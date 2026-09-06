@@ -12,6 +12,9 @@ import { homedir, hostname, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { resolveVavCredentials } from '../accounts/vavCredentials.ts'
 import { AgentRuntime } from '../agent/AgentRuntime.ts'
+import { SkillService } from '../agent/SkillService.ts'
+import { PluginService } from '../plugins/PluginService.ts'
+import { pluginAccessPaths } from '../plugins/pluginPaths.ts'
 import { ChangeSetStore } from '../agent/ChangeSetStore.ts'
 import { FileService } from '../fs/FileService.ts'
 import { currentLocale, t } from '../i18n.ts'
@@ -130,6 +133,17 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
       secrets.asSecretStore()
     )
 
+  const pluginService = new PluginService(home)
+  const skillService = new SkillService()
+  pluginService.setBundledSkills(skillService.catalog().skills, skillService.root())
+  skillService.extraSkills = () => pluginService.enabledSkillEntries()
+  pluginService.onChange(() => skillService.invalidate())
+  {
+    const bundledRoot = skillService.root()
+    if (bundledRoot) files.grantRoot(bundledRoot)
+    for (const path of pluginAccessPaths('vav', home)) files.grantRoot(path)
+  }
+
   const agent = new AgentRuntime({
     conversations,
     settings,
@@ -138,6 +152,8 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
     files,
     hosts,
     changeSets,
+    skills: skillService,
+    plugins: pluginService,
     emit: handleAgentEvent
   })
 

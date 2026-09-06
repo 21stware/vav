@@ -44,6 +44,7 @@ export interface ToolHost {
   webSearch?: WebSearchService
   webFetch?: WebFetchService
   skills?: SkillService
+  extraTools?: import('@earendil-works/pi-agent-core').AgentTool[]
   braveSearchKey?: () => string | null
   tinyfishSearchKey?: () => string | null
   selectionAnchor?: () => PreviewRef[]

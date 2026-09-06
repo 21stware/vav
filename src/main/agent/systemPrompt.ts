@@ -10,6 +10,8 @@ export type SystemPromptOptions = {
   openFileKind?: string | null
   /** Pre-formatted skill catalog lines for progressive disclosure. */
   skillCatalog?: string | null
+  /** Stdout from SessionStart / UserPromptSubmit hooks. */
+  pluginContext?: string | null
   /** Override `process.platform` so tests do not depend on the host OS. */
   platform?: string
 }
@@ -139,6 +141,9 @@ export function buildSystemPrompt(
     '- MCP servers → `mcp-builder`',
     'Bundled catalog:',
     options?.skillCatalog?.trim() || '(skill catalog unavailable)',
+    options?.pluginContext?.trim()
+      ? `\n## Plugin hook context\n${options.pluginContext.trim()}\n`
+      : '',
     '',
     'File-preview edit loop (product model):',
     '1) View — user sees a format-correct canvas (windowed/streamed; never refuse on size).',

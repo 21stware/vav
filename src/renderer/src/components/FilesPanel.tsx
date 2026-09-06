@@ -11,6 +11,7 @@ import {
   FolderInput,
   Package,
   Plus,
+  Puzzle,
   RefreshCw
 } from 'lucide-react'
 import { IGNORED_NAMES, IGNORED_SUFFIXES } from '@shared/types'
@@ -39,6 +40,11 @@ import { SupabasePanel, type SupabasePanelChrome } from './SupabasePanel'
 import { SupabaseMark } from './SupabaseMark'
 import { CloudflarePanel, type CloudflarePanelChrome } from './CloudflarePanel'
 import { ArtifactsPanel } from './ArtifactsPanel'
+import {
+  PluginsPanel,
+  type PluginCreateKind,
+  type PluginsPanelChrome
+} from './PluginsPanel'
 import { openFileInSessionPreview } from '../lib/openSessionFile'
 import { ColumnBrowser, TreeLevel } from './filesPanel/FilesBrowser'
 import {
@@ -47,7 +53,14 @@ import {
   isSupabaseTrayEnabled
 } from '@shared/workspaceTrays'
 
-type FilesTrayView = 'files' | 'artifacts' | 'git' | 'github' | 'supabase' | 'cloudflare'
+type FilesTrayView =
+  | 'files'
+  | 'artifacts'
+  | 'plugins'
+  | 'git'
+  | 'github'
+  | 'supabase'
+  | 'cloudflare'
 
 /** Scroll the row for `path` into view inside the files browser. */
 function scrollFileRowIntoView(path: string): void {
@@ -121,6 +134,8 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
   const [githubChrome, setGithubChrome] = useState<GithubPanelChrome | null>(null)
   const [supabaseChrome, setSupabaseChrome] = useState<SupabasePanelChrome | null>(null)
   const [cloudflareChrome, setCloudflareChrome] = useState<CloudflarePanelChrome | null>(null)
+  const [pluginsChrome, setPluginsChrome] = useState<PluginsPanelChrome | null>(null)
+  const cliHost = conversation?.cliHost ?? null
   /** Temp dirs can become repos after Files → Git “enable version control”. */
   const gitRepoEpoch = useGitRepoSyncEpoch()
   const supabaseHint = (dirs?.[root ?? ''] ?? [])
@@ -165,6 +180,22 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
         next &&
         prev.meta === next.meta &&
         prev.loading === next.loading &&
+        prev.refresh === next.refresh
+      ) {
+        return prev
+      }
+      return next
+    })
+  }, [])
+  const onPluginsChrome = useCallback((next: PluginsPanelChrome | null) => {
+    setPluginsChrome((prev) => {
+      if (prev === next) return prev
+      if (
+        prev &&
+        next &&
+        prev.meta === next.meta &&
+        prev.loading === next.loading &&
+        prev.writable === next.writable &&
         prev.refresh === next.refresh
       ) {
         return prev
@@ -530,12 +561,6 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
     loadDirectory
   ])
 
-  if (!root) {
-    return (
-      <EmptyState title={t('files.noWorkdirTitle')} description={t('files.noWorkdirDesc')} />
-    )
-  }
-
   const applySort = (key: FileSortKey): void => {
     const next = normalizeFileSortKey(key)
     const nextAscending = next !== 'none' && sort === next ? !ascending : true
@@ -625,6 +650,37 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
     openViewer(full)
   }
 
+  const createPlugin = (kind: PluginCreateKind): void => {
+    const name = window.prompt(t('plugins.namePrompt'), '')
+    if (name == null || !name.trim()) return
+    if (!window.vav?.plugins?.create) {
+      showDialog({
+        title: t('plugins.createFailed'),
+        body: t('plugins.apiMissing'),
+        confirmLabel: t('common.ok')
+      })
+      return
+    }
+    void window.vav.plugins.create(kind, name.trim()).then((result) => {
+      if ('ok' in result && result.ok === false) {
+        showDialog({
+          title: t('plugins.createFailed'),
+          body: result.error,
+          confirmLabel: t('common.ok')
+        })
+        return
+      }
+      pluginsChrome?.refresh()
+    })
+  }
+
+  const pluginCreateItems: MenuItem[] = [
+    { label: t('plugins.createSkill'), onSelect: () => createPlugin('skill') },
+    { label: t('plugins.createMcp'), onSelect: () => createPlugin('mcp') },
+    { label: t('plugins.createHook'), onSelect: () => createPlugin('hook') },
+    { label: t('plugins.createPlugin'), onSelect: () => createPlugin('plugin') }
+  ]
+
   return (
     <>
       <div className="files-toolbar">
@@ -644,6 +700,12 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
                 label: t('files.tabArtifacts'),
                 title: t('files.tabArtifacts'),
                 icon: <Package size={14} />
+              },
+              {
+                value: 'plugins',
+                label: t('files.tabPlugins'),
+                title: t('files.tabPlugins'),
+                icon: <Puzzle size={14} />
               },
               {
                 value: 'git',
@@ -749,6 +811,31 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
               />
             </>
           )}
+          {trayView === 'plugins' && pluginsChrome && (
+            <>
+              {pluginsChrome.meta ? (
+                <span className="git-panel-meta">{pluginsChrome.meta}</span>
+              ) : null}
+              <Button
+                icon={<RefreshCw size={14} />}
+                size="sm"
+                className={`git-refresh-btn${pluginsChrome.loading ? ' is-refreshing' : ''}`}
+                title={t('plugins.refresh')}
+                disabled={pluginsChrome.loading}
+                onClick={pluginsChrome.refresh}
+              />
+              {pluginsChrome.writable && (
+                <Button
+                  icon={<Plus size={14} />}
+                  size="sm"
+                  title={t('plugins.create')}
+                  onClick={(event) =>
+                    void showMenu(pluginCreateItems, menuAnchor(event.currentTarget as HTMLElement))
+                  }
+                />
+              )}
+            </>
+          )}
           {trayView === 'git' && gitChrome && (
             <>
               {gitChrome.meta ? <span className="git-panel-meta">{gitChrome.meta}</span> : null}
@@ -812,6 +899,9 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
 
       <div className="files-tray-stack">
         <div className="files-tray-pane" data-hidden={trayView !== 'files'}>
+          {!root ? (
+            <EmptyState title={t('files.noWorkdirTitle')} description={t('files.noWorkdirDesc')} />
+          ) : (
           <div
             className="files-browser"
             data-testid="files-panel"
@@ -862,6 +952,7 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
           />
         )}
       </div>
+          )}
         </div>
         <div
           className="files-tray-pane"
@@ -869,6 +960,17 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
           data-testid="artifacts-tray"
         >
           <ArtifactsPanel />
+        </div>
+        <div
+          className="files-tray-pane"
+          data-hidden={trayView !== 'plugins'}
+          data-testid="plugins-tray"
+        >
+          <PluginsPanel
+            visible={visible && trayView === 'plugins'}
+            host={cliHost}
+            onChrome={onPluginsChrome}
+          />
         </div>
         <div className="files-tray-pane" data-hidden={trayView !== 'git'} data-testid="git-panel">
           <GitChangesPanel

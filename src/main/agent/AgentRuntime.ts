@@ -77,6 +77,8 @@ import {
 } from './tools'
 import { buildSystemPrompt } from './systemPrompt'
 import { summarizeToolInput } from './toolSummarize'
+import { McpToolBridge } from '../plugins/mcpClient.ts'
+import { runPluginHooks } from '../plugins/hooksRunner.ts'
 import { stampReasoningDurations } from './reasoningStamp'
 import { applyToolRuntimePatch, applyToolStatePatch, ensureToolCallBlock, rememberSentToolCard, toolCallBlockIndex } from './cliToolBlock'
 import { compactClearGate, planConversationCompact } from './compactPlan'
@@ -162,6 +164,9 @@ interface TurnState {
   cancelled?: boolean
   recovery: TurnRecovery | null
   recoveryAttempts: number
+  extraTools: import('@earendil-works/pi-agent-core').AgentTool[]
+  pluginContext: string
+  lastToolName: string
 }
 
 export interface AgentRuntimeDeps {
@@ -177,6 +182,8 @@ export interface AgentRuntimeDeps {
   webSearch?: WebSearchService
   webFetch?: WebFetchService
   skills?: SkillService
+  plugins?: import('../plugins/PluginService').PluginService
+  mcpTools?: import('../plugins/mcpClient').McpToolBridge
   fileSessions?: FileSessionStore
   /** Sync preview chrome when the agent flips Read/Edit via switch_mode. */
   onFileReadOnlyChange?: (conversationId: string, readOnly: boolean) => void
@@ -216,7 +223,15 @@ export class AgentRuntime {
 
   constructor(deps: AgentRuntimeDeps) {
     this.deps = deps
+    this.mcpBridge = deps.mcpTools ?? new McpToolBridge()
+    deps.plugins?.onChange(() => {
+      this.mcpBridge.invalidate()
+      this.deps.skills?.invalidate()
+    })
   }
+
+  private sessionStartDone = new Set<string>()
+  private mcpBridge: McpToolBridge
 
   private vavCreds(conversation: Conversation): { apiKey: string | null; settings: AppSettings } {
     return mergeVavCredentials(
@@ -597,7 +612,10 @@ export class AgentRuntime {
       selectionRefs: parentMessage?.contextBlocks ?? [],
       reasoningStartedAt: new Map(),
       recovery: null,
-      recoveryAttempts: 0
+      recoveryAttempts: 0,
+      extraTools: [],
+      pluginContext: '',
+      lastToolName: ''
     }
     this.turns.set(conversationId, turn)
     if (this.pendingCancels.delete(conversationId)) {
@@ -623,6 +641,33 @@ export class AgentRuntime {
         if (conversation.focusedFilePath) openFilePathForPrompt = wc.copyPath
       } catch (err) {
         console.warn('[agent] working-copy ensure failed', logicalOpenPath, err)
+      }
+    }
+    if (turn.cancelled || this.turns.get(conversationId) !== turn) return
+    const workdir = this.workdirOf(conversation)
+    const pluginHooks = this.deps.plugins?.enabledHooks() ?? []
+    if (!this.sessionStartDone.has(conversationId)) {
+      this.sessionStartDone.add(conversationId)
+      const started = await runPluginHooks({
+        hooks: pluginHooks,
+        event: 'SessionStart',
+        cwd: workdir
+      })
+      if (started.output) turn.pluginContext += started.output
+    }
+    const submitted = await runPluginHooks({
+      hooks: pluginHooks,
+      event: 'UserPromptSubmit',
+      cwd: workdir
+    })
+    if (submitted.output) {
+      turn.pluginContext = [turn.pluginContext, submitted.output].filter(Boolean).join('\n')
+    }
+    if (this.deps.plugins) {
+      try {
+        turn.extraTools = await this.mcpBridge.toolsFor(this.deps.plugins.enabledMcpServers())
+      } catch (err) {
+        console.warn('[plugins] MCP tools failed', err)
       }
     }
     if (turn.cancelled || this.turns.get(conversationId) !== turn) return
@@ -653,7 +698,8 @@ export class AgentRuntime {
                       ? this.deps.fileSessions.kindForFileId(conversation.fileId)
                       : null)
                   : null,
-                skillCatalog: this.deps.skills?.catalogForPrompt() ?? null
+                skillCatalog: this.deps.skills?.catalogForPrompt() ?? null,
+                pluginContext: turn.pluginContext || null
               }),
               messages: history,
               tools: this.toolsFor(conversation, turn)
@@ -668,11 +714,30 @@ export class AgentRuntime {
               // lie in both cases.
               toolExecution: 'sequential',
               convertToLlm: (messages) => messages as Message[],
-              beforeToolCall: async ({ toolCall, args }) =>
-                this.gateToolCall(conversationId, turn, toolCall, args),
-              afterToolCall: async ({ result }) => ({
-                isError: !!(result.details as ToolDetails | undefined)?.failed
-              }),
+              beforeToolCall: async ({ toolCall, args }) => {
+                turn.lastToolName = toolCall.name
+                const gated = await this.gateToolCall(conversationId, turn, toolCall, args)
+                if (gated?.block) return gated
+                const pre = await runPluginHooks({
+                  hooks: this.deps.plugins?.enabledHooks() ?? [],
+                  event: 'PreToolUse',
+                  toolName: toolCall.name,
+                  cwd: this.workdirOf(conversation)
+                })
+                if (pre.blocked) return { block: true, reason: pre.reason || pre.output || 'Hook blocked tool' }
+                return gated
+              },
+              afterToolCall: async ({ result }) => {
+                await runPluginHooks({
+                  hooks: this.deps.plugins?.enabledHooks() ?? [],
+                  event: 'PostToolUse',
+                  toolName: turn.lastToolName,
+                  cwd: this.workdirOf(conversation)
+                })
+                return {
+                  isError: !!(result.details as ToolDetails | undefined)?.failed
+                }
+              },
               shouldStopAfterTurn: () => false
             },
             (event) => this.onAgentEvent(conversationId, turn, event),
@@ -1167,6 +1232,7 @@ export class AgentRuntime {
       webSearch: this.deps.webSearch,
       webFetch: this.deps.webFetch,
       skills: this.deps.skills,
+      extraTools: turn.extraTools,
       braveSearchKey: () => this.deps.secrets.get('braveSearch'),
       tinyfishSearchKey: () => this.deps.secrets.get('tinyfish'),
       selectionAnchor: () => turn.selectionRefs,

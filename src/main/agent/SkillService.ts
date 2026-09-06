@@ -53,6 +53,12 @@ const REMOTE_HOST_ALLOW = new Set([
 export class SkillService {
   private catalogCache: SkillCatalog | null = null
   private rootCache: string | null = null
+  /** User / plugin skills merged into the same catalog `load_skill` reads. */
+  extraSkills?: () => SkillCatalogEntry[]
+
+  invalidate(): void {
+    this.catalogCache = null
+  }
 
   /** Absolute path to resources/agent-skills (dev + packaged). */
   root(): string | null {
@@ -78,6 +84,17 @@ export class SkillService {
   }
 
   catalog(): SkillCatalog {
+    const bundled = this.bundledCatalog()
+    const extras = this.extraSkills?.() ?? []
+    if (extras.length === 0) return bundled
+    const seen = new Set(extras.map((skill) => skill.id.toLowerCase()))
+    return {
+      ...bundled,
+      skills: [...extras, ...bundled.skills.filter((skill) => !seen.has(skill.id.toLowerCase()))]
+    }
+  }
+
+  private bundledCatalog(): SkillCatalog {
     if (this.catalogCache) return this.catalogCache
     const root = this.root()
     if (!root) {
@@ -96,15 +113,21 @@ export class SkillService {
 
   /** Compact listing for system prompt (~ few hundred tokens). */
   catalogForPrompt(): string {
-    const skills = skillsForPrompt(this.catalog().skills)
-    if (skills.length === 0) return '(no bundled skills available)'
-    return skills
-      .map((s) => {
+    const extras = this.extraSkills?.() ?? []
+    const bundled = skillsForPrompt(this.bundledCatalog().skills)
+    const lines = [
+      ...extras.map((s) => {
+        const desc = (s.description || '').slice(0, 160)
+        return `- \`${s.id}\` [plugin]: ${desc}`
+      }),
+      ...bundled.map((s) => {
         const tags = s.tags?.length ? ` [${s.tags.join(', ')}]` : ''
         const desc = (s.description || '').slice(0, 160)
         return `- \`${s.id}\`${tags}: ${desc}`
       })
-      .join('\n')
+    ]
+    if (lines.length === 0) return '(no bundled skills available)'
+    return lines.join('\n')
   }
 
   find(idOrName: string): SkillCatalogEntry | null {
@@ -137,8 +160,7 @@ export class SkillService {
       return { error: `Unknown skill "${idOrName}". Available: ${ids || '(none)'}` }
     }
     const root = this.root()
-    if (!root) return { error: 'Skill root not found' }
-    const skillDir = join(root, entry.dir)
+    const skillDir = existsSync(entry.dir) ? entry.dir : root ? join(root, entry.dir) : entry.dir
     if (!existsSync(skillDir)) return { error: `Skill directory missing: ${entry.dir}` }
 
     const rel = (pathRel ?? '').trim().replace(/^\/+/, '')

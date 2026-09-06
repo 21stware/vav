@@ -316,6 +316,14 @@ const api: VavApi = {
       ipcRenderer.invoke(IPC.supabaseStatus, cwd, query)
   },
 
+  plugins: {
+    list: (host) => ipcRenderer.invoke(IPC.pluginsList, host),
+    setEnabled: (host, pluginId, enabled) =>
+      ipcRenderer.invoke(IPC.pluginsSetEnabled, host, pluginId, enabled),
+    create: (kind, name) => ipcRenderer.invoke(IPC.pluginsCreate, kind, name),
+    write: (path, content) => ipcRenderer.invoke(IPC.pluginsWrite, path, content)
+  },
+
   github: {
     listPulls: (cwd: string, state?: import('@shared/github').GithubPullStateFilter) =>
       ipcRenderer.invoke(IPC.githubListPulls, cwd, state),
