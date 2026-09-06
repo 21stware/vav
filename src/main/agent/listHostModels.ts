@@ -17,7 +17,7 @@ import { resolveHostBinary } from './drivers'
 import { contextWindowFor, lookupCatalogModel } from './modelMeta'
 import { resolveModelModalities } from '../../shared/modelModalities.ts'
 import { fetchVavModels } from './vavModelProbe'
-import { collapseCursorListModels } from './drivers/acpModelId'
+import { presentHostCatalog } from '../../shared/hostModelCodec.ts'
 
 const CACHE_TTL_MS = 30 * 60_000
 const RUN_TIMEOUT_MS = 12_000
@@ -452,7 +452,7 @@ async function probeLiveModels(
   switch (host) {
     case 'cursor': {
       const out = await runText(binary, ['--list-models'], env)
-      return collapseCursorListModels(parseCursorModels(out))
+      return presentHostCatalog(parseCursorModels(out))
     }
     case 'grok': {
       const out = await runText(binary, ['models'], env)

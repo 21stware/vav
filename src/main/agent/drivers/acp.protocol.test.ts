@@ -256,7 +256,7 @@ describe('wireAcp protocol', () => {
     })
 
     const created = await waitFor(outbound, (msg) => msg.method === 'session/new')
-    assert.equal(asRecord(created.params)?.modelId, 'grok-4.6[effort=high,fast=true]')
+    assert.equal(asRecord(created.params)?.modelId, undefined)
     toClient({
       jsonrpc: '2.0',
       id: created.id,
@@ -305,7 +305,7 @@ describe('wireAcp protocol', () => {
     driver.dispose()
   })
 
-  it('applies thinking level and fast from session prefs', async () => {
+  it('pins the advertised ACP family row, not a thinking / fast overlay', async () => {
     const events: DriverEvent[] = []
     const { proc, outbound, toClient } = fakeStdio()
     const dir = await mkdtemp(join(tmpdir(), 'vav-acp-prefs-'))
@@ -336,7 +336,7 @@ describe('wireAcp protocol', () => {
     })
 
     const created = await waitFor(outbound, (msg) => msg.method === 'session/new')
-    assert.equal(asRecord(created.params)?.modelId, 'grok-4.6[effort=low,fast=true]')
+    assert.equal(asRecord(created.params)?.modelId, undefined)
     toClient({
       jsonrpc: '2.0',
       id: created.id,
@@ -352,13 +352,13 @@ describe('wireAcp protocol', () => {
     })
 
     const set = await waitFor(outbound, (msg) => msg.method === 'session/set_model')
-    assert.equal(asRecord(set.params)?.modelId, 'grok-4.6[effort=low,fast=true]')
+    assert.equal(asRecord(set.params)?.modelId, 'grok-4.6[effort=high,fast=true]')
     toClient({ jsonrpc: '2.0', id: set.id, result: {} })
     await waitForEvent(events, (event) => event.type === 'connected')
     driver.dispose()
   })
 
-  it('retries session/new without modelId when Cursor rejects the field', async () => {
+  it('omits session/new.modelId and applies the advertised set_model id', async () => {
     const events: DriverEvent[] = []
     const { proc, outbound, toClient } = fakeStdio()
     const dir = await mkdtemp(join(tmpdir(), 'vav-acp-new-model-'))
@@ -389,18 +389,10 @@ describe('wireAcp protocol', () => {
     })
 
     const first = await waitFor(outbound, (msg) => msg.method === 'session/new')
-    assert.equal(asRecord(first.params)?.modelId, 'grok-4.6[effort=medium,fast=false]')
+    assert.equal(asRecord(first.params)?.modelId, undefined)
     toClient({
       jsonrpc: '2.0',
       id: first.id,
-      error: { code: RpcErrorCode.invalidParams, message: 'Invalid params' }
-    })
-
-    const retry = await waitForNth(outbound, (msg) => msg.method === 'session/new', 2)
-    assert.equal(asRecord(retry.params)?.modelId, undefined)
-    toClient({
-      jsonrpc: '2.0',
-      id: retry.id,
       result: {
         sessionId: 'sess-retry',
         models: {
@@ -411,13 +403,13 @@ describe('wireAcp protocol', () => {
     })
 
     const set = await waitFor(outbound, (msg) => msg.method === 'session/set_model')
-    assert.equal(asRecord(set.params)?.modelId, 'grok-4.6[effort=medium,fast=false]')
+    assert.equal(asRecord(set.params)?.modelId, 'grok-4.6[effort=high,fast=true]')
     toClient({ jsonrpc: '2.0', id: set.id, result: {} })
     await waitForEvent(events, (event) => event.type === 'connected')
     driver.dispose()
   })
 
-  it('does not fall back to a listed Fast default after the overlay is rejected', async () => {
+  it('never invents a Fast overlay when the advertised row is locked', async () => {
     const events: DriverEvent[] = []
     const { proc, outbound, toClient } = fakeStdio()
     const dir = await mkdtemp(join(tmpdir(), 'vav-acp-fast-fallback-'))
@@ -460,29 +452,24 @@ describe('wireAcp protocol', () => {
       }
     })
 
-    const overlay = await waitFor(outbound, (msg) => msg.method === 'session/set_model')
-    assert.equal(asRecord(overlay.params)?.modelId, 'grok-4.6[effort=high,fast=false]')
-    toClient({
-      jsonrpc: '2.0',
-      id: overlay.id,
-      error: { code: RpcErrorCode.invalidParams, message: 'Invalid params' }
-    })
+    const advertised = await waitFor(outbound, (msg) => msg.method === 'session/set_model')
+    assert.equal(asRecord(advertised.params)?.modelId, 'grok-4.6[effort=high,fast=true]')
+    toClient({ jsonrpc: '2.0', id: advertised.id, result: {} })
     await waitForEvent(events, (event) => event.type === 'connected')
 
-    const setModels = outbound.filter((msg) => msg.method === 'session/set_model')
-    assert.equal(setModels.length, 1)
-    assert.ok(
-      setModels.every((msg) => asRecord(msg.params)?.modelId !== 'grok-4.6[effort=high,fast=true]')
-    )
-
     driver.applyOptions?.({ fast: true })
-    const enabled = await waitForNth(outbound, (msg) => msg.method === 'session/set_model', 2)
-    assert.equal(asRecord(enabled.params)?.modelId, 'grok-4.6[effort=high,fast=true]')
-    toClient({ jsonrpc: '2.0', id: enabled.id, result: {} })
+    const again = await waitForNth(outbound, (msg) => msg.method === 'session/set_model', 2)
+    assert.equal(asRecord(again.params)?.modelId, 'grok-4.6[effort=high,fast=true]')
+    toClient({ jsonrpc: '2.0', id: again.id, result: {} })
+    assert.ok(
+      outbound
+        .filter((msg) => msg.method === 'session/set_model')
+        .every((msg) => asRecord(msg.params)?.modelId === 'grok-4.6[effort=high,fast=true]')
+    )
     driver.dispose()
   })
 
-  it('re-pins the current Fast chip before a follow-up prompt', async () => {
+  it('re-pins the advertised family row before a follow-up prompt', async () => {
     const events: DriverEvent[] = []
     const { proc, outbound, toClient } = fakeStdio()
     const dir = await mkdtemp(join(tmpdir(), 'vav-acp-fast-prompt-'))
@@ -532,12 +519,12 @@ describe('wireAcp protocol', () => {
 
     driver.applyOptions?.({ fast: false })
     const flipped = await waitForNth(outbound, (msg) => msg.method === 'session/set_model', 2)
-    assert.equal(asRecord(flipped.params)?.modelId, 'grok-4.6[effort=high,fast=false]')
+    assert.equal(asRecord(flipped.params)?.modelId, 'grok-4.6[effort=high,fast=true]')
     toClient({ jsonrpc: '2.0', id: flipped.id, result: {} })
 
     driver.prompt('hello again')
     const pinned = await waitForNth(outbound, (msg) => msg.method === 'session/set_model', 3)
-    assert.equal(asRecord(pinned.params)?.modelId, 'grok-4.6[effort=high,fast=false]')
+    assert.equal(asRecord(pinned.params)?.modelId, 'grok-4.6[effort=high,fast=true]')
     toClient({ jsonrpc: '2.0', id: pinned.id, result: {} })
     const prompt = await waitFor(outbound, (msg) => msg.method === 'session/prompt')
     assert.equal(asRecord(prompt.params)?.sessionId, 'sess-fast-prompt')
@@ -1088,20 +1075,30 @@ describe('ACP goal (Grok)', () => {
 })
 
 describe('acpInvokeArgs', () => {
-  it('pins Cursor --model before the acp subcommand', () => {
+  it('pins Cursor with a hyphen --model id, never a bracket overlay', () => {
     assert.deepEqual(
       acpInvokeArgs('cursor', 'edit', {
         model: 'grok-4.6',
         thinkingLevel: 'medium',
         fast: false
       }),
-      ['--model', 'grok-4.6[effort=medium,fast=false]', 'acp']
+      ['acp', '--model', 'cursor-grok-4.6-medium']
+    )
+    assert.deepEqual(
+      acpInvokeArgs('cursor', 'edit', { model: 'cursor-grok-4.6-medium' }),
+      ['acp', '--model', 'cursor-grok-4.6-medium']
     )
     assert.deepEqual(acpInvokeArgs('cursor', 'edit', {}), ['acp'])
     assert.deepEqual(
       acpInvokeArgs('cursor', 'edit', { model: 'grok-4.6', extraArgs: ['--model', 'auto'] }),
       ['acp', '--model', 'auto']
     )
+    const args = acpInvokeArgs('cursor', 'edit', {
+      model: 'grok-4.6[effort=medium,fast=false]',
+      thinkingLevel: 'medium'
+    })
+    assert.equal(args.includes('['), false)
+    assert.deepEqual(args, ['acp', '--model', 'cursor-grok-4.6-medium'])
   })
 
   it('drops Cursor TUI flags that are not valid on `cursor-agent acp`', () => {
@@ -1112,11 +1109,10 @@ describe('acpInvokeArgs', () => {
       model: 'grok-4.6',
       extraArgs: ['--force', '--trust', '--yolo']
     })
-    assert.equal(args.at(-1), 'acp')
+    assert.deepEqual(args, ['acp', '--model', 'cursor-grok-4.6-medium'])
     assert.equal(args.includes('--force'), false)
     assert.equal(args.includes('--trust'), false)
     assert.equal(args.includes('--yolo'), false)
-    assert.ok(args.some((token) => token.includes('grok-4.6')))
   })
 
   it('places Grok flags around agent / stdio', () => {

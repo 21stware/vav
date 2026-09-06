@@ -2,5 +2,7 @@ vavd.js
 vav.js
 vavd.js.map
 vav.js.map
+# Copied from out/phone-ui by pack-vavd.mjs
+phone-ui/
 LICENSE
 *.tgz

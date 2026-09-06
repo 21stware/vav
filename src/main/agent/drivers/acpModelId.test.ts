@@ -4,7 +4,6 @@ import {
   acpBootstrapModelId,
   acpModelIdCandidates,
   advertisedThinkingLevel,
-  candidateSatisfiesPrefs,
   collapseCursorListModels,
   parseAcpAvailableModels,
   resolveAcpModelId
@@ -24,14 +23,14 @@ const CURSOR_AVAILABLE = [
 ]
 
 describe('resolveAcpModelId', () => {
-  it('maps picker aliases onto Cursor ACP parameterized ids', () => {
+  it('maps picker ids onto the advertised ACP family row', () => {
     assert.equal(
       resolveAcpModelId('cursor-grok-4.6-high-fast', CURSOR_AVAILABLE),
       'grok-4.6[effort=high,fast=true]'
     )
     assert.equal(
       resolveAcpModelId('cursor-grok-4.6-low', CURSOR_AVAILABLE),
-      'grok-4.6[effort=low,fast=false]'
+      'grok-4.6[effort=high,fast=true]'
     )
     assert.equal(
       resolveAcpModelId('claude-fable-5-thinking-high', CURSOR_AVAILABLE),
@@ -39,37 +38,17 @@ describe('resolveAcpModelId', () => {
     )
     assert.equal(
       resolveAcpModelId('claude-opus-5-thinking-high-fast', CURSOR_AVAILABLE),
-      'claude-opus-5[thinking=true,context=300k,effort=high,fast=true]'
+      'claude-opus-5[thinking=true,context=300k,effort=high,fast=false]'
     )
-    assert.equal(
-      resolveAcpModelId('claude-opus-5-high', CURSOR_AVAILABLE),
-      'claude-opus-5[thinking=false,context=300k,effort=high,fast=false]'
-    )
-    assert.equal(
-      resolveAcpModelId('gpt-5.6-sol-xhigh-fast', CURSOR_AVAILABLE),
-      'gpt-5.6-sol[context=272k,reasoning=xhigh,fast=true]'
-    )
-    assert.equal(
-      resolveAcpModelId('gpt-5.3-codex-low-fast', CURSOR_AVAILABLE),
-      'gpt-5.3-codex[reasoning=low,fast=true]'
-    )
-    assert.equal(
-      resolveAcpModelId('composer-2.5', CURSOR_AVAILABLE),
-      'composer-2.5[fast=false]'
-    )
-    assert.equal(
-      resolveAcpModelId('composer-2.5-fast', CURSOR_AVAILABLE),
-      'composer-2.5[fast=true]'
-    )
+    assert.equal(resolveAcpModelId('auto', CURSOR_AVAILABLE), 'default[]')
+    assert.equal(resolveAcpModelId('default', CURSOR_AVAILABLE), 'default[]')
     assert.equal(
       resolveAcpModelId('gemini-3.7-flash-high', CURSOR_AVAILABLE),
       'gemini-3.7-flash[effort=high]'
     )
-    assert.equal(resolveAcpModelId('auto', CURSOR_AVAILABLE), 'default[]')
-    assert.equal(resolveAcpModelId('default', CURSOR_AVAILABLE), 'default[]')
   })
 
-  it('passes through exact ACP ids and plain host ids', () => {
+  it('passes through exact ACP ids and does not invent overlays', () => {
     assert.equal(
       resolveAcpModelId('grok-4.6[effort=high,fast=true]', CURSOR_AVAILABLE),
       'grok-4.6[effort=high,fast=true]'
@@ -78,44 +57,25 @@ describe('resolveAcpModelId', () => {
     assert.equal(resolveAcpModelId('gemini-3.1-pro', CURSOR_AVAILABLE), 'gemini-3.1-pro[]')
   })
 
-  it('constructs an ACP id when the session has not advertised models yet', () => {
-    assert.equal(
-      resolveAcpModelId('cursor-grok-4.6-high-fast', []),
-      'grok-4.6[effort=high,fast=true]'
-    )
+  it('does not construct an overlay before the session has advertised models', () => {
+    assert.equal(resolveAcpModelId('cursor-grok-4.6-high-fast', []), 'cursor-grok-4.6-high-fast')
     assert.equal(resolveAcpModelId('auto', []), 'default[]')
   })
 
-  it('overlays session thinking / fast instead of baking them into the model id', () => {
+  it('ignores thinking / fast prefs and keeps the advertised row', () => {
     assert.equal(
       resolveAcpModelId('grok-4.6', CURSOR_AVAILABLE, { thinkingLevel: 'low', fast: true }),
-      'grok-4.6[effort=low,fast=true]'
-    )
-    assert.equal(
-      resolveAcpModelId('claude-fable-5', CURSOR_AVAILABLE, { thinkingLevel: 'off', fast: false }),
-      'claude-fable-5[thinking=false,context=300k,effort=high,fast=false]'
-    )
-    assert.equal(
-      resolveAcpModelId('gpt-5.6-sol', CURSOR_AVAILABLE, { thinkingLevel: 'max', fast: true }),
-      'gpt-5.6-sol[context=272k,reasoning=max,fast=true]'
-    )
-    assert.equal(
-      resolveAcpModelId('composer-2.5', CURSOR_AVAILABLE, { thinkingLevel: 'high', fast: false }),
-      'composer-2.5[fast=false]'
-    )
-    assert.equal(
-      resolveAcpModelId('kimi-k3', CURSOR_AVAILABLE, { thinkingLevel: 'high', fast: false }),
-      'kimi-k3[reasoning=high]'
+      'grok-4.6[effort=high,fast=true]'
     )
     assert.equal(
       resolveAcpModelId('kimi-k3', CURSOR_AVAILABLE, { thinkingLevel: 'low' }),
-      'kimi-k3[reasoning=low]'
+      'kimi-k3[reasoning=max]'
     )
   })
 })
 
 describe('collapseCursorListModels', () => {
-  it('keeps one family row and strips effort / fast from the label', () => {
+  it('keeps hyphen --list-models rows atomic', () => {
     const collapsed = collapseCursorListModels([
       { id: 'cursor-grok-4.6-high-fast', label: 'Cursor Grok 4.6 Fast' },
       { id: 'cursor-grok-4.6-low', label: 'Cursor Grok 4.6 Low' },
@@ -124,66 +84,44 @@ describe('collapseCursorListModels', () => {
     ])
     assert.deepEqual(
       collapsed.map((m) => m.id),
-      ['grok-4.6', 'claude-fable-5', 'auto']
+      [
+        'cursor-grok-4.6-high-fast',
+        'cursor-grok-4.6-low',
+        'claude-fable-5-thinking-high',
+        'auto'
+      ]
     )
-    assert.equal(collapsed[0]?.label, 'Cursor Grok 4.6')
-    assert.equal(collapsed[1]?.label, 'Claude Fable 5')
+    assert.equal(collapsed[0]?.label, 'Cursor Grok 4.6 Fast')
   })
 })
 
 describe('acpBootstrapModelId', () => {
-  it('constructs an ACP id before the session has advertised models', () => {
-    assert.equal(
-      acpBootstrapModelId('grok-4.6', { thinkingLevel: 'medium', fast: false }),
-      'grok-4.6[effort=medium,fast=false]'
-    )
-    assert.equal(
-      acpBootstrapModelId('cursor-grok-4.6-high-fast'),
-      'grok-4.6[effort=high,fast=true]'
-    )
+  it('does not invent an overlay before availableModels exists', () => {
+    assert.equal(acpBootstrapModelId('grok-4.6', { thinkingLevel: 'medium', fast: false }), null)
+    assert.equal(acpBootstrapModelId('cursor-grok-4.6-high-fast'), null)
     assert.equal(acpBootstrapModelId(''), null)
     assert.equal(acpBootstrapModelId(null), null)
+    assert.equal(acpBootstrapModelId('auto'), 'default[]')
   })
 })
 
 describe('acpModelIdCandidates', () => {
-  it('tries the overlaid id before the family default and the raw picker id', () => {
+  it('only tries the advertised family row', () => {
     assert.deepEqual(acpModelIdCandidates('cursor-grok-4.6-low', CURSOR_AVAILABLE), [
-      'grok-4.6[effort=low,fast=false]',
-      'grok-4.6[effort=high,fast=true]',
-      'grok-4.6[effort=low]',
-      'cursor-grok-4.6-low'
+      'grok-4.6[effort=high,fast=true]'
     ])
   })
 
-  it('drops advertised defaults that contradict thinking / fast chips', () => {
+  it('does not emit thinking / fast overlays', () => {
     assert.deepEqual(
       acpModelIdCandidates('grok-4.6', CURSOR_AVAILABLE, { thinkingLevel: 'high', fast: false }),
-      ['grok-4.6[effort=high,fast=false]']
+      ['grok-4.6[effort=high,fast=true]']
     )
     assert.deepEqual(
       acpModelIdCandidates('grok-4.6', CURSOR_AVAILABLE, { thinkingLevel: 'low', fast: true }),
-      ['grok-4.6[effort=low,fast=true]']
+      ['grok-4.6[effort=high,fast=true]']
     )
-    assert.ok(
-      !acpModelIdCandidates('grok-4.6', CURSOR_AVAILABLE, {
-        thinkingLevel: 'high',
-        fast: false
-      }).includes('grok-4.6[effort=high,fast=true]')
-    )
-  })
-})
-
-describe('candidateSatisfiesPrefs', () => {
-  it('rejects a listed grok default when Fast is off', () => {
-    assert.equal(
-      candidateSatisfiesPrefs('grok-4.6[effort=high,fast=true]', { fast: false }),
-      false
-    )
-    assert.equal(
-      candidateSatisfiesPrefs('grok-4.6[effort=high,fast=false]', { fast: false }),
-      true
-    )
+    assert.deepEqual(acpModelIdCandidates('grok-4.6', []), [])
   })
 })
 

@@ -2,8 +2,8 @@ import type { ModelOption, ThinkingLevel } from './types.ts'
 
 /**
  * Cursor `--list-models` encodes effort / fast in the id
- * (`grok-4.6-low-fast`). VAV stores the family and applies those as
- * session-run chips.
+ * (`cursor-grok-4.6-medium`). Those hyphen ids stay atomic. ACP
+ * bracket ids (`grok-4.6[effort=…]`) still peel to family + chips.
  */
 
 export function cursorModelFamilyId(id: string): string {
@@ -28,15 +28,24 @@ export function cursorFamilyAllowsThinkingOverlay(family: string): boolean {
   return /^(grok|claude|gemini)/i.test(family)
 }
 
-/** Collapse `--list-models` effort/fast variants onto one family row. */
+/**
+ * Hyphen `--list-models` rows stay atomic. Bracket ACP catalogues still
+ * collapse to one family row so the picker can show chips.
+ */
 export function collapseCursorListModels(models: ModelOption[]): ModelOption[] {
+  const hasBrackets = models.some((model) => model.id.includes('['))
+  if (!hasBrackets) {
+    return models.filter((model) => model.id.trim()).map((model) => ({ ...model }))
+  }
   const byFamily = new Map<string, ModelOption>()
   const levelsByFamily = new Map<string, Set<ThinkingLevel>>()
   const defaultByFamily = new Map<string, ThinkingLevel>()
   for (const model of models) {
     const alias = parseCursorModelAlias(model.id)
     const family = alias.auto ? 'auto' : alias.family
-    const level = effortToThinkingLevel(alias.effort)
+    const level = effortToThinkingLevel(
+      alias.effort ?? alias.bracket?.effort ?? alias.bracket?.reasoning ?? alias.bracket?.reasoning_effort
+    )
     if (level) {
       const set = levelsByFamily.get(family) ?? new Set<ThinkingLevel>()
       set.add(level)
@@ -90,10 +99,21 @@ export function normalizeCursorConversationModel(model: string): {
   if (alias.auto) {
     return { model: 'auto', migrated: trimmed !== 'auto' && trimmed !== '' }
   }
+  if (isCursorPickerAlias(trimmed)) {
+    return {
+      model: trimmed,
+      thinkingLevel: effortToThinkingLevel(alias.effort),
+      fast: alias.fast,
+      migrated: false
+    }
+  }
   return {
     model: alias.family,
     thinkingLevel: effortToThinkingLevel(
-      alias.effort ?? alias.bracket?.effort ?? alias.bracket?.reasoning
+      alias.effort ??
+        alias.bracket?.effort ??
+        alias.bracket?.reasoning ??
+        alias.bracket?.reasoning_effort
     ),
     fast: alias.fast ?? (alias.bracket?.fast === 'true' ? true : alias.bracket?.fast === 'false' ? false : undefined),
     migrated: alias.family !== trimmed

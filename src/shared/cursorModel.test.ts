@@ -26,8 +26,16 @@ describe('normalizeCursorConversationModel', () => {
     })
   })
 
-  it('migrates leftover --list-models ids onto family + fast', () => {
+  it('keeps leftover --list-models hyphen ids atomic', () => {
     const normalized = normalizeCursorConversationModel('grok-4.6-low-fast')
+    assert.equal(normalized.model, 'grok-4.6-low-fast')
+    assert.equal(normalized.thinkingLevel, 'low')
+    assert.equal(normalized.fast, true)
+    assert.equal(normalized.migrated, false)
+  })
+
+  it('still peels ACP bracket ids onto family + prefs', () => {
+    const normalized = normalizeCursorConversationModel('grok-4.6[effort=low,fast=true]')
     assert.equal(normalized.model, 'grok-4.6')
     assert.equal(normalized.thinkingLevel, 'low')
     assert.equal(normalized.fast, true)
@@ -50,25 +58,27 @@ describe('prefsFromCursorModelId', () => {
 })
 
 describe('collapseCursorListModels', () => {
-  it('keeps the first family row', () => {
+  it('keeps hyphen variants as separate picker rows', () => {
     const collapsed = collapseCursorListModels([
       { id: 'grok-4.6-low-fast', label: 'Grok 4.6 Low Fast' },
       { id: 'grok-4.6-high', label: 'Grok 4.6 High' }
     ])
     assert.deepEqual(
       collapsed.map((m) => m.id),
-      ['grok-4.6']
+      ['grok-4.6-low-fast', 'grok-4.6-high']
     )
-    assert.equal(collapsed[0]?.label, 'Grok 4.6')
+    assert.equal(collapsed[0]?.label, 'Grok 4.6 Low Fast')
   })
 
-  it('records Kimi variant levels and the unlabeled default', () => {
+  it('still collapses ACP bracket rows onto the family', () => {
     const collapsed = collapseCursorListModels([
-      { id: 'kimi-k3-low', label: 'Kimi K3 Low' },
-      { id: 'kimi-k3-high', label: 'Kimi K3 High' },
-      { id: 'kimi-k3-max', label: 'Kimi K3' }
+      { id: 'kimi-k3[reasoning=low]', label: 'Kimi K3 Low' },
+      { id: 'kimi-k3[reasoning=max]', label: 'Kimi K3' }
     ])
-    assert.deepEqual(collapsed[0]?.thinkingLevels, ['low', 'high', 'max'])
-    assert.equal(collapsed[0]?.defaultThinkingLevel, 'max')
+    assert.deepEqual(
+      collapsed.map((m) => m.id),
+      ['kimi-k3']
+    )
+    assert.deepEqual(collapsed[0]?.thinkingLevels, ['low', 'max'])
   })
 })

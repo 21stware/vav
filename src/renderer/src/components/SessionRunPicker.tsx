@@ -19,7 +19,7 @@ import {
   sessionShowsThinking,
   thinkingLevelsForSession
 } from '@shared/thinkingLevel'
-import { cursorModelFamilyId } from '@shared/cursorModel'
+import { catalogRowForModel } from '@shared/hostModelCodec'
 import { agentModelHostKey } from '@shared/agentModels'
 import { useSessionStore } from '../state/sessionStore'
 import { useT } from '../i18n/useT'
@@ -91,12 +91,11 @@ export function SessionRunPicker({
 
   const catalog = useSessionStore((s) => s.agentModelCatalog)
   const showThinking = sessionShowsThinking(conversation?.cliHost, conversation?.model)
-  const showFast = sessionShowsFast(conversation?.cliHost)
+  const showFast = sessionShowsFast(conversation?.cliHost, conversation?.model)
   const catalogueDefault = (() => {
     if (conversation?.cliHost !== 'cursor' || !conversation.model) return null
-    const family = cursorModelFamilyId(conversation.model)
     const models = catalog[agentModelHostKey('cursor')]?.models ?? []
-    return models.find((model) => model.id === family)?.defaultThinkingLevel ?? null
+    return catalogRowForModel(models, conversation.model)?.defaultThinkingLevel ?? null
   })()
   const allowedThinking = thinkingLevelsForSession({
     cliHost: conversation?.cliHost,

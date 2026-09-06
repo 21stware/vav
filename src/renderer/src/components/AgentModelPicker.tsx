@@ -20,7 +20,7 @@ import {
   pushRecentAgentModel,
   resolveModelForChatHost
 } from '@shared/agentModels'
-import { collapseCursorListModels } from '@shared/cursorModel'
+import { presentHostCatalog } from '@shared/hostModelCodec'
 import {
   groupAccountsByVendor,
   vendorDisplayName,
@@ -321,7 +321,7 @@ export function AgentModelPicker({
       entry?.models && entry.models.length > 0
         ? entry.models
         : modelsForChatHost(host, customModels, settings.defaultModel, vendorId)
-    const list = host === 'cursor' ? collapseCursorListModels(raw) : raw
+    const list = host === 'cursor' ? presentHostCatalog(raw) : raw
     return filterEnabledModels(host, list, disabledModels, vendorId, accountId)
   }
 

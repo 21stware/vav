@@ -12,7 +12,7 @@ import {
   labelForChatModel,
   modelsForChatHost
 } from '../../shared/agentModels.ts'
-import { collapseCursorListModels } from '../../shared/cursorModel.ts'
+import { catalogRowForModel, presentHostCatalog } from '../../shared/hostModelCodec.ts'
 import { vendorIdFromEndpoint } from '../../shared/llmVendors.ts'
 import { agentLabel } from '../../shared/remoteSessionControls.ts'
 import { REMOTE_PHONE_CAPABILITIES, type RemoteHostEvent } from '../../shared/remoteControl.ts'
@@ -84,7 +84,7 @@ export function remoteCatalogModelRows(opts: {
     snap?.models?.length
       ? snap.models
       : modelsForChatHost(opts.host, opts.customModels, opts.defaultModel)
-  const listed = opts.host === 'cursor' ? collapseCursorListModels(raw) : raw
+  const listed = opts.host === 'cursor' ? presentHostCatalog(raw) : raw
   return filterEnabledModels(
     opts.host,
     listed,
@@ -125,10 +125,8 @@ export function cursorCatalogueDefaultThinking(
   host: string | null | undefined
 ): ThinkingLevel | null {
   if (host !== 'cursor' || !model) return null
-  return (
-    (snapshot[agentModelHostKey('cursor')]?.models ?? []).find((entry) => entry.id === model)
-      ?.defaultThinkingLevel ?? null
-  )
+  const models = snapshot[agentModelHostKey('cursor')]?.models ?? []
+  return catalogRowForModel(models, model)?.defaultThinkingLevel ?? null
 }
 
 /** Phone host snapshot: identity, defaults, and recent folders. */

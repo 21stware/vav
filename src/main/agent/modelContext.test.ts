@@ -19,10 +19,10 @@ describe('modelContext', () => {
     )
   })
 
-  it('heals Cursor fast chips and mismatched model ids', () => {
+  it('heals Cursor fast chips from ACP bracket ids, not hyphen variants', () => {
     const fast = conversationModelHealPatch({
       host: 'cursor',
-      currentModel: 'grok-4.6-low-fast',
+      currentModel: 'grok-4.6[effort=low,fast=true]',
       currentFast: false,
       resolved: 'grok-4.6',
       tokenLimit: 99
@@ -30,6 +30,16 @@ describe('modelContext', () => {
     assert.equal(fast.fast, true)
     assert.equal(fast.model, 'grok-4.6')
     assert.equal(fast.tokenLimit, 99)
+    assert.deepEqual(
+      conversationModelHealPatch({
+        host: 'cursor',
+        currentModel: 'grok-4.6-low-fast',
+        currentFast: false,
+        resolved: 'grok-4.6-low-fast',
+        tokenLimit: 99
+      }),
+      {}
+    )
     assert.deepEqual(
       conversationModelHealPatch({
         host: 'claude',

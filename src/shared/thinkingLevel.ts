@@ -2,6 +2,7 @@ import {
   cursorFamilyAllowsThinkingOverlay,
   cursorModelFamilyId
 } from './cursorModel.ts'
+import { sessionModelIsAtomic } from './hostModelCodec.ts'
 import type { ThinkingLevel } from './types'
 
 export const THINKING_LEVELS: readonly ThinkingLevel[] = [
@@ -51,7 +52,7 @@ export function isGrokEffortId(id: string | null | undefined): boolean {
   return id === 'low' || id === 'medium' || id === 'high'
 }
 
-/** Thinking chip: VAV models, Cursor overlays, and Grok build effort. */
+/** Thinking chip: VAV models, Cursor family rows, and Grok build effort. */
 export function sessionShowsThinking(
   cliHost: string | null | undefined,
   modelId: string | null | undefined
@@ -60,14 +61,19 @@ export function sessionShowsThinking(
   if (cliHost && cliHost !== 'cursor') return false
   const raw = (modelId ?? '').trim()
   if (!raw) return false
+  if (sessionModelIsAtomic(cliHost, raw)) return false
   const id = cliHost === 'cursor' ? cursorModelFamilyId(raw) : raw
   if (cliHost === 'cursor' && /^(auto|default)$/i.test(id)) return false
   return vavModelSupportsThinking(id)
 }
 
-/** Fast chip: Cursor ACP only. */
-export function sessionShowsFast(cliHost: string | null | undefined): boolean {
-  return cliHost === 'cursor'
+/** Fast chip: Cursor family rows only — atomic hyphen ids bake Fast in. */
+export function sessionShowsFast(
+  cliHost: string | null | undefined,
+  modelId?: string | null
+): boolean {
+  if (cliHost !== 'cursor') return false
+  return !sessionModelIsAtomic(cliHost, modelId)
 }
 
 /** Thinking menu: only levels this Cursor model actually accepts. */

@@ -4,7 +4,11 @@ User-facing changes by release. Unreleased work lives at the top until the next 
 
 ## Unreleased
 
-Connectors and Timers are separate product surfaces. Conversations list the files the agent produced under the thread. Files in the workbench drag out as real OS files (browser, TextEdit, Finder). Settings → Logs records user actions and agent internals for debugging, with temporary / session / durable retention. The Files tray has a Plugins tab for global skills, MCP servers, and hooks.
+Cursor ACP sessions no longer die on startup when Grok (or another family) is selected. Connectors and Timers are separate product surfaces. Conversations list the files the agent produced under the thread. Files in the workbench drag out as real OS files (browser, TextEdit, Finder). Settings → Logs records user actions and agent internals for debugging, with temporary / session / durable retention. The Files tray has a Plugins tab for global skills, MCP servers, and hooks.
+
+### Reliability
+
+- `cursor-agent acp` is launched with a hyphen `--model` id (`cursor-grok-4.6-medium`), never an ACP bracket overlay. Bracket / family ids on that flag exited the child with "Cannot use this model". `session/set_model` uses the advertised family row only; invented `[effort=…]` overlays are rejected by Cursor.
 
 ### Plugins
 

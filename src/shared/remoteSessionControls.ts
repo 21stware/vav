@@ -72,7 +72,7 @@ export function buildRemoteControls(input: {
   const modeId = host ? acpCurrentModeId(input.acpSession) : null
   const approval: ApprovalMode =
     input.approvalMode === 'bypass' || input.approvalMode === 'edit' ? input.approvalMode : 'auto'
-  const showFast = sessionShowsFast(host)
+  const showFast = sessionShowsFast(host, model)
 
   return {
     type: 'controls',

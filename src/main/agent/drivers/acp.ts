@@ -53,9 +53,9 @@ import {
   cursorModelFamilyId,
   prefsFromCursorModelId
 } from '../../../shared/cursorModel.ts'
+import { encodeCursorCliModelId } from '../../../shared/hostModelCodec.ts'
 import { clampThinkingLevel } from '../../../shared/thinkingLevel.ts'
 import {
-  acpBootstrapModelId,
   acpModelIdCandidates,
   advertisedThinkingLevel,
   parseAcpAvailableModels,
@@ -205,7 +205,12 @@ function grokInvokeArgs(
   return [...split.global, 'agent', ...agentMid, ...split.agent, 'stdio', ...split.stdio]
 }
 
-/** Cursor `--model` + ACP subcommand. Extra argv from AgentConfig stay last. */
+/**
+ * Cursor ACP argv. `--model` must be a `--list-models` hyphen id
+ * (`cursor-grok-4.6-medium`). Bracket / overlay ids (`grok-4.6[effort=…]`)
+ * kill the child with "Cannot use this model" / exit 1. Extra argv from
+ * AgentConfig stay last; an explicit `--model` there wins.
+ */
 export function acpInvokeArgs(
   kind: AcpHostKind,
   approvalMode: ApprovalMode,
@@ -213,15 +218,15 @@ export function acpInvokeArgs(
 ): string[] {
   if (kind === 'grok') return grokInvokeArgs(options)
   const extra = filterAcpExtraArgs(kind, options?.extraArgs ?? [])
-  const boot =
-    kind === 'cursor'
-      ? acpBootstrapModelId(options?.model, {
-          thinkingLevel: options?.thinkingLevel ?? null,
-          fast: typeof options?.fast === 'boolean' ? options.fast : null
-        })
-      : null
-  const modelArg = boot && !extra.includes('--model') ? ['--model', boot] : []
-  return [...modelArg, ...acpArgs(kind, approvalMode), ...extra]
+  const args = [...acpArgs(kind, approvalMode)]
+  if (kind === 'cursor' && !hasArgvFlag(extra, '--model', '-m')) {
+    const cliModel = encodeCursorCliModelId(options?.model, {
+      thinkingLevel: options?.thinkingLevel,
+      fast: options?.fast
+    })
+    if (cliModel) args.push('--model', cliModel)
+  }
+  return [...args, ...extra]
 }
 
 /**
@@ -289,7 +294,6 @@ export function wireAcp(
   let lastModelsField: unknown = null
   let wantedModel = options.model?.trim() || null
   let wantedThinking = options.thinkingLevel ?? null
-  let wantedFast: boolean | null = typeof options.fast === 'boolean' ? options.fast : null
   let applyModelChain: Promise<void> = Promise.resolve()
   const rejectedModels = new Set<string>()
 
@@ -387,17 +391,14 @@ export function wireAcp(
     ingestSessionSetup(created, { resume: false })
   }
 
-  const wantedPrefs = (): { thinkingLevel: typeof wantedThinking; fast: typeof wantedFast } => ({
-    thinkingLevel: wantedThinking,
-    fast: wantedFast
-  })
-
   const bootModelId = (): string | null => {
     if (kind === 'grok') {
       const raw = wantedModel?.trim()
       return raw ? raw.replace(/\[.*$/, '') : null
     }
-    return acpBootstrapModelId(wantedModel, wantedPrefs())
+    // Cursor ignores session/new.modelId and rejects invented overlays.
+    if (kind === 'cursor') return null
+    return wantedModel?.trim() || null
   }
 
   const createSession = async (): Promise<unknown> => {
@@ -482,16 +483,7 @@ export function wireAcp(
     }
     if (!wantedModel) return
     rejectedModels.clear()
-    const allowed = sessionState.thinkingLevels
-    const thinking =
-      wantedThinking && allowed?.length
-        ? clampThinkingLevel(wantedThinking, allowed)
-        : wantedThinking
-    const prefs = {
-      thinkingLevel: thinking,
-      fast: wantedFast
-    }
-    const candidates = acpModelIdCandidates(wantedModel, availableModels, prefs)
+    const candidates = acpModelIdCandidates(wantedModel, availableModels)
     for (const modelId of candidates) {
       if (rejectedModels.has(modelId)) continue
       try {
@@ -1013,11 +1005,9 @@ export function wireAcp(
       if (opts.approvalMode) return false
       if (opts.model != null) wantedModel = opts.model.trim() || null
       if (opts.thinkingLevel !== undefined) wantedThinking = opts.thinkingLevel
-      if (opts.fast !== undefined) wantedFast = opts.fast
       if (opts.model != null) publishAdvertisedThinkingLevels()
       if (opts.model != null || opts.thinkingLevel !== undefined || opts.fast !== undefined) {
-        // A previous overlay may have been rejected before availableModels
-        // arrived, or before the user flipped Fast. Retry the current chips.
+        // Re-apply the advertised family row after a model / chip change.
         rejectedModels.clear()
         void queueApplyWantedModel()
       }
