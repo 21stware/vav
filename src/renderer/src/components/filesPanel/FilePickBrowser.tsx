@@ -202,7 +202,6 @@ function PickTreeRow({
     <>
       <div
         className={`tree-row ${entry.isDirectory ? 'dir' : 'file'}${selected ? ' selected' : ''}`}
-        data-file-path={entry.path}
         data-testid={`remote-folder-entry-${entry.name}`}
         role="treeitem"
         aria-selected={selected}
@@ -308,7 +307,6 @@ function PickColumnBrowser({
                 return (
                   <div
                     key={entry.path}
-                    data-file-path={entry.path}
                     data-testid={`remote-folder-entry-${entry.name}`}
                     role="treeitem"
                     aria-selected={selected}

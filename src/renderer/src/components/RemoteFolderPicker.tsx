@@ -156,11 +156,13 @@ export function RemoteFolderPicker(): React.JSX.Element | null {
     loadDir(dir)
   }
 
-  const select = async (dismiss: () => void): Promise<void> => {
+  const select = async (): Promise<void> => {
     const chosen = confirmFolderPath(path, selected)
+    // Drop the modal before the workspace hydrate — that can outlive the
+    // conversation write, and a leaving Modal would keep matching Files rows.
+    close()
     if (pick.purpose === 'locate' && pick.conversationId) {
       await finishLocateWorkspace(pick.conversationId, chosen)
-      dismiss()
       return
     }
     if (!pick.conversationId) {
@@ -169,10 +171,9 @@ export function RemoteFolderPicker(): React.JSX.Element | null {
         machineId: pick.machineId,
         openIn: 'here'
       })
-    } else {
-      await setWorkingDirectory(pick.conversationId, chosen, pick.machineId)
+      return
     }
-    dismiss()
+    await setWorkingDirectory(pick.conversationId, chosen, pick.machineId)
   }
 
   return (
@@ -187,7 +188,7 @@ export function RemoteFolderPicker(): React.JSX.Element | null {
             label={t('hosts.pickSelect')}
             variant="primary"
             testId="remote-folder-select"
-            onClick={() => void select(dismiss)}
+            onClick={() => void select()}
           />
         </>
       )}
