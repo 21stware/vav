@@ -7,13 +7,7 @@ import { useSessionStore, visibleMessages } from '../state/sessionStore'
 import { useT } from '../i18n/useT'
 
 /** Files tray → Artifacts: session catalog of files the agent produced. */
-export function ArtifactsPanel({
-  visible: _visible,
-  active: _active
-}: {
-  visible: boolean
-  active: boolean
-}): React.JSX.Element {
+export function ArtifactsPanel(): React.JSX.Element {
   const t = useT()
   const activeId = useSessionStore((s) => s.activeId)
   const nodes = useSessionStore((s) => (activeId ? s.messages[activeId] : undefined))

@@ -868,7 +868,7 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
           data-hidden={trayView !== 'artifacts'}
           data-testid="artifacts-tray"
         >
-          <ArtifactsPanel visible={visible} active={trayView === 'artifacts'} />
+          <ArtifactsPanel />
         </div>
         <div className="files-tray-pane" data-hidden={trayView !== 'git'} data-testid="git-panel">
           <GitChangesPanel
