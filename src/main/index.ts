@@ -1308,7 +1308,7 @@ const timerScheduler = new TimerScheduler({
   workspaceRoot: app.getPath('userData'),
   accountIdFor: (workdir) => accountIdForSession(workdir, null),
   onSessionsChanged: () => {
-    broadcast(IPC.timerChanged)
+    broadcast(IPC.timerChanged, null)
     publishConversations()
   }
 })
@@ -6974,7 +6974,9 @@ return c as text`
     }
   })
 
-  registerTimerIpc(ipcMain, timerStore, timerScheduler, (channel) => broadcast(channel))
+  registerTimerIpc(ipcMain, timerStore, timerScheduler, (channel, payload) =>
+    broadcast(channel, payload)
+  )
   registerFileSessionsIpc(ipcMain, fileSessionStore, {
     defaultModel: () => settingsStore.get().defaultModel,
     defaultApprovalMode: () => settingsStore.get().defaultApprovalMode ?? 'auto',

@@ -9,6 +9,7 @@ export function registerTimerIpc(
   scheduler: TimerScheduler,
   broadcast: (channel: string, payload?: unknown) => void
 ): void {
+  const notify = (): void => broadcast(IPC.timerChanged, null)
   ipcMain.handle(IPC.timerListJobs, () => store.listJobs())
   ipcMain.handle(
     IPC.timerUpsertJob,
@@ -24,24 +25,24 @@ export function registerTimerIpc(
       }
     ) => {
       const job = store.upsertJob(input)
-      broadcast(IPC.timerChanged)
+      notify()
       return job
     }
   )
   ipcMain.handle(IPC.timerDeleteJob, (_event, id: string) => {
     const ok = store.deleteJob(String(id || ''))
-    if (ok) broadcast(IPC.timerChanged)
+    if (ok) notify()
     return ok
   })
   ipcMain.handle(IPC.timerListSessions, () => store.listSessions())
   ipcMain.handle(IPC.timerDeleteSessions, (_event, sessionIds: string[]) => {
     const removed = store.deleteSessions(Array.isArray(sessionIds) ? sessionIds : [])
-    if (removed.length) broadcast(IPC.timerChanged)
+    if (removed.length) notify()
     return removed
   })
   ipcMain.handle(IPC.timerRunNow, async (_event, jobId: string) => {
     const result = await scheduler.runNow(String(jobId || ''))
-    broadcast(IPC.timerChanged)
+    notify()
     return result
   })
 }

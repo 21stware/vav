@@ -1671,7 +1671,7 @@ export function Sidebar({
                     void showMenu([
                       {
                         label: t('timer.openOutput'),
-                        enabled: Boolean(row.outputPath),
+                        disabled: !row.outputPath,
                         onSelect: () => {
                           if (row.outputPath) {
                             void window.vav.window.openFilePreview(row.outputPath, {

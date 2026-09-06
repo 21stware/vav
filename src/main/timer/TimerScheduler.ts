@@ -26,10 +26,13 @@ const TICK_MS = 5_000
  * timer session — never a main-sidebar chat session.
  */
 export class TimerScheduler {
+  private readonly host: TimerSchedulerHost
   private timer: ReturnType<typeof setInterval> | null = null
   private firing = new Set<string>()
 
-  constructor(private readonly host: TimerSchedulerHost) {}
+  constructor(host: TimerSchedulerHost) {
+    this.host = host
+  }
 
   start(): void {
     if (this.timer) return
