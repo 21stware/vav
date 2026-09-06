@@ -53,6 +53,8 @@ export type VavWebBridgeOpts = {
   secret: () => string
   name?: string
   version?: string
+  /** Daemon / phone-protocol TCP port advertised on `/discover`. */
+  daemonPort?: number
 }
 
 class WsSocket extends EventEmitter {
@@ -268,7 +270,14 @@ function handleHttp(req: IncomingMessage, res: ServerResponse, opts: VavWebBridg
     return
   }
   if (path === VAV_DISCOVER_PATH) {
-    json(res, 200, buildDiscoverPayload(opts, requestIsLoopback(req, opts.listen)))
+    json(
+      res,
+      200,
+      buildDiscoverPayload(
+        { ...opts, port: opts.daemonPort },
+        requestIsLoopback(req, opts.listen)
+      )
+    )
     return
   }
   if (path === '/pairing.json') {

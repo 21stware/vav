@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, it } from 'node:test'
@@ -42,6 +42,27 @@ describe('grant store', () => {
       again.remove(issued.id)
       const raw = JSON.parse(await readFile(join(dir, 'grants.json'), 'utf8')) as { grants: unknown[] }
       assert.equal(raw.grants.length, 0)
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('finds by client id and clears kicked on touch', () => {
+    const store = createMemoryGrantStore()
+    const grant = store.issue({ clientId: 'laptop', name: 'Studio' })
+    assert.equal(store.findByClientId('laptop')?.id, grant.id)
+    assert.equal(store.findByClientId(''), null)
+    store.markKicked(grant.id)
+    store.touch(grant.id, 'Studio 2')
+    assert.equal(store.findById(grant.id)?.name, 'Studio 2')
+    assert.equal(store.findById(grant.id)?.kicked, false)
+  })
+
+  it('ignores a corrupt grants file', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vav-grants-bad-'))
+    try {
+      await writeFile(join(dir, 'grants.json'), '{not json')
+      assert.equal(createFileGrantStore(dir).list().length, 0)
     } finally {
       await rm(dir, { recursive: true, force: true })
     }

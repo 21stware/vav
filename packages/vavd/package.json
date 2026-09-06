@@ -7,11 +7,15 @@
   "type": "commonjs",
   "bin": {
     "vavd": "vavd.js",
-    "vav": "vav.js"
+    "vav": "vav.js",
+    "vavc": "vavc.js",
+    "vavcli": "vavcli.js"
   },
   "files": [
     "vavd.js",
     "vav.js",
+    "vavc.js",
+    "vavcli.js",
     "phone-ui",
     "README.md",
     "LICENSE"
@@ -34,6 +38,8 @@
   "keywords": [
     "vav",
     "vavd",
+    "vavc",
+    "vavcli",
     "daemon",
     "workspace",
     "agent"

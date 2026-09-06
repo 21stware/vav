@@ -67,6 +67,22 @@ describe('VavWebBridge discover', () => {
       const bytes = new Uint8Array(await mark.arrayBuffer())
       assert.equal(bytes[0], 0x89)
       assert.equal(bytes[1], 0x50)
+
+      const pairing = await fetch(`http://127.0.0.1:${web.port}/pairing.json`)
+      const pair = (await pairing.json()) as { proto?: number; hasSecret?: boolean; secret?: string }
+      assert.equal(pair.proto, 1)
+      assert.equal(pair.hasSecret, true)
+      assert.equal(pair.secret, SECRET)
+
+      const uiAlias = await fetch(`http://127.0.0.1:${web.port}/ui/phone.css`)
+      assert.equal(uiAlias.ok, true)
+      assert.match(await uiAlias.text(), /composer-box|app-shell/)
+
+      const missing = await fetch(`http://127.0.0.1:${web.port}/no-such-file`)
+      assert.equal(missing.status, 404)
+
+      const traversal = await fetch(`http://127.0.0.1:${web.port}/ui/../package.json`)
+      assert.equal(traversal.status, 404)
     } finally {
       web.close()
       plane.dispose()

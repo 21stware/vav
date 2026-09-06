@@ -16,13 +16,26 @@ import { assertDesktopSessionLayout, readPhoneSessionLayout } from './phoneSessi
 const SECRET = '0123456789abcdef01234567'
 const EXT = join(import.meta.dirname, '../../../extension')
 
-function playwrightChromium(): string | undefined {
+function chromePath(): string | undefined {
+  if (process.env.CHROME_PATH && existsSync(process.env.CHROME_PATH)) return process.env.CHROME_PATH
   try {
-    const path = chromium.executablePath()
-    return existsSync(path) ? path : undefined
+    const bundled = chromium.executablePath()
+    if (existsSync(bundled)) return bundled
   } catch {
-    return undefined
+    // Playwright Chromium is optional on a developer machine.
   }
+  if (process.env.CI) return undefined
+  const candidates =
+    process.platform === 'darwin'
+      ? ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome']
+      : process.platform === 'win32'
+        ? ['C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe']
+        : ['/usr/bin/google-chrome', '/usr/bin/google-chrome-stable', '/usr/bin/chromium']
+  return candidates.find((path) => existsSync(path))
+}
+
+function usesPlaywrightChromium(exe: string): boolean {
+  return /chrome-mac|chromium-|chrome-win|chrome-linux|Google Chrome for Testing/i.test(exe)
 }
 
 async function openSidePanel(context: BrowserContext): Promise<Page> {
@@ -52,11 +65,14 @@ async function openSidePanel(context: BrowserContext): Promise<Page> {
 async function launchExtension(profile: string, exe: string): Promise<BrowserContext> {
   return chromium.launchPersistentContext(profile, {
     executablePath: exe,
-    headless: true,
+    // Playwright Chromium can load MV3 in headless. System Chrome often cannot.
+    headless: usesPlaywrightChromium(exe),
     viewport: { width: 420, height: 800 },
     args: [
       `--disable-extensions-except=${EXT}`,
       `--load-extension=${EXT}`,
+      // Chrome 137+ ignores --load-extension unless this feature is off.
+      '--disable-features=DisableLoadExtensionCommandLineSwitch',
       '--no-sandbox',
       '--disable-dev-shm-usage',
       '--disable-gpu'
@@ -116,7 +132,7 @@ async function freeDesktopWebPorts(): Promise<void> {
  * Headed (needs DISPLAY) because headless Chrome often refuses extensions.
  */
 describe('vavd Chrome extension', () => {
-  const exe = playwrightChromium()
+  const exe = chromePath()
   const prevE2e = process.env.VAV_E2E
   const prevStub = process.env.VAV_E2E_STUB_TURN
 
@@ -134,7 +150,7 @@ describe('vavd Chrome extension', () => {
 
   it('loads the side panel, pairs, and shows a vavd stub reply', async (t) => {
     if (!exe) {
-      t.skip('Playwright Chromium is not installed')
+      t.skip('Chrome is not installed')
       return
     }
 
@@ -279,7 +295,7 @@ describe('vavd Chrome extension', () => {
 
   it('pairs to a desktop-spawned vavd from a pasted local URL', async (t) => {
     if (!exe) {
-      t.skip('Playwright Chromium is not installed')
+      t.skip('Chrome is not installed')
       return
     }
 
@@ -345,7 +361,7 @@ describe('vavd Chrome extension', () => {
 
   it('auto-discovers a desktop-spawned vavd without a pasted URL', async (t) => {
     if (!exe) {
-      t.skip('Playwright Chromium is not installed')
+      t.skip('Chrome is not installed')
       return
     }
 
@@ -388,7 +404,7 @@ describe('vavd Chrome extension', () => {
 
   it('pairs from a pasted desktop Connect vav-daemon URI', async (t) => {
     if (!exe) {
-      t.skip('Playwright Chromium is not installed')
+      t.skip('Chrome is not installed')
       return
     }
 

@@ -23,12 +23,13 @@ describe('vavDiscover', () => {
 
   it('includes the pairing secret only for loopback clients', () => {
     const secret = () => '0123456789abcdef01234567'
-    const local = buildDiscoverPayload({ name: 'office', version: '1.19.0', secret }, true)
+    const local = buildDiscoverPayload({ name: 'office', version: '1.19.0', secret, port: 4750 }, true)
     assert.equal(local.app, 'vavd')
     assert.equal(local.proto, 1)
     assert.equal(local.loopback, true)
     assert.equal(local.secret, '0123456789abcdef01234567')
     assert.equal(local.wsPath, '/vav')
+    assert.equal(local.port, 4750)
     const lan = buildDiscoverPayload({ name: 'office', version: '1.19.0', secret }, false)
     assert.equal(lan.loopback, false)
     assert.equal(lan.secret, undefined)

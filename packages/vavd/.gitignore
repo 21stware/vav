@@ -1,7 +1,11 @@
 vavd.js
 vav.js
+vavc.js
+vavcli.js
 vavd.js.map
 vav.js.map
+vavc.js.map
+vavcli.js.map
 # Copied from out/phone-ui by pack-vavd.mjs
 phone-ui/
 LICENSE

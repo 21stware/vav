@@ -69,7 +69,8 @@ describe('collectDialTargets', () => {
       name: 'Mac-mini-2.local',
       machineId: 'mini',
       discovered: [{ machineId: 'mini', address: '192.168.1.10', port: 55950 }],
-      localAddresses: ['192.168.1.20']
+      localAddresses: ['192.168.1.20'],
+      selfMdns: 'office-mac.local'
     })
     assert.equal(targets[0]?.host, '192.168.1.10')
     assert.ok(targets.some((row) => row.host === 'Mac-mini-2.local'))
@@ -82,7 +83,8 @@ describe('collectDialTargets', () => {
       port: 4750,
       addresses: ['192.168.1.13', '198.18.0.1', 'Mac-mini-2.local'],
       name: 'Mac-mini-2.local',
-      localAddresses: ['192.168.1.8', '198.18.0.1']
+      localAddresses: ['192.168.1.8', '198.18.0.1'],
+      selfMdns: 'office-mac.local'
     })
     assert.deepEqual(
       targets.map((row) => row.host),
@@ -101,6 +103,21 @@ describe('collectDialTargets', () => {
     assert.deepEqual(
       targets.map((row) => row.host),
       ['127.0.0.1']
+    )
+  })
+
+  it('skips this machine’s Bonjour name even when the pairing line lists it', () => {
+    const targets = collectDialTargets({
+      host: '10.0.0.8',
+      port: 4750,
+      addresses: ['10.0.0.8', 'Mac-mini-2.local'],
+      name: 'Mac-mini-2.local',
+      localAddresses: ['10.0.0.2'],
+      selfMdns: 'Mac-mini-2.local'
+    })
+    assert.deepEqual(
+      targets.map((row) => row.host),
+      ['10.0.0.8', '127.0.0.1']
     )
   })
 

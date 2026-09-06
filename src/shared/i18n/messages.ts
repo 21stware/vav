@@ -1230,7 +1230,7 @@ export const zhCN = {
   'cli.installTitle': '安装 VAV 命令',
   'cli.uninstallTitle': '卸载 VAV 命令',
   'cli.uninstallBody':
-    '将从 {path} 中移除 CLI 命令。VAV 主程序和数据不受影响。可随时重新安装。',
+    '将从 {path} 中移除 vav、vavd、vavc、vavcli。VAV 主程序和数据不受影响。可随时重新安装。',
   'cli.pathWarning':
     '{location} 可能不在 PATH 中。若终端找不到 VAV，在 shell 配置中加入 export PATH="$HOME/.local/bin:$PATH"（或对应目录）后重开终端。',
   'cli.fellBackToLocal':
@@ -1641,11 +1641,11 @@ export const zhCN = {
   // —— cli extras ——
   'cli.commandTitle': 'VAV 命令',
   'cli.commandIntro':
-    '在任意终端中使用 VAV . 或 VAV /path 打开 VAV 并自动进入该目录的新会话。',
+    '安装 vav、vavd、vavc、vavcli。vav 打开桌面应用；vavd 是守护进程；vavc 控制会话；vavcli 在终端里跑一轮。三者都接到同一套 vavd。',
   'cli.installingTo': '正在安装到 {path}…',
   'cli.installedAt': '已安装到 {path}{version}',
-  'cli.installedHint': '在终端执行 VAV -h 查看使用方式',
-  'cli.afterInstallHint': '安装后在任意终端执行 VAV -h 查看完整使用方式。',
+  'cli.installedHint': 'vav 打开应用；vavd / vavc / vavcli 对接同一套守护进程。执行 vav -h、vavc -h、vavcli -h。',
+  'cli.afterInstallHint': '安装后执行 vav -h、vavc -h、vavcli -h。vavc 与 vavcli 会自动发现本机正在跑的 vavd（含应用拉起的那一个）。',
   'cli.installFailedPrefix': '安装失败：{message}',
   'cli.notInstalled': '未安装 — 点击右侧按钮安装到 {path}',
   'cli.confirmUninstall': '确认卸载',
@@ -3584,7 +3584,7 @@ export const en: Record<MessageKey, string> = {
   'cli.installTitle': 'Install VAV command',
   'cli.uninstallTitle': 'Uninstall VAV command',
   'cli.uninstallBody':
-    'Removes the CLI command from {path}. The VAV app and your data are untouched. You can reinstall anytime.',
+    'Removes vav, vavd, vavc, and vavcli from {path}. The VAV app and your data are untouched. You can reinstall anytime.',
   'cli.pathWarning':
     '{location} may not be on your PATH. If the shell cannot find VAV, add export PATH="$HOME/.local/bin:$PATH" (or the matching directory) to your shell config and open a new terminal.',
   'cli.fellBackToLocal':
@@ -3998,11 +3998,12 @@ export const en: Record<MessageKey, string> = {
 
   'cli.commandTitle': 'VAV command',
   'cli.commandIntro':
-    'Run VAV . or VAV /path in any terminal to open VAV and start a new session in that directory.',
+    'Installs vav, vavd, vavc, and vavcli. vav opens the desktop app; vavd is the daemon; vavc controls sessions; vavcli runs a turn in the terminal. All three talk to the same vavd.',
   'cli.installingTo': 'Installing to {path}…',
   'cli.installedAt': 'Installed at {path}{version}',
-  'cli.installedHint': 'Run VAV -h in a terminal for usage',
-  'cli.afterInstallHint': 'After installing, run VAV -h in any terminal for full usage.',
+  'cli.installedHint': 'vav opens the app; vavd / vavc / vavcli talk to the same daemon. Run vav -h, vavc -h, vavcli -h.',
+  'cli.afterInstallHint':
+    'After installing, run vav -h, vavc -h, and vavcli -h. vavc and vavcli discover a local vavd, including the one the app spawned.',
   'cli.installFailedPrefix': 'Install failed: {message}',
   'cli.notInstalled': 'Not installed — click Install to add it at {path}',
   'cli.confirmUninstall': 'Uninstall',

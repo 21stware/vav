@@ -4,7 +4,16 @@ User-facing changes by release. Unreleased work lives at the top until the next 
 
 ## Unreleased
 
+`@21stware/vavd` now ships `vavc` (herdr-style control client) and `vavcli` (pi-style agent CLI) beside `vavd`. Settings → Command Line installs all three plus the desktop `vav` opener. They share the same phone protocol and pairing as the app, web UI, and Chrome extension.
+
 Cursor ACP sessions no longer die on startup when Grok (or another family) is selected. Connectors and Timers are separate product surfaces. Conversations list the files the agent produced under the thread. Files in the workbench drag out as real OS files (browser, TextEdit, Finder). Settings → Logs records user actions and agent internals for debugging, with temporary / session / durable retention. The Files tray has a Plugins tab for global skills, MCP servers, and hooks.
+
+### CLI
+
+- `vavc` lists / creates / attaches / stops sessions, workspaces, and agents against a running vavd (`session`, `workspace`, `agent`, `status`, `server`).
+- `vavcli` runs VAV turns from the terminal: interactive REPL, `-p` print, `--mode json`, `--mode rpc`.
+- Both discover vavd via `--uri` / `VAVD_URI`, `~/.vavd` + `listen.json`, the app's spawned state dir, or loopback `/discover`.
+- A second `vavd` on the same `--state` prints the live pairing instead of binding twice.
 
 ### Reliability
 
