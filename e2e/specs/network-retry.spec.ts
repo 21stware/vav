@@ -143,7 +143,7 @@ test('streamed retriable error as the whole reply retries in place and seals cle
 /**
  * Mid-outputting network change: cursor-agent leaks a TLS disconnect as a
  * trailing chunk after a PARTIAL reply and still reports end_turn. VAV must
- * keep the draft, flip Outputting → Retry, continue on the same session,
+ * keep the draft, flip Outputting → Recovering, continue on the same session,
  * and seal one assistant message — the user must not type "continue".
  */
 test('partial reply cut off by a transport leak continues on the same turn', async () => {
@@ -157,7 +157,7 @@ test('partial reply cut off by a transport leak continues on the same turn', asy
     await expect(streaming).toBeVisible({ timeout: 15_000 })
     await expect(streaming).toContainText('partial e2e reply', { timeout: 15_000 })
     await expect(
-      page.locator('[data-testid="stream-status"][data-state="retrying"]')
+      page.locator('[data-testid="stream-status"][data-state="healing"]')
     ).toBeVisible({ timeout: 8_000 })
     await expect(streaming).not.toContainText('RetriableError')
 

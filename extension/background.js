@@ -117,6 +117,7 @@ function attachSocket(found) {
 }
 
 function onFrame(msg) {
+  broadcast({ type: 'wire', payload: msg })
   if (msg.type === 'welcome') {
     clearTimeout(helloTimer)
     setStatus('connected', {
@@ -457,6 +458,14 @@ chrome.runtime.onConnect.addListener((port) => {
     if (msg.type === 'toggle-shot') {
       state.includeShot = msg.on
       broadcast({ type: 'state', state: snapshot() })
+      return
+    }
+    if (msg.type === 'wire' && msg.payload) {
+      send(msg.payload)
+      if (msg.payload.type === 'create') return
+      if (msg.payload.type === 'thread' && msg.payload.conversationId) {
+        state.active = msg.payload.conversationId
+      }
       return
     }
     if (msg.type === 'send') return void sendTurn({ text: msg.text, usePage: msg.usePage, useShot: msg.useShot })

@@ -8,7 +8,8 @@ import type {
   PreviewRef,
   QuoteDraft,
   TerminalSplitAxis,
-  TokenSnapshot
+  TokenSnapshot,
+  TurnErrorKind
 } from '@shared/types'
 import { DEFAULT_CLI_AGENTS, DEFAULT_SETTINGS } from '@shared/types'
 import type { WorkspaceHostInfo } from '@shared/workspaceHost'
@@ -306,7 +307,7 @@ interface SessionState {
 
   search: SearchState
   errorBanner: string | null
-  errorBannerKind: 'quota' | 'session-stale' | 'auth' | 'network' | 'cancelled' | 'generic' | null
+  errorBannerKind: TurnErrorKind | null
   errorBannerDetail: string | null
   dialog: DialogState | null
   toast: ToastState | null
@@ -994,7 +995,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         // Events may have already primed this window while status was in flight;
         // only hydrate when we still have no live view.
         if (!projection.getSnapshot().active) {
-          projection.hydrate(status.phase, status.blocks)
+          projection.hydrate(status.phase, status.blocks, status.recovery)
         }
       }
     }

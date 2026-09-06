@@ -266,3 +266,22 @@ LAN 监听端口和 tailcat 本地回环都接到同一个 Hub。Hub 是 Electro
 控制端的 send / cancel / reply / create / configure（模型、审批、thinking、Fast、ACP mode）/ workspace / rename / archive 都走这套帧。Adopt 后本地 id 若发生碰撞，`hostSessionId` 用 `duplicateSourceId` 对回受控端。`vavd` 接 phone-role hello：回合在 daemon 里跑，桌面 / 手机 / 网页 / 扩展都是壳。Regenerate / edit / fork / compact 不在 phone 协议里，控制平面会话上直接拒绝，避免又在控制端起一轮。
 
 回合只在持有会话的那台机器上跑。`handleAgentEvent` 同时 `fanRemoteTurn`（控制平面）和 `sendToWorkspaceWindows`（本机 UI）。所以手机或另一台桌面发一句话，受控端 transcript 会自己动。
+
+## 16. 诊断日志
+
+Transcript 是给人看的工作记录，不是给排障用的。设置 → 日志另外收两路明细：
+
+- **用户行为**（`user.*`）：发送 / 停止 / 回答卡片 / 重新生成 / 编辑提问 / 新建或删除会话 / 改设置的字段名。不写正文、不写密钥。
+- **Agent 技术**（`agent.*`）：回合开始（host + model）、phase、工具名与状态、挂起等待、结束（耗时、cancelled / errorKind）。token delta、文件草稿、终端镜像故意不记——那是洪水，不是故事。
+- **系统**（`system.*`）：启动、退出、uncaught / unhandled。
+
+三类寿命是刻意分开的：
+
+| 类 | 默认寿命 | 落盘 | 移除 |
+| --- | --- | --- | --- |
+| 临时 `ephemeral` | 15 分钟 / 最多 2000 条 | 否（内存环形） | 过期、计数淘汰、退出、清除临时 |
+| 会话 `session` | 24 小时 | `userData/logs/session.jsonl` | 过期、删会话时级联、清除全部 |
+| 留存 `durable` | 设置里的 1/3/7/14/30 天（默认 7） | `durable.jsonl` | 过期、计数淘汰（20000）、清除全部。删会话不删它 |
+
+排障时你要的是「刚才那一轮工具为什么失败」，不是永远留着每一次设置导航。会话删了，跟它绑定的工具时间线一起走；错误和发送记录留下来，因为事后才知道要看。写入时按 key 名和 `sk-` 形态抹掉密钥，字符串截断。`vavd` 与桌面共用同一套 store。
+

@@ -197,6 +197,7 @@ export function useEmptyEntranceCopy(ready: boolean): {
 type ButtonVariant = 'ghost' | 'secondary' | 'primary' | 'danger'
 
 export function Button({
+  id,
   label,
   icon,
   variant = 'ghost',
@@ -207,6 +208,7 @@ export function Button({
   testId,
   onClick
 }: {
+  id?: string
   label?: string
   icon?: ReactNode
   variant?: ButtonVariant
@@ -223,6 +225,7 @@ export function Button({
   const tip = title ?? label
   return (
     <button
+      id={id}
       type="button"
       className={classes}
       disabled={disabled}

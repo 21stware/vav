@@ -26,6 +26,7 @@ describe('Chrome extension pack', () => {
     const html = readFileSync(join(EXT, 'sidepanel.html'), 'utf8')
     assert.equal(html.includes('ws://127.0.0.1:4752'), false)
     assert.ok(html.includes('data-testid="transcript"'))
+    assert.ok(html.includes('href="phone/"'), 'side panel must resolve bundled assets under phone/')
     assert.ok(existsSync(join(EXT, 'content.js')))
     assert.ok(existsSync(join(EXT, 'lib/discover.js')))
   })

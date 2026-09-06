@@ -45,6 +45,7 @@ export function describeCliHostError(
   if (kind === 'session-stale') return { kind, message: t('error.sessionStale') }
   if (kind === 'auth') return { kind, message: t('error.agentAuthRequired') }
   if (kind === 'network') return { kind, message: t('error.network') }
+  if (kind === 'technical') return { kind, message: t('error.technical') }
   if (isBareInternalError(text)) return { kind: 'generic', message: t('error.agentInternal') }
   return { kind, message: text }
 }

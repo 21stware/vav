@@ -16,7 +16,7 @@ import {
   buildDiscoverPayload,
   isLoopbackAddress
 } from '../../shared/vavDiscover.ts'
-import { WEB_UI_HTML } from './webUi.ts'
+import { WEB_UI_HTML, phoneUiMime, readPhoneUiFile } from './webUi.ts'
 
 const WS_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
 const BRAND_ICON_FILES: Record<string, string> = {
@@ -229,6 +229,34 @@ function handleHttp(req: IncomingMessage, res: ServerResponse, opts: VavWebBridg
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
     res.end(WEB_UI_HTML)
     return
+  }
+  if (path.startsWith('/ui/')) {
+    const name = path.slice('/ui/'.length)
+    if (name && !name.includes('..') && !name.includes('/') && !name.includes('\\')) {
+      const body = readPhoneUiFile(name)
+      if (body != null) {
+        res.writeHead(200, {
+          'content-type': phoneUiMime(name),
+          'cache-control': 'no-store'
+        })
+        res.end(body)
+        return
+      }
+    }
+  }
+  if (path.length > 1 && !path.includes('..')) {
+    const name = path.slice(1)
+    if (!name.includes('/') && !name.includes('\\')) {
+      const body = readPhoneUiFile(name)
+      if (body != null) {
+        res.writeHead(200, {
+          'content-type': phoneUiMime(name),
+          'cache-control': 'no-store'
+        })
+        res.end(body)
+        return
+      }
+    }
   }
   if (path === '/health') {
     json(res, 200, {

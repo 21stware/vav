@@ -4,16 +4,29 @@ User-facing changes by release. Unreleased work lives at the top until the next 
 
 ## Unreleased
 
+Settings → Logs records user actions and agent internals for debugging, with temporary / session / durable retention.
+
+### Logs
+
+- User send/stop/answer and agent turn/tool/error lines land in a diagnostic log (no message bodies, no secrets).
+- Temporary records stay in memory 15 minutes; session records last 24 hours or until the chat is deleted; durable records default to 7 days (1–30).
+- Settings → Logs to filter, search, export, clear temporary records, or clear everything.
+
+## 1.19.1
+
+CLI ACP turns no longer stay on Streaming after the child dies or the handshake hangs. The Chrome extension can find a local `vavd` and run a full chat from the side panel.
+
+### Reliability
+
+- Stop aborts an in-flight spawn; missing TEMP DIR folders are recreated.
+- Cursor TUI flags (`--force --trust`) are not passed to `cursor-agent acp`.
+
 ### Chrome extension
 
 - Side panel finds a local `vavd` on loopback (`/discover` on :4752–4762) and pairs without pasting a URL or secret.
 - Conversation UI matches the phone client: sessions, agent-log blocks, model/approval, ask cards, and streaming.
 - Page context, selection, screenshot, context menus, and an in-page “Ask VAV” chip ride along with a turn.
 - Toolbar icons are the VAV mark at 16/32/48/128.
-
-### Reliability
-
-- CLI ACP turns no longer stay on Streaming after the child dies or the handshake hangs. Stop aborts an in-flight spawn, missing TEMP DIR folders are recreated, and Cursor TUI flags (`--force --trust`) are not passed to `cursor-agent acp`.
 
 ## 1.19.0
 

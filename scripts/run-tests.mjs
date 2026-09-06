@@ -6,8 +6,19 @@
  * are picked up automatically. `*.live.test.ts` is skipped unless TEST_LIVE=1
  * or `--live` is passed (those talks to a real accounts store / tailcat DERP).
  */
-import { globSync } from 'node:fs'
-import { spawn } from 'node:child_process'
+import { existsSync, globSync } from 'node:fs'
+import { spawn, spawnSync } from 'node:child_process'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const root = fileURLToPath(new URL('..', import.meta.url))
+if (!existsSync(join(root, 'out', 'phone-ui', 'phone.js'))) {
+  const built = spawnSync(process.execPath, [join(root, 'scripts', 'build-phone-ui.mjs')], {
+    cwd: root,
+    stdio: 'inherit'
+  })
+  if (built.status !== 0) process.exit(built.status ?? 1)
+}
 
 const live = process.env.TEST_LIVE === '1' || process.argv.includes('--live')
 

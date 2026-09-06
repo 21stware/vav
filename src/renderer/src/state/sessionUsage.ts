@@ -20,13 +20,19 @@ export function turnRuntimeFromAgentStatus<
     phase: unknown
     toolCount: number
     awaitingToolCallId: string | null
+    recovery?: unknown
   }
->(status: T): Pick<T, 'isRunning' | 'phase' | 'toolCount' | 'awaitingToolCallId'> {
+>(
+  status: T
+): Pick<T, 'isRunning' | 'phase' | 'toolCount' | 'awaitingToolCallId'> & {
+  recovery?: T['recovery']
+} {
   return {
     isRunning: status.isRunning,
     phase: status.phase,
     toolCount: status.toolCount,
-    awaitingToolCallId: status.awaitingToolCallId
+    awaitingToolCallId: status.awaitingToolCallId,
+    ...(status.recovery != null ? { recovery: status.recovery } : {})
   }
 }
 
@@ -136,6 +142,7 @@ export function conversationStatusPatch<
     phase: unknown
     toolCount: number
     awaitingToolCallId: string | null
+    recovery?: unknown
   }
 >(
   state: { messages: Record<string, M[]>; turns: Record<string, ReturnType<typeof turnRuntimeFromAgentStatus<T>>> },

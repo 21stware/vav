@@ -1,4 +1,5 @@
-import type { MessageBlock, ToolCallBlock, TurnPhase } from '@shared/types'
+import type { MessageBlock, ToolCallBlock, TurnPhase, TurnRecovery } from '@shared/types'
+import { recoveryEqual } from '@shared/turnRecovery'
 import { MarkdownSegmenter } from '../lib/segmenter'
 
 /** UI refresh cadence during a turn. Deltas arriving between ticks accumulate. */
@@ -12,10 +13,11 @@ export type StreamBlock =
 export interface StreamSnapshot {
   active: boolean
   phase: TurnPhase
+  recovery: TurnRecovery | null
   blocks: StreamBlock[]
 }
 
-const EMPTY_SNAPSHOT: StreamSnapshot = { active: false, phase: 'idle', blocks: [] }
+const EMPTY_SNAPSHOT: StreamSnapshot = { active: false, phase: 'idle', recovery: null, blocks: [] }
 
 type Internal =
   | { kind: 'reasoning'; key: string; text: string; startedAt: number; durationMs?: number }
@@ -35,6 +37,7 @@ export class StreamProjection {
   /** Sparse: indexed by the block's position in the assistant message. */
   private slots: (Internal | undefined)[] = []
   private phase: TurnPhase = 'idle'
+  private recovery: TurnRecovery | null = null
   private active = false
   private dirty = false
   private timer: ReturnType<typeof setInterval> | null = null
@@ -50,6 +53,7 @@ export class StreamProjection {
   start(): void {
     this.slots = []
     this.phase = 'thinking'
+    this.recovery = null
     this.active = true
     this.publish()
     this.ensureTicking()
@@ -61,10 +65,11 @@ export class StreamProjection {
    * Detached windows open mid-turn and never saw `start`; without this the
    * live view stays inactive and StreamingMessage renders nothing.
    */
-  hydrate(phase: TurnPhase, blocks: MessageBlock[]): void {
+  hydrate(phase: TurnPhase, blocks: MessageBlock[], recovery?: TurnRecovery | null): void {
     this.stopTicking()
     this.slots = []
     this.phase = phase
+    this.recovery = recovery ?? null
     this.active = true
     this.dirty = false
     for (let index = 0; index < blocks.length; index++) {
@@ -92,19 +97,18 @@ export class StreamProjection {
 
   /** Make a late-joining projection accept deltas without wiping slots. */
   ensureLive(phase?: TurnPhase): void {
-    if (this.active) {
-      if (phase) this.setPhase(phase)
-      return
-    }
+    if (this.active) return
     this.active = true
     if (phase) this.phase = phase
     this.publish()
     this.ensureTicking()
   }
 
-  setPhase(phase: TurnPhase): void {
-    if (this.phase === phase) return
+  setPhase(phase: TurnPhase, recovery?: TurnRecovery | null): void {
+    const nextRecovery = recovery === undefined ? this.recovery : recovery
+    if (this.phase === phase && recoveryEqual(this.recovery, nextRecovery)) return
     this.phase = phase
+    this.recovery = nextRecovery
     // Phase changes are structural, not token noise: publish immediately so the
     // composer and sidebar react without waiting for the next tick.
     this.publish()
@@ -155,6 +159,7 @@ export class StreamProjection {
     this.stopTicking()
     this.slots = []
     this.phase = 'idle'
+    this.recovery = null
     this.active = false
     this.dirty = false
     this.snapshot = EMPTY_SNAPSHOT
@@ -212,7 +217,7 @@ export class StreamProjection {
         blocks.push(block)
       }
     }
-    this.snapshot = { active: this.active, phase: this.phase, blocks }
+    this.snapshot = { active: this.active, phase: this.phase, recovery: this.recovery, blocks }
     this.notify()
   }
 

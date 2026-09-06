@@ -108,6 +108,12 @@ import {
 import { parseThinkingLevel } from '@shared/thinkingLevel'
 import { threadPath } from '@shared/thread'
 import { SettingsStore } from './store/SettingsStore'
+import { ConversationStore } from './store/ConversationStore'
+import { LogStore } from './store/LogStore'
+import { createAppLogger, setAppLogger, appLog } from './log/appLogger'
+import { logTurnEvent } from './log/turnLog'
+import { registerLogIpc } from './ipc/registerLogIpc'
+import { LOG_EVENT } from '@shared/appLog'
 import { SleepBlocker } from './power/SleepBlocker'
 import { MacLidSleepGuard } from './power/MacLidSleep'
 import { SecretStore } from './store/SecretStore'
@@ -142,7 +148,6 @@ import {
   resolveModelForChatHost
 } from '@shared/agentModels'
 import { groupAccountsByVendor, isLlmVendorId, vendorById, vendorIdFromEndpoint } from '@shared/llmVendors'
-import { ConversationStore } from './store/ConversationStore'
 import { VavPackService } from './store/VavPackService'
 import { FileSessionStore } from './store/FileSessionStore'
 import { SwarmHistoryStore } from './store/SwarmHistoryStore'
@@ -497,6 +502,11 @@ const settingsStore = new SettingsStore()
 const secretStore = new SecretStore()
 const accountStore = new AccountStore(app.getPath('userData'))
 const conversationStore = new ConversationStore()
+const logStore = new LogStore({
+  dir: join(app.getPath('userData'), 'logs'),
+  durableDays: () => settingsStore.get().logRetentionDays
+})
+setAppLogger(createAppLogger(logStore))
 const swarmHistoryStore = new SwarmHistoryStore(
   join(app.getPath('userData'), 'swarm-session-history.json')
 )
@@ -1132,6 +1142,7 @@ function rebuildAppChrome(): void {
 }
 
 function handleAgentEvent(event: TurnEvent): void {
+  logTurnEvent(event, conversationStore.get(event.conversationId))
   fanRemoteTurn(event)
   sendToWorkspaceWindows(IPC.agentEvent, event, event.conversationId)
   const conversation = conversationStore.get(event.conversationId)
@@ -6321,6 +6332,7 @@ function registerIpc(): void {
   registerSettingsIpc(ipcMain, settingsStore, secretStore, {
     currentSettings,
     applyUpdateSideEffects: (previous, patch, next) => {
+      if (patch.logRetentionDays !== undefined) logStore.prune()
       if (patch.theme && patch.theme !== previous.theme) applyTheme(next.theme)
       if (patch.shell && patch.shell !== previous.shell) agent.applyShellSetting()
       if (patch.globalHotkey !== undefined && patch.globalHotkey !== previous.globalHotkey) {
@@ -6590,6 +6602,18 @@ return c as text`
     }
   })
 
+  registerLogIpc(ipcMain, logStore, {
+    saveExportPath: async () => {
+      const result = await dialog.showSaveDialog({
+        defaultPath: `vav-logs-${new Date().toISOString().slice(0, 10)}.txt`,
+        filters: [{ name: 'Text', extensions: ['txt'] }]
+      })
+      if (result.canceled || !result.filePath) return null
+      return result.filePath
+    },
+    broadcast: (record) => broadcast(IPC.logsChanged, record)
+  })
+
   registerAccountsIpc(ipcMain, accountStore, secretStore, {
     page: accountsPage,
     refreshPage: refreshAccountsPage,
@@ -6723,6 +6747,7 @@ return c as text`
     hostFor: (machineId) => hostRegistry.hostFor(machineId),
     invalidateCliResume: (id) => cliHost.invalidateResume(id),
     onRemoved: (id) => {
+      logStore.removeForConversation(id)
       clearUnseenForConversation(id)
       agent.disposeConversation(id)
       cliHost.dispose(id)
@@ -7271,6 +7296,8 @@ if (!singleInstance) {
     quotaService.stop()
     conversationStore.flush()
     settingsStore.flushPersist()
+    appLog().system(LOG_EVENT.systemQuit, 'Quit')
+    logStore.dispose()
   })
 
   app.on('will-quit', () => globalShortcut.unregisterAll())
@@ -7384,6 +7411,10 @@ if (!singleInstance) {
     const settings = settingsStore.load()
     setLocalePreference(settings.locale ?? DEFAULT_SETTINGS.locale)
     conversationStore.load({ model: settings.defaultModel, mintWorkdir: resolveNewWorkdir })
+    logStore.load()
+    appLog().system(LOG_EVENT.systemBoot, 'App ready', {
+      data: { version: app.getVersion() }
+    })
     swarmHistoryStore.load()
     swarmSession.adoptRecordedBindings()
     swarmSession.refreshTitles()

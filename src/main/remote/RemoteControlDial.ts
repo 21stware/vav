@@ -195,16 +195,23 @@ export class RemoteControlDial {
   ): Promise<RemoteControlSessionState> {
     if (match(this.state)) return Promise.resolve(this.state)
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
+      let settled = false
+      const finish = (fn: () => void): void => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
         off()
-        reject(new Error(`control plane ${label} timed out`))
+        fn()
+      }
+      const timer = setTimeout(() => {
+        finish(() => reject(new Error(`control plane ${label} timed out`)))
       }, timeoutMs)
       const off = this.onFrame((state) => {
         if (!match(state)) return
-        clearTimeout(timer)
-        off()
-        resolve(state)
+        finish(() => resolve(state))
       })
+      // Frame may arrive between the pre-check and onFrame subscribe.
+      if (match(this.state)) finish(() => resolve(this.state))
     })
   }
 }

@@ -1,4 +1,4 @@
-import type { ModelOption, TurnPhase } from '@shared/types'
+import type { ModelOption, TurnPhase, TurnRecovery } from '@shared/types'
 import type { GitChangeEntry } from '@shared/git'
 import type { GithubActionRun, GithubPullListItem, GithubRelease, GithubSite } from '@shared/github'
 import type { CloudflareStatus } from '@shared/cloudflare'
@@ -47,6 +47,7 @@ export type SettingsCategory =
   | 'agents'
   | 'file-associations'
   | 'keybindings'
+  | 'logs'
   | 'about'
 
 export interface TurnRuntime {
@@ -58,6 +59,7 @@ export interface TurnRuntime {
   startedModel?: string
   startedCliHost?: string | null
   startedAccountId?: string | null
+  recovery?: TurnRecovery | null
 }
 
 export interface DialogState {

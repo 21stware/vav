@@ -11,6 +11,7 @@ import { createLocalWorkspaceHost } from '../host/WorkspaceHost.ts'
 import { createVavControlPlane } from '../host/VavControlPlane.ts'
 import { startVavWebBridge } from './VavWebBridge.ts'
 import { spawnLocalVavd } from './vavdSpawn.ts'
+import { assertDesktopSessionLayout, readPhoneSessionLayout } from './phoneSessionLayout.ts'
 
 const SECRET = '0123456789abcdef01234567'
 const EXT = join(import.meta.dirname, '../../../extension')
@@ -52,6 +53,7 @@ async function launchExtension(profile: string, exe: string): Promise<BrowserCon
   return chromium.launchPersistentContext(profile, {
     executablePath: exe,
     headless: true,
+    viewport: { width: 420, height: 800 },
     args: [
       `--disable-extensions-except=${EXT}`,
       `--load-extension=${EXT}`,
@@ -68,6 +70,7 @@ async function chatStubTurn(panel: Page, text: string): Promise<void> {
   await panel.locator('#text').fill(text)
   await panel.locator('#sendForm button[type="submit"]').click()
   await panel.locator('#transcript').getByText('e2e stub reply').waitFor({ timeout: 8_000 })
+  assertDesktopSessionLayout(await panel.evaluate(readPhoneSessionLayout), 280)
 }
 
 /** Desktop and the extension share 4752–4762. A leftover steals /discover. */
@@ -155,17 +158,7 @@ describe('vavd Chrome extension', () => {
     })
     let context: BrowserContext | undefined
     try {
-      context = await chromium.launchPersistentContext(profile, {
-        executablePath: exe,
-        headless: true,
-        args: [
-          `--disable-extensions-except=${EXT}`,
-          `--load-extension=${EXT}`,
-          '--no-sandbox',
-          '--disable-dev-shm-usage',
-          '--disable-gpu'
-        ]
-      })
+      context = await launchExtension(profile, exe)
       const page = context.pages()[0] ?? (await context.newPage())
       const cdp = await context.newCDPSession(page)
       const started = Date.now()
@@ -198,14 +191,17 @@ describe('vavd Chrome extension', () => {
       await panel.locator('#create').click()
       await panel.locator('#sessionBar').waitFor({ timeout: 8_000 })
       await panel.locator('#sessionsBtn').click()
-      await panel.locator('#sessions li').first().waitFor({ timeout: 8_000 })
-      await panel.locator('#closeDrawer').click()
+      await panel.locator('#sessions [data-testid="session-row"]').first().waitFor({ timeout: 8_000 })
+      await panel.locator('#closeDrawer').click({ position: { x: 400, y: 16 } })
       await panel.locator('#model').fill('extension-model')
       await panel.locator('#model').dispatchEvent('change')
       await panel.locator('#text').fill('hello from the chrome extension')
       await panel.locator('#sendForm button[type="submit"]').click()
       await panel.locator('#transcript').getByText('e2e stub reply').waitFor({ timeout: 8_000 })
-      const first = [...plane.conversations.all()].at(-1)
+      assertDesktopSessionLayout(await panel.evaluate(readPhoneSessionLayout), 280)
+      const first = [...plane.conversations.all()].find((row) =>
+        row.messages.some((m) => m.role === 'user')
+      )
       assert.ok(first)
       assert.equal(first.model, 'extension-model')
       assert.ok(first.messages.some((m) => m.role === 'assistant'))
@@ -243,7 +239,16 @@ describe('vavd Chrome extension', () => {
             fullPage: true
           })
         }
-        const stored = [...plane.conversations.all()].at(-1)
+        const stored =
+          [...plane.conversations.all()].find((row) =>
+            row.messages.some((m) => {
+              const text =
+                typeof (m as { content?: unknown }).content === 'string'
+                  ? String((m as { content?: string }).content)
+                  : ''
+              return text.includes('[Current page]')
+            })
+          ) ?? first
         assert.ok(stored)
         const userTexts = stored.messages
           .filter((m) => m.role === 'user')
@@ -260,7 +265,11 @@ describe('vavd Chrome extension', () => {
         site.close()
       }
     } finally {
-      await context?.close()
+      try {
+        await context?.close()
+      } catch {
+        // Chromium can throw EIO when its stdio is already gone.
+      }
       web.close()
       plane.dispose()
       await rm(dir, { recursive: true, force: true })
@@ -284,17 +293,7 @@ describe('vavd Chrome extension', () => {
     let context: BrowserContext | undefined
     try {
       assert.ok(spawned.webOrigin)
-      context = await chromium.launchPersistentContext(profile, {
-        executablePath: exe,
-        headless: true,
-        args: [
-          `--disable-extensions-except=${EXT}`,
-          `--load-extension=${EXT}`,
-          '--no-sandbox',
-          '--disable-dev-shm-usage',
-          '--disable-gpu'
-        ]
-      })
+      context = await launchExtension(profile, exe)
       const page = context.pages()[0] ?? (await context.newPage())
       const cdp = await context.newCDPSession(page)
       const started = Date.now()
@@ -334,7 +333,11 @@ describe('vavd Chrome extension', () => {
         })
       }
     } finally {
-      await context?.close()
+      try {
+        await context?.close()
+      } catch {
+        // Chromium can throw EIO when its stdio is already gone.
+      }
       spawned.stop()
       await rm(profile, { recursive: true, force: true })
     }
@@ -373,7 +376,11 @@ describe('vavd Chrome extension', () => {
         })
       }
     } finally {
-      await context?.close()
+      try {
+        await context?.close()
+      } catch {
+        // Chromium can throw EIO when its stdio is already gone.
+      }
       spawned.stop()
       await rm(profile, { recursive: true, force: true })
     }
@@ -412,7 +419,11 @@ describe('vavd Chrome extension', () => {
         })
       }
     } finally {
-      await context?.close()
+      try {
+        await context?.close()
+      } catch {
+        // Chromium can throw EIO when its stdio is already gone.
+      }
       spawned.stop()
       await rm(profile, { recursive: true, force: true })
     }

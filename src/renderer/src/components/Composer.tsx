@@ -489,6 +489,7 @@ export function Composer({
         )}
 
         <textarea
+          id="text"
           ref={textareaRef}
           data-testid="composer-input"
           rows={1}
@@ -625,6 +626,7 @@ export function Composer({
             />
           )}
           <button
+            type="button"
             className="send-button"
             data-testid="composer-send"
             disabled={!canSend}

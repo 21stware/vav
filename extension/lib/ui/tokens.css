@@ -1,0 +1,83 @@
+/* Shared with VAV desktop (`src/renderer/src/styles/app-shell.css` :root). */
+:root {
+  color-scheme: light dark;
+  --font-ui: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', system-ui, sans-serif;
+  --font-code: 'SF Mono', Menlo, monospace;
+  --font-reading:
+    -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI Variable Text', 'Segoe UI',
+    'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', system-ui, sans-serif;
+  --code-size: 12px;
+  --md-measure: 38rem;
+  --md-doc-size: 15px;
+  --md-doc-lh: 1.68;
+
+  --accent: #3a3a42;
+  --accent-hover: #2a2a30;
+  --accent-soft: rgba(20, 20, 28, 0.09);
+  --accent-text: #2c2c34;
+  --accent-fg: #ffffff;
+  --danger: #bf3b3b;
+  --warning: #8f6a15;
+  --success: #2f7a52;
+  --tone-shell: #1f7a86;
+  --tone-read: #35619f;
+  --tone-write: #a1621b;
+  --tone-list: #3a3a42;
+  --tone-web: #0f766e;
+
+  --bg-window: #ececee;
+  --bg-content: #fcfcfc;
+  --bg-raised: #ffffff;
+  --bg-sunken: #f2f2f4;
+  --bg-hover: rgba(20, 20, 28, 0.05);
+  --bg-selected: #e2e2e6;
+  --text: #141416;
+  --text-secondary: #5c5c66;
+  --text-tertiary: #8a8a94;
+  --border: rgba(20, 20, 28, 0.09);
+  --border-strong: rgba(20, 20, 28, 0.16);
+
+  --radius-sm: 6px;
+  --radius: 10px;
+  --radius-lg: 14px;
+  --sidebar-width: 232px;
+  --toolbar-height: 42px;
+  --row-height: 34px;
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+  --dur-press: 120ms;
+  --dur-hover: 140ms;
+  --dur-pop: 180ms;
+  --dur-sheet: 220ms;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --accent: #c8c8d0;
+    --accent-hover: #d8d8e0;
+    --accent-fg: #141416;
+    --accent-text: #e4e4ea;
+    --success: #6ec596;
+    --tone-read: #93b4ea;
+    --tone-write: #ddaf74;
+    --tone-shell: #6fc3ce;
+    --tone-web: #5eead4;
+    --bg-window: #121213;
+    --bg-content: #1b1b1d;
+    --bg-raised: #242427;
+    --bg-sunken: #161617;
+    --bg-hover: rgba(255, 255, 255, 0.055);
+    --bg-selected: #2f2f33;
+    --text: #efeff1;
+    --text-secondary: #a2a2a9;
+    --text-tertiary: #73737b;
+    --border: rgba(255, 255, 255, 0.07);
+    --border-strong: rgba(255, 255, 255, 0.14);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+  }
+}

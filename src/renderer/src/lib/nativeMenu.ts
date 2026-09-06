@@ -67,7 +67,10 @@ export async function showMenu(
 ): Promise<void> {
   const handlers = new Map<string, () => void>()
   const payload = await toNativeItems(items, handlers)
-  const chosen = await window.vav.window.popupMenu(payload, position)
+  const popup = window.vav?.window?.popupMenu
+  const chosen = popup
+    ? await popup(payload, position)
+    : await (await import('./domMenu')).showDomMenu(payload, position)
   if (chosen === null) return
   handlers.get(chosen)?.()
 }

@@ -101,6 +101,12 @@ export type DriverEvent =
       resumeAt?: string | null
     }
   | { type: 'error'; message: string; errorCode?: number; errorDetail?: string }
+  | {
+      type: 'transport'
+      status: 'retrying' | 'reconnecting' | 'healing'
+      attempt?: number
+      limit?: number
+    }
   | { type: 'process-exited'; code: number | null }
 
 export interface DriverPromptExtras {

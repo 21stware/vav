@@ -419,6 +419,7 @@ function SidebarSlot({
     >
       <div
         className="sidebar-float-scrim"
+        id="closeDrawer"
         onMouseDown={(event) => {
           if (event.button === 0 && !floatLeaving) close()
         }}

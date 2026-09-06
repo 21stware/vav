@@ -509,7 +509,8 @@ struct SessionDetailView: View {
 
 // MARK: - Run bar (mode / permission / agent / model / thinking)
 
-/// [mode · permission]  agent+model  [thinking · Fast] — same chrome as desktop.
+/// [mode · permission]  agent+model  [thinking · Fast] — same chrome as desktop
+/// SessionRunPicker. Web and the Chrome extension mount that React component.
 private struct SessionRunBar: View {
     let controls: RemoteSessionControls
     let onPick: (String, String) -> Void

@@ -3,6 +3,8 @@ playwright-report/
 blob-report/
 node_modules/
 out/
+# Built from src/phone-ui (npm run build:phone-ui)
+extension/phone/
 release/
 release-sidecars/
 dist/
