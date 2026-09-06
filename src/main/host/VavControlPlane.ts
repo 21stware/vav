@@ -48,6 +48,9 @@ import { remoteBrowseRoots, remoteIsTemporary, remoteParentPath, remotePathAllow
 import { listRemoteChildEntries, listRemoteRootEntries } from '../remote/dirBrowse.ts'
 import type { DaemonWorkspaceCatalog } from '../daemon/DaemonServer.ts'
 import type { WorkspaceHost } from './WorkspaceHost.ts'
+import { createConnectorRegistry } from '../connectors/registry.ts'
+import { TimerStore } from '../store/TimerStore.ts'
+import { TimerScheduler } from '../timer/TimerScheduler.ts'
 import { HostRegistry } from './WorkspaceHost.ts'
 import type {
   RemoteConfigure,
@@ -76,6 +79,7 @@ export type VavControlPlane = {
   secrets: NodeSecretStore
   files: FileService
   catalog: DaemonWorkspaceCatalog
+  timers: TimerStore
   load(): void
   dispose(): void
 }
@@ -114,13 +118,31 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
   const remoteSessionStatus = new Map<string, 'running' | 'done'>()
   const pendingSends = new RemoteSendQueue()
   let hub: RemoteControlHub
+  const timerStore = new TimerStore(opts.stateDir)
+  let timerScheduler: TimerScheduler | null = null
+  const connectorRegistry = createConnectorRegistry({
+    creds: () => ({
+      cloudflare: {
+        token: secrets.get('cloudflare') ?? null,
+        accountId: settings.get().cloudflareAccountId || null
+      },
+      supabase: {
+        token: secrets.get('supabase') ?? null,
+        projectRef: settings.get().supabaseProjectRef || null
+      },
+      vercel: { token: secrets.get('vercel') ?? null }
+    })
+  })
 
   const handleAgentEvent = (event: TurnEvent): void => {
     if (event.type === 'start') remoteSessionStatus.set(event.conversationId, 'running')
     if (event.type === 'end') remoteSessionStatus.set(event.conversationId, 'done')
     logTurnEvent(event, conversations.get(event.conversationId), logger)
     fanRemoteTurn(event, hub, currentLocale())
-    if (event.type === 'end') flushSends()
+    if (event.type === 'end') {
+      timerScheduler?.onTurnEnd(event.conversationId, false)
+      flushSends()
+    }
   }
 
   const resolveCreds = (conversation?: Conversation | null) =>
@@ -138,7 +160,19 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
     files,
     hosts,
     changeSets,
+    connectors: connectorRegistry,
     emit: handleAgentEvent
+  })
+
+  timerScheduler = new TimerScheduler({
+    store: timerStore,
+    conversations,
+    tmp,
+    defaultModel: () => settings.get().defaultModel || VAV_DEFAULT_MODEL_ID,
+    runTurn: (id, text) => {
+      void agent.run(id, text, [], null, null, null)
+    },
+    isRunning: (id) => agent.isRunning(id)
   })
 
   function listSessions(): RemoteSession[] {
@@ -486,6 +520,7 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
     secrets,
     files,
     catalog,
+    timers: timerStore,
     load() {
       mkdirSync(opts.stateDir, { recursive: true })
       settings.load()
@@ -495,6 +530,8 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
         model: settings.get().defaultModel || VAV_DEFAULT_MODEL_ID,
         mintWorkdir: () => mintTempWorkdir(tmp)
       })
+      timerStore.load()
+      timerScheduler?.start()
       logStore.load()
       setAppLogger(logger)
       logger.system(LOG_EVENT.systemBoot, 'vavd ready', { data: { version: opts.appVersion } })
@@ -505,6 +542,7 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
     },
     dispose() {
       logger.system(LOG_EVENT.systemQuit, 'Quit')
+      timerScheduler?.stop()
       logStore.dispose()
       setAppLogger(null)
       agent.disposeAll()

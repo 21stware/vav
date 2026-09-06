@@ -19,7 +19,7 @@ import { isE2eRuntime } from '../e2eRuntime.ts'
  * a Keychain prompt. Never touch safeStorage until {@link unlock} runs from
  * the onboarding UI — status/needsUnlock must stay pure.
  */
-export type SecretName = 'api' | 'braveSearch' | 'tinyfish' | 'cloudflare' | 'supabase'
+export type SecretName = 'api' | 'braveSearch' | 'tinyfish' | 'cloudflare' | 'supabase' | 'vercel'
 
 const ACCOUNT_SECRET_PREFIX = 'secret-account-'
 const OAUTH_SNAPSHOT_PREFIX = 'secret-oauth-'

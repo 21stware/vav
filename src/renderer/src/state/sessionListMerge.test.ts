@@ -16,6 +16,18 @@ function row(
 }
 
 describe('mergeConversationList', () => {
+  it('keeps hydrated timer sessions when the broadcast omits them', () => {
+    const prev = [
+      row({ id: 'live', updatedAt: 2 }),
+      row({ id: 'timer', updatedAt: 1, sessionKind: 'timer' })
+    ]
+    const next = [row({ id: 'live', updatedAt: 2 })]
+    assert.deepEqual(
+      mergeConversationList(prev, next).map((c) => c.id),
+      ['live', 'timer']
+    )
+  })
+
   it('keeps previous order when only titles change', () => {
     const prev = [row({ id: 'a', updatedAt: 2 }), row({ id: 'b', updatedAt: 1 })]
     const next = [row({ id: 'b', updatedAt: 1 }), row({ id: 'a', updatedAt: 2 })]
@@ -25,15 +37,16 @@ describe('mergeConversationList', () => {
     )
   })
 
-  it('re-sorts when updatedAt changes and keeps hydrated file sessions', () => {
+  it('re-sorts when updatedAt changes and keeps hydrated file / timer sessions', () => {
     const prev = [
       row({ id: 'old', updatedAt: 3 }),
-      row({ id: 'file', updatedAt: 0, fileId: 'f1' })
+      row({ id: 'file', updatedAt: 0, fileId: 'f1' }),
+      row({ id: 'timer', updatedAt: 0, sessionKind: 'timer' })
     ]
     const next = [row({ id: 'old', updatedAt: 4 }), row({ id: 'new', updatedAt: 5 })]
     assert.deepEqual(
       mergeConversationList(prev, next).map((c) => c.id),
-      ['new', 'old', 'file']
+      ['new', 'old', 'file', 'timer']
     )
   })
 })
@@ -228,7 +241,8 @@ describe('listedConversationIdsForSelect', () => {
       row({ id: 'live' }),
       row({ id: 'arch', archived: true }),
       row({ id: 'file', fileId: 'f1' }),
-      row({ id: 'arch-file', archived: true, fileId: 'f2' })
+      row({ id: 'arch-file', archived: true, fileId: 'f2' }),
+      row({ id: 'timer', sessionKind: 'timer' })
     ]
     assert.deepEqual(listedConversationIdsForSelect(rows, false), ['live'])
     assert.deepEqual(listedConversationIdsForSelect(rows, undefined), ['live'])

@@ -3,6 +3,7 @@ import { compareRemoteSessions, type RemoteSession, type RemoteThreadEvent } fro
 import { projectRemoteMessages, remoteSessionPreview } from '../../shared/remoteThread.ts'
 import { remoteIsTemporary } from '../../shared/remoteWorkspace.ts'
 import { threadPath } from '../../shared/thread.ts'
+import { isWorkspaceSession } from '../../shared/sessionKind.ts'
 
 export const REMOTE_SESSION_LIST_CAP = 30
 
@@ -11,6 +12,7 @@ export type RemoteSessionSource = {
   title?: string | null
   archived?: boolean
   fileId?: string | null
+  sessionKind?: import('../../shared/sessionKind.ts').SessionKind | null
   swarmParentId?: string | null
   workingDirectory?: string | null
   resultUnseen?: boolean
@@ -34,7 +36,7 @@ export function mapRemoteSessions(
   }
 ): RemoteSession[] {
   return conversations
-    .filter((c) => !c.archived && !c.fileId && !c.swarmParentId)
+    .filter((c) => !c.archived && isWorkspaceSession(c) && !c.swarmParentId)
     .map((c) => ({
       id: c.id,
       title: (c.title && c.title.trim()) || opts.fallbackTitle,

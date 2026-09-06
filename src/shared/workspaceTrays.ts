@@ -1,5 +1,5 @@
 /**
- * Status trays in Files (GitHub / Cloudflare / Supabase).
+ * Status trays in Files (GitHub / Cloudflare / Supabase / Vercel).
  * Git stays always-on as a local diff inspector — not gated here.
  *
  * Missing keys (older settings.json) use the defaults below.
@@ -20,4 +20,10 @@ export function isSupabaseTrayEnabled(settings: {
   supabaseTrayEnabled?: boolean
 }): boolean {
   return settings.supabaseTrayEnabled === true
+}
+
+export function isVercelTrayEnabled(settings: {
+  vercelTrayEnabled?: boolean
+}): boolean {
+  return settings.vercelTrayEnabled === true
 }

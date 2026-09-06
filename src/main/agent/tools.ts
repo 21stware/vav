@@ -20,6 +20,7 @@ import { createFsTools } from './toolsFs'
 import { createDocTools } from './toolsDoc'
 import { createWebTools } from './toolsWeb'
 import { createInteractiveTools } from './toolsInteractive'
+import { createConnectorTools } from './toolsConnector'
 
 export { normalizeAskQuestions, normalizePlanSteps } from '@shared/askPlan'
 export { summarizeToolInput } from './toolSummarize'
@@ -39,6 +40,7 @@ export function createTools(host: ToolHost): AgentTool[] {
   const [docSearch, docFetch, sqlQuery] = createDocTools(host)
   const [webSearch, webFetch] = createWebTools(host)
   const { request, askUserQuestion, loadSkill, plan, switchMode } = createInteractiveTools(host)
+  const { connector } = createConnectorTools(host)
 
   const tools: AgentTool[] = [
     terminal,
@@ -53,6 +55,7 @@ export function createTools(host: ToolHost): AgentTool[] {
     webSearch,
     webFetch,
     loadSkill,
+    connector,
     request,
     askUserQuestion,
     plan

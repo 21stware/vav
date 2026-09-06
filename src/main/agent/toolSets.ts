@@ -9,7 +9,8 @@ export const READONLY_TOOLS: ReadonlySet<ToolName> = new Set([
   'web_search',
   'web_fetch',
   'sql_query',
-  'load_skill'
+  'load_skill',
+  'connector'
 ])
 /** Auto-mode tools that pause for Approve / Deny. */
 export const HIGH_RISK_TOOLS: ReadonlySet<ToolName> = new Set([

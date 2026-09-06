@@ -10,7 +10,8 @@ import {
   List,
   FolderInput,
   Plus,
-  RefreshCw
+  RefreshCw,
+  Triangle
 } from 'lucide-react'
 import { IGNORED_NAMES, IGNORED_SUFFIXES } from '@shared/types'
 import {
@@ -37,15 +38,17 @@ import { GithubPanel, type GithubPanelChrome } from './GithubPanel'
 import { SupabasePanel, type SupabasePanelChrome } from './SupabasePanel'
 import { SupabaseMark } from './SupabaseMark'
 import { CloudflarePanel, type CloudflarePanelChrome } from './CloudflarePanel'
+import { VercelPanel, type VercelPanelChrome } from './VercelPanel'
 import { openFileInSessionPreview } from '../lib/openSessionFile'
 import { ColumnBrowser, TreeLevel } from './filesPanel/FilesBrowser'
 import {
   isCloudflareTrayEnabled,
   isGithubTrayEnabled,
-  isSupabaseTrayEnabled
+  isSupabaseTrayEnabled,
+  isVercelTrayEnabled
 } from '@shared/workspaceTrays'
 
-type FilesTrayView = 'files' | 'git' | 'github' | 'supabase' | 'cloudflare'
+type FilesTrayView = 'files' | 'git' | 'github' | 'supabase' | 'cloudflare' | 'vercel'
 
 /** Scroll the row for `path` into view inside the files browser. */
 function scrollFileRowIntoView(path: string): void {
@@ -112,13 +115,16 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
   const [rootIsGit, setRootIsGit] = useState<boolean | null>(null)
   const [hasSupabase, setHasSupabase] = useState<boolean | null>(null)
   const [hasCloudflare, setHasCloudflare] = useState(false)
+  const [hasVercel, setHasVercel] = useState(false)
   const githubTrayOn = isGithubTrayEnabled(settings)
   const supabaseTrayOn = isSupabaseTrayEnabled(settings)
   const cloudflareTrayOn = isCloudflareTrayEnabled(settings)
+  const vercelTrayOn = isVercelTrayEnabled(settings)
   const [gitChrome, setGitChrome] = useState<GitPanelChrome | null>(null)
   const [githubChrome, setGithubChrome] = useState<GithubPanelChrome | null>(null)
   const [supabaseChrome, setSupabaseChrome] = useState<SupabasePanelChrome | null>(null)
   const [cloudflareChrome, setCloudflareChrome] = useState<CloudflarePanelChrome | null>(null)
+  const [vercelChrome, setVercelChrome] = useState<VercelPanelChrome | null>(null)
   /** Temp dirs can become repos after Files → Git “enable version control”. */
   const gitRepoEpoch = useGitRepoSyncEpoch()
   const supabaseHint = (dirs?.[root ?? ''] ?? [])
@@ -172,6 +178,21 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
   }, [])
   const onCloudflareChrome = useCallback((next: CloudflarePanelChrome | null) => {
     setCloudflareChrome((prev) => {
+      if (prev === next) return prev
+      if (
+        prev &&
+        next &&
+        prev.meta === next.meta &&
+        prev.loading === next.loading &&
+        prev.refresh === next.refresh
+      ) {
+        return prev
+      }
+      return next
+    })
+  }, [])
+  const onVercelChrome = useCallback((next: VercelPanelChrome | null) => {
+    setVercelChrome((prev) => {
       if (prev === next) return prev
       if (
         prev &&
@@ -262,6 +283,29 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
   useEffect(() => {
     if (!hasCloudflare && trayView === 'cloudflare') setTrayView('files')
   }, [hasCloudflare, trayView])
+
+  useEffect(() => {
+    let cancelled = false
+    if (!vercelTrayOn || !root || !window.vav?.vercel?.status) {
+      setHasVercel(false)
+      return
+    }
+    void window.vav.vercel
+      .status(root, { remote: false })
+      .then((result) => {
+        if (!cancelled) setHasVercel(result.ok && result.data.present)
+      })
+      .catch(() => {
+        if (!cancelled) setHasVercel(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [root, visible, vercelTrayOn])
+
+  useEffect(() => {
+    if (!hasVercel && trayView === 'vercel') setTrayView('files')
+  }, [hasVercel, trayView])
 
   useEffect(() => {
     if (visible && activeId && trayView === 'files') void ensureFilesLoaded(activeId)
@@ -672,6 +716,16 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
                       icon: <Cloud size={14} />
                     }
                   ]
+                : []),
+              ...(vercelTrayOn && hasVercel
+                ? [
+                    {
+                      value: 'vercel' as const,
+                      label: t('files.tabVercel'),
+                      title: t('files.tabVercel'),
+                      icon: <Triangle size={14} />
+                    }
+                  ]
                 : [])
             ]}
           />
@@ -799,6 +853,21 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
               />
             </>
           )}
+          {trayView === 'vercel' && vercelChrome && (
+            <>
+              {vercelChrome.meta ? (
+                <span className="git-panel-meta">{vercelChrome.meta}</span>
+              ) : null}
+              <Button
+                icon={<RefreshCw size={14} />}
+                size="sm"
+                className={`git-refresh-btn${vercelChrome.loading ? ' is-refreshing' : ''}`}
+                title={t('vercel.refresh')}
+                disabled={vercelChrome.loading}
+                onClick={vercelChrome.refresh}
+              />
+            </>
+          )}
         </div>
       </div>
 
@@ -881,6 +950,14 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
             <CloudflarePanel
               visible={visible && trayView === 'cloudflare'}
               onChrome={onCloudflareChrome}
+            />
+          </div>
+        ) : null}
+        {vercelTrayOn && hasVercel ? (
+          <div className="files-tray-pane" data-hidden={trayView !== 'vercel'}>
+            <VercelPanel
+              visible={visible && trayView === 'vercel'}
+              onChrome={onVercelChrome}
             />
           </div>
         ) : null}

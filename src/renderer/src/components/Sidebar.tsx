@@ -50,6 +50,7 @@ import {
   filterFileSessionRows
 } from '../lib/sidebarList'
 import { ConvBracket, type SwarmBracketKind } from './sidebar/ConvBracket'
+import { TimerJobsPanel } from './sidebar/TimerJobsPanel'
 import { RenameField } from './sidebar/RenameField'
 import {
   conversationOnMachine,
@@ -164,6 +165,7 @@ export function Sidebar({
 
   const archiveView = listMode === 'archive'
   const fileSessionsView = listMode === 'fileSessions'
+  const timersView = listMode === 'timers'
 
   // Rasterize the foot-menu glyphs ahead of the first open.
   useEffect(() => {
@@ -582,9 +584,17 @@ export function Sidebar({
         useSessionStore.setState({ selectedIds: visible.map((c) => c.id) })
       } else if (event.key === 'Escape' && listMode !== 'main') {
         event.preventDefault()
-        // Keep the float open: Escape steps out of archive / file-sessions first.
+        // Keep the float open: Escape steps out of archive / file-sessions / timers first.
         event.stopImmediatePropagation()
         setListMode('main')
+        const store = useSessionStore.getState()
+        const active = store.conversations.find((c) => c.id === store.activeId)
+        if (active?.sessionKind === 'timer') {
+          const next = store.conversations.find(
+            (c) => !c.archived && !c.fileId && c.sessionKind !== 'timer'
+          )
+          if (next) void store.selectConversation(next.id)
+        }
       }
     }
     window.addEventListener('keydown', onKey)
@@ -1308,8 +1318,10 @@ export function Sidebar({
                 // showing FileSessionView only while still on a file-bound id.
                 const store = useSessionStore.getState()
                 const active = store.conversations.find((c) => c.id === store.activeId)
-                if (active?.fileId || active?.archived) {
-                  const next = store.conversations.find((c) => !c.archived && !c.fileId)
+                if (active?.fileId || active?.archived || active?.sessionKind === 'timer') {
+                  const next = store.conversations.find(
+                    (c) => !c.archived && !c.fileId && c.sessionKind !== 'timer'
+                  )
                   if (next) void store.selectConversation(next.id)
                 }
               }}
@@ -1318,7 +1330,9 @@ export function Sidebar({
               <span className="sidebar-archive-title">
                 {archiveView
                   ? t('sidebar.archivedCount', { count: archivedCount })
-                  : t('sidebar.fileSessionsTitle', { count: fileSessionRows.length })}
+                  : timersView
+                    ? t('sidebar.timersTitle')
+                    : t('sidebar.fileSessionsTitle', { count: fileSessionRows.length })}
               </span>
             </button>
           </div>
@@ -1365,6 +1379,9 @@ export function Sidebar({
             title={t('sidebar.fileSessionsEmptyTitle')}
             description={t('sidebar.fileSessionsEmptyDesc')}
           />
+        )}
+        {timersView && (
+          <TimerJobsPanel />
         )}
         {fileSessionsView && searching && filteredFileSessions.length === 0 && (
           <EmptyState title={t('sidebar.noMatchTitle')} description={t('sidebar.noMatchDesc')}>
@@ -1506,7 +1523,7 @@ export function Sidebar({
           </div>
         )}
 
-        {!fileSessionsView && pinnedGroups.length > 0 && (
+        {!fileSessionsView && !timersView && pinnedGroups.length > 0 && (
           <div className="conv-pinned-section">
             <button
               type="button"
@@ -1527,7 +1544,7 @@ export function Sidebar({
           </div>
         )}
 
-        {!fileSessionsView && mainGroups.map(renderGroup)}
+        {!fileSessionsView && !timersView && mainGroups.map(renderGroup)}
       </div>
 
       <UpdateCorner variant="inline" />
@@ -1572,6 +1589,15 @@ export function Sidebar({
                       setSidebarQuery('')
                       void selectWorkspaceGroup(null)
                       setListMode('fileSessions')
+                    }
+                  },
+                  {
+                    label: t('sidebar.showTimers'),
+                    icon: lucideMenuIcon('sessions'),
+                    onSelect: () => {
+                      setSidebarQuery('')
+                      void selectWorkspaceGroup(null)
+                      setListMode('timers')
                     }
                   },
                   {

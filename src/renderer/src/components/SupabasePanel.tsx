@@ -404,7 +404,7 @@ export function SupabasePanel({
           <ProjectSummary
             status={status}
             onPreview={() => previewFunction(selected?.slug ?? null)}
-            onOpenSettings={() => openSettings('workspace')}
+            onOpenSettings={() => openSettings('connectors')}
           />
           <div
             ref={listRef}
@@ -436,7 +436,7 @@ export function SupabasePanel({
                 <button
                   type="button"
                   className="github-site-link"
-                  onClick={() => openSettings('workspace')}
+                  onClick={() => openSettings('connectors')}
                 >
                   {t('supabase.openSettings')}
                 </button>

@@ -43,6 +43,7 @@ export type SettingsCategory =
   | 'appearance'
   | 'notifications'
   | 'connect'
+  | 'connectors'
   | 'cli'
   | 'agents'
   | 'file-associations'
@@ -82,7 +83,7 @@ export interface SearchState {
   tick: number
 }
 
-/** Sidebar list: main sessions, archive, or file-bound sessions. */
-export type SidebarListMode = 'main' | 'archive' | 'fileSessions'
+/** Sidebar list: main sessions, archive, file-bound sessions, or timer jobs. */
+export type SidebarListMode = 'main' | 'archive' | 'fileSessions' | 'timers'
 
 export type { QueuedMessage } from './sessionQueue'

@@ -4,7 +4,18 @@ User-facing changes by release. Unreleased work lives at the top until the next 
 
 ## Unreleased
 
-Settings → Logs records user actions and agent internals for debugging, with temporary / session / durable retention.
+Connectors and Timers are separate product surfaces. Settings → Logs still records user actions and agent internals for debugging, with temporary / session / durable retention.
+
+### Connectors
+
+- Settings → Connectors holds GitHub / Cloudflare / Supabase / Vercel trays and tokens (moved off Workspace).
+- Vercel is a first-class connector: Files tray, API token, and `connector` tool `deploy`.
+- GitHub stays read-only. Cloudflare, Supabase, and Vercel deploy through the connector tool (approval required; timer runs use Bypass).
+
+### Timers
+
+- Sidebar → More → Timers is a separate session kind. Each fire mints a timestamped workspace and writes `output.md`.
+- Timer conversations never appear in the main session list.
 
 ### Logs
 
