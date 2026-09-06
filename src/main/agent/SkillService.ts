@@ -70,12 +70,13 @@ export class SkillService {
     } catch {
       appPath = null
     }
+    const here = skillModuleDir()
     const candidates = [
       typeof process.resourcesPath === 'string' ? join(process.resourcesPath, 'agent-skills') : '',
       appPath ? join(appPath, 'resources', 'agent-skills') : '',
       appPath ? join(appPath, '..', 'resources', 'agent-skills') : '',
-      join(__dirname, '../../resources/agent-skills'),
-      join(__dirname, '../../../resources/agent-skills'),
+      here ? join(here, '../../resources/agent-skills') : '',
+      here ? join(here, '../../../resources/agent-skills') : '',
       join(process.cwd(), 'resources', 'agent-skills')
     ].filter(Boolean)
     const hit = candidates.find((p) => existsSync(join(p, 'catalog.json')))
@@ -306,6 +307,17 @@ function listCompanions(skillDir: string): string[] {
   }
   walk(skillDir, '')
   return out.sort()
+}
+
+/**
+ * Packed / Electron CJS has `__dirname`. ESM tests and `vavd` do not —
+ * `import.meta.dirname` is the Node 22 equivalent. Never read `__dirname`
+ * unguarded or control-plane boot throws ReferenceError.
+ */
+function skillModuleDir(): string {
+  if (typeof import.meta.dirname === 'string' && import.meta.dirname) return import.meta.dirname
+  if (typeof __dirname === 'string') return __dirname
+  return ''
 }
 
 function basenameNoExt(url: string): string {
