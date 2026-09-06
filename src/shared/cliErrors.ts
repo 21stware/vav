@@ -2,7 +2,9 @@ import { cursorModelFamilyId } from './cursorModel.ts'
 import type { QuotaWindow, QuotaWindowKind } from './types'
 
 /** Why a structured CLI host (Grok / Claude / Codex / …) failed a turn. */
-export type CliErrorKind = 'quota' | 'session-stale' | 'auth' | 'cancelled' | 'network' | 'generic'
+import type { TurnErrorKind } from './types.ts'
+
+export type CliErrorKind = TurnErrorKind
 
 /**
  * JSON-RPC 2.0 + ACP error codes.
@@ -53,6 +55,17 @@ const BARE_INTERNAL_RE = /^(?:internal error|json-?rpc\s+internal error)(?:\s*[.
  * its HTTP stack. These are retried on the SAME session — never treated as a
  * turn-breaking error until {@link NETWORK_RETRY_LIMIT} attempts fail.
  */
+/**
+ * Host-internal stream / protocol failures that are not a dead socket.
+ * Distinct from {@link TRANSPORT_DISCONNECT_RE} so the UI can say Retrying
+ * instead of Reconnecting.
+ */
+const TECHNICAL_RE =
+  /RetriableError|WritableIterable is closed|stream (?:closed|aborted|ended unexpectedly)|incomplete chunked encoding/i
+
+const PROCESS_EXIT_RE =
+  /(?:agent process exited|codex exited with code|claude exited with code|(?:agent |codex |claude )?process exited \(\s*-?\d+\s*\))/i
+
 const RETRIABLE_RE =
   /RetriableError|Client network socket disconnected|ECONNRESET|ECONNREFUSED|ECONNABORTED|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|EPIPE|EHOSTUNREACH|ENETUNREACH|socket hang up|TLS connection (?:failed|error)|error sending request for url|fetch failed|network (?:error|failure)|connection (?:reset|refused|closed|interrupted|timed?[\s-]?out)|request (?:to .{1,200} )?failed, reason:/i
 
@@ -290,6 +303,8 @@ export function classifyCliError(
   }
   if (code === RpcErrorCode.tooManyRequests || code === 429 || code === 402) return 'quota'
   if (QUOTA_RE.test(raw)) return 'quota'
+  if (isTransportDisconnect(raw) || PROCESS_EXIT_RE.test(raw)) return 'network'
+  if (TECHNICAL_RE.test(raw)) return 'technical'
   if (RETRIABLE_RE.test(raw)) return 'network'
   if (SESSION_STALE_RE.test(raw)) return 'session-stale'
   if (AUTH_RE.test(raw)) return 'auth'
@@ -401,7 +416,7 @@ export function shouldContinuePartialNetworkTurn(
  * else falls through to {@link shouldRetryFreshSession}.
  */
 export function shouldRetrySameSession(kind: CliErrorKind): boolean {
-  return kind === 'network'
+  return kind === 'network' || kind === 'technical'
 }
 
 /**
@@ -416,7 +431,7 @@ export function shouldRetryFreshSession(
   hadResumeCursor: boolean,
   code?: number | null
 ): boolean {
-  if (kind === 'network') return false
+  if (kind === 'network' || kind === 'technical') return false
   if (!hadResumeCursor) return false
   if (kind === 'quota' || kind === 'auth' || kind === 'cancelled') return false
   if (

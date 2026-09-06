@@ -1,4 +1,4 @@
-import type { ChatMessage, MessageBlock, TurnStatus } from '../../shared/types.ts'
+import type { ChatMessage, MessageBlock, TurnRecovery, TurnStatus } from '../../shared/types.ts'
 
 /** pi stopReason on the final assistant message. */
 export function assistantStopKind(
@@ -158,6 +158,7 @@ export function runtimeTurnStatus(
         pending: { keys(): IterableIterator<string> }
         messageId: string | null
         blocks: MessageBlock[]
+        recovery?: TurnRecovery | null
       }
     | undefined
 ): TurnStatus {
@@ -168,7 +169,8 @@ export function runtimeTurnStatus(
     toolCount: turn?.toolCount ?? 0,
     awaitingToolCallId: turn ? (turn.pending.keys().next().value ?? null) : null,
     messageId: turn?.messageId ?? null,
-    blocks: turn ? turn.blocks.map((block) => ({ ...block })) : []
+    blocks: turn ? turn.blocks.map((block) => ({ ...block })) : [],
+    recovery: turn?.recovery ?? null
   }
 }
 

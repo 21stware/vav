@@ -7,7 +7,9 @@ export function activeTurnStatusFromPhase(
     phase === 'working' ||
     phase === 'thinking' ||
     phase === 'outputting' ||
-    phase === 'retrying'
+    phase === 'retrying' ||
+    phase === 'reconnecting' ||
+    phase === 'healing'
   ) {
     return 'running'
   }

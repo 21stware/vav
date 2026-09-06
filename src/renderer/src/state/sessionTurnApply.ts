@@ -1,5 +1,5 @@
 import type { ChangeSet } from '../../../shared/changeSet.ts'
-import type { ChatMessage, ConversationMeta, TokenSnapshot, TurnEvent } from '../../../shared/types.ts'
+import type { ChatMessage, ConversationMeta, TokenSnapshot, TurnErrorKind, TurnEvent } from '../../../shared/types.ts'
 import { getProjection } from './StreamProjection.ts'
 import { clearPriorChangeReviews, upsert } from './sessionThread.ts'
 import { omitLiveUsage } from './sessionUsage.ts'
@@ -13,7 +13,8 @@ export const IDLE_TURN: TurnRuntime = {
   awaitingToolCallId: null,
   startedModel: undefined,
   startedCliHost: undefined,
-  startedAccountId: undefined
+  startedAccountId: undefined,
+  recovery: null
 }
 
 export type TurnApplyState = {
@@ -30,7 +31,7 @@ export type TurnApplyState = {
   changeSet: ChangeSet | null
   changeReviewId: string | null
   errorBanner: string | null
-  errorBannerKind: 'quota' | 'session-stale' | 'auth' | 'network' | 'cancelled' | 'generic' | null
+  errorBannerKind: TurnErrorKind | null
   errorBannerDetail: string | null
 }
 
@@ -89,7 +90,8 @@ export function applySessionTurnEvent(
         awaitingToolCallId: null,
         startedModel: started?.model,
         startedCliHost: started?.cliHost ?? null,
-        startedAccountId: started?.accountId ?? null
+        startedAccountId: started?.accountId ?? null,
+        recovery: null
       })
       set((state) => ({
         ...clearPriorChangeReviews(state, id),
@@ -127,8 +129,8 @@ export function applySessionTurnEvent(
 
     case 'phase':
       projection.ensureLive(event.phase)
-      projection.setPhase(event.phase)
-      patchTurn(set, id, { phase: event.phase })
+      projection.setPhase(event.phase, event.recovery ?? null)
+      patchTurn(set, id, { phase: event.phase, recovery: event.recovery ?? null })
       break
 
     case 'delta':

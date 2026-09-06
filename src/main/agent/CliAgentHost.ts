@@ -12,6 +12,7 @@ import type {
   ToolCallBlock,
   TurnEvent,
   TurnPhase,
+  TurnRecovery,
   TurnStatus
 } from '@shared/types'
 import {
@@ -31,13 +32,20 @@ import {
   formatErrorDetailFromParts,
   NETWORK_CONTINUE_PROMPT,
   NETWORK_RETRY_LIMIT,
-  networkRetryDelayMs,
   RpcErrorCode,
   shouldContinuePartialNetworkTurn,
   shouldRetryFreshSession,
   shouldRetrySameSession,
   type CliErrorKind
 } from '@shared/cliErrors'
+import {
+  isRecoveryPhase,
+  planHostRecoveryUi,
+  planSameSessionRecovery,
+  recoveryEqual,
+  recoveryFromTransportEvent,
+  recoveryRetryDelayMs
+} from '@shared/turnRecovery'
 import { parseToolInput } from '@shared/askPlan'
 import {
   isAskToolName,
@@ -94,7 +102,6 @@ import {
   clearCliTurnDraft,
   cliAssistantMessage,
   consumePendingCancel,
-  sameSessionRetryPlan,
   shouldSettleAsCancelled,
   stripLeakedStreamErrorFromTurn
 } from './cliTurnFinish'
@@ -189,6 +196,9 @@ interface HostTurn {
   retriedFreshSession: boolean
   /** Same-session re-prompts already burned on transient network failures. */
   networkRetries: number
+  recovery: TurnRecovery | null
+  /** Mid-turn host retry/reconnect error — not fatal unless the turn ends failed. */
+  pendingRecoveryError?: string
   /** A usage event carried real token counts during this turn. */
   sawUsage: boolean
   settling: boolean
@@ -705,6 +715,7 @@ export class CliAgentHost {
       sawTurnStarted: false,
       retriedFreshSession: false,
       networkRetries: 0,
+      recovery: null,
       sawUsage: false,
       settling: false,
       pendingPermissions: new Map(),
@@ -1045,12 +1056,19 @@ export class CliAgentHost {
       case 'quota':
         this.applyQuota(conversationId, event.windows)
         break
-      case 'error':
-        if (
-          turn.cancelled ||
-          this.classifyTurnError(conversationId, event.message, event.errorCode) === 'cancelled'
-        ) {
+      case 'error': {
+        const kind = this.classifyTurnError(conversationId, event.message, event.errorCode)
+        if (turn.cancelled || kind === 'cancelled') {
           turn.cancelled = true
+          break
+        }
+        if (shouldRetrySameSession(kind) && turn.sawTurnStarted && !turn.settling) {
+          // Host is still in the turn (Codex/Claude internal retry). Surface
+          // recovery UI without sealing — settle only if the turn later fails.
+          turn.pendingRecoveryError = event.message
+          turn.errorCode = event.errorCode ?? turn.errorCode
+          turn.errorDetail = event.errorDetail ?? turn.errorDetail
+          this.applyHostRecoveryUi(conversationId, turn, event.message, { kind })
           break
         }
         turn.error = event.message
@@ -1065,6 +1083,16 @@ export class CliAgentHost {
             event.errorDetail
           )
         }
+        break
+      }
+      case 'transport':
+        if (turn.cancelled || turn.settling) break
+        this.setPhase(
+          conversationId,
+          turn,
+          event.status,
+          recoveryFromTransportEvent(event, turn.networkRetries)
+        )
         break
       case 'turn-finished':
         if (event.resumeAt && runtime?.cursor?.provider === 'claude') {
@@ -1083,6 +1111,9 @@ export class CliAgentHost {
           turn.error = turn.error || event.error
           turn.errorCode = event.errorCode ?? turn.errorCode
           turn.errorDetail = event.errorDetail ?? turn.errorDetail
+        } else if (event.success) {
+          turn.error = undefined
+          turn.pendingRecoveryError = undefined
         }
         const finishKind = this.classifyTurnError(
           conversationId,
@@ -1156,7 +1187,7 @@ export class CliAgentHost {
         void this.settleFailedTurn(
           conversationId,
           turn,
-          event.error || turn.error || t('error.model'),
+          event.error || turn.error || turn.pendingRecoveryError || t('error.model'),
           event.errorCode ?? turn.errorCode,
           event.errorDetail ?? turn.errorDetail
         )
@@ -1180,12 +1211,17 @@ export class CliAgentHost {
           const raw = turn.error || `Agent process exited (${event.code ?? '?'})`
           turn.errorDetail =
             turn.errorDetail || formatErrorDetailFromParts(raw, event.code)
+          const kind = this.classifyTurnError(conversationId, raw, turn.errorCode)
+          if (shouldRetrySameSession(kind) && turn.networkRetries < NETWORK_RETRY_LIMIT) {
+            this.applyHostRecoveryUi(conversationId, turn, raw, { kind, processDied: true })
+          }
           void this.settleFailedTurn(
             conversationId,
             turn,
             raw,
             turn.errorCode,
-            turn.errorDetail
+            turn.errorDetail,
+            { processDied: true }
           )
         }
         this.runtimes.delete(conversationId)
@@ -1947,7 +1983,8 @@ export class CliAgentHost {
     turn: HostTurn,
     raw: string,
     code?: number | null,
-    detail?: string
+    detail?: string,
+    extra?: { processDied?: boolean }
   ): Promise<void> {
     if (!this.turns.has(conversationId) || this.turns.get(conversationId) !== turn) return
     if (turn.settling) return
@@ -1962,10 +1999,10 @@ export class CliAgentHost {
     turn.settling = true
     turn.errorDetail = detail?.trim() || formatErrorDetailFromParts(raw, code)
 
-    // Transient network failure: keep the SAME session after a short
-    // backoff. The resume cursor is kept — the thread must not lose context —
-    // and the turn stays live so the UI never paints a break. Classified
-    // cheaply (no quota refresh) so the retry starts right away.
+    // Transient network / technical failure: keep the SAME session after a
+    // graduated backoff. The resume cursor is kept — the thread must not lose
+    // context — and the turn stays live so the UI never paints a break.
+    // Classified cheaply (no quota refresh) so the retry starts right away.
     const quickKind = this.classifyTurnError(conversationId, raw, code)
     if (shouldRetrySameSession(quickKind) && turn.networkRetries < NETWORK_RETRY_LIMIT) {
       turn.networkRetries += 1
@@ -1973,19 +2010,25 @@ export class CliAgentHost {
       turn.errorKind = undefined
       turn.errorCode = undefined
       turn.errorDetail = undefined
+      turn.pendingRecoveryError = undefined
       const keepPartial = turnHasAnswerContent(turn)
-      const retry = sameSessionRetryPlan(keepPartial)
+      const retry = planSameSessionRecovery({
+        keepPartial,
+        processDied: extra?.processDied,
+        kind: quickKind,
+        attempt: turn.networkRetries
+      })
       if (retry.prepareReplayFromBlocks) {
         this.flushBuffers(conversationId, turn)
         this.sealOpenReasoning(turn)
         turn.textIndex = null
         turn.replay = createCliHistoryReplayGateFromBlocks(turn.blocks)
       }
-      this.setPhase(conversationId, turn, retry.phase)
+      this.setPhase(conversationId, turn, retry.phase, retry.recovery)
       // Keep `settling` held through the backoff so a racing error event
       // cannot start a second retry for the same failure.
       await new Promise((resolve) =>
-        setTimeout(resolve, networkRetryDelayMs(turn.networkRetries))
+        setTimeout(resolve, recoveryRetryDelayMs(quickKind, turn.networkRetries))
       )
       // Cancelled / superseded while backing off — nothing to resume.
       if (!this.turns.has(conversationId) || this.turns.get(conversationId) !== turn) return
@@ -2018,7 +2061,8 @@ export class CliAgentHost {
           turn,
           extracted.text || (err instanceof Error ? err.message : String(err)),
           extracted.code,
-          formatErrorDetail(err, extracted.text)
+          formatErrorDetail(err, extracted.text),
+          extra
         )
         return
       }
@@ -2044,6 +2088,11 @@ export class CliAgentHost {
       turn.error = undefined
       turn.errorKind = undefined
       turn.errorDetail = undefined
+      this.setPhase(conversationId, turn, 'healing', {
+        kind: 'healing',
+        attempt: 1,
+        limit: 1
+      })
       // The fresh session knows nothing — prepend the VAV transcript so the
       // conversation survives the swap instead of restarting from one prompt.
       this.markHistoryHandoff(conversationId, this.conversationCwd(conversationId), 'session-lost')
@@ -2077,10 +2126,39 @@ export class CliAgentHost {
     void this.finishTurn(conversationId, turn, false)
   }
 
-  private setPhase(conversationId: string, turn: HostTurn, phase: TurnPhase): void {
-    if (turn.phase === phase) return
+  private applyHostRecoveryUi(
+    conversationId: string,
+    turn: HostTurn,
+    raw: string,
+    extra?: { kind?: CliErrorKind; processDied?: boolean }
+  ): void {
+    const kind = extra?.kind ?? this.classifyTurnError(conversationId, raw, turn.errorCode)
+    const plan = planHostRecoveryUi({
+      raw,
+      keepPartial: turnHasAnswerContent(turn),
+      processDied: extra?.processDied,
+      kind,
+      networkRetries: turn.networkRetries
+    })
+    this.setPhase(conversationId, turn, plan.phase, plan.recovery)
+  }
+
+  private setPhase(
+    conversationId: string,
+    turn: HostTurn,
+    phase: TurnPhase,
+    recovery?: TurnRecovery | null
+  ): void {
+    const nextRecovery = isRecoveryPhase(phase) ? (recovery ?? turn.recovery) : null
+    if (turn.phase === phase && recoveryEqual(turn.recovery, nextRecovery)) return
     turn.phase = phase
-    this.deps.emit({ type: 'phase', conversationId, phase })
+    turn.recovery = nextRecovery
+    this.deps.emit({
+      type: 'phase',
+      conversationId,
+      phase,
+      ...(nextRecovery ? { recovery: nextRecovery } : {})
+    })
   }
 
   private addUserMessage(

@@ -7,7 +7,6 @@ import {
   cliAssistantMessage,
   clearCliTurnDraft,
   consumePendingCancel,
-  sameSessionRetryPlan,
   shouldSettleAsCancelled,
   stripLeakedStreamErrorFromTurn
 } from './cliTurnFinish.ts'
@@ -42,24 +41,6 @@ describe('consumePendingCancel', () => {
     assert.equal(consumePendingCancel(pending, 'c1', turn), false)
     assert.equal(turn.cancelled, false)
     assert.equal(pending.has('other'), true)
-  })
-})
-
-describe('sameSessionRetryPlan', () => {
-  it('continues without re-prompt when partial answer content already landed', () => {
-    assert.deepEqual(sameSessionRetryPlan(true), {
-      phase: 'retrying',
-      prepareReplayFromBlocks: true,
-      continueWithoutReprompt: true
-    })
-  })
-
-  it('re-opens replay and re-prompts when the turn has no answer yet', () => {
-    assert.deepEqual(sameSessionRetryPlan(false), {
-      phase: 'thinking',
-      prepareReplayFromBlocks: false,
-      continueWithoutReprompt: false
-    })
   })
 })
 

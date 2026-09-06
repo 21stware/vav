@@ -15,12 +15,21 @@ import {
   type ToolName,
   type TurnEvent,
   type TurnPhase,
+  type TurnRecovery,
   type TurnStatus
 } from '@shared/types'
 import { pendingChangeSetFileCount } from '@shared/changeSet'
 import { ROOT_LEAF, forkActiveLeaf, regenerateActiveLeaf } from '@shared/thread'
 import { buildSnapshot } from '@shared/tokenUsage'
 import { buildModel, describeError, streamWith } from './provider'
+import { classifyCliError, type CliErrorKind } from '@shared/cliErrors'
+import {
+  isRecoveryPhase,
+  planSameSessionRecovery,
+  recoveryEqual,
+  recoveryRetryDelayMs,
+  shouldRetryNativeTurn
+} from '@shared/turnRecovery'
 import { catalogRatesFor, contextWindowFor, maxTokensFor } from './modelMeta'
 import { loadInlineImages } from './attachmentImages'
 import { parseThinkingLevel, toPiReasoning } from '@shared/thinkingLevel'
@@ -149,7 +158,10 @@ interface TurnState {
   /** First-token wall time per reasoning slot, used to stamp `durationMs`. */
   reasoningStartedAt: Map<number, number>
   error?: string
+  errorKind?: CliErrorKind
   cancelled?: boolean
+  recovery: TurnRecovery | null
+  recoveryAttempts: number
 }
 
 export interface AgentRuntimeDeps {
@@ -583,7 +595,9 @@ export class AgentRuntime {
       pending: new Map(),
       argOverrides: new Map(),
       selectionRefs: parentMessage?.contextBlocks ?? [],
-      reasoningStartedAt: new Map()
+      reasoningStartedAt: new Map(),
+      recovery: null,
+      recoveryAttempts: 0
     }
     this.turns.set(conversationId, turn)
     if (this.pendingCancels.delete(conversationId)) {
@@ -623,46 +637,95 @@ export class AgentRuntime {
       : undefined
 
     try {
-      await runAgentLoopContinue(
-        {
-          systemPrompt: buildSystemPrompt(this.workdirOf(conversation), settings.shell, {
-            fileReadOnly: !!conversation.fileReadOnly,
-            // Only when the File Attachment Chip is attached (focusedFilePath).
-            // When sandboxed, this is the working-copy path (agent must edit that).
-            openFilePath: openFilePathForPrompt,
-            // Prefer the focused path (chip may differ from session fileId).
-            openFileKind: conversation.focusedFilePath
-              ? kindFromFilePath(conversation.focusedFilePath) ??
-                (conversation.fileId && this.deps.fileSessions
-                  ? this.deps.fileSessions.kindForFileId(conversation.fileId)
-                  : null)
-              : null,
-            skillCatalog: this.deps.skills?.catalogForPrompt() ?? null
-          }),
-          messages: history,
-          tools: this.toolsFor(conversation, turn)
-        },
-        {
-          model,
-          apiKey,
-          maxTokens: maxTokensFor(modelId),
-          ...(reasoning ? { reasoning } : {}),
-          // The sticky shell is one serialized process and the interactive
-          // cards are answered one at a time, so parallel execution would be a
-          // lie in both cases.
-          toolExecution: 'sequential',
-          convertToLlm: (messages) => messages as Message[],
-          beforeToolCall: async ({ toolCall, args }) =>
-            this.gateToolCall(conversationId, turn, toolCall, args),
-          afterToolCall: async ({ result }) => ({
-            isError: !!(result.details as ToolDetails | undefined)?.failed
-          }),
-          shouldStopAfterTurn: () => false
-        },
-        (event) => this.onAgentEvent(conversationId, turn, event),
-        turn.abort.signal,
-        (model_, context, options) => streamWith(model_, context, { ...options, apiKey })
-      )
+      for (;;) {
+        try {
+          await runAgentLoopContinue(
+            {
+              systemPrompt: buildSystemPrompt(this.workdirOf(conversation), settings.shell, {
+                fileReadOnly: !!conversation.fileReadOnly,
+                // Only when the File Attachment Chip is attached (focusedFilePath).
+                // When sandboxed, this is the working-copy path (agent must edit that).
+                openFilePath: openFilePathForPrompt,
+                // Prefer the focused path (chip may differ from session fileId).
+                openFileKind: conversation.focusedFilePath
+                  ? kindFromFilePath(conversation.focusedFilePath) ??
+                    (conversation.fileId && this.deps.fileSessions
+                      ? this.deps.fileSessions.kindForFileId(conversation.fileId)
+                      : null)
+                  : null,
+                skillCatalog: this.deps.skills?.catalogForPrompt() ?? null
+              }),
+              messages: history,
+              tools: this.toolsFor(conversation, turn)
+            },
+            {
+              model,
+              apiKey,
+              maxTokens: maxTokensFor(modelId),
+              ...(reasoning ? { reasoning } : {}),
+              // The sticky shell is one serialized process and the interactive
+              // cards are answered one at a time, so parallel execution would be a
+              // lie in both cases.
+              toolExecution: 'sequential',
+              convertToLlm: (messages) => messages as Message[],
+              beforeToolCall: async ({ toolCall, args }) =>
+                this.gateToolCall(conversationId, turn, toolCall, args),
+              afterToolCall: async ({ result }) => ({
+                isError: !!(result.details as ToolDetails | undefined)?.failed
+              }),
+              shouldStopAfterTurn: () => false
+            },
+            (event) => this.onAgentEvent(conversationId, turn, event),
+            turn.abort.signal,
+            (model_, context, options) => streamWith(model_, context, { ...options, apiKey })
+          )
+        } catch (err) {
+          if (turn.cancelled || turn.abort.signal.aborted) {
+            turn.cancelled = true
+          } else {
+            turn.error = (err as Error).message
+          }
+        }
+        if (
+          turn.cancelled ||
+          turn.abort.signal.aborted ||
+          this.turns.get(conversationId) !== turn
+        ) {
+          if (turn.abort.signal.aborted) turn.cancelled = true
+          break
+        }
+        if (
+          !shouldRetryNativeTurn({
+            cancelled: !!turn.cancelled,
+            error: turn.error,
+            toolCount: turn.toolCount,
+            attempts: turn.recoveryAttempts
+          })
+        ) {
+          if (turn.error) {
+            const kind = classifyCliError(turn.error)
+            turn.errorKind = kind
+            if (kind === 'network') turn.error = t('error.network')
+            else if (kind === 'technical') turn.error = t('error.technical')
+            else turn.error = describeError(turn.error)
+          }
+          break
+        }
+        const kind = classifyCliError(turn.error || '')
+        turn.recoveryAttempts += 1
+        const plan = planSameSessionRecovery({
+          keepPartial: false,
+          kind,
+          attempt: turn.recoveryAttempts
+        })
+        this.resetNativeDraft(conversationId, turn)
+        turn.error = undefined
+        this.setPhase(conversationId, turn, plan.phase, plan.recovery)
+        await new Promise((resolve) =>
+          setTimeout(resolve, recoveryRetryDelayMs(kind, turn.recoveryAttempts))
+        )
+        if (turn.cancelled || this.turns.get(conversationId) !== turn) break
+      }
     } catch (err) {
       if (turn.cancelled || turn.abort.signal.aborted) {
         turn.cancelled = true
@@ -809,7 +872,7 @@ export class AgentRuntime {
           const stop = assistantStopKind(event.message.stopReason)
           if (stop === 'cancelled') turn.cancelled = true
           else if (stop === 'error') {
-            turn.error = describeError(event.message.errorMessage ?? t('error.model'))
+            turn.error = event.message.errorMessage ?? t('error.model')
           }
         }
         break
@@ -1356,10 +1419,38 @@ export class AgentRuntime {
     ensureToolCallBlock(turn.blocks, toolCallId, summary)
   }
 
-  private setPhase(conversationId: string, turn: TurnState, phase: TurnPhase): void {
-    if (turn.phase === phase) return
+  private setPhase(
+    conversationId: string,
+    turn: TurnState,
+    phase: TurnPhase,
+    recovery?: TurnRecovery | null
+  ): void {
+    const nextRecovery = isRecoveryPhase(phase) ? (recovery ?? turn.recovery) : null
+    if (turn.phase === phase && recoveryEqual(turn.recovery, nextRecovery)) return
     turn.phase = phase
-    this.deps.emit({ type: 'phase', conversationId, phase })
+    turn.recovery = nextRecovery
+    this.deps.emit({
+      type: 'phase',
+      conversationId,
+      phase,
+      ...(nextRecovery ? { recovery: nextRecovery } : {})
+    })
+  }
+
+  private resetNativeDraft(conversationId: string, turn: TurnState): void {
+    if (turn.flushTimer) {
+      clearTimeout(turn.flushTimer)
+      turn.flushTimer = null
+    }
+    turn.blocks = []
+    turn.slots.clear()
+    turn.buffers.clear()
+    turn.llmTurn = -1
+    turn.toolState.clear()
+    turn.sentCards.clear()
+    turn.reasoningStartedAt.clear()
+    turn.toolCount = 0
+    this.deps.emit({ type: 'start', conversationId })
   }
 
   // -------------------------------------------------------------------------
@@ -1432,6 +1523,7 @@ export class AgentRuntime {
       message,
       tokensUsed: conversation?.tokensUsed ?? 0,
       error: turn.error,
+      errorKind: turn.errorKind,
       cancelled: turn.cancelled
     })
 
