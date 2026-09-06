@@ -9,6 +9,7 @@ import {
   Info,
   Keyboard,
   Palette,
+  Plug,
   ScrollText,
   Terminal
 } from 'lucide-react'
@@ -28,6 +29,7 @@ import { installAnalysisBridge } from './lib/analysisCache'
 import { installInstallRunBridge } from './state/installRunStore'
 import { AppToast } from './components/AppToast'
 import { WorkspaceSettings } from './components/settings/WorkspaceSettings'
+import { ConnectorsSettings } from './components/settings/ConnectorsSettings'
 import { AppearanceSettings } from './components/settings/AppearanceSettings'
 import { NotificationsSettings } from './components/settings/NotificationsSettings'
 import { ConnectSettings } from './components/settings/ConnectSettings'
@@ -62,6 +64,11 @@ const CATEGORY_KEYS: { id: SettingsView; labelKey: MessageKey; icon: React.JSX.E
     id: 'connect',
     labelKey: 'settings.nav.connect',
     icon: <Cable size={NAV_ICON} strokeWidth={1.75} />
+  },
+  {
+    id: 'connectors',
+    labelKey: 'settings.nav.connectors',
+    icon: <Plug size={NAV_ICON} strokeWidth={1.75} />
   },
   {
     id: 'workspace',
@@ -198,6 +205,7 @@ export default function SettingsWindow(): React.JSX.Element {
             {category === 'keybindings' && <KeyBindingsSettings />}
             {category === 'notifications' && <NotificationsSettings />}
             {category === 'connect' && <ConnectSettings />}
+            {category === 'connectors' && <ConnectorsSettings />}
             {category === 'agents' && <AgentsSettings />}
             {category === 'cli' && <CliSettings />}
             {category === 'file-associations' && <FileAssociationsSettings />}

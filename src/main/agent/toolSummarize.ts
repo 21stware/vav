@@ -73,6 +73,12 @@ export function summarizeToolInput(
     }
     case 'web_fetch':
       return truncateToolSummary(String(input.url ?? ''), 120)
+    case 'connector': {
+      const op = String(input.op ?? 'list')
+      const id = input.connector ? ` ${String(input.connector)}` : ''
+      const action = input.action ? ` ${String(input.action)}` : ''
+      return truncateToolSummary(`${op}${id}${action}`.trim(), 120)
+    }
     case 'load_skill': {
       if (input.list || (!input.name && !input.url)) return 'list catalog'
       if (input.url) return truncateToolSummary(`url: ${String(input.url)}`, 120)

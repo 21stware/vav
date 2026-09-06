@@ -28,7 +28,7 @@ export class NodeSecretStore {
   }
 
   load(): void {
-    for (const name of ['api', 'braveSearch', 'tinyfish', 'cloudflare', 'supabase'] as const) {
+    for (const name of ['api', 'braveSearch', 'tinyfish', 'cloudflare', 'supabase', 'vercel'] as const) {
       const value = this.readFile(this.pathFor(name))
       if (value) this.memory.set(name, value)
     }

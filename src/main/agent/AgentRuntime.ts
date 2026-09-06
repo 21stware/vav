@@ -63,7 +63,8 @@ import {
   shouldAutoAcceptChangeSet,
   shouldPauseForApproval,
   shouldSkipToolGate,
-  terminalCommandFromArgs
+  terminalCommandFromArgs,
+  connectorOpFromArgs
 } from './toolApproval'
 import {
   blockFromContent,
@@ -101,6 +102,7 @@ import type { WebSearchService } from '../web/WebSearchService'
 import type { WebFetchService } from '../web/WebFetchService'
 import type { FileSessionStore } from '../store/FileSessionStore'
 import type { SkillService } from './SkillService'
+import type { ConnectorRegistry } from '../connectors/registry'
 import { StickyShell } from '../terminal/StickyShell'
 import { isApprovalApproveText, isApprovalDenyText } from '@shared/i18n'
 import { t } from '../i18n'
@@ -192,6 +194,7 @@ export interface AgentRuntimeDeps {
     apiKey: string | null
     endpoint: string
   }
+  connectors?: ConnectorRegistry
 }
 
 /**
@@ -1242,7 +1245,9 @@ export class AgentRuntime {
       },
       isFileReadOnly: () =>
         !!this.deps.conversations.get(conversationId)?.fileReadOnly,
-      setFileReadOnly: (readOnly) => this.setConversationFileReadOnly(conversationId, readOnly)
+      setFileReadOnly: (readOnly) => this.setConversationFileReadOnly(conversationId, readOnly),
+      connectors: this.deps.connectors,
+      isTimerSession: () => this.deps.conversations.get(conversationId)?.sessionKind === 'timer'
     })
     // Keep fs_write offered in Read mode so the same turn can write after
     // switch_mode; execute-time gates still refuse until Edit is on.
@@ -1301,7 +1306,8 @@ export class AgentRuntime {
 
     const conversation = this.deps.conversations.get(conversationId)
     const mode = conversation?.approvalMode ?? 'auto'
-    const command = terminalCommandFromArgs(name, args)
+    const command =
+      name === 'connector' ? connectorOpFromArgs(name, args) : terminalCommandFromArgs(name, args)
 
     // File Preview Read: hard-block write tools / mutating shell before approval UI.
     // switch_mode itself is allowed through so the user can Approve → Edit.

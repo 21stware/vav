@@ -13,10 +13,15 @@ export type SettingsIpcStore = {
 }
 
 export type SettingsIpcSecrets = {
-  clear: (slot: 'api' | 'braveSearch' | 'cloudflare' | 'supabase' | 'tinyfish') => void
-  set: (value: string, slot: 'api' | 'braveSearch' | 'cloudflare' | 'supabase' | 'tinyfish') => void
-  get: (slot: 'api' | 'braveSearch' | 'cloudflare' | 'supabase' | 'tinyfish') => string | null
-  maskedHint: (slot?: 'api' | 'braveSearch' | 'cloudflare' | 'supabase' | 'tinyfish') => string | null
+  clear: (slot: 'api' | 'braveSearch' | 'cloudflare' | 'supabase' | 'tinyfish' | 'vercel') => void
+  set: (
+    value: string,
+    slot: 'api' | 'braveSearch' | 'cloudflare' | 'supabase' | 'tinyfish' | 'vercel'
+  ) => void
+  get: (slot: 'api' | 'braveSearch' | 'cloudflare' | 'supabase' | 'tinyfish' | 'vercel') => string | null
+  maskedHint: (
+    slot?: 'api' | 'braveSearch' | 'cloudflare' | 'supabase' | 'tinyfish' | 'vercel'
+  ) => string | null
 }
 
 export type SettingsIpcHost = {
@@ -80,6 +85,7 @@ export function registerSettingsIpc(
     secrets.clear('braveSearch')
     secrets.clear('cloudflare')
     secrets.clear('supabase')
+    secrets.clear('vercel')
     const next = store.reset()
     host.applyResetSideEffects(next)
     const settings = host.currentSettings()
@@ -130,6 +136,13 @@ export function registerSettingsIpc(
     return { hint: secrets.maskedHint('supabase') }
   })
   ipcMain.handle(IPC.settingsSupabaseTokenHint, () => secrets.maskedHint('supabase'))
+
+  ipcMain.handle(IPC.settingsSetVercelToken, (_event, token: string) => {
+    secrets.set(token, 'vercel')
+    host.broadcastSettings(host.currentSettings())
+    return { hint: secrets.maskedHint('vercel') }
+  })
+  ipcMain.handle(IPC.settingsVercelTokenHint, () => secrets.maskedHint('vercel'))
 
   ipcMain.handle(IPC.settingsValidateKey, async (_event, key: string) => {
     const settings = store.get()

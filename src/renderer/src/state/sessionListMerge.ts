@@ -11,6 +11,13 @@ import { regenerateActiveLeaf } from '../../../shared/thread.ts'
 
 export { regenerateActiveLeaf }
 
+function isHiddenSidebarSession(row: {
+  fileId?: string | null
+  sessionKind?: import('../../../shared/sessionKind.ts').SessionKind | null
+}): boolean {
+  return !!row.fileId || row.sessionKind === 'timer'
+}
+
 export type ConversationListItem = {
   id: string
   updatedAt: number
@@ -19,6 +26,7 @@ export type ConversationListItem = {
   archived: boolean
   archivedAt: number | null
   fileId?: string | null
+  sessionKind?: import('../../../shared/sessionKind.ts').SessionKind | null
 }
 
 /** Optimistic one-row patch; file-preview sessions stay in the local list. */
@@ -43,11 +51,19 @@ export function prependConversationIfMissing<C extends { id: string }>(
 
 /** Sidebar ids for shift-range select: archive vs live, never file-preview rows. */
 export function listedConversationIdsForSelect(
-  conversations: Array<{ id: string; archived?: boolean; fileId?: string | null }>,
+  conversations: Array<{
+    id: string
+    archived?: boolean
+    fileId?: string | null
+    sessionKind?: import('../../../shared/sessionKind.ts').SessionKind | null
+  }>,
   archived: boolean | undefined
 ): string[] {
   return conversations
-    .filter((c) => (archived ? c.archived && !c.fileId : !c.archived && !c.fileId))
+    .filter((c) => {
+      if (c.sessionKind === 'timer') return false
+      return archived ? c.archived && !c.fileId : !c.archived && !c.fileId
+    })
     .map((c) => c.id)
 }
 
@@ -157,7 +173,7 @@ export function mergeConversationList<T extends ConversationListItem>(
   }
   if (!orderRelevantChange) {
     for (const p of prev) {
-      if (!p.fileId && !nextById.has(p.id)) {
+      if (!isHiddenSidebarSession(p) && !nextById.has(p.id)) {
         orderRelevantChange = true
         break
       }
@@ -165,7 +181,7 @@ export function mergeConversationList<T extends ConversationListItem>(
   }
 
   if (!orderRelevantChange) {
-    // Keep previous order; patch fields from next; keep hydrated file sessions.
+    // Keep previous order; patch fields from next; keep hydrated file / timer sessions.
     const result: T[] = []
     const seen = new Set<string>()
     for (const p of prev) {
@@ -173,7 +189,7 @@ export function mergeConversationList<T extends ConversationListItem>(
       if (n) {
         result.push(n)
         seen.add(n.id)
-      } else if (p.fileId) {
+      } else if (isHiddenSidebarSession(p)) {
         result.push(p)
         seen.add(p.id)
       }
@@ -184,7 +200,7 @@ export function mergeConversationList<T extends ConversationListItem>(
     return result
   }
 
-  const fileSessions = prev.filter((c) => !!c.fileId && !nextById.has(c.id))
+  const fileSessions = prev.filter((c) => isHiddenSidebarSession(c) && !nextById.has(c.id))
   const sorted = [...next].sort((a, b) => {
     const d = b.updatedAt - a.updatedAt
     if (d !== 0) return d

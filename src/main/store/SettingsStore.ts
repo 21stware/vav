@@ -301,6 +301,8 @@ export class SettingsStore {
     if (typeof s.githubTrayEnabled !== 'boolean') s.githubTrayEnabled = true
     if (typeof s.cloudflareTrayEnabled !== 'boolean') s.cloudflareTrayEnabled = false
     if (typeof s.supabaseTrayEnabled !== 'boolean') s.supabaseTrayEnabled = false
+    if (typeof s.vercelTrayEnabled !== 'boolean') s.vercelTrayEnabled = false
+    if (typeof s.vercelProjectId !== 'string') s.vercelProjectId = ''
     if (!s.disabledAgentModels || typeof s.disabledAgentModels !== 'object') {
       s.disabledAgentModels = {}
     } else {
@@ -550,6 +552,7 @@ export class SettingsStore {
         tinyfishSearchKeyPresent: _omitTiny,
         cloudflareApiTokenPresent: _omitCf,
         supabaseAccessTokenPresent: _omitSb,
+        vercelApiTokenPresent: _omitVercel,
         customSurfacePatternUrl: _omitPatternUrl,
         ...rest
       } = this.settings
@@ -558,6 +561,7 @@ export class SettingsStore {
       void _omitTiny
       void _omitCf
       void _omitSb
+      void _omitVercel
       void _omitPatternUrl
       writeFileSync(this.file, JSON.stringify(rest, null, 2), 'utf8')
     } catch (err) {

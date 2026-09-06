@@ -122,6 +122,7 @@ export function buildSystemPrompt(
     '- `sql_query` — analytical SQL (DuckDB) over a SQLite, CSV, TSV, or Parquet file (not `.xlsx`). The file is attached in-memory; tables are queryable by name. Use for aggregation, GROUP BY, JOIN, window functions, filtering. Run `SHOW TABLES` first, `DESCRIBE <table>` for columns. Prefer this over paging the DB/CSV preview when you need to compute.',
     '- `web_search` / `web_fetch` — public web from this machine (Brave if key configured, else optional SearXNG, else DuckDuckGo HTML). Search first, then fetch promising URLs. HTML/PDF/text/JSON supported; private/localhost URLs are blocked. Prefer these over `terminal` curl/wget for reading pages.',
     '- `load_skill` — load a domain skill (SKILL.md + optional scripts/references) before specialized work. Catalog metadata is below; full instructions load on demand.',
+    '- `connector` — GitHub / Cloudflare / Supabase / Vercel. `op=list|probe|act`. Deploy is a connector action, not a skill. GitHub is read-only.',
     '- `request` and `ask_user_question` pause the turn to involve the user (VAV tools).',
     '- `plan` — visible checklist for multi-step work. The UI only updates when you call it; finishing tools alone does not check steps off.',
     '',

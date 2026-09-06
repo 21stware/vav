@@ -10,6 +10,11 @@ export function terminalCommandFromArgs(name: string, args: unknown): string {
   return String((args as { command: unknown }).command ?? '')
 }
 
+export function connectorOpFromArgs(name: string, args: unknown): string {
+  if (name !== 'connector' || !args || typeof args !== 'object' || !('op' in args)) return ''
+  return String((args as { op: unknown }).op ?? '').trim().toLowerCase()
+}
+
 export function shouldSkipToolGate(name: ToolName): boolean {
   return (
     INTERACTIVE_TOOLS.has(name) ||
@@ -37,6 +42,13 @@ export function readonlyApprovalBlock(
       reason: `Read-only session: only read-only shell commands are allowed until Edit (refused: ${command.slice(0, 120)})`
     }
   }
+  if (name === 'connector' && command === 'act') {
+    return {
+      block: true,
+      reason:
+        'Read-only session: connector deploy needs Edit (call switch_mode with mode "edit" first).'
+    }
+  }
   return null
 }
 
@@ -53,6 +65,7 @@ export function shouldPauseForApproval(opts: {
 }): boolean {
   if (shouldAutoAcceptChangeSet(opts.mode)) return false
   if (opts.mode === 'auto') {
+    if (opts.name === 'connector') return opts.command === 'act'
     const highRisk =
       (HIGH_RISK_TOOLS.has(opts.name) || opts.name.startsWith('mcp_')) &&
       !(opts.name === 'terminal' && isReadonlyTerminalCommand(opts.command))
