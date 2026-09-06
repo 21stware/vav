@@ -358,10 +358,12 @@ test('Files Open menu item opens a companion preview window', async () => {
   try {
     const { page } = harness
     await openFilesTray(page)
-    await page.locator('[data-file-path$="hello.md"]').click({ button: 'right' })
+    const file = page.locator('[data-file-path$="hello.md"]')
+    await expect(file).toHaveAttribute('draggable', 'true')
+    await file.click({ button: 'right' })
     await expect
       .poll(async () => (await peekNativeMenu(page))?.map((item) => item.label) ?? [])
-      .toEqual(expect.arrayContaining(['Open', 'Preview']))
+      .toEqual(expect.arrayContaining(['Open', 'Preview', 'Open with default app']))
     const companion = await waitForNewWindow(harness, () => chooseNativeMenu(page, 'Open'))
     await expect(companion.locator('[data-testid="file-preview-name"]')).toHaveText('hello.md', {
       timeout: 20_000

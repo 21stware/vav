@@ -87,6 +87,7 @@ import {
   readBinarySuccess,
   textFileFromWindow
 } from './fileWindows'
+import { runCopyPathsToClipboard, runShowGetInfo } from './fileNativeTransferRun'
 
 function electronShell(): { trashItem: (path: string) => Promise<void>; openPath: (path: string) => Promise<string> } {
   const electron = require('electron') as {
@@ -680,6 +681,49 @@ export class FileService {
       return
     }
     void electronShell().openPath(path)
+  }
+
+  /**
+   * Finder/Explorer “Copy”: the OS clipboard holds the file itself so other
+   * apps (and Finder) can paste it. Text contents stay on the existing Copy
+   * Contents path.
+   */
+  async copyAsFile(
+    paths: string[],
+    conversationId?: string
+  ): Promise<{ ok: true } | { ok: false; error: string }> {
+    if (paths.length === 0) return { ok: false, error: t('files.error.notAllowed') }
+    for (const path of paths) {
+      const denied = this.accessError(path)
+      if (denied) return { ok: false, error: denied }
+      if (this.fsFor(conversationId, path) !== this.fs) {
+        return { ok: false, error: t('files.error.notLocal') }
+      }
+    }
+    try {
+      await runCopyPathsToClipboard(paths)
+      return { ok: true }
+    } catch (err) {
+      return caughtIoError(err, t('files.error.notLocal'))
+    }
+  }
+
+  /** Finder Get Info / Explorer Properties. Local files only. */
+  async getInfo(
+    path: string,
+    conversationId?: string
+  ): Promise<{ ok: true } | { ok: false; error: string }> {
+    const denied = this.accessError(path)
+    if (denied) return { ok: false, error: denied }
+    if (this.fsFor(conversationId, path) !== this.fs) {
+      return { ok: false, error: t('files.error.notLocal') }
+    }
+    try {
+      await runShowGetInfo(path)
+      return { ok: true }
+    } catch (err) {
+      return caughtIoError(err, t('files.error.notLocal'))
+    }
   }
 
   /**
