@@ -9,6 +9,7 @@ Cursor ACP sessions no longer die on startup when Grok (or another family) is se
 ### Reliability
 
 - `cursor-agent acp` is launched with a hyphen `--model` id (`cursor-grok-4.6-medium`), never an ACP bracket overlay. Bracket / family ids on that flag exited the child with "Cannot use this model". `session/set_model` uses the advertised family row only; invented `[effort=…]` overlays are rejected by Cursor.
+- `vavd` and ESM tests no longer crash on boot with `__dirname is not defined` when loading bundled skills (Plugins wiring constructed `SkillService` at control-plane start).
 
 ### Plugins
 
