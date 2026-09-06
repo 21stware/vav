@@ -11,6 +11,7 @@ test('Files tray lists workspace files and opens a session preview', async () =>
     const { page } = harness
     await openFilesTray(page)
     await expect(page.locator('[data-testid="segment-files"]')).toBeVisible()
+    await expect(page.locator('[data-testid="segment-artifacts"]')).toBeVisible()
     await expect(page.locator('[data-testid="segment-git"]')).toBeVisible()
     await expect(page.locator('[data-testid="files-new-file"]')).toBeVisible()
     await expect(page.locator('[data-testid="files-view-mode"]')).toBeVisible()
@@ -33,6 +34,9 @@ test('Git tab stays available and swaps the Files toolbar', async () => {
   try {
     const { page } = harness
     await openFilesTray(page)
+    await page.locator('[data-testid="segment-artifacts"]').click()
+    await expect(page.locator('[data-testid="artifacts-panel"]')).toBeVisible()
+    await expect(page.locator('[data-testid="files-new-file"]')).toHaveCount(0)
     await page.locator('[data-testid="segment-git"]').click()
     await expect(page.locator('[data-testid="git-panel"]')).toBeVisible()
     await expect(page.locator('[data-testid="files-new-file"]')).toHaveCount(0)

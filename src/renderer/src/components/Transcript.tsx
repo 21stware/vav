@@ -34,6 +34,7 @@ import { AgentBrandMark } from './AgentBrandMark'
 import { SessionWorkspaceChrome } from './SessionWorkspaceChrome'
 import { EmptyQuotaUsage } from './EmptyQuotaUsage'
 import { FirstRunChecklist } from './FirstRunChecklist'
+import { TranscriptArtifacts } from './TranscriptArtifacts'
 import { useWorkspaceSwitchMenu } from '../lib/workspaceSwitchMenu'
 import { useT } from '../i18n/useT'
 
@@ -766,6 +767,9 @@ export function Transcript({
             <div className="transcript-stream-status">
               <StreamStatus state="done" />
             </div>
+          ) : null}
+          {!isEmpty && activeId ? (
+            <TranscriptArtifacts conversationId={activeId} messages={messages} />
           ) : null}
         </div>
       </div>

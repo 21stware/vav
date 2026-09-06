@@ -4,9 +4,14 @@ User-facing changes by release. Unreleased work lives at the top until the next 
 
 ## Unreleased
 
-Files in the workbench drag out as real OS files (browser, TextEdit, Finder). The row menu copies the file, opens Get Info / Properties, and opens with the default app.
+Conversations list the files the agent produced under the thread. Files in the workbench drag out as real OS files (browser, TextEdit, Finder). Settings → Logs records user actions and agent internals for debugging, with temporary / session / durable retention.
 
-Settings → Logs records user actions and agent internals for debugging, with temporary / session / durable retention.
+### Artifacts
+
+- After the last message, the transcript lists unique files written on the visible branch (HTML, Office, media, notes, and other writes).
+- Workbench Files tray has an Artifacts tab immediately after Files (before Git) with the same catalog and an empty state when nothing has been written.
+- Click a row to open preview; right-click to reveal or copy the path. Source-only edits collapse behind “more files” when a deliverable is also present.
+- The list updates while a turn is still writing.
 
 ### Files
 
