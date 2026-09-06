@@ -116,11 +116,13 @@ export function collectDialTargets(input: {
   machineId?: string
   discovered?: Array<{ machineId: string; address: string; port: number }>
   localAddresses?: string[]
+  /** This machine’s Bonjour name. Defaults to the OS hostname. */
+  selfMdns?: string
 }): DialTarget[] {
   const port = input.port && input.port > 0 ? input.port : DAEMON_DEFAULT_PORT
   const seen = new Set<string>()
   const localOwn = new Set(input.localAddresses ?? [])
-  const selfMdns = mdnsName()
+  const selfMdns = input.selfMdns ?? mdnsName()
   const out: DialTarget[] = []
   const add = (host: string | undefined, p = port): void => {
     const h = host?.trim()

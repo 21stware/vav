@@ -30,7 +30,7 @@ New session: pick a workspace, pick an agent, ask one thing. Multi-split CLI TUI
 - **Spending** — Settings panel for local usage plus provider subscriptions, and DeepSeek API balance when VAV talks to official DeepSeek
 - **Swarm** (optional) — multi-split raw CLI TUIs; off by default in Settings → Providers
 - **Remote** — Settings → Allow other devices; pair VAV Remote (iOS) or another computer. Conversations and keys stay on this machine
-- **Headless VAV** — `npx @21stware/vavd` (or `npm i -g @21stware/vavd && vavd`) hosts sessions, keys, files, PTY, and agent turns. Desktop, iOS Remote, the local web UI, and the Chrome extension are shells over that daemon.
+- **Headless VAV** — `npx @21stware/vavd` (or `npm i -g @21stware/vavd && vavd`) hosts sessions, keys, files, PTY, and agent turns. `vavc` is the herdr-style control client; `vavcli` is the pi-style agent CLI. Desktop, iOS Remote, the local web UI, and the Chrome extension are shells over that same daemon.
 
 ## Website
 
@@ -63,18 +63,20 @@ Grab a build from [Releases](https://github.com/21stware/vav/releases). Each `v*
 - **macOS** — Developer ID signed and notarized (app + DMG, ticket stapled); open the DMG and drag to Applications. Later versions update in-app (About → Check for Updates).
 - **Windows** — not code-signed; SmartScreen may warn on first open (More info → Run anyway). In-app updates use the NSIS installer feed.
 
-Then in Settings → “vav command”, install the `vav` CLI (defaults to `~/.local/bin`). Run `vav -h` for usage; `vav .` opens a new session in the current directory.
+Then in Settings → “VAV command”, install `vav`, `vavd`, `vavc`, and `vavcli` (defaults to `~/.local/bin`). `vav .` opens a new desktop session in the current directory. `vavd` is the daemon; `vavc` controls sessions; `vavcli` runs a turn in the terminal. All three talk to the same vavd the app can spawn.
 
 On a machine that should host VAV without opening the desktop app:
 
 ```bash
 npx @21stware/vavd
 # or: npm i -g @21stware/vavd && vavd
+vavc session create --cwd .
+vavcli -p "hello"
 ```
 
 Listens on all interfaces by default (`--listen 127.0.0.1` for local-only). Opens a web UI on `http://127.0.0.1:4752`. Paste the pairing line into VAV → Connect or VAV Remote. The local web UI and Chrome extension discover a loopback daemon and pair automatically — or launch the desktop app with `VAVD_URI` / `--vavd-uri` so it opens as a vavd UI without the Connect paste. `VAVD_SPAWN=1` / `--with-vavd` starts vavd as a child of the app and pairs automatically. Packaged builds do that by default (`VAVD_SPAWN=0` / `--no-vavd` keeps the in-process host). The pairing secret is equivalent to local access on that machine. Set `VAV_API_KEY` (and optional `VAV_API_ENDPOINT`) so the daemon can call your model.
 
-From this repo, `npm run vav -- sessions` / `npm run vav -- send "hello"` talks to that daemon over the same phone protocol.
+From this repo, `npm run vavc -- session list` / `npm run vavcli -- -p "hello"` talks to that daemon over the same phone protocol. `npm run vav -- send "hello"` remains as a compatibility alias.
 
 ## Develop
 

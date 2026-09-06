@@ -30,6 +30,8 @@ const pkgDir = resolve(argValue('--dir') || canonicalDir)
 mkdirSync(pkgDir, { recursive: true })
 const outfile = join(pkgDir, 'vavd.js')
 const cliOutfile = join(pkgDir, 'vav.js')
+const vavcOutfile = join(pkgDir, 'vavc.js')
+const vavcliOutfile = join(pkgDir, 'vavcli.js')
 const pkgPath = join(pkgDir, 'package.json')
 if (!existsSync(pkgPath)) {
   cpSync(join(canonicalDir, 'package.json'), pkgPath)
@@ -42,8 +44,10 @@ const { build } = await import(pathToFileURL(esbuildPath).href)
 const rootPkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
 const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'))
 pkg.version = rootPkg.version
-pkg.bin = { vavd: 'vavd.js', vav: 'vav.js' }
-if (!pkg.files.includes('vav.js')) pkg.files = [...pkg.files, 'vav.js']
+pkg.bin = { vavd: 'vavd.js', vav: 'vav.js', vavc: 'vavc.js', vavcli: 'vavcli.js' }
+for (const file of ['vav.js', 'vavc.js', 'vavcli.js']) {
+  if (!pkg.files.includes(file)) pkg.files = [...pkg.files, file]
+}
 writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`)
 
 const shared = {
@@ -74,8 +78,18 @@ await build({
   entryPoints: [join(root, 'src/main/cli/vavRemoteCli.ts')],
   outfile: cliOutfile
 })
+await build({
+  ...shared,
+  entryPoints: [join(root, 'src/main/cli/vavc.ts')],
+  outfile: vavcOutfile
+})
+await build({
+  ...shared,
+  entryPoints: [join(root, 'src/main/cli/vavcli.ts')],
+  outfile: vavcliOutfile
+})
 
-for (const file of [outfile, cliOutfile]) {
+for (const file of [outfile, cliOutfile, vavcOutfile, vavcliOutfile]) {
   let code = readFileSync(file, 'utf8')
   if (!code.startsWith('#!')) code = `#!/usr/bin/env node\n${code}`
   writeFileSync(file, code)
@@ -94,4 +108,4 @@ const readme = join(canonicalDir, 'README.md')
 if (existsSync(readme) && pkgDir !== canonicalDir) {
   cpSync(readme, join(pkgDir, 'README.md'))
 }
-console.log(`[pack-vavd] ${pkg.name}@${pkg.version} → ${outfile} + ${cliOutfile}`)
+console.log(`[pack-vavd] ${pkg.name}@${pkg.version} → ${outfile} + ${cliOutfile} + ${vavcOutfile} + ${vavcliOutfile}`)

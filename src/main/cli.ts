@@ -14,6 +14,7 @@ import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, resolve as resolvePath } from 'node:path'
 import { promisify } from 'node:util'
 import { APP_CLI_NAME } from './brand'
+import { CLI_BIN_NAMES, DAEMON_BIN_NAMES, nodeBinLauncherScript, resolveNodeBinSpec } from './cli/cliBins'
 import { t } from './i18n'
 
 const execFileAsync = promisify(execFile)
@@ -30,6 +31,8 @@ export interface CliStatus {
   error?: string
   /** Soft note after e.g. falling back from /usr/local/bin → ~/.local/bin. */
   notice?: string
+  /** All shims this install writes (`vav` plus vavd / vavc / vavcli). */
+  commands: string[]
 }
 
 const LOCATION_KEY = 'cliInstallLocation'
@@ -46,8 +49,16 @@ function expandLocation(location: CliInstallLocation): string {
   return '/usr/local/bin'
 }
 
-function binaryPath(location: CliInstallLocation): string {
-  return join(expandLocation(location), APP_CLI_NAME)
+function binaryPath(location: CliInstallLocation, name = APP_CLI_NAME): string {
+  return join(expandLocation(location), name)
+}
+
+function daemonStateDir(): string {
+  try {
+    return join(app.getPath('userData'), 'vavd')
+  } catch {
+    return join(homedir(), '.vavd')
+  }
 }
 
 /**
@@ -105,6 +116,14 @@ const CLI_HELP = [
   '',
   'If VAV is already running, the session is added and focused.',
   'The command returns immediately — VAV opens in the background.',
+  '',
+  'This install also writes:',
+  '  vavd     Headless daemon (same process the app can spawn)',
+  '  vavc     Control client — sessions, workspaces, agents (herdr-style)',
+  '  vavcli   Agent CLI — interactive / print / JSON / RPC (pi-style)',
+  '',
+  'Those three talk to vavd over the same phone protocol as the app.',
+  'Run vavc -h or vavcli -h for usage.',
   ''
 ].join('\n')
 
@@ -264,33 +283,33 @@ export async function getCliStatus(): Promise<CliStatus> {
       pathInPath: false,
       version: null,
       installedAt: null,
-      error: t('cli.winUnsupported')
+      error: t('cli.winUnsupported'),
+      commands: [...CLI_BIN_NAMES]
     }
   }
 
   const meta = readMeta()
   const candidate = meta.path ?? binaryPath(meta.preferredLocation)
-  const installed = !!(candidate && existsSync(candidate))
+  const locationDir = candidate ? dirname(candidate) : expandLocation(meta.preferredLocation)
+  const present = CLI_BIN_NAMES.filter((name) => existsSync(join(locationDir, name)))
+  const installed = present.length === CLI_BIN_NAMES.length
   let installedAt = meta.installedAt
-  if (installed && !installedAt) {
+  if (present.includes(APP_CLI_NAME) && !installedAt) {
     try {
-      installedAt = Math.round(statSync(candidate).mtimeMs)
+      installedAt = Math.round(statSync(join(locationDir, APP_CLI_NAME)).mtimeMs)
     } catch {
       installedAt = null
     }
   }
 
-  const locationDir = installed && candidate
-    ? dirname(candidate)
-    : expandLocation(meta.preferredLocation)
-
   return {
     installed,
-    path: installed ? candidate : null,
+    path: present.includes(APP_CLI_NAME) ? join(locationDir, APP_CLI_NAME) : null,
     preferredLocation: meta.preferredLocation,
     pathInPath: await pathEnvHas(locationDir),
-    version: installed ? app.getVersion() : null,
-    installedAt
+    version: present.length ? app.getVersion() : null,
+    installedAt,
+    commands: present
   }
 }
 
@@ -300,6 +319,27 @@ export async function setCliPreferredLocation(
   const meta = readMeta()
   writeMeta({ ...meta, preferredLocation: location })
   return getCliStatus()
+}
+
+function writeDaemonBins(dir: string): string[] {
+  const written: string[] = []
+  const stateDir = daemonStateDir()
+  const resourcesPath = typeof process.resourcesPath === 'string' ? process.resourcesPath : undefined
+  for (const name of DAEMON_BIN_NAMES) {
+    const spec = resolveNodeBinSpec(name, {
+      cwd: process.cwd(),
+      resourcesPath,
+      stateDir
+    })
+    if (!spec) {
+      throw new Error(`missing ${name} binary — pack vavd or run from the VAV repo`)
+    }
+    const target = join(dir, name)
+    writeFileSync(target, nodeBinLauncherScript(spec), { encoding: 'utf8', mode: 0o755 })
+    chmodSync(target, 0o755)
+    written.push(target)
+  }
+  return written
 }
 
 function writeLauncher(location: CliInstallLocation, previousPath: string | null): string {
@@ -312,9 +352,21 @@ function writeLauncher(location: CliInstallLocation, previousPath: string | null
     } catch {
       // Best-effort; the new install still proceeds.
     }
+    const previousDir = dirname(previousPath)
+    for (const name of DAEMON_BIN_NAMES) {
+      const stale = join(previousDir, name)
+      if (stale !== join(dir, name) && existsSync(stale)) {
+        try {
+          unlinkSync(stale)
+        } catch {
+          /* ignore */
+        }
+      }
+    }
   }
   writeFileSync(target, launcherScript(), { encoding: 'utf8', mode: 0o755 })
   chmodSync(target, 0o755)
+  writeDaemonBins(dir)
   writeMeta({
     preferredLocation: location,
     path: target,
@@ -368,7 +420,11 @@ export async function uninstallCli(): Promise<CliStatus> {
   const meta = readMeta()
   const target = meta.path ?? binaryPath(meta.preferredLocation)
   try {
-    if (target && existsSync(target)) unlinkSync(target)
+    const dir = target ? dirname(target) : expandLocation(meta.preferredLocation)
+    for (const name of CLI_BIN_NAMES) {
+      const file = join(dir, name)
+      if (existsSync(file)) unlinkSync(file)
+    }
     writeMeta({
       preferredLocation: meta.preferredLocation,
       path: null,

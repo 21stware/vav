@@ -1,15 +1,22 @@
 /**
- * Phone-protocol client used by the `vav` CLI and process-level vavd tests.
+ * Phone-protocol client used by vavc / vavcli and process-level vavd tests.
  * Same frames as iOS Remote, the web UI, and the Chrome extension.
  */
 import { createConnection, type Socket } from 'node:net'
 import { encodeLine, parseServerMessage, type RemoteServerMessage } from '../../shared/remoteControl.ts'
+import { VAV_WEB_SOCKET_PATH } from '../../shared/vavDiscover.ts'
+import type { VavdTarget } from './vavdTarget.ts'
 
 export type PhoneClient = {
   frames: RemoteServerMessage[]
   send: (message: object) => void
   wait: (until: (msg: RemoteServerMessage) => boolean, timeoutMs?: number) => Promise<RemoteServerMessage[]>
   waitNew: (until: (msg: RemoteServerMessage) => boolean, timeoutMs?: number) => Promise<RemoteServerMessage[]>
+  close: () => void
+}
+
+export type PhoneTransport = {
+  write: (line: string) => void
   close: () => void
 }
 
@@ -27,19 +34,109 @@ export async function connectPhone(opts: {
     socket.once('error', reject)
   })
   const client = attachPhone(socket)
+  await hello(client, opts.secret, opts.device ?? 'vav-cli', opts.omitRole)
+  return client
+}
+
+/** WebSocket attach — same path the Chrome extension uses on loopback. */
+export async function connectPhoneWs(opts: {
+  origin: string
+  secret: string
+  device?: string
+}): Promise<PhoneClient> {
+  const url = new URL(opts.origin)
+  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
+  url.pathname = VAV_WEB_SOCKET_PATH
+  url.search = ''
+  url.hash = ''
+  const ws = new WebSocket(url)
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`websocket timeout: ${url}`)), 8000)
+    ws.addEventListener('open', () => {
+      clearTimeout(timer)
+      resolve()
+    })
+    ws.addEventListener('error', () => {
+      clearTimeout(timer)
+      reject(new Error(`websocket error: ${url}`))
+    })
+  })
+  const client = attachWsPhone(ws)
+  await hello(client, opts.secret, opts.device ?? 'vav-cli', false)
+  return client
+}
+
+export async function connectPhoneTarget(
+  target: VavdTarget,
+  device = 'vav-cli'
+): Promise<PhoneClient> {
+  if (target.kind === 'ws') {
+    return connectPhoneWs({ origin: target.origin, secret: target.secret, device })
+  }
+  return connectPhone({
+    host: target.host,
+    port: target.port,
+    secret: target.secret,
+    device
+  })
+}
+
+function hello(client: PhoneClient, secret: string, device: string, omitRole?: boolean): Promise<RemoteServerMessage[]> {
   const welcomed = client.wait((msg) => msg.type === 'welcome')
   client.send({
     type: 'hello',
     proto: 1,
-    auth: opts.secret,
-    ...(opts.omitRole ? {} : { role: 'phone' }),
-    device: opts.device ?? 'vav-cli'
+    auth: secret,
+    ...(omitRole ? {} : { role: 'phone' }),
+    device
   })
-  await welcomed
-  return client
+  return welcomed
 }
 
 export function attachPhone(socket: Socket): PhoneClient {
+  return attachTransport({
+    write: (line) => {
+      socket.write(line)
+    },
+    close: () => {
+      socket.destroy()
+    },
+    onChunk: (fn) => {
+      socket.setEncoding('utf8')
+      socket.on('data', fn)
+    },
+    onError: (fn) => {
+      socket.on('error', fn)
+    }
+  })
+}
+
+function attachWsPhone(ws: WebSocket): PhoneClient {
+  return attachTransport({
+    write: (line) => {
+      ws.send(line)
+    },
+    close: () => {
+      ws.close()
+    },
+    onChunk: (fn) => {
+      ws.addEventListener('message', (event) => {
+        const text = typeof event.data === 'string' ? event.data : String(event.data)
+        fn(text.endsWith('\n') ? text : `${text}\n`)
+      })
+    },
+    onError: (fn) => {
+      ws.addEventListener('error', () => fn(new Error('websocket error')))
+    }
+  })
+}
+
+function attachTransport(transport: {
+  write: (line: string) => void
+  close: () => void
+  onChunk: (fn: (chunk: string) => void) => void
+  onError: (fn: (err: Error) => void) => void
+}): PhoneClient {
   let buf = ''
   const frames: RemoteServerMessage[] = []
   const pending: Array<{
@@ -59,8 +156,7 @@ export function attachPhone(socket: Socket): PhoneClient {
     }
   }
 
-  socket.setEncoding('utf8')
-  socket.on('data', (chunk: string) => {
+  const ingest = (chunk: string): void => {
     buf += chunk
     const parts = buf.split('\n')
     buf = parts.pop() ?? ''
@@ -76,8 +172,10 @@ export function attachPhone(socket: Socket): PhoneClient {
       frames.push(parsed)
     }
     flushWaiters()
-  })
-  socket.on('error', (err) => {
+  }
+
+  transport.onChunk(ingest)
+  transport.onError((err) => {
     for (const waiter of pending) {
       clearTimeout(waiter.timer)
       waiter.reject(err)
@@ -88,7 +186,7 @@ export function attachPhone(socket: Socket): PhoneClient {
   return {
     frames,
     send(message) {
-      socket.write(encodeLine(message as Parameters<typeof encodeLine>[0]))
+      transport.write(encodeLine(message as Parameters<typeof encodeLine>[0]))
     },
     wait(until, timeoutMs = 8000) {
       if (frames.some((msg) => until(msg))) return Promise.resolve(frames.slice())
@@ -112,7 +210,7 @@ export function attachPhone(socket: Socket): PhoneClient {
     close() {
       for (const waiter of pending) clearTimeout(waiter.timer)
       pending.length = 0
-      socket.destroy()
+      transport.close()
     }
   }
 }

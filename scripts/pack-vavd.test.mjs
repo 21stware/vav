@@ -25,20 +25,29 @@ test('pack-vavd writes electron-free bins that print a pairing URI', async () =>
 
   const vavdJs = join(dir, 'vavd.js')
   const vavJs = join(dir, 'vav.js')
+  const vavcJs = join(dir, 'vavc.js')
+  const vavcliJs = join(dir, 'vavcli.js')
   assert.ok(existsSync(vavdJs))
   assert.ok(existsSync(vavJs))
+  assert.ok(existsSync(vavcJs))
+  assert.ok(existsSync(vavcliJs))
 
   const vavd = readFileSync(vavdJs, 'utf8')
   const cli = readFileSync(vavJs, 'utf8')
+  const vavc = readFileSync(vavcJs, 'utf8')
+  const vavcli = readFileSync(vavcliJs, 'utf8')
   assert.ok(vavd.startsWith('#!/usr/bin/env node'))
   assert.ok(cli.startsWith('#!/usr/bin/env node'))
-  assert.ok(!vavd.includes('from "electron"') && !vavd.includes("from 'electron'"))
-  assert.ok(!cli.includes('from "electron"') && !cli.includes("from 'electron'"))
+  assert.ok(vavc.startsWith('#!/usr/bin/env node'))
+  assert.ok(vavcli.startsWith('#!/usr/bin/env node'))
+  for (const code of [vavd, cli, vavc, vavcli]) {
+    assert.ok(!code.includes('from "electron"') && !code.includes("from 'electron'"))
+  }
 
   const pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'))
   const rootPkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
   assert.equal(pkg.version, rootPkg.version)
-  assert.deepEqual(pkg.bin, { vavd: 'vavd.js', vav: 'vav.js' })
+  assert.deepEqual(pkg.bin, { vavd: 'vavd.js', vav: 'vav.js', vavc: 'vavc.js', vavcli: 'vavcli.js' })
   assert.ok(!pkg.dependencies?.electron)
 
   const state = mkdtempSync(join(tmpdir(), 'vavd-pack-'))

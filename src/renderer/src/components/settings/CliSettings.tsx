@@ -45,7 +45,8 @@ export function CliSettings(): React.JSX.Element {
   }, [])
 
   const location = status?.preferredLocation ?? '~/.local/bin'
-  const targetLabel = `${location}/vav`
+  const commandNames = status?.commands?.length ? status.commands.join(', ') : 'vav, vavd, vavc, vavcli'
+  const targetLabel = `${location} (${commandNames})`
 
   const install = async (): Promise<void> => {
     setBusy(true)
@@ -123,7 +124,11 @@ export function CliSettings(): React.JSX.Element {
               <div>
                 {t('cli.installedAt', { path: status.path, version: versionSuffix })}
               </div>
-              <div className="muted tiny">{t('cli.installedHint')}</div>
+              <div className="muted tiny">
+                {status.commands?.length
+                  ? `${status.commands.join(', ')} · ${t('cli.installedHint')}`
+                  : t('cli.installedHint')}
+              </div>
             </>
           ) : status?.error ? (
             <span className="muted">

@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, it } from 'node:test'
-import { loadOrCreateIdentity, loadOrCreateSecret, persistSecret, writePrivateJson } from './identity.ts'
+import { defaultHostName, loadOrCreateIdentity, loadOrCreateSecret, persistSecret, writePrivateJson } from './identity.ts'
 
 describe('daemon identity', () => {
   it('reuses a persisted machine id', async () => {
@@ -45,6 +45,26 @@ describe('daemon identity', () => {
         const mode = (await stat(join(dir, 'secret.json'))).mode & 0o777
         assert.equal(mode, 0o600)
       }
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('uses a non-empty default host name', () => {
+    assert.ok(defaultHostName().trim().length > 0)
+  })
+
+  it('rotates a corrupt identity and a too-short secret', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vav-id-bad-'))
+    try {
+      await writeFile(join(dir, 'identity.json'), '{not json')
+      const recovered = loadOrCreateIdentity(dir, 'Recovered')
+      assert.equal(recovered.name, 'Recovered')
+      assert.ok(recovered.machineId)
+      await writeFile(join(dir, 'secret.json'), JSON.stringify({ secret: 'short' }))
+      const secret = loadOrCreateSecret(dir)
+      assert.ok(secret.length >= 16)
+      assert.notEqual(secret, 'short')
     } finally {
       await rm(dir, { recursive: true, force: true })
     }

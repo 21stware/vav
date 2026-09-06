@@ -20,6 +20,8 @@ export type VavDiscoverInfo = {
   wsPath: typeof VAV_WEB_SOCKET_PATH
   loopback: boolean
   secret?: string
+  /** Control-plane TCP port (`hello.role=phone`). Older daemons omit this. */
+  port?: number
 }
 
 export function isLoopbackAddress(addr?: string | null): boolean {
@@ -43,7 +45,7 @@ export function webScanPorts(hint?: number[]): number[] {
 }
 
 export function buildDiscoverPayload(
-  opts: { name?: string; version?: string; secret: () => string },
+  opts: { name?: string; version?: string; secret: () => string; port?: number },
   loopback: boolean
 ): VavDiscoverInfo {
   const payload: VavDiscoverInfo = {
@@ -53,6 +55,9 @@ export function buildDiscoverPayload(
     version: (opts.version || '0.0.0').trim() || '0.0.0',
     wsPath: VAV_WEB_SOCKET_PATH,
     loopback
+  }
+  if (typeof opts.port === 'number' && Number.isInteger(opts.port) && opts.port > 0) {
+    payload.port = opts.port
   }
   if (loopback) {
     const secret = opts.secret()

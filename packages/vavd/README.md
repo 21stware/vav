@@ -8,7 +8,10 @@ npx @21stware/vavd
 npm i -g @21stware/vavd && vavd
 # or the 21stware-vavd-*.tgz on each GitHub Release
 # then, from another terminal:
-vav send "hello"
+vavc status
+vavc session create --cwd .
+vavcli -p "hello"
+# `vav send "hello"` still works (alias of vavc send)
 ```
 
 Prints a pairing URI. Use it from:
@@ -17,7 +20,7 @@ Prints a pairing URI. Use it from:
 - VAV Remote (iOS)
 - the local web UI (`http://127.0.0.1:4752`) — discovers and pairs on loopback
 - the Chrome extension side panel — same automatic discovery
-- `npm run vav` in this repo (sessions / send / configure) — also reads `VAVD_URI`
+- `vavc` (herdr-style control: status / session / workspace / agent) and `vavcli` (pi-style print / JSON / RPC / interactive). Also `npm run vavc` / `npm run vavcli` in this repo. They read `VAVD_URI`, `~/.vavd`, or loopback `/discover`.
 
 All of those are the same control-plane client (`hello.role=phone`). Turns run in this process.
 

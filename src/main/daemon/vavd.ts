@@ -36,6 +36,7 @@ import {
 } from './vavdAdmin.ts'
 import { startVavWebBridge } from './VavWebBridge.ts'
 import { VAVD_WEB_DEFAULT_PORT, webScanPorts } from '../../shared/vavDiscover.ts'
+import { clearListenState, probeListenAlive, readListenState, writeListenState } from './listenState.ts'
 
 function argValue(flag: string, fallback?: string): string | undefined {
   const index = process.argv.indexOf(flag)
@@ -94,6 +95,7 @@ function printHelp(): void {
       '  --api-endpoint <url> provider root (or VAV_API_ENDPOINT)',
       '  --no-announce       skip LAN multicast',
       '  --no-web            disable the web UI',
+      '  --force             start even if listen.json still points at a live process',
       '',
       '  clients          list authorized computers',
       '  disconnect <id>  drop live sockets; grant remains',
@@ -132,6 +134,24 @@ async function main(): Promise<void> {
   const port = Number.isFinite(portParsed) ? portParsed : DAEMON_DEFAULT_PORT
   const bind = argValue('--listen', DAEMON_LAN_BIND) ?? DAEMON_LAN_BIND
 
+  const existing = readListenState(stateDir)
+  if (existing && (await probeListenAlive(existing)) && !hasFlag('--force')) {
+    const loopback = existing.host === '127.0.0.1' || existing.host === 'localhost' || existing.host === '::1'
+    process.stdout.write(`vavd already running on ${existing.host}:${existing.port}\n`)
+    process.stdout.write(
+      `${encodeDaemonPairing({
+        v: DAEMON_PROTO_VERSION,
+        secret,
+        machineId: identity.machineId,
+        name: identity.name,
+        host: loopback ? '127.0.0.1' : existing.host,
+        port: existing.port,
+        addresses: loopback ? ['127.0.0.1'] : undefined
+      })}\n`
+    )
+    return
+  }
+
   const host = createLocalWorkspaceHost({ name: identity.name })
   const plane = createVavControlPlane({
     stateDir,
@@ -147,15 +167,26 @@ async function main(): Promise<void> {
   let bound = port
   const pairingOf = (auth = secret): string => {
     const loopback = bind === '127.0.0.1' || bind === 'localhost' || bind === '::1'
+    if (loopback) {
+      return encodeDaemonPairing({
+        v: DAEMON_PROTO_VERSION,
+        secret: auth,
+        machineId: identity.machineId,
+        name: identity.name,
+        host: '127.0.0.1',
+        port: bound,
+        addresses: ['127.0.0.1']
+      })
+    }
     const advertised = advertisedPairingAddresses({ identityName: identity.name })
     return encodeDaemonPairing({
       v: DAEMON_PROTO_VERSION,
       secret: auth,
       machineId: identity.machineId,
       name: identity.name,
-      host: loopback ? '127.0.0.1' : advertised.host,
+      host: advertised.host,
       port: bound,
-      addresses: loopback ? ['127.0.0.1'] : advertised.addresses
+      addresses: advertised.addresses
     })
   }
 
@@ -173,6 +204,7 @@ async function main(): Promise<void> {
   })
 
   bound = await server.listen(port, bind)
+  writeListenState(stateDir, { host: bind === '0.0.0.0' ? '127.0.0.1' : bind, port: bound })
 
   if (!hasFlag('--no-announce')) {
     startAnnouncer({
@@ -202,7 +234,8 @@ async function main(): Promise<void> {
           hub: plane.hub,
           secret: () => secret,
           name: identity.name,
-          version: process.env.npm_package_version || '0.0.0'
+          version: process.env.npm_package_version || '0.0.0',
+          daemonPort: bound
         })
         lastError = undefined
         break
@@ -239,6 +272,7 @@ async function main(): Promise<void> {
   }
 
   const shutdown = (): void => {
+    clearListenState(stateDir)
     stopVavdAdmin(stateDir, admin)
     web?.close()
     plane.dispose()

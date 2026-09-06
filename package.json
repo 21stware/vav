@@ -22,6 +22,8 @@
     "test:e2e:vavd": "playwright test --config e2e/playwright.config.ts e2e/specs/remote-daemon.spec.ts e2e/specs/remote-control.spec.ts",
     "vavd": "node --import ./scripts/register-shared-alias.mjs --experimental-strip-types src/main/daemon/vavd.ts",
     "vav": "node --import ./scripts/register-shared-alias.mjs --experimental-strip-types src/main/cli/vavRemoteCli.ts",
+    "vavc": "node --import ./scripts/register-shared-alias.mjs --experimental-strip-types src/main/cli/vavc.ts",
+    "vavcli": "node --import ./scripts/register-shared-alias.mjs --experimental-strip-types src/main/cli/vavcli.ts",
     "build:phone-ui": "node scripts/build-phone-ui.mjs",
     "pack:vavd": "node scripts/build-phone-ui.mjs && node scripts/pack-vavd.mjs",
     "publish:vavd": "node scripts/publish-vavd.mjs",
@@ -138,6 +140,14 @@
       {
         "from": "packages/vavd/vav.js",
         "to": "vavd/vav.js"
+      },
+      {
+        "from": "packages/vavd/vavc.js",
+        "to": "vavd/vavc.js"
+      },
+      {
+        "from": "packages/vavd/vavcli.js",
+        "to": "vavd/vavcli.js"
       }
     ],
     "asarUnpack": [

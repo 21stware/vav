@@ -268,6 +268,8 @@ export interface CliStatus {
   error?: string
   /** Soft note (e.g. auto-fallback to ~/.local/bin). */
   notice?: string
+  /** All shims this install writes (`vav` plus vavd / vavc / vavcli). */
+  commands?: string[]
 }
 
 export interface CreateConversationOptions {
