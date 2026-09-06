@@ -33,6 +33,7 @@ export type SpawnLocalVavdOptions = {
   stubApprove?: boolean
   cwd?: string
   extraEnv?: NodeJS.ProcessEnv
+  pairingTimeoutMs?: number
 }
 
 export function findVavdScript(from = process.cwd()): string | null {
@@ -158,7 +159,7 @@ export async function spawnLocalVavd(
     env: childEnv
   })
 
-  const started = await waitForPairing(child)
+  const started = await waitForPairing(child, options.pairingTimeoutMs)
   const payload = parseDaemonPairing(started.pairing)
   if (!payload) {
     child.kill('SIGTERM')
@@ -197,32 +198,42 @@ function parseWebOrigin(stdout: string): string | undefined {
   return match?.[0]
 }
 
-function waitForPairing(
+export function waitForPairing(
   child: ChildProcess,
   timeoutMs = 12_000
 ): Promise<{ pairing: string; stdout: string }> {
   return new Promise((resolve, reject) => {
     let stdout = ''
     let stderrTail = ''
+    let settled = false
+    const finish = (fn: () => void): void => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      child.stdout?.off('data', onStdout)
+      child.stderr?.off('data', onStderr)
+      child.off('exit', onExit)
+      fn()
+    }
     const timer = setTimeout(() => {
-      reject(new Error(`vavd did not print pairing.\n${stdout}\n${stderrTail}`))
+      child.kill('SIGTERM')
+      finish(() => reject(new Error(`vavd did not print pairing.\n${stdout}\n${stderrTail}`)))
     }, timeoutMs)
-    child.stderr?.setEncoding('utf8')
-    child.stderr?.on('data', (chunk: string) => {
+    const onStderr = (chunk: string): void => {
       stderrTail += chunk
-    })
-    child.stdout?.setEncoding('utf8')
-    child.stdout?.on('data', (chunk: string) => {
+    }
+    const onStdout = (chunk: string): void => {
       stdout += chunk
       const line = stdout.split('\n').find((row) => row.startsWith('vav-daemon:'))
-      if (line) {
-        clearTimeout(timer)
-        resolve({ pairing: line.trim(), stdout })
-      }
-    })
-    child.on('exit', (code) => {
-      clearTimeout(timer)
-      reject(new Error(`vavd exited ${code}: ${stderrTail || stdout}`))
-    })
+      if (line) finish(() => resolve({ pairing: line.trim(), stdout }))
+    }
+    const onExit = (code: number | null): void => {
+      finish(() => reject(new Error(`vavd exited ${code}: ${stderrTail || stdout}`)))
+    }
+    child.stderr?.setEncoding('utf8')
+    child.stderr?.on('data', onStderr)
+    child.stdout?.setEncoding('utf8')
+    child.stdout?.on('data', onStdout)
+    child.on('exit', onExit)
   })
 }
