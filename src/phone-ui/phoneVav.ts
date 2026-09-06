@@ -542,7 +542,12 @@ export function installPhoneVav(transport: PhoneTransport): PhoneVavHandle {
       watch: async () => undefined,
       unwatch: async () => undefined,
       onDirty: () => () => undefined,
-      quickLook: async () => undefined
+      quickLook: async () => undefined,
+      openWithDefault: async () => ({ ok: false as const, error: 'unavailable' }),
+      startDrag: () => undefined,
+      prefetchDragIcon: async () => undefined,
+      copyAsFile: async () => ({ ok: false as const, error: 'unavailable' }),
+      getInfo: async () => ({ ok: false as const, error: 'unavailable' })
     },
     pty: {
       list: async () => ({ sessions: [], layouts: { bash: null, agents: {} } }),

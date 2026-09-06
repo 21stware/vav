@@ -251,6 +251,14 @@ const api: VavApi = {
     workingCopyStatus: (path: string) => ipcRenderer.invoke(IPC.filesWorkingCopyStatus, path),
     quickLook: (path: string) => ipcRenderer.invoke(IPC.filesQuickLook, path),
     openWithDefault: (path: string) => ipcRenderer.invoke(IPC.filesOpenWithDefault, path),
+    startDrag: (paths: string[]) => {
+      ipcRenderer.send(IPC.filesStartDrag, paths)
+    },
+    prefetchDragIcon: (path: string) => ipcRenderer.invoke(IPC.filesPrefetchDragIcon, path),
+    copyAsFile: (paths: string[], conversationId?: string) =>
+      ipcRenderer.invoke(IPC.filesCopyAsFile, paths, conversationId),
+    getInfo: (path: string, conversationId?: string) =>
+      ipcRenderer.invoke(IPC.filesGetInfo, path, conversationId),
     watch: (conversationId: string, root: string | null) =>
       ipcRenderer.invoke(IPC.filesWatch, conversationId, root),
     onDirty: (handler) => subscribe(IPC.filesDirty, handler),

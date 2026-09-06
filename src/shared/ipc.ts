@@ -1100,6 +1100,24 @@ export interface VavApi {
     quickLook(path: string): Promise<void>
     /** Open path with the OS default application (binary "Open with …"). */
     openWithDefault(path: string): Promise<{ ok: true } | { ok: false; error: string }>
+    /**
+     * Begin an OS file drag (Electron `webContents.startDrag`). Other apps
+     * receive a real file URL — browser, TextEdit, Finder — not a JS File blob.
+     * Must be called from a `dragstart` handler.
+     */
+    startDrag(paths: string[]): void
+    /** Warm the drag icon cache (`app.getFileIcon`) before the gesture. */
+    prefetchDragIcon(path: string): Promise<void>
+    /** Finder/Explorer Copy: put the file itself on the system clipboard. */
+    copyAsFile(
+      paths: string[],
+      conversationId?: string
+    ): Promise<{ ok: true } | { ok: false; error: string }>
+    /** Finder Get Info / Explorer Properties. */
+    getInfo(
+      path: string,
+      conversationId?: string
+    ): Promise<{ ok: true } | { ok: false; error: string }>
     watch(conversationId: string, root: string | null): Promise<void>
     onDirty(handler: (event: FsDirtyEvent) => void): () => void
     /** Resolves a dropped File to its absolute path. */
@@ -1944,6 +1962,10 @@ export const IPC = {
   fileSessionsDelete: 'vav:file-sessions:delete',
   fileSessionsForceDelete: 'vav:file-sessions:force-delete',
   filesOpenWithDefault: 'vav:files:open-with-default',
+  filesStartDrag: 'vav:files:start-drag',
+  filesPrefetchDragIcon: 'vav:files:prefetch-drag-icon',
+  filesCopyAsFile: 'vav:files:copy-as-file',
+  filesGetInfo: 'vav:files:get-info',
 
   gitStatus: 'vav:git:status',
   gitDiff: 'vav:git:diff',

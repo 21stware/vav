@@ -3,9 +3,14 @@ import { ChevronDown, Save, X } from 'lucide-react'
 import { isClipPath } from '@shared/clipPath'
 import type { FileAssociationStatus, FileInspectResult } from '@shared/ipc'
 import { basename } from '../../lib/path'
-import { fileManagerLabel } from '../../lib/platform'
+import { fileManagerLabel, IS_MAC } from '../../lib/platform'
 import { FileManagerIcon } from '../FileManagerIcon'
 import { menuAnchor, showMenu } from '../../lib/nativeMenu'
+import {
+  nativeFileDragProps,
+  nativeOsFileActionsAvailable
+} from '../../lib/nativeFileDrag'
+import { useSessionStore } from '../../state/sessionStore'
 import { Button } from '../ui'
 import { useT } from '../../i18n/useT'
 
@@ -68,6 +73,49 @@ export function FileViewerHeader({
           className={`file-viewer-name${noDrag}`}
           data-testid="file-preview-name"
           title={isClipPath(filePath) ? (info?.name ?? basename(filePath)) : filePath}
+          {...nativeFileDragProps(filePath)}
+          onContextMenu={(event) => {
+            event.preventDefault()
+            event.stopPropagation()
+            const id = useSessionStore.getState().activeId
+            void showMenu(
+              [
+                {
+                  label: t('preview.openWithDefault'),
+                  onSelect: () => void window.vav.files.openWithDefault(filePath)
+                },
+                { label: '', divider: true },
+                ...(nativeOsFileActionsAvailable() && typeof window.vav.files.copyAsFile === 'function'
+                  ? [
+                      {
+                        label: t('files.copyFile'),
+                        onSelect: () => void window.vav.files.copyAsFile([filePath], id)
+                      }
+                    ]
+                  : []),
+                {
+                  label: t('files.copyPath'),
+                  onSelect: () => void window.vav.conversations.copyToClipboard(filePath)
+                },
+                {
+                  label: t('tools.revealInFm', { fileManager: fileManagerLabel() }),
+                  onSelect: () =>
+                    void window.vav.conversations
+                      .revealInFinder(filePath)
+                      .catch((err) => revealFailed(err as Error))
+                },
+                ...(nativeOsFileActionsAvailable() && typeof window.vav.files.getInfo === 'function'
+                  ? [
+                      {
+                        label: IS_MAC ? t('files.getInfo') : t('files.properties'),
+                        onSelect: () => void window.vav.files.getInfo(filePath, id)
+                      }
+                    ]
+                  : [])
+              ],
+              { x: event.clientX, y: event.clientY }
+            )
+          }}
         >
           {info?.name ?? basename(filePath)}
         </span>

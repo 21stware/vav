@@ -1,13 +1,18 @@
 import { useEffect, useState } from 'react'
+import { Columns3, House, List } from 'lucide-react'
+import type { FileEntry, FileViewMode } from '@shared/types'
 import { recentsForMachine } from '@shared/workspaceHost'
 import { useSessionStore } from '../state/sessionStore'
 import { useT } from '../i18n/useT'
-import { basename } from '../lib/path'
+import { basename, dirname } from '../lib/path'
+import { canGoParent, confirmFolderPath } from '../lib/remoteFolderPick'
 import { Button, Modal } from './ui'
+import { FilePickBrowser, type FilePickDirs } from './filesPanel/FilePickBrowser'
 
 /**
  * Folder picker for a remote workspace host — the native dialog only sees
- * this machine's disks.
+ * this machine's disks. Reuses the Files-panel tree / column browser and
+ * always opens on that host's home (`~`).
  */
 export function RemoteFolderPicker(): React.JSX.Element | null {
   const t = useT()
@@ -18,10 +23,17 @@ export function RemoteFolderPicker(): React.JSX.Element | null {
   const setWorkingDirectory = useSessionStore((s) => s.setWorkingDirectory)
   const createConversation = useSessionStore((s) => s.createConversation)
   const finishLocateWorkspace = useSessionStore((s) => s.finishLocateWorkspace)
+  const fileViewMode = useSessionStore((s) => s.settings.fileViewMode ?? 'tree')
   const [path, setPath] = useState('')
-  const [entries, setEntries] = useState<{ name: string; path: string }[]>([])
-  const [error, setError] = useState<string | null>(null)
-  const [loading, setLoading] = useState(false)
+  const [home, setHome] = useState('')
+  const [dirs, setDirs] = useState<FilePickDirs>({})
+  const [loadingDirs, setLoadingDirs] = useState<string[]>([])
+  const [dirErrors, setDirErrors] = useState<Record<string, string>>({})
+  const [selected, setSelected] = useState<FileEntry | null>(null)
+  const [expanded, setExpanded] = useState<string[]>([])
+  const [columnPath, setColumnPath] = useState<string[]>([])
+  const [viewMode, setViewMode] = useState<FileViewMode>(fileViewMode)
+  const [filter, setFilter] = useState('')
 
   const machineId = pick?.machineId ?? ''
   const host = hosts.find((h) => h.id === machineId)
@@ -31,67 +43,143 @@ export function RemoteFolderPicker(): React.JSX.Element | null {
   useEffect(() => {
     if (!pick) {
       setPath('')
+      setHome('')
+      setDirs({})
+      setLoadingDirs([])
+      setDirErrors({})
+      setSelected(null)
+      setExpanded([])
+      setColumnPath([])
+      setFilter('')
       return
     }
     let alive = true
-    setError(null)
-    setEntries([])
-    const seeded = host?.defaultPath || host?.home || ''
+    const seeded = host?.home || ''
+    const applyHome = (next: string): void => {
+      if (!alive || !next) return
+      setHome(next)
+      setPath(next)
+      setSelected(null)
+      setExpanded([])
+      setColumnPath([])
+      setFilter('')
+    }
     if (seeded) {
-      setPath(seeded)
+      applyHome(seeded)
       return () => {
         alive = false
       }
     }
-    void window.vav.hosts.home(pick.machineId).then((home) => {
-      if (!alive) return
-      setPath((current) => current || home)
+    void window.vav.hosts.home(pick.machineId).then((value) => {
+      applyHome(value)
     })
     return () => {
       alive = false
     }
-  }, [pick, host?.defaultPath, host?.home])
+  }, [pick, host?.home])
 
   useEffect(() => {
     if (!pick || !path) return
     let alive = true
-    setLoading(true)
+    setLoadingDirs((current) => (current.includes(path) ? current : [...current, path]))
     void window.vav.hosts.listDir(pick.machineId, path).then((listing) => {
       if (!alive) return
-      setLoading(false)
-      setError(listing.error ?? null)
-      setEntries(listing.entries.filter((e) => e.isDirectory).map((e) => ({ name: e.name, path: e.path })))
+      setLoadingDirs((current) => current.filter((dir) => dir !== path))
+      setDirErrors((current) => {
+        const next = { ...current }
+        if (listing.error) next[path] = listing.error
+        else delete next[path]
+        return next
+      })
+      setDirs((current) => ({ ...current, [path]: listing.entries }))
     })
     return () => {
       alive = false
     }
   }, [pick, path])
 
+  const columnsKey = columnPath.join('\0')
+  useEffect(() => {
+    if (!pick || columnPath.length === 0) return
+    let alive = true
+    for (const dir of columnPath) {
+      setLoadingDirs((current) => (current.includes(dir) ? current : [...current, dir]))
+      void window.vav.hosts.listDir(pick.machineId, dir).then((listing) => {
+        if (!alive) return
+        setLoadingDirs((current) => current.filter((item) => item !== dir))
+        setDirErrors((current) => {
+          const next = { ...current }
+          if (listing.error) next[dir] = listing.error
+          else delete next[dir]
+          return next
+        })
+        setDirs((current) => ({ ...current, [dir]: listing.entries }))
+      })
+    }
+    return () => {
+      alive = false
+    }
+    // columnsKey is the stable listing of columnPath.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pick, columnsKey])
+
   if (!pick) return null
 
-  const parent = path.replace(/[/\\]+$/, '').replace(/[/\\][^/\\]+$/, '') || path
+  const loadDir = (dir: string): void => {
+    if (!pick || dirs[dir] || loadingDirs.includes(dir)) return
+    setLoadingDirs((current) => [...current, dir])
+    void window.vav.hosts.listDir(pick.machineId, dir).then((listing) => {
+      setLoadingDirs((current) => current.filter((item) => item !== dir))
+      setDirErrors((current) => {
+        const next = { ...current }
+        if (listing.error) next[dir] = listing.error
+        else delete next[dir]
+        return next
+      })
+      setDirs((current) => ({ ...current, [dir]: listing.entries }))
+    })
+  }
 
-  const select = async (dismiss: () => void): Promise<void> => {
+  const enterDir = (next: string): void => {
+    setPath(next)
+    setSelected(null)
+    setExpanded([])
+    setColumnPath([])
+    setFilter('')
+  }
+
+  const toggleExpand = (dir: string): void => {
+    setExpanded((current) => {
+      if (current.includes(dir)) return current.filter((item) => item !== dir)
+      return [...current, dir]
+    })
+    loadDir(dir)
+  }
+
+  const select = async (): Promise<void> => {
+    const chosen = confirmFolderPath(path, selected)
+    // Drop the modal before the workspace hydrate — that can outlive the
+    // conversation write, and a leaving Modal would keep matching Files rows.
+    close()
     if (pick.purpose === 'locate' && pick.conversationId) {
-      await finishLocateWorkspace(pick.conversationId, path)
-      dismiss()
+      await finishLocateWorkspace(pick.conversationId, chosen)
       return
     }
     if (!pick.conversationId) {
       await createConversation({
-        workingDirectory: path,
+        workingDirectory: chosen,
         machineId: pick.machineId,
         openIn: 'here'
       })
-    } else {
-      await setWorkingDirectory(pick.conversationId, path, pick.machineId)
+      return
     }
-    dismiss()
+    await setWorkingDirectory(pick.conversationId, chosen, pick.machineId)
   }
 
   return (
     <Modal
       title={t('hosts.pickTitle', { name: hostName })}
+      size="wide"
       onDismiss={close}
       actions={(dismiss) => (
         <>
@@ -100,17 +188,54 @@ export function RemoteFolderPicker(): React.JSX.Element | null {
             label={t('hosts.pickSelect')}
             variant="primary"
             testId="remote-folder-select"
-            onClick={() => void select(dismiss)}
+            onClick={() => void select()}
           />
         </>
       )}
     >
       <div className="remote-folder-picker" data-testid="remote-folder-picker">
+        <div className="remote-folder-toolbar">
+          <Button
+            icon={<House size={14} />}
+            size="sm"
+            title={t('hosts.pickHome')}
+            testId="remote-folder-home"
+            disabled={!home || path === home}
+            onClick={() => enterDir(home)}
+          />
+          <Button
+            label={t('hosts.pickParent')}
+            size="sm"
+            testId="remote-folder-parent"
+            disabled={!canGoParent(path)}
+            onClick={() => enterDir(dirname(path))}
+          />
+          <Button
+            icon={viewMode === 'tree' ? <List size={14} /> : <Columns3 size={14} />}
+            size="sm"
+            title={viewMode === 'tree' ? t('files.viewList') : t('files.viewColumn')}
+            testId="remote-folder-view-mode"
+            onClick={() => setViewMode((mode) => (mode === 'tree' ? 'column' : 'tree'))}
+          />
+          <input
+            className="text-field remote-folder-filter"
+            value={filter}
+            placeholder={t('common.search')}
+            spellCheck={false}
+            data-testid="remote-folder-filter"
+            onChange={(event) => setFilter(event.target.value)}
+          />
+        </div>
         <div className="remote-folder-path">
           <input
             className="text-field"
             value={path}
-            onChange={(event) => setPath(event.target.value)}
+            onChange={(event) => {
+              setPath(event.target.value)
+              setSelected(null)
+              setExpanded([])
+              setColumnPath([])
+            }}
             spellCheck={false}
             data-testid="remote-folder-path"
           />
@@ -123,42 +248,28 @@ export function RemoteFolderPicker(): React.JSX.Element | null {
                 key={`${ref.machineId}:${ref.path}`}
                 type="button"
                 className="remote-folder-row"
-                onClick={() => setPath(ref.path)}
+                onClick={() => enterDir(ref.path)}
               >
                 {basename(ref.path)}
               </button>
             ))}
           </div>
         )}
-        {path !== parent && (
-          <button
-            type="button"
-            className="remote-folder-row"
-            data-testid="remote-folder-parent"
-            onClick={() => setPath(parent)}
-          >
-            {t('hosts.pickParent')}
-          </button>
-        )}
-        {loading && <div className="form-hint">{t('common.loading')}</div>}
-        {error && (
-          <div className="session-workspace-error" data-testid="remote-folder-error">
-            {error}
-          </div>
-        )}
-        <div className="remote-folder-list">
-          {entries.map((entry) => (
-            <button
-              key={entry.path}
-              type="button"
-              className="remote-folder-row"
-              data-testid={`remote-folder-entry-${entry.name}`}
-              onClick={() => setPath(entry.path)}
-            >
-              {entry.name}
-            </button>
-          ))}
-        </div>
+        <FilePickBrowser
+          root={path}
+          dirs={dirs}
+          loadingDirs={loadingDirs}
+          dirErrors={dirErrors}
+          selectedPath={selected?.path ?? null}
+          expanded={expanded}
+          viewMode={viewMode}
+          columnPath={columnPath}
+          filter={filter}
+          onSelect={setSelected}
+          onToggleExpand={toggleExpand}
+          onEnterDir={enterDir}
+          onColumnPath={setColumnPath}
+        />
       </div>
     </Modal>
   )

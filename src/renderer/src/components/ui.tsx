@@ -669,13 +669,16 @@ export function Modal({
   title,
   children,
   actions,
-  onDismiss
+  onDismiss,
+  size = 'default'
 }: {
   title: string
   children: ReactNode
   /** Receives animated dismiss so action buttons share the exit path. */
   actions: (dismiss: () => void) => ReactNode
   onDismiss: () => void
+  /** Wide: file-browser pickers that need room for tree / columns. */
+  size?: 'default' | 'wide'
 }): React.JSX.Element {
   const [leaving, setLeaving] = useState(false)
   const leavingRef = useRef(false)
@@ -713,7 +716,10 @@ export function Modal({
       data-leaving={leaving || undefined}
       onMouseDown={dismiss}
     >
-      <div className="modal" onMouseDown={(event) => event.stopPropagation()}>
+      <div
+        className={size === 'wide' ? 'modal wide' : 'modal'}
+        onMouseDown={(event) => event.stopPropagation()}
+      >
         <div className="modal-title">{title}</div>
         <div className="modal-body">{children}</div>
         <div className="modal-actions">{actions(dismiss)}</div>
