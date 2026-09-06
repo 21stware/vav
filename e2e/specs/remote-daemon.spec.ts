@@ -152,7 +152,7 @@ test('pair vavd, open its folder, list a file that only exists there', async () 
       { machineId: paired.host.id, path: daemon.workspace }
     )
     expect(dirs.entries.map((e) => e.name)).toContain('remote-pkg')
-    expect(dirs.entries.map((e) => e.name)).not.toContain('remote-only.md')
+    expect(dirs.entries.map((e) => e.name)).toContain('remote-only.md')
 
     await remote.locator(`[data-testid="session-row"][data-conversation-id="${created.id}"]`).click()
     await openFilesTray(remote)
@@ -244,6 +244,7 @@ test('workdir menu opens the remote folder picker and binds the session', async 
     await expect(remote.locator('[data-testid="remote-folder-entry-remote-pkg"]')).toBeVisible()
     await remote.locator('[data-testid="remote-folder-entry-remote-pkg"]').click()
     await remote.locator('[data-testid="remote-folder-select"]').click()
+    await expect(picker).toHaveCount(0)
 
     const nested = join(daemon.workspace, 'remote-pkg')
     const activeId = await remote
@@ -780,6 +781,7 @@ test('pair another VAV, pull its sessions and folder recents', async () => {
     await expect(picker).toBeVisible()
     await remote.locator('[data-testid="remote-folder-path"]').fill(host.extraWorkspace!)
     await remote.locator('[data-testid="remote-folder-select"]').click()
+    await expect(picker).toHaveCount(0)
     await expect(remote.locator('[data-file-path$="host-only.md"]')).toBeVisible()
 
     await remote.evaluate((path) => window.vav.conversations.revealInFinder(path), host.extraWorkspace)

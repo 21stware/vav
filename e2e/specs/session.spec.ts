@@ -22,7 +22,7 @@ test('sidebar lists the session, groups by workspace, and archives stay reachabl
   }
 })
 
-test('Connect button pops the connect window with phone and machine pairing', async () => {
+test('Remote Tunnel button pops the tunnel window with phone and machine pairing', async () => {
   const harness = await launchVav()
   try {
     const { page } = harness
@@ -31,9 +31,11 @@ test('Connect button pops the connect window with phone and machine pairing', as
     })
     await expect(connect.locator('[data-testid="connect-window"]')).toBeVisible()
     // Incoming (phone / QR) stacked above outgoing (pair a remote machine).
-    await expect(connect.locator('[data-testid="settings-machines"]')).toContainText('Connect to')
+    await expect(connect.locator('[data-testid="settings-machines"]')).toContainText(
+      'Join remote tunnel'
+    )
     await expect(connect.locator('[data-testid="connect-panel-incoming"]')).toContainText(
-      'Allow to be remote connected'
+      'Allow remote tunnel'
     )
     await expect(connect.locator('[data-testid="settings-remote-enabled"]')).toBeVisible()
     await expect(connect.locator('[data-testid="settings-machines-pair-input"]')).toBeVisible()

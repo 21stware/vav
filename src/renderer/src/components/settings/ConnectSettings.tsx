@@ -13,7 +13,7 @@ const QR_PX = 152
 const COPIED_MS = 1600
 
 /**
- * Settings → Connect and the sidebar Connect popup.
+ * Settings → Remote Tunnel and the sidebar Remote Tunnel popup.
  *
  * Incoming (QR + pairing URI) stacked above outgoing (pair a machine).
  * No card chrome — layout gap is the only separator.
