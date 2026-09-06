@@ -5054,6 +5054,11 @@
 
 /* File tree rows — fixed metrics so Retina zoom / long CJK names stay aligned.
    No hover wash, no bg/color transitions, no OS text-select flash on dblclick. */
+.tree-row[draggable='true'],
+.file-viewer-name[draggable='true'] {
+  -webkit-user-drag: element;
+}
+
 .tree-row {
   --tree-icon: 16px;
   --tree-chevron: 14px;

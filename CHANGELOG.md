@@ -4,7 +4,7 @@ User-facing changes by release. Unreleased work lives at the top until the next 
 
 ## Unreleased
 
-Settings → Logs records user actions and agent internals for debugging, with temporary / session / durable retention. Conversations list the files the agent produced under the thread.
+Conversations list the files the agent produced under the thread. Files in the workbench drag out as real OS files (browser, TextEdit, Finder). Settings → Logs records user actions and agent internals for debugging, with temporary / session / durable retention.
 
 ### Artifacts
 
@@ -12,6 +12,11 @@ Settings → Logs records user actions and agent internals for debugging, with t
 - Workbench Files tray has an Artifacts tab immediately after Files (before Git) with the same catalog and an empty state when nothing has been written.
 - Click a row to open preview; right-click to reveal or copy the path. Source-only edits collapse behind “more files” when a deliverable is also present.
 - The list updates while a turn is still writing.
+
+### Files
+
+- Drag a Files row or the preview title out of VAV and other apps receive the real file (Electron `startDrag`), not an HTML ghost.
+- Right-click Copy puts the file on the clipboard the way Finder / Explorer do. Get Info (macOS) and Properties (Windows) open the system inspector. Open with default app is on the same menu.
 
 ### Logs
 

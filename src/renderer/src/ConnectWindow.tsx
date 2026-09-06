@@ -10,8 +10,9 @@ import { installDefaultContextMenu } from './lib/nativeMenu'
 import { ConnectSettings } from './components/settings/ConnectSettings'
 
 /**
- * Sidebar Connect popup: phone QR + vavd machine pairing in a small window of
- * its own. Same light store bootstrap as Settings — no transcript loading.
+ * Sidebar Remote Tunnel popup: phone QR + vavd machine pairing in a small
+ * window of its own. Same light store bootstrap as Settings — no transcript
+ * loading. Named “tunnel” so later Connectors stay a separate concept.
  */
 export default function ConnectWindow(): React.JSX.Element {
   const t = useT()
