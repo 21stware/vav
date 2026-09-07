@@ -1,6 +1,10 @@
 import { ChevronDown, House, Monitor } from 'lucide-react'
 import { isLocalMachine, listedServices, normalizeMachineId } from '@shared/workspaceHost'
-import { appearanceForMachine, patchMachineAppearance } from '@shared/machineAppearance'
+import {
+  appearanceBaseForMachine,
+  appearanceForMachine,
+  patchMachineAppearance
+} from '@shared/machineAppearance'
 import type { ThemeMode } from '@shared/types'
 import { useSessionStore } from '../../state/sessionStore'
 import { useT } from '../../i18n/useT'
@@ -29,7 +33,11 @@ export function SidebarServiceBar(): React.JSX.Element {
   }
 
   const openMore = (machineId: string, anchor: HTMLElement): void => {
-    const current = appearanceForMachine(settings, machineId).theme
+    const current = appearanceForMachine(
+      settings,
+      machineId,
+      appearanceBaseForMachine(settings, machineId, hosts)
+    ).theme
     const applyTheme = (theme: ThemeMode): void => {
       void updateSettings({
         machineAppearances: patchMachineAppearance(settings.machineAppearances, machineId, {
@@ -61,11 +69,15 @@ export function SidebarServiceBar(): React.JSX.Element {
       },
       {
         label: t('sidebar.pairDevice'),
-        onSelect: () => void window.vav.window.openConnect()
+        onSelect: () => useSessionStore.getState().openSettings('connect')
+      },
+      {
+        label: t('sidebar.configureService'),
+        icon: lucideMenuIcon('settings'),
+        onSelect: () => useSessionStore.getState().openSettings('agents')
       },
       {
         label: t('sidebar.serviceThemeSettings'),
-        icon: lucideMenuIcon('settings'),
         onSelect: () => useSessionStore.getState().openSettings('appearance')
       }
     ]

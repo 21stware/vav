@@ -172,6 +172,7 @@ export const zhCN = {
   'sidebar.switchService': '切换服务',
   'sidebar.serviceTheme': '此连接的主题',
   'sidebar.serviceThemeSettings': '外观设置…',
+  'sidebar.configureService': '配置此 vavd…',
   'sidebar.pairDevice': '配对其他设备…',
   'sidebar.emptyRemoteTitle': '这台设备上还没有会话',
   'sidebar.emptyRemoteDesc': '新建一个会话，工作目录和 Agent 会在 {name} 上运行',
@@ -653,6 +654,8 @@ export const zhCN = {
   'settings.nav.appearance': '外观',
   'settings.nav.notifications': '通知',
   'settings.nav.connect': '远程隧道',
+  'settings.hostSettingsUnavailable': '无法读取该连接的服务设置',
+  'settings.hostSettingsUnavailableHint': '这次改动没有写到远端。请确认该 vavd 在线后再试。',
   'settings.nav.connectors': '连接器',
   'settings.nav.agents': 'Providers',
   'settings.nav.accounts': '账户',
@@ -1108,7 +1111,7 @@ export const zhCN = {
 
   // —— appearance ——
   'appearance.connectionTheme': '连接主题',
-  'appearance.connectionThemeHint': '每个已连接的服务可以有自己的浅色 / 暗色 / 系统主题。',
+  'appearance.connectionThemeHint': '每个已连接的服务可以有自己的主题、强调色和底纹。默认继承该 vavd 自己的样式，改动只在本机生效。',
   'appearance.theme': '主题',
   'appearance.theme.system': '系统',
   'appearance.theme.light': '浅色',
@@ -2552,6 +2555,7 @@ export const en: Record<MessageKey, string> = {
   'sidebar.switchService': 'Switch service',
   'sidebar.serviceTheme': 'Theme for this connection',
   'sidebar.serviceThemeSettings': 'Appearance settings…',
+  'sidebar.configureService': 'Configure this vavd…',
   'sidebar.pairDevice': 'Pair another device…',
   'sidebar.emptyRemoteTitle': 'No sessions on this device',
   'sidebar.emptyRemoteDesc': 'Start a session. The folder and agent will run on {name}.',
@@ -3032,6 +3036,8 @@ export const en: Record<MessageKey, string> = {
   'settings.nav.appearance': 'Appearance',
   'settings.nav.notifications': 'Notifications',
   'settings.nav.connect': 'Remote Tunnel',
+  'settings.hostSettingsUnavailable': 'Could not read settings from this connection',
+  'settings.hostSettingsUnavailableHint': 'The change was not written to the remote. Make sure that vavd is online and try again.',
   'settings.nav.connectors': 'Connectors',
   'settings.nav.agents': 'Providers',
   'settings.nav.accounts': 'Accounts',
@@ -3505,7 +3511,8 @@ export const en: Record<MessageKey, string> = {
   'preview.meta.inode': 'Inode',
 
   'appearance.connectionTheme': 'Connection theme',
-  'appearance.connectionThemeHint': 'Each connected service can use its own light, dark, or system theme.',
+  'appearance.connectionThemeHint':
+    'Each connected service can have its own theme, accent, and pattern. Defaults come from that vavd; changes stay on this computer.',
   'appearance.theme': 'Theme',
   'appearance.theme.system': 'System',
   'appearance.theme.light': 'Light',

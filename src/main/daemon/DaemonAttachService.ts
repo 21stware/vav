@@ -59,7 +59,7 @@ import {
   type DiscoveredPeer
 } from './lanAnnounce.ts'
 import { agentBinaryCandidates } from '../../shared/agentBinary.ts'
-import { CLI_AGENT_CATALOGUE } from '../../shared/types.ts'
+import { CLI_AGENT_CATALOGUE, type MachineAppearance } from '../../shared/types.ts'
 
 /** Hello into a local `--dial` port. The listen staying up does not mean the pipe is live. */
 const TUNNEL_HELLO_MS = 5_000
@@ -138,6 +138,7 @@ export class DaemonAttachService {
   private readonly homes = new Map<string, string>()
   private readonly tmps = new Map<string, string>()
   private readonly providers = new Map<string, HostProviderInfo[]>()
+  private readonly appearances = new Map<string, MachineAppearance>()
   /** candidate-list cache for PTY spawn (sync). */
   private readonly whichCache = new Map<string, Map<string, string | null>>()
   /** Live `--dial` sidecars, keyed by tailcat token. */
@@ -369,6 +370,16 @@ export class DaemonAttachService {
     return this.clients.get(machineId)
   }
 
+  rememberAppearance(machineId: string, appearance: MachineAppearance): void {
+    const id = String(machineId || '').trim()
+    if (!id || isLocalMachine(id) || !Object.keys(appearance).length) return
+    this.appearances.set(id, appearance)
+  }
+
+  appearanceOf(machineId: string): MachineAppearance | undefined {
+    return this.appearances.get(machineId)
+  }
+
   /** Spawned loopback vavd — the Settings → Logs sink. */
   localShellClient(): DaemonClient | undefined {
     for (const host of this.opts.registry.list()) {
@@ -569,6 +580,7 @@ export class DaemonAttachService {
     this.homes.delete(machineId)
     this.tmps.delete(machineId)
     this.providers.delete(machineId)
+    this.appearances.delete(machineId)
     this.whichCache.delete(machineId)
     this.versions.delete(machineId)
     this.opts.registry.remove(machineId)
@@ -593,6 +605,7 @@ export class DaemonAttachService {
     this.homes.delete(machineId)
     this.tmps.delete(machineId)
     this.providers.delete(machineId)
+    this.appearances.delete(machineId)
     this.whichCache.delete(machineId)
     this.versions.delete(machineId)
     this.releaseTunnel(machineId)

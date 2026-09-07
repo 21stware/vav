@@ -28,6 +28,7 @@ import { installDefaultContextMenu } from './lib/nativeMenu'
 import { installAnalysisBridge } from './lib/analysisCache'
 import { installInstallRunBridge } from './state/installRunStore'
 import { AppToast } from './components/AppToast'
+import { InlineAlert } from './components/ui'
 import { WorkspaceSettings } from './components/settings/WorkspaceSettings'
 import { ConnectorsSettings } from './components/settings/ConnectorsSettings'
 import { AppearanceSettings } from './components/settings/AppearanceSettings'
@@ -117,6 +118,7 @@ export default function SettingsWindow(): React.JSX.Element {
   const bootstrap = useSessionStore((s) => s.bootstrap)
   const rawCategory = useSessionStore((s) => s.settingsCategory)
   const category = rawCategory === 'api' || rawCategory === 'accounts' ? 'agents' : rawCategory
+  const hostSettingsUnavailable = useSessionStore((s) => s.settings.hostSettingsUnavailable === true)
   const prevCategory = useRef<SettingsView | null>(null)
   const animateEnter = prevCategory.current !== null && prevCategory.current !== category
   useEffect(() => {
@@ -198,6 +200,15 @@ export default function SettingsWindow(): React.JSX.Element {
 
       <div className="settings-main">
         <header className="settings-head">{title}</header>
+        {hostSettingsUnavailable ? (
+          <div className="settings-body" style={{ paddingBottom: 0 }}>
+            <InlineAlert
+              kind="warning"
+              title={t('settings.hostSettingsUnavailable')}
+              message={t('settings.hostSettingsUnavailableHint')}
+            />
+          </div>
+        ) : null}
         <div className="settings-body">
           <div
             key={category}

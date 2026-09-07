@@ -1,8 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ChevronDown, Plus } from 'lucide-react'
 import { normalizeAccentHex, tintSwatchColor, type FixedColorTint } from '@shared/colorTints'
-import { appearanceForMachine, patchMachineAppearance } from '@shared/machineAppearance'
-import { LOCAL_MACHINE_ID, serviceShortName, userFacingRemotes } from '@shared/workspaceHost'
+import {
+  appearanceBaseForMachine,
+  appearanceForMachine,
+  patchMachineAppearance
+} from '@shared/machineAppearance'
+import { isLocalMachine, LOCAL_MACHINE_ID, serviceShortName, userFacingRemotes } from '@shared/workspaceHost'
 import {
   PRESET_COLOR_TINTS,
   DISPLAY_CURRENCIES,
@@ -28,6 +32,9 @@ export function AppearanceSettings(): React.JSX.Element {
   const windowMachineId = useSessionStore((s) => s.windowMachineId)
   const remotes = userFacingRemotes(hosts)
   const [themeMachineId, setThemeMachineId] = useState(windowMachineId || LOCAL_MACHINE_ID)
+  useEffect(() => {
+    setThemeMachineId(windowMachineId || LOCAL_MACHINE_ID)
+  }, [windowMachineId])
   const themeTargets = useMemo(
     () => [
       { id: LOCAL_MACHINE_ID, name: LOCAL_MACHINE_ID },
@@ -38,7 +45,29 @@ export function AppearanceSettings(): React.JSX.Element {
     ],
     [hosts, remotes]
   )
-  const machineLook = appearanceForMachine(settings, themeMachineId)
+  const machineLook = appearanceForMachine(
+    settings,
+    themeMachineId,
+    appearanceBaseForMachine(settings, themeMachineId, hosts)
+  )
+  const persistLook = (patch: {
+    theme?: ThemeMode
+    colorTint?: (typeof settings)['colorTint']
+    customAccentColor?: string
+    surfacePattern?: SurfacePattern
+  }): void => {
+    if (themeTargets.length <= 1 || isLocalMachine(themeMachineId)) {
+      void updateSettings(patch)
+      return
+    }
+    void updateSettings({
+      machineAppearances: patchMachineAppearance(
+        settings.machineAppearances,
+        themeMachineId,
+        patch
+      )
+    })
+  }
   const [patternError, setPatternError] = useState<string | null>(null)
 
   const [fonts, setFonts] = useState<string[]>([])
@@ -70,8 +99,8 @@ export function AppearanceSettings(): React.JSX.Element {
     })
   }, [])
 
-  const customHex = normalizeAccentHex(settings.customAccentColor)
-  const customActive = (settings.colorTint ?? 'system') === 'custom'
+  const customHex = normalizeAccentHex(machineLook.customAccentColor)
+  const customActive = (machineLook.colorTint ?? 'system') === 'custom'
   const customLabel = customHex
     ? `${t('appearance.colorTint.custom')} · ${customHex}`
     : t('appearance.colorTint.custom')
@@ -114,19 +143,7 @@ export function AppearanceSettings(): React.JSX.Element {
               { value: 'system', label: t('appearance.theme.system') }
             ]}
             value={machineLook.theme}
-            onChange={(theme) => {
-              if (themeTargets.length <= 1) {
-                void updateSettings({ theme })
-                return
-              }
-              void updateSettings({
-                machineAppearances: patchMachineAppearance(
-                  settings.machineAppearances,
-                  themeMachineId,
-                  { theme }
-                )
-              })
-            }}
+            onChange={(theme) => persistLook({ theme })}
           />
         </div>
       </div>
@@ -151,7 +168,7 @@ export function AppearanceSettings(): React.JSX.Element {
         <div className="control">
           <div className="tint-swatches" role="radiogroup" aria-label={t('appearance.colorTint')}>
             {PRESET_COLOR_TINTS.map((tint) => {
-              const active = (settings.colorTint ?? 'system') === tint
+              const active = (machineLook.colorTint ?? 'system') === tint
               // Same hex (or mono gradient) that appearance.ts applies for this theme.
               const swatch =
                 tint === 'system'
@@ -169,7 +186,7 @@ export function AppearanceSettings(): React.JSX.Element {
                   title={t(`appearance.colorTint.${tint}`)}
                   aria-label={t(`appearance.colorTint.${tint}`)}
                   style={{ ['--tint-swatch' as string]: swatch }}
-                  onClick={() => void updateSettings({ colorTint: tint })}
+                  onClick={() => persistLook({ colorTint: tint })}
                 />
               )
             })}
@@ -186,14 +203,14 @@ export function AppearanceSettings(): React.JSX.Element {
               onClick={async () => {
                 // Select "custom" immediately so the swatch shows as active
                 // while the picker is open.
-                if (settings.colorTint !== 'custom') {
-                  void updateSettings({ colorTint: 'custom' })
+                if (machineLook.colorTint !== 'custom') {
+                  persistLook({ colorTint: 'custom' })
                 }
                 const picked = await window.vav.settings.pickColor(customHex ?? undefined)
                 if (!picked) return // cancelled — keep current selection
                 const hex = normalizeAccentHex(picked)
                 if (!hex) return
-                void updateSettings({ colorTint: 'custom', customAccentColor: hex })
+                persistLook({ colorTint: 'custom', customAccentColor: hex })
               }}
             >
               {customHex ? (
@@ -368,7 +385,7 @@ export function AppearanceSettings(): React.JSX.Element {
             aria-label={t('appearance.surfacePattern')}
           >
             {SURFACE_PATTERN_PRESETS.filter((preset) => preset.id !== 'custom').map((preset) => {
-              const active = (settings.surfacePattern ?? 'none') === preset.id
+              const active = (machineLook.surfacePattern ?? 'none') === preset.id
               const name = t(`appearance.surfacePattern.${preset.id}`)
               return (
                 <button
@@ -389,7 +406,7 @@ export function AppearanceSettings(): React.JSX.Element {
                       : undefined
                   }
                   onClick={() =>
-                    void updateSettings({ surfacePattern: preset.id as SurfacePattern })
+                    persistLook({ surfacePattern: preset.id as SurfacePattern })
                   }
                 >
                   <span className="pattern-swatch-name">{name}</span>
@@ -399,10 +416,10 @@ export function AppearanceSettings(): React.JSX.Element {
             <button
               type="button"
               role="radio"
-              aria-checked={(settings.surfacePattern ?? 'none') === 'custom'}
+              aria-checked={(machineLook.surfacePattern ?? 'none') === 'custom'}
               className={`pattern-swatch is-custom${
-                (settings.surfacePattern ?? 'none') === 'custom' ? ' is-active' : ''
-              }${settings.customSurfacePatternUrl ? '' : ' is-empty'}`}
+                (machineLook.surfacePattern ?? 'none') === 'custom' ? ' is-active' : ''
+              }${machineLook.customSurfacePatternUrl ? '' : ' is-empty'}`}
               data-pattern="custom"
               title={
                 settings.customSurfacePatternUrl
@@ -415,11 +432,11 @@ export function AppearanceSettings(): React.JSX.Element {
                   : t('appearance.surfacePattern.customEmpty')
               }
               style={
-                settings.customSurfacePatternUrl
+                machineLook.customSurfacePatternUrl
                   ? {
-                      ['--surface-pattern-url' as string]: `url("${settings.customSurfacePatternUrl}")`,
+                      ['--surface-pattern-url' as string]: `url("${machineLook.customSurfacePatternUrl}")`,
                       ['--surface-pattern-size' as string]: swatchPatternSize(
-                        settings.customSurfacePatternSize || '40px 40px'
+                        machineLook.customSurfacePatternSize || '40px 40px'
                       )
                     }
                   : undefined
@@ -427,9 +444,9 @@ export function AppearanceSettings(): React.JSX.Element {
               onClick={() => {
                 void (async () => {
                   setPatternError(null)
-                  const has = !!settings.customSurfacePatternUrl
-                  if (has && settings.surfacePattern !== 'custom') {
-                    void updateSettings({ surfacePattern: 'custom' })
+                  const has = !!machineLook.customSurfacePatternUrl
+                  if (has && machineLook.surfacePattern !== 'custom') {
+                    persistLook({ surfacePattern: 'custom' })
                     return
                   }
                   const picked = await window.vav.settings.pickSurfacePatternImage()

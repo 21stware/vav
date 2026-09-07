@@ -1483,11 +1483,6 @@ export interface VavApi {
     /** Settings live in their own window, not a sheet over the transcript. */
     openSettings(view?: SettingsView, agentId?: string): Promise<void>
     closeSettings(): Promise<void>
-    /** Small pairing popup (phone QR + vavd machines) from the sidebar. */
-    openConnect(): Promise<void>
-    closeConnect(): Promise<void>
-    /** Hug the Connect popup to the rendered body (no empty band, no inner scroll). */
-    fitConnect(height: number): Promise<void>
     /** Last category ⌘, / Open Settings asked for — pull after the lazy chunk mounts. */
     desiredSettingsView(): Promise<SettingsViewPayload>
     /** Opens (or raises) the standalone window for one conversation. */
@@ -2069,9 +2064,6 @@ export const IPC = {
   windowShellPath: 'vav:window:shell-path',
   windowOpenSettings: 'vav:window:open-settings',
   windowCloseSettings: 'vav:window:close-settings',
-  windowOpenConnect: 'vav:window:open-connect',
-  windowCloseConnect: 'vav:window:close-connect',
-  windowFitConnect: 'vav:window:fit-connect',
   settingsDesiredView: 'vav:settings:desired-view',
   windowPopupMenu: 'vav:window:popup-menu',
   windowClosePopupMenu: 'vav:window:close-popup-menu',

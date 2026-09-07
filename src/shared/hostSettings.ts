@@ -1,4 +1,13 @@
 import type { AppSettings } from './types.ts'
+import {
+  isLocalMachine,
+  normalizeMachineId,
+  parseWorkspaceRefList,
+  recentsForMachine,
+  workspaceRef,
+  workspaceRefKey,
+  type WorkspaceRef
+} from './workspaceHost.ts'
 
 /**
  * Settings that live on vavd (turns, new sessions, trays). Appearance, fonts,
@@ -74,6 +83,60 @@ export function omitHostSettings(source: Partial<AppSettings> | null | undefined
 
 export function mergeHostSettings(local: AppSettings, host: HostSettingsPatch): AppSettings {
   return { ...local, ...host }
+}
+
+/**
+ * Remote vavd stores recents as `local`. On this desktop they belong to the
+ * paired machine id (the same remap `pullHostCatalog` applies).
+ */
+export function remapHostWorkspaceSettings(
+  patch: HostSettingsPatch,
+  machineId: string,
+  direction: 'fromHost' | 'toHost' = 'fromHost'
+): HostSettingsPatch {
+  if (isLocalMachine(machineId) || !('recentWorkspaceDirectories' in patch)) return patch
+  const recents = parseWorkspaceRefList(patch.recentWorkspaceDirectories)
+  const mapped: WorkspaceRef[] = recents.map((ref) => {
+    if (direction === 'fromHost') {
+      return isLocalMachine(ref.machineId) ? workspaceRef(ref.path, machineId) : ref
+    }
+    return normalizeMachineId(ref.machineId) === normalizeMachineId(machineId)
+      ? workspaceRef(ref.path)
+      : ref
+  })
+  return { ...patch, recentWorkspaceDirectories: mapped }
+}
+
+/** Keep catalog-adopted recents the host snapshot omitted or emptied. */
+export function retainAdoptedHostRecents(
+  merged: AppSettings,
+  local: AppSettings,
+  machineId: string
+): AppSettings {
+  if (isLocalMachine(machineId)) return merged
+  const adopted = recentsForMachine(
+    parseWorkspaceRefList(local.recentWorkspaceDirectories),
+    machineId
+  )
+  if (!adopted.length) return merged
+  const next = parseWorkspaceRefList(merged.recentWorkspaceDirectories)
+  const seen = new Set(next.map(workspaceRefKey))
+  let extra = false
+  for (const ref of adopted) {
+    if (seen.has(workspaceRefKey(ref))) continue
+    next.push(ref)
+    extra = true
+  }
+  return extra ? { ...merged, recentWorkspaceDirectories: next } : merged
+}
+
+export function composeHostSettings(
+  local: AppSettings,
+  hostSnap: Partial<AppSettings> | null | undefined,
+  machineId: string
+): AppSettings {
+  const remapped = remapHostWorkspaceSettings(pickHostSettings(hostSnap), machineId, 'fromHost')
+  return retainAdoptedHostRecents(mergeHostSettings(local, remapped), local, machineId)
 }
 
 /** Derived secret flags from vavd — not persisted host prefs. */

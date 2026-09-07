@@ -246,7 +246,6 @@ function MachinesSection(): React.JSX.Element {
       return
     }
     setDraft('')
-    void window.vav.window.closeConnect()
   }
 
   const pairLan = async (peer: HostDiscoveryPeer): Promise<void> => {
@@ -267,7 +266,6 @@ function MachinesSection(): React.JSX.Element {
       setError(pairErrorMessage(result.error, t))
       return
     }
-    void window.vav.window.closeConnect()
   }
 
   return (

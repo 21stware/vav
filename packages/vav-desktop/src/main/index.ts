@@ -89,7 +89,8 @@ import { DaemonAttachService } from '@main/daemon/DaemonAttachService'
 import { createAccountsCatalog } from '@main/accounts/daemonCatalog'
 import { seedChangeReviewTurn } from '@main/agent/seedChangeReview'
 import { createSettingsCatalog, vavAccountKeyPresent } from '@main/daemon/settingsCatalog'
-import { mergeHostSettings, pickHostSettings, pickSecretPresent } from '@shared/hostSettings'
+import { composeHostSettings, pickSecretPresent } from '@shared/hostSettings'
+import { pickAppearanceBase } from '@shared/machineAppearance'
 import {
   createChangeSetCatalog,
   createConnectorCatalog,
@@ -468,12 +469,9 @@ let stopSpawnedVavd: (() => void) | undefined
 let localShellPairing: Promise<unknown> | null = null
 let stopDesktopWeb: (() => void) | undefined
 let stopVavdLogs: (() => void) | undefined
-/** Extra main shells from older builds (`?machine=<id>`). Switching is in-place now. */
-const hostWindows = new Map<string, BrowserWindow>()
 /** Machine the single main shell is showing. */
 let mainShellMachineId = LOCAL_MACHINE_ID
 let settingsWindow: BrowserWindow | null = null
-let connectWindow: BrowserWindow | null = null
 let tokenUsageWindow: BrowserWindow | null = null
 let providerAccountWindow: BrowserWindow | null = null
 /** Last BrowserWindow that held focus — Dock activate raises this, not always main. */
@@ -1843,9 +1841,8 @@ const remoteControl = new RemoteControlService({
   browse: browseRemoteDirs,
   setWorkspace: setRemoteWorkspace,
   onStatusChange: (status) => {
-    // Sidebar (main window) shows connected device names; settings + connect
-    // windows render the full pairing UI.
-    for (const win of [mainWindow, settingsWindow, connectWindow]) {
+    // Sidebar (main window) shows connected device names; Settings renders pairing.
+    for (const win of [mainWindow, settingsWindow]) {
       if (win && !win.isDestroyed()) safeSend(win.webContents, IPC.remoteControlChanged, status)
     }
   },
@@ -2007,14 +2004,11 @@ const daemonAttach = new DaemonAttachService({
     if (settingsWindow && !settingsWindow.isDestroyed()) {
       safeSend(settingsWindow.webContents, IPC.hostsDiscoveredChanged, peers)
     }
-    if (connectWindow && !connectWindow.isDestroyed()) {
-      safeSend(connectWindow.webContents, IPC.hostsDiscoveredChanged, peers)
-    }
   },
   confirmLanPair: async (from) => {
     const parent =
-      (connectWindow && !connectWindow.isDestroyed() && connectWindow.isVisible()
-        ? connectWindow
+      (settingsWindow && !settingsWindow.isDestroyed() && settingsWindow.isVisible()
+        ? settingsWindow
         : null) ??
       (mainWindow && !mainWindow.isDestroyed() ? mainWindow : null)
     if (parent) {
@@ -2072,6 +2066,12 @@ function localShellMachineId(): string | null {
     if (host.localShell && daemonAttach.controlPlaneOf(host.id)) return host.id
   }
   return null
+}
+
+function activeSettingsClient(): { request: (method: string, params?: unknown) => Promise<unknown> } | null {
+  const id = mainShellMachineId
+  if (isLocalMachine(id)) return daemonAttach.localShellClient() ?? null
+  return daemonAttach.clientOf(id) ?? null
 }
 
 /** Local chats persist on spawned vavd only — Electron `conversations/` is a cache. */
@@ -2360,7 +2360,6 @@ function isAuxiliaryWindow(window: BrowserWindow): boolean {
   // Settings and the warm token-usage panel never host PTYs / file trees /
   // streaming transcripts — skip them on the hot path.
   if (settingsWindow && !settingsWindow.isDestroyed() && window === settingsWindow) return true
-  if (connectWindow && !connectWindow.isDestroyed() && window === connectWindow) return true
   if (tokenUsageWindow && !tokenUsageWindow.isDestroyed() && window === tokenUsageWindow) return true
   if (providerAccountWindow && !providerAccountWindow.isDestroyed() && window === providerAccountWindow) {
     return true
@@ -2423,11 +2422,6 @@ function sendMenuCommand(command: MenuCommand): void {
   if (target === settingsWindow) {
     // Settings runs a light renderer with no menu-command router; ⌘W still closes it.
     if (command === 'close-context') hideSettingsWindow()
-    return
-  }
-  if (target === connectWindow) {
-    // Same deal as Settings: light renderer, ⌘W hides the popup.
-    if (command === 'close-context') hideConnectWindow()
     return
   }
   if (command === 'close-context' && isAppClipBrowserWindow(target)) {
@@ -3025,9 +3019,6 @@ function wirePopupDismiss(window: BrowserWindow): void {
 
 function eachMainShell(fn: (window: BrowserWindow) => void): void {
   if (mainWindow && !mainWindow.isDestroyed()) fn(mainWindow)
-  for (const window of hostWindows.values()) {
-    if (!window.isDestroyed()) fn(window)
-  }
 }
 
 function hostWindowOf(_machineId?: string | null): BrowserWindow | null {
@@ -3040,10 +3031,6 @@ function hostWindowTitle(machineId: string, name?: string): string {
 }
 
 function syncHostWindows(hosts: WorkspaceHostInfo[]): void {
-  const known = new Set(hosts.map((host) => host.id))
-  for (const id of [...hostWindows.keys()]) {
-    if (!known.has(id)) closeHostWindow(id)
-  }
   if (mainWindow && !mainWindow.isDestroyed()) {
     const current =
       hosts.find((host) => host.id === mainShellMachineId) ??
@@ -3054,20 +3041,10 @@ function syncHostWindows(hosts: WorkspaceHostInfo[]): void {
 }
 
 function closeHostWindow(machineId: string): void {
-  const window = hostWindows.get(machineId)
-  hostWindows.delete(machineId)
-  if (window && !window.isDestroyed() && window !== mainWindow) {
-    try {
-      window.destroy()
-    } catch {
-      // ignore
-    }
-  }
   if (mainShellMachineId === machineId) activateMainShellMachine(LOCAL_MACHINE_ID)
 }
 
-function createWindow(opts?: { machineId?: string }): BrowserWindow {
-  const machineId = normalizeMachineId(opts?.machineId)
+function createWindow(): BrowserWindow {
   const icon = loadAppIcon()
   const snapshotting = Boolean(process.env.VAV_SNAPSHOT)
   const e2e = isE2eRuntime()
@@ -3133,19 +3110,7 @@ function createWindow(opts?: { machineId?: string }): BrowserWindow {
   })
 
   installSnapshotHook(window)
-  loadRenderer(window, isLocalMachine(machineId) ? {} : { machine: machineId })
-  if (!isLocalMachine(machineId)) {
-    window.setTitle(hostWindowTitle(machineId))
-    const anchor = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null
-    if (anchor) {
-      const [x, y] = anchor.getPosition()
-      window.setPosition(x + 36, y + 36)
-    }
-    hostWindows.set(machineId, window)
-    window.on('closed', () => {
-      if (hostWindows.get(machineId) === window) hostWindows.delete(machineId)
-    })
-  }
+  loadRenderer(window)
 
   return window
 }
@@ -3281,79 +3246,6 @@ function hideSettingsWindow(): void {
 function warmSettingsWindow(): void {
   if (settingsWindow && !settingsWindow.isDestroyed()) return
   ensureSettingsWindow('appearance', false)
-}
-
-/**
- * Small pairing popup from the sidebar Connect button: phone QR + vavd
- * machines, nothing else. Same hide-on-close warmth as Settings.
- */
-const CONNECT_WINDOW_WIDTH = 440
-const CONNECT_WINDOW_MIN_HEIGHT = 200
-
-function fitConnectWindow(height: number): void {
-  if (!connectWindow || connectWindow.isDestroyed()) return
-  const display = screen.getDisplayMatching(connectWindow.getBounds())
-  const maxH = Math.max(CONNECT_WINDOW_MIN_HEIGHT, display.workArea.height)
-  const next = Math.round(Math.min(maxH, Math.max(CONNECT_WINDOW_MIN_HEIGHT, height)))
-  const [currentW, currentH] = connectWindow.getContentSize()
-  if (currentW !== CONNECT_WINDOW_WIDTH || currentH !== next) {
-    connectWindow.setContentSize(CONNECT_WINDOW_WIDTH, next)
-  }
-}
-
-function openConnectWindow(): void {
-  if (connectWindow && !connectWindow.isDestroyed()) {
-    connectWindow.setResizable(false)
-    void revealBrowserWindow(connectWindow)
-    return
-  }
-
-  connectWindow = new BrowserWindow({
-    width: CONNECT_WINDOW_WIDTH,
-    height: CONNECT_WINDOW_MIN_HEIGHT,
-    useContentSize: true,
-    resizable: false,
-    show: false,
-    paintWhenInitiallyHidden: true,
-    title: t('app.connectWindowTitle'),
-    icon: loadAppIcon(),
-    ...chrome(TOOLBAR_HEIGHT),
-    minimizable: false,
-    maximizable: false,
-    fullscreenable: false,
-    webPreferences: rendererPrefs()
-  })
-  applyMenuBar(connectWindow)
-  applyTrafficLights(connectWindow)
-
-  connectWindow.on('close', (event) => {
-    if (quitting) return
-    event.preventDefault()
-    if (connectWindow && !connectWindow.isDestroyed()) connectWindow.hide()
-  })
-  connectWindow.on('closed', () => {
-    connectWindow = null
-  })
-
-  wireExternalLinks(connectWindow.webContents)
-
-  if (!app.isPackaged) {
-    connectWindow.webContents.on('console-message', (event) => {
-      console.log(`[connect:${event.level}] ${event.message}`)
-    })
-  }
-
-  connectWindow.once('ready-to-show', () => {
-    if (connectWindow && !connectWindow.isDestroyed()) {
-      void revealBrowserWindow(connectWindow)
-    }
-  })
-  loadRenderer(connectWindow, { view: 'connect' })
-}
-
-/** Hide (don't destroy) so the next open is instant. */
-function hideConnectWindow(): void {
-  if (connectWindow && !connectWindow.isDestroyed()) connectWindow.hide()
 }
 
 /**
@@ -5702,17 +5594,11 @@ function activateMainShellMachine(machineId: string): void {
   const id = normalizeMachineId(machineId)
   mainShellMachineId = id
   const win = mainWindow
-  if (!win || win.isDestroyed()) return
-  win.setTitle(hostWindowTitle(id, hostRegistry.get(id)?.info.name))
-  const send = (): void => {
-    if (win.isDestroyed() || mainShellMachineId !== id) return
-    safeSend(win.webContents, IPC.hostsActivate, id)
+  if (win && !win.isDestroyed()) {
+    win.setTitle(hostWindowTitle(id, hostRegistry.get(id)?.info.name))
   }
-  if (win.webContents.isLoading()) {
-    win.webContents.once('did-finish-load', send)
-  } else {
-    send()
-  }
+  broadcast(IPC.hostsActivate, id)
+  void publishMergedSettings()
 }
 
 async function showHostWindow(machineId?: string | null): Promise<void> {
@@ -5728,6 +5614,9 @@ async function showHostWindow(machineId?: string | null): Promise<void> {
     mainWindow = win
   }
   activateMainShellMachine(id)
+  if (!isLocalMachine(id)) {
+    await daemonAttach.waitForControlPlane(id).catch(() => false)
+  }
   if (win.webContents.isLoading()) {
     await new Promise<void>((resolve) => {
       const done = (): void => resolve()
@@ -6667,19 +6556,49 @@ function currentSettings(): AppSettings {
 
 async function publishMergedSettings(): Promise<void> {
   const local = currentSettings()
-  const client = daemonAttach.localShellClient()
+  const machineId = mainShellMachineId
+  const client = activeSettingsClient()
   if (!client) {
-    broadcast(IPC.settingsChanged, local)
+    broadcast(IPC.settingsChanged, {
+      ...local,
+      hostSettingsUnavailable: !isLocalMachine(machineId)
+    })
     return
   }
   try {
     const hostSnap = (await client.request('settings.get')) as Partial<AppSettings>
+    const empty = !hostSnap || Object.keys(hostSnap).length === 0
+    const appearanceBase = pickAppearanceBase(hostSnap)
+    if (!isLocalMachine(machineId) && Object.keys(appearanceBase).length) {
+      daemonAttach.rememberAppearance(machineId, appearanceBase)
+    }
+    const bases = {
+      ...(local.hostAppearanceBases ?? {}),
+      ...(!isLocalMachine(machineId) && Object.keys(appearanceBase).length
+        ? { [machineId]: appearanceBase }
+        : {})
+    }
+    if (empty && !isLocalMachine(machineId)) {
+      broadcast(IPC.settingsChanged, {
+        ...composeHostSettings(local, DEFAULT_SETTINGS, machineId),
+        hostAppearanceBases: bases,
+        hostSettingsUnavailable: true
+      })
+      return
+    }
     broadcast(IPC.settingsChanged, {
-      ...mergeHostSettings(local, pickHostSettings(hostSnap)),
-      ...pickSecretPresent(hostSnap)
+      ...composeHostSettings(local, hostSnap, machineId),
+      ...pickSecretPresent(hostSnap),
+      hostAppearanceBases: bases,
+      hostSettingsUnavailable: false
     })
   } catch {
-    broadcast(IPC.settingsChanged, local)
+    broadcast(IPC.settingsChanged, {
+      ...(isLocalMachine(machineId)
+        ? local
+        : composeHostSettings(local, DEFAULT_SETTINGS, machineId)),
+      hostSettingsUnavailable: !isLocalMachine(machineId)
+    })
   }
 }
 
@@ -6887,7 +6806,11 @@ return c as text`
     setFileAssociation: (formatId) => fileAssociationService.setDefault(formatId),
     unsetFileAssociation: (formatId) => fileAssociationService.unsetDefault(formatId),
     registerAllFileAssociations: () => fileAssociationService.registerAll(),
-    remote: () => daemonAttach.localShellClient() ?? null
+    remote: () => activeSettingsClient(),
+    activeMachineId: () => mainShellMachineId,
+    rememberHostAppearance: (machineId, appearance) => {
+      daemonAttach.rememberAppearance(machineId, appearance)
+    }
   })
 
   const analysisHasApiKey = (): boolean => {
@@ -7069,7 +6992,7 @@ return c as text`
     refreshQuotaPanel: (host) => {
       void quotaService.refreshForPanel(host as CliHostKind)
     },
-    remote: () => daemonAttach.localShellClient() ?? null
+    remote: () => activeSettingsClient()
   })
 
   // --- conversations ---
@@ -7680,9 +7603,6 @@ return c as text`
     openSettings: openSettingsWindow,
     settingsDesiredView: () => settingsDesiredView,
     hideSettings: hideSettingsWindow,
-    openConnect: openConnectWindow,
-    hideConnect: hideConnectWindow,
-    fitConnect: fitConnectWindow,
     openSession: (id) => {
       void openDetachedWindow(id)
     },
@@ -8214,7 +8134,7 @@ if (!singleInstance) {
           name: isE2eRuntime() ? 'E2E Daemon' : 'VAV Daemon',
           stateDir: join(app.getPath('userData'), 'vavd'),
           stubTurn: isE2eRuntime() && !liveAcp,
-          stubStream: isE2eRuntime() && process.env.VAV_E2E_STUB_STREAM === '1',
+          stubStream: isE2eRuntime() && !liveAcp,
           stubApprove: isE2eRuntime() && process.env.VAV_E2E_STUB_APPROVE === '1',
           extraEnv:
             isE2eRuntime() && process.env.VAV_E2E_STUB_ASK === '1'

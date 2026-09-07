@@ -594,7 +594,7 @@ describe('e2e feature coverage', () => {
     assert.match(review, /seedReview/)
     const session = readFileSync(join(root, 'e2e/specs/session.spec.ts'), 'utf8')
     assert.match(session, /launchWorkbench/)
-    assert.match(session, /connect-window/)
+    assert.match(session, /settings-nav-connect/)
     const boot = readFileSync(join(root, 'e2e/specs/boot.spec.ts'), 'utf8')
     assert.match(boot, /launchWorkbench/)
     const sidebarMenu = readFileSync(join(root, 'e2e/specs/sidebar-menu.spec.ts'), 'utf8')

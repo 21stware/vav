@@ -278,11 +278,30 @@ export class SettingsStore {
           ? (row.colorTint as ColorTint)
           : undefined
         const customAccentColor = normalizeAccentHex(row.customAccentColor) ?? ''
-        if (!theme && !colorTint && !customAccentColor) continue
+        const surfacePattern = SURFACE_PATTERNS.includes(row.surfacePattern as SurfacePattern)
+          ? (row.surfacePattern as SurfacePattern)
+          : undefined
+        const customSurfacePatternUrl =
+          typeof row.customSurfacePatternUrl === 'string' ? row.customSurfacePatternUrl.trim() : ''
+        const customSurfacePatternSize =
+          typeof row.customSurfacePatternSize === 'string' ? row.customSurfacePatternSize.trim() : ''
+        if (
+          !theme &&
+          !colorTint &&
+          !customAccentColor &&
+          !surfacePattern &&
+          !customSurfacePatternUrl &&
+          !customSurfacePatternSize
+        ) {
+          continue
+        }
         cleaned[id.trim()] = {
           ...(theme ? { theme } : {}),
           ...(colorTint ? { colorTint } : {}),
-          ...(customAccentColor ? { customAccentColor } : {})
+          ...(customAccentColor ? { customAccentColor } : {}),
+          ...(surfacePattern ? { surfacePattern } : {}),
+          ...(customSurfacePatternUrl ? { customSurfacePatternUrl } : {}),
+          ...(customSurfacePatternSize ? { customSurfacePatternSize } : {})
         }
       }
       s.machineAppearances = cleaned
@@ -577,6 +596,8 @@ export class SettingsStore {
         supabaseAccessTokenPresent: _omitSb,
         vercelApiTokenPresent: _omitVercel,
         customSurfacePatternUrl: _omitPatternUrl,
+        hostAppearanceBases: _omitBases,
+        hostSettingsUnavailable: _omitUnavailable,
         ...rest
       } = this.settings
       void _omitApi
@@ -586,6 +607,8 @@ export class SettingsStore {
       void _omitSb
       void _omitVercel
       void _omitPatternUrl
+      void _omitBases
+      void _omitUnavailable
       writeFileSync(this.file, JSON.stringify(rest, null, 2), 'utf8')
     } catch (err) {
       console.error('[settings] persist failed', err)

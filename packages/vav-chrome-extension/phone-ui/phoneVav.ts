@@ -1763,11 +1763,6 @@ export function installPhoneVav(transport: PhoneTransport): PhoneVavHandle {
       closeSettings: async () => {
         window.dispatchEvent(new CustomEvent('vav:phone-close-settings'))
       },
-      openConnect: async () => {
-        window.dispatchEvent(new CustomEvent('vav:phone-open-connect'))
-      },
-      closeConnect: async () => undefined,
-      fitConnect: async () => undefined,
       desiredSettingsView: async () => desiredSettings,
       openSession: async () => undefined,
       revealInList: async () => undefined,

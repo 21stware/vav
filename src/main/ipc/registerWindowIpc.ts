@@ -10,9 +10,6 @@ export type WindowIpcActions = {
   openSettings: (view: SettingsView, agentId?: string) => void
   settingsDesiredView: () => unknown
   hideSettings: () => void
-  openConnect: () => void
-  hideConnect: () => void
-  fitConnect: (height: number) => void
   openSession: (id: string) => void
   revealInList: (event: IpcMainInvokeEvent, id: string) => Promise<void>
   closeDetached: (id: string) => void
@@ -56,12 +53,6 @@ export function registerWindowIpc(ipcMain: IpcMain, actions: WindowIpcActions): 
   )
   ipcMain.handle(IPC.settingsDesiredView, () => actions.settingsDesiredView())
   ipcMain.handle(IPC.windowCloseSettings, () => actions.hideSettings())
-  ipcMain.handle(IPC.windowOpenConnect, () => actions.openConnect())
-  ipcMain.handle(IPC.windowCloseConnect, () => actions.hideConnect())
-  ipcMain.handle(IPC.windowFitConnect, (_event, height: unknown) => {
-    if (typeof height !== 'number' || !Number.isFinite(height)) return
-    actions.fitConnect(height)
-  })
   ipcMain.handle(IPC.windowOpenSession, (_event, id: string) => {
     void actions.openSession(String(id || ''))
   })

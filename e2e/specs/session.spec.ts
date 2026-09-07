@@ -22,24 +22,25 @@ test('sidebar lists the session, groups by workspace, and archives stay reachabl
   }
 })
 
-test('Remote Tunnel button pops the tunnel window with phone and machine pairing', async () => {
+test('Remote Tunnel menu opens Settings Connect with phone and machine pairing', async () => {
   const harness = await launchWorkbench()
   try {
     const { page } = harness
-    const connect = await waitForNewWindow(harness, async () => {
+    const settings = await waitForNewWindow(harness, async () => {
       await page.locator('[data-testid="sidebar-connect"]').click()
       await chooseNativeMenu(page, 'Pair another device…')
     })
-    await expect(connect.locator('[data-testid="connect-window"]')).toBeVisible()
+    await expect(settings.locator('[data-testid="settings-window"]')).toBeVisible()
+    await expect(settings.locator('[data-testid="settings-nav-connect"]')).toBeVisible()
     // Incoming (phone / QR) stacked above outgoing (pair a remote machine).
-    await expect(connect.locator('[data-testid="settings-machines"]')).toContainText(
+    await expect(settings.locator('[data-testid="settings-machines"]')).toContainText(
       'Join remote tunnel'
     )
-    await expect(connect.locator('[data-testid="connect-panel-incoming"]')).toContainText(
+    await expect(settings.locator('[data-testid="connect-panel-incoming"]')).toContainText(
       'Allow remote tunnel'
     )
-    await expect(connect.locator('[data-testid="settings-remote-enabled"]')).toBeVisible()
-    await expect(connect.locator('[data-testid="settings-machines-pair-input"]')).toBeVisible()
+    await expect(settings.locator('[data-testid="settings-remote-enabled"]')).toBeVisible()
+    await expect(settings.locator('[data-testid="settings-machines-pair-input"]')).toBeVisible()
   } finally {
     await harness.dispose()
   }

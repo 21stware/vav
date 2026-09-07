@@ -828,11 +828,14 @@ export const PRESET_COLOR_TINTS: readonly Exclude<ColorTint, 'custom'>[] = COLOR
   (tint): tint is Exclude<ColorTint, 'custom'> => tint !== 'custom'
 )
 
-/** Per-connection theme / tint overlay. Missing fields inherit the global look. */
+/** Per-connection theme / tint / pattern overlay. Missing fields inherit. */
 export type MachineAppearance = {
   theme?: ThemeMode
   colorTint?: ColorTint
   customAccentColor?: string
+  surfacePattern?: SurfacePattern
+  customSurfacePatternUrl?: string
+  customSurfacePatternSize?: string
 }
 /** Sidebar list grouping; default is time buckets ("无分组" in the UI). */
 export type SidebarGroupingMode = 'none' | 'workspace' | 'provider'
@@ -1206,6 +1209,16 @@ export interface AppSettings {
    * Temporary records never persist and last 15 minutes in memory.
    */
   logRetentionDays: 1 | 3 | 7 | 14 | 30
+  /**
+   * Read-only appearance snapshot from each paired vavd (theme / tint / accent /
+   * preset pattern). Never persisted. Used as the inherit base for overlays.
+   */
+  hostAppearanceBases?: Record<string, MachineAppearance>
+  /**
+   * True when the active remote is selected but its settings plane could not
+   * be read. Never persisted.
+   */
+  hostSettingsUnavailable?: boolean
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {

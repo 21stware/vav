@@ -1,12 +1,15 @@
 import type { IpcMain, IpcMainInvokeEvent } from 'electron'
 import { IPC } from '@shared/ipc'
-import type { AppSettings } from '@shared/types'
+import { DEFAULT_SETTINGS, type AppSettings, type MachineAppearance } from '@shared/types'
 import {
-  mergeHostSettings,
+  composeHostSettings,
   omitHostSettings,
   pickHostSettings,
-  pickSecretPresent
+  pickSecretPresent,
+  remapHostWorkspaceSettings
 } from '@shared/hostSettings'
+import { pickAppearanceBase } from '@shared/machineAppearance'
+import { isLocalMachine } from '@shared/workspaceHost'
 import type { CliInstallLocation } from '../cli'
 import { parseHexToRgb16, parseOsascriptColorText } from '../window/appleColor'
 import { LOG_EVENT } from '@shared/appLog'
@@ -62,8 +65,10 @@ export type SettingsIpcHost = {
   setFileAssociation: (formatId: string) => unknown
   unsetFileAssociation: (formatId: string) => unknown
   registerAllFileAssociations: () => unknown
-  /** Spawned loopback vavd — host prefs share the store Chrome Settings writes. */
+  /** Current accordion target — host prefs / secrets write this vavd. */
   remote?: () => { request: (method: string, params?: unknown) => Promise<unknown> } | null
+  activeMachineId?: () => string
+  rememberHostAppearance?: (machineId: string, appearance: MachineAppearance) => void
 }
 
 /** Settings get/update/keys/fonts/CLI/file-associations. Analysis stays in the entry. */
@@ -76,18 +81,55 @@ export function registerSettingsIpc(
   const remote = (): { request: (method: string, params?: unknown) => Promise<unknown> } | null =>
     host.remote?.() ?? null
 
-  const mergedSettings = async (): Promise<unknown> => {
+  const activeMachineId = (): string => host.activeMachineId?.() ?? 'local'
+
+  const attachAppearanceBase = (
+    local: AppSettings,
+    hostSnap: Partial<AppSettings> | null | undefined,
+    machineId: string
+  ): Record<string, MachineAppearance> => {
+    const bases = { ...(local.hostAppearanceBases ?? {}) }
+    const appearanceBase = pickAppearanceBase(hostSnap)
+    if (!isLocalMachine(machineId) && Object.keys(appearanceBase).length) {
+      bases[machineId] = appearanceBase
+      host.rememberHostAppearance?.(machineId, appearanceBase)
+    }
+    return bases
+  }
+
+  const mergedSettings = async (): Promise<AppSettings> => {
     const local = host.currentSettings() as AppSettings
+    const machineId = activeMachineId()
     const client = remote()
-    if (!client) return local
+    if (!client) {
+      return {
+        ...local,
+        hostSettingsUnavailable: !isLocalMachine(machineId)
+      }
+    }
     try {
       const hostSnap = (await client.request('settings.get')) as Partial<AppSettings>
+      const empty = !hostSnap || Object.keys(hostSnap).length === 0
+      if (empty && !isLocalMachine(machineId)) {
+        return {
+          ...composeHostSettings(local, DEFAULT_SETTINGS, machineId),
+          hostAppearanceBases: attachAppearanceBase(local, null, machineId),
+          hostSettingsUnavailable: true
+        }
+      }
       return {
-        ...mergeHostSettings(local, pickHostSettings(hostSnap)),
-        ...pickSecretPresent(hostSnap)
+        ...composeHostSettings(local, hostSnap, machineId),
+        ...pickSecretPresent(hostSnap),
+        hostAppearanceBases: attachAppearanceBase(local, hostSnap, machineId),
+        hostSettingsUnavailable: false
       }
     } catch {
-      return local
+      return {
+        ...(isLocalMachine(machineId)
+          ? local
+          : composeHostSettings(local, DEFAULT_SETTINGS, machineId)),
+        hostSettingsUnavailable: !isLocalMachine(machineId)
+      }
     }
   }
 
@@ -96,19 +138,41 @@ export function registerSettingsIpc(
   ipcMain.handle(IPC.settingsUpdate, async (_event, patch: Partial<AppSettings>) => {
     const previous = store.get()
     const client = remote()
+    const machineId = activeMachineId()
     const hostPatch = pickHostSettings(patch)
-    const localPatch = omitHostSettings(patch)
+    const {
+      hostAppearanceBases: _omitBases,
+      hostSettingsUnavailable: _omitFlag,
+      ...localPatch
+    } = omitHostSettings(patch)
+    void _omitBases
+    void _omitFlag
     if (Object.keys(localPatch).length) store.update(localPatch)
-    if (client && Object.keys(hostPatch).length) {
-      await client.request('settings.update', hostPatch)
-    } else if (!client && Object.keys(hostPatch).length) {
-      store.update(hostPatch)
+    if (Object.keys(hostPatch).length) {
+      if (client) {
+        try {
+          await client.request(
+            'settings.update',
+            remapHostWorkspaceSettings(hostPatch, machineId, 'toHost')
+          )
+        } catch {
+          const failed = { ...(await mergedSettings()), hostSettingsUnavailable: true }
+          host.broadcastSettings(failed)
+          return failed
+        }
+      } else if (isLocalMachine(machineId)) {
+        store.update(hostPatch)
+      } else {
+        const failed = { ...(await mergedSettings()), hostSettingsUnavailable: true }
+        host.broadcastSettings(failed)
+        return failed
+      }
     }
     const keys = Object.keys(patch ?? {}).filter((key) => key !== 'apiKeyPresent')
     if (keys.length) {
       appLog().user(LOG_EVENT.userSettingsUpdate, keys.join(', '), { data: { keys } })
     }
-    const next = (await mergedSettings()) as AppSettings
+    const next = await mergedSettings()
     host.applyUpdateSideEffects(previous, patch, next)
     host.broadcastSettings(next)
     return next

@@ -6,6 +6,7 @@ export type RemoteHostFacts = {
   tmpOf: (id: string) => string
   defaultPathOf: (id: string) => string | null | undefined
   controlPlaneOf?: (id: string) => boolean
+  appearanceOf?: (id: string) => WorkspaceHostInfo['appearance']
 }
 
 /** Overlay daemon-reported home/tmp/providers onto the registry snapshot. */
@@ -26,7 +27,8 @@ export function decorateHosts(
       defaultPath,
       providers,
       controlPlane: remote.controlPlaneOf?.(host.id),
-      localShell: host.localShell
+      localShell: host.localShell,
+      appearance: remote.appearanceOf?.(host.id) ?? host.appearance
     }
   })
 }

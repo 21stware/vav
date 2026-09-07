@@ -44,7 +44,10 @@ function PhoneChrome({ transport }: { transport: PhoneTransport }): React.JSX.El
   useEffect(() => transport.onPage(setPage), [transport])
 
   useEffect(() => {
-    const open = (): void => setPairOpen(true)
+    const open = (): void => {
+      useSessionStore.getState().openSettings('connect')
+      setSettingsOpen(true)
+    }
     window.addEventListener('vav:phone-open-connect', open)
     return () => window.removeEventListener('vav:phone-open-connect', open)
   }, [])

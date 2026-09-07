@@ -10,6 +10,8 @@
  * headless `vavd` can share the same types.
  */
 
+import type { MachineAppearance } from './types.ts'
+
 /** This process. Remote hosts use a paired machine id. */
 export const LOCAL_MACHINE_ID = 'local'
 
@@ -42,6 +44,8 @@ export type WorkspaceHostInfo = {
    * user-facing remote in the switcher / tray.
    */
   localShell?: boolean
+  /** Read-only appearance this host reported (theme / tint / accent / pattern). */
+  appearance?: MachineAppearance
 }
 
 /** A directory on a specific host. */

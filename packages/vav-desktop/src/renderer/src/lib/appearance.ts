@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { TINT_ACCENT, normalizeAccentHex, type FixedColorTint } from '@shared/colorTints'
-import { appearanceForMachine } from '@shared/machineAppearance'
+import { appearanceBaseForMachine, appearanceForMachine } from '@shared/machineAppearance'
 import { COLOR_TINTS, type ColorTint } from '@shared/types'
 import { useSessionStore } from '../state/sessionStore'
 import { IS_MAC } from './platform'
@@ -277,7 +277,12 @@ function applyAccentTintVars(
 export function useAppearance(): void {
   const settings = useSessionStore((s) => s.settings)
   const windowMachineId = useSessionStore((s) => s.windowMachineId)
-  const resolved = appearanceForMachine(settings, windowMachineId)
+  const hosts = useSessionStore((s) => s.hosts)
+  const resolved = appearanceForMachine(
+    settings,
+    windowMachineId,
+    appearanceBaseForMachine(settings, windowMachineId, hosts)
+  )
   const theme = resolved.theme
   const colorTint = resolved.colorTint
   const customAccentColor = resolved.customAccentColor
@@ -285,9 +290,9 @@ export function useAppearance(): void {
   const fontSize = useSessionStore((s) => s.settings.fontSize)
   const reduceMotion = useSessionStore((s) => s.settings.reduceMotion)
   const windowVibrancyEnabled = useSessionStore((s) => s.settings.windowVibrancyEnabled)
-  const surfacePattern = useSessionStore((s) => s.settings.surfacePattern)
-  const customSurfacePatternUrl = useSessionStore((s) => s.settings.customSurfacePatternUrl)
-  const customSurfacePatternSize = useSessionStore((s) => s.settings.customSurfacePatternSize)
+  const surfacePattern = resolved.surfacePattern
+  const customSurfacePatternUrl = resolved.customSurfacePatternUrl
+  const customSurfacePatternSize = resolved.customSurfacePatternSize
   const storedAccent = useSessionStore((s) => s.systemAccentColor)
 
   const [systemAccent, setSystemAccent] = useState(storedAccent || '#007aff')

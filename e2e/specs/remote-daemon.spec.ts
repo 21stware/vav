@@ -10,6 +10,8 @@ import {
   launchVav,
   openFilesTray,
   openSettingsWindow,
+  readElectronConversation,
+  readVavdConversation,
   waitForDaemonPairing,
   waitForHostWindow,
   pairRemoteDaemon,
@@ -460,6 +462,14 @@ test('desktop spawns vavd and sends through the child process', async () => {
       timeout: 20_000
     })
     await expect(remote.locator('[data-testid="message-assistant"]').last()).toContainText(
+      'e2e stub reply'
+    )
+    await expect
+      .poll(
+        () => readVavdConversation(harness.userData, sessionId!)?.includes('e2e stub reply') ?? false
+      )
+      .toBe(true)
+    expect(readElectronConversation(harness.userData, sessionId!) ?? '').not.toContain(
       'e2e stub reply'
     )
 

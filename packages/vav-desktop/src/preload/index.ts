@@ -453,9 +453,6 @@ const api: VavApi = {
     openSettings: (view?: SettingsView, agentId?: string) =>
       ipcRenderer.invoke(IPC.windowOpenSettings, view, agentId),
     closeSettings: () => ipcRenderer.invoke(IPC.windowCloseSettings),
-    openConnect: () => ipcRenderer.invoke(IPC.windowOpenConnect),
-    closeConnect: () => ipcRenderer.invoke(IPC.windowCloseConnect),
-    fitConnect: (height) => ipcRenderer.invoke(IPC.windowFitConnect, height),
     desiredSettingsView: () =>
       ipcRenderer.invoke(IPC.settingsDesiredView) as Promise<SettingsViewPayload>,
     popupMenu: (items: NativeMenuItem[], position?: { x: number; y: number }) =>
