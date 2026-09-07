@@ -5,6 +5,7 @@
  * Electron-free — only Node + the Host* interfaces.
  */
 
+import { spawn } from 'node:child_process'
 import { createServer, type Server, type Socket } from 'node:net'
 import { randomUUID } from 'node:crypto'
 import {
@@ -19,6 +20,13 @@ import {
 } from '../../shared/daemonProtocol.ts'
 import { parseClientMessage, type RemoteHello } from '../../shared/remoteControl.ts'
 import type { WorkspaceHost } from '../host/WorkspaceHost.ts'
+import {
+  copyAsFileSpawn,
+  getInfoSpawn,
+  openSpawn,
+  previewSpawn,
+  revealSpawn
+} from '../host/hostShell.ts'
 import type { HostChild, HostPtyProcess, HostFileHandle } from '../host/index.ts'
 import { attachLineReader, secretsMatch, writeLine } from './jsonLines.ts'
 import type { DaemonIdentity } from './identity.ts'
@@ -28,7 +36,34 @@ import {
   type GrantStore,
   type IncomingController
 } from './grants.ts'
+import { emptyPluginSnapshot, pluginHostKind } from '../../shared/plugins.ts'
 import { whichOnHost } from './procWhich.ts'
+import {
+  checkoutGitBranch,
+  createGitBranch,
+  createGitWorktree,
+  getGitDiff,
+  getGitShowBase64,
+  getGitSnapshot,
+  initGitRepo
+} from '../git/GitService.ts'
+import {
+  getGithubActionRun,
+  getGithubPull,
+  getGithubSite,
+  listGithubActions,
+  listGithubPulls,
+  listGithubReleases
+} from '../github/GithubService.ts'
+import {
+  isLogChannel,
+  isLogRetentionClass,
+  type AppLogClearScope,
+  type AppLogInput,
+  type AppLogQuery,
+  type AppLogRecord,
+  type AppLogStats
+} from '../../shared/appLog.ts'
 
 type ServerOpts = {
   host: WorkspaceHost
@@ -37,8 +72,13 @@ type ServerOpts = {
   appVersion: string
   home: string
   tmp: string
-  /** This machine's `vav-daemon://` URI — sent after a LAN pair-ask is approved. */
+  /** This machine's `vavrtp://` URI — sent after a LAN pair-ask is approved. */
   pairing?: (secret?: string) => string | null
+  /**
+   * Mint a new offer secret and return the current `vavrtp://` line.
+   * Existing grants stay valid. Chrome / desktop / `vavc host rotate` share this.
+   */
+  rotateOffer?: () => string | null | Promise<string | null>
   /** Desktop confirm for LAN Pair. Headless daemons omit this and refuse. */
   onPairAsk?: (from: { name: string; machineId: string }) => Promise<boolean>
   /** Issued grants. Defaults to an in-memory store so every pair can be revoked. */
@@ -56,11 +96,35 @@ type ServerOpts = {
    */
   catalog?: DaemonWorkspaceCatalog
   /**
+   * Control-plane diagnostic logs. `vavd` supplies the plane's LogStore;
+   * a workspace-only listen omits this and the RPCs return empty.
+   */
+  logs?: DaemonLogCatalog
+  /** Host plugin catalog (skills / MCP / hooks). Chrome Git already uses git.*. */
+  plugins?: DaemonPluginCatalog
+  /** Scheduled jobs on this control plane. Chrome / vavc list the same rows as desktop. */
+  timers?: DaemonTimerCatalog
+  /** Connector catalog + vendor status (GitHub / CF / Supabase / Vercel). */
+  connectors?: DaemonConnectorCatalog
+  /** File-preview multi-session store — Chrome / web Files tray matches desktop. */
+  fileSessions?: DaemonFileSessionCatalog
+  /** Accept / reject the pending change-review set — same store desktop paints. */
+  changeSets?: DaemonChangeSetCatalog
+  /** Provider accounts + keys. Chrome Settings and desktop IPC share this store. */
+  accounts?: DaemonAccountsCatalog
+  /** Host-relevant preferences (model / agents / trays). Appearance stays on the client. */
+  settings?: DaemonSettingsCatalog
+  /**
    * Phone-role hello on this listen port — hand the socket to the session
    * plane. Omit only for a workspace-only listen (tests). `vavd` always
    * supplies this so phone / web / extension / desktop-connect share one port.
    */
   onControlHello?: (socket: Socket, leftover: string, hello: RemoteHello) => void
+  /**
+   * Finder / default-app / Get Info / clipboard-file. Tests inject a spy so
+   * `fs.reveal` does not open a real file manager. Production detaches.
+   */
+  hostFileSpawn?: DaemonHostFileSpawn
 }
 
 /** Plain JSON catalog the desktop injects — DaemonServer stays Electron-free. */
@@ -70,12 +134,127 @@ export type DaemonWorkspaceCatalog = {
   listRecents: () => string[]
 }
 
+/** Host plugin snapshot the Chrome / web Files → Plugins tab reads. */
+export type DaemonPluginCatalog = {
+  snapshot: (host?: string | null) => unknown
+  setEnabled: (host: string, pluginId: string, enabled: boolean) => unknown
+  create: (kind: string, name: string) => unknown
+  writeConfig: (path: string, content: string) => unknown
+}
+
+/** Scheduled jobs the Chrome / web sidebar and `vavc timers` read. */
+export type DaemonTimerCatalog = {
+  listJobs: () => unknown
+  createScheduled: () => unknown
+  getJobForConversation: (conversationId: string) => unknown
+  createJob: (input: unknown) => unknown
+  updateJob: (id: string, patch: unknown) => unknown
+  removeJob: (id: string) => unknown
+  runNow: (id: string) => unknown
+  listRuns: (jobId?: string) => unknown
+  listSessions: () => unknown
+}
+
+/** File-preview sessions the Chrome / web Files tray switcher reads. */
+export type DaemonFileSessionCatalog = {
+  open: (path: string) => Promise<unknown>
+  create: (path: string) => Promise<unknown>
+  setActive: (fileId: string, sessionId: string) => unknown
+  list: (fileId: string) => unknown
+  listAll: () => unknown
+  resolve: (fileId: string) => unknown
+  rename: (fileId: string, sessionId: string, title: string) => unknown
+  delete: (fileId: string, sessionIds: string[]) => unknown
+  forceDelete: (fileId: string, sessionIds: string[]) => unknown
+  setReadOnly: (sessionId: string, readOnly: boolean) => void
+}
+
+/** Host settings Chrome / desktop IPC / `vavc settings` share when the workbench is a shell. */
+export type DaemonSettingsCatalog = {
+  get: () => unknown
+  update: (patch: Record<string, unknown>) => unknown
+  reset: () => unknown
+  setSecret: (slot: string, value: string) => unknown
+  secretHint: (slot: string) => string | null
+  revealSecret: (slot: string) => string | null
+}
+
+/** Provider accounts the Chrome / web Settings window and `vavc account` read. */
+export type DaemonAccountsCatalog = {
+  getPage: (workspaceKey?: string) => unknown
+  createVav: (input: {
+    name?: string
+    endpoint?: string
+    apiKey?: string
+    agentId?: string
+    provider?: string
+  }) => Promise<unknown>
+  createDraft: (input: { agentId?: string; kind?: string; endpoint?: string }) => unknown
+  updateVav: (
+    id: string,
+    patch: { alias?: string | null; endpoint?: string; apiKey?: string }
+  ) => unknown
+  setCurrent: (id: string) => unknown
+  activate: (id: string) => Promise<unknown>
+  remove: (id: string) => unknown
+  verify: (id: string, apiKey?: string) => Promise<unknown>
+  revealKey: (id: string) => string | null
+  beginOAuth: (agentId: string, accountId?: string) => Promise<unknown>
+  cancelOAuth: (agentId: string) => unknown
+  signOut: (agentId: string) => Promise<unknown>
+}
+
+/** Change-review Accept / Reject the Chrome / web transcript uses. */
+export type DaemonChangeSetCatalog = {
+  get: (id: string) => unknown
+  active: (conversationId: string) => unknown
+  /**
+   * Freeze the deterministic 2-file smoke review onto this conversation.
+   * Desktop e2e calls this after the local shell is paired so Accept lives
+   * on the same ChangeSetStore Chrome / web already read.
+   */
+  seedReview?: (conversationId: string) => Promise<unknown>
+  accept: (setId: string, filePaths: string[]) => unknown
+  reject: (setId: string, filePaths: string[]) => unknown
+  acceptAll: (setId: string) => unknown
+  rejectAll: (setId: string) => unknown
+  undo: (setId: string, filePath: string) => unknown
+  applyEdit: (setId: string, filePath: string, content: string) => unknown
+}
+
+/** Connector + vendor-status RPCs so Chrome Settings / workspace panels match desktop. */
+export type DaemonConnectorCatalog = {
+  catalog: () => unknown
+  probe: (cwd: string) => Promise<unknown>
+  act: (request: unknown) => Promise<unknown>
+  authStatus: () => Promise<unknown>
+  beginLogin: (id: string) => Promise<unknown>
+  cancelLogin: (id?: string) => Promise<unknown>
+  cloudflareStatus: (cwd: string, query?: unknown) => Promise<unknown>
+  supabaseStatus: (cwd: string, query?: unknown) => Promise<unknown>
+  vercelStatus: (cwd: string, query?: unknown) => Promise<unknown>
+}
+
+/** vavd LogStore surface — Settings → Logs is a client of this sink. */
+export type DaemonLogCatalog = {
+  query: (query?: AppLogQuery) => AppLogRecord[]
+  stats: () => AppLogStats
+  clear: (scope: AppLogClearScope) => number
+  exportText: (query?: AppLogQuery) => string
+  append: (input: AppLogInput) => AppLogRecord | null
+  subscribe: (fn: (record: AppLogRecord) => void) => () => void
+}
+
+const EMPTY_LOG_STATS: AppLogStats = { ephemeral: 0, session: 0, durable: 0, total: 0 }
+
 type LiveProcess = {
   child: HostChild
+  socket: Socket | null
 }
 
 type LivePty = {
   proc: HostPtyProcess
+  socket: Socket | null
 }
 
 type LiveHandle = {
@@ -92,6 +271,44 @@ function asRecord(value: unknown): Record<string, unknown> {
 
 function asString(value: unknown, fallback = ''): string {
   return typeof value === 'string' ? value : fallback
+}
+
+function asStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.map((row) => String(row)) : []
+}
+
+export type DaemonHostFileSpawn = (file: string, args: string[]) => void
+
+function defaultHostFileSpawn(file: string, args: string[]): void {
+  try {
+    const child = spawn(file, args, {
+      stdio: 'ignore',
+      detached: true,
+      windowsHide: true
+    })
+    child.unref()
+    child.on('error', () => undefined)
+  } catch {
+    /* host may lack the helper */
+  }
+}
+
+function sanitizeLogQuery(params: Record<string, unknown>): AppLogQuery {
+  const channel =
+    params.channel === 'all' || isLogChannel(params.channel) ? params.channel : undefined
+  const retention =
+    params.retention === 'all' || isLogRetentionClass(params.retention)
+      ? params.retention
+      : undefined
+  return {
+    channel,
+    retention,
+    conversationId: typeof params.conversationId === 'string' ? params.conversationId : undefined,
+    search: typeof params.search === 'string' ? params.search : undefined,
+    since: typeof params.since === 'number' ? params.since : undefined,
+    until: typeof params.until === 'number' ? params.until : undefined,
+    limit: typeof params.limit === 'number' ? params.limit : undefined
+  }
 }
 
 /** Explicit LAN bind — used when the user opts into "allow other devices". */
@@ -118,6 +335,9 @@ export class DaemonServer {
   private readonly sockets = new Set<Socket>()
   private readonly sessions = new Set<() => void>()
   private readonly live = new Map<Socket, LiveMeta>()
+  /** PTYs and spawned processes live on the daemon, not the client socket. */
+  private readonly processes = new Map<string, LiveProcess>()
+  private readonly ptys = new Map<string, LivePty>()
   private listenPort = 0
   private pairAskBusy = false
   private pendingAsk: IncomingController | null = null
@@ -130,6 +350,16 @@ export class DaemonServer {
   constructor(opts: ServerOpts) {
     this.opts = opts
     this.grants = opts.grants ?? createMemoryGrantStore()
+  }
+
+  private spawnHostFile(
+    cmd: { file: string; args: string[] } | null,
+    missing: string
+  ): { ok: true } {
+    if (!cmd) throw new Error(missing)
+    const spawnFile = this.opts.hostFileSpawn ?? defaultHostFileSpawn
+    spawnFile(cmd.file, cmd.args)
+    return { ok: true }
   }
 
   incoming(): IncomingController[] {
@@ -196,9 +426,34 @@ export class DaemonServer {
     this.attachSession(socket, leftover, true, hello)
   }
 
+  /**
+   * Fresh inbound socket (loopback WebSocket). First line must be hello;
+   * `role: 'daemon'` stays here, phone/omitted role is handed to the hub.
+   */
+  attachIncoming(socket: Socket, leftover = ''): void {
+    this.attachSession(socket, leftover, false)
+  }
+
   close(): void {
     for (const dispose of [...this.sessions]) dispose()
     this.sessions.clear()
+    for (const live of this.processes.values()) {
+      try {
+        live.child.kill()
+        live.child.unref()
+      } catch {
+        /* ignore */
+      }
+    }
+    this.processes.clear()
+    for (const live of this.ptys.values()) {
+      try {
+        live.proc.kill()
+      } catch {
+        /* ignore */
+      }
+    }
+    this.ptys.clear()
     for (const socket of this.sockets) {
       try {
         if (typeof socket.resetAndDestroy === 'function') socket.resetAndDestroy()
@@ -242,6 +497,16 @@ export class DaemonServer {
 
   private notifyIncoming(): void {
     this.opts.onIncomingChanged?.()
+    const controllers = this.incoming()
+    for (const [socket, meta] of this.live) {
+      if (meta.role !== 'daemon') continue
+      writeLine(socket, {
+        type: 'stream',
+        stream: 'incoming',
+        event: 'changed',
+        data: { controllers }
+      })
+    }
   }
 
   private clearRevoked(clientId: string): void {
@@ -337,8 +602,6 @@ export class DaemonServer {
     adoptedHello?: { auth: string; device?: string }
   ): void {
     this.sockets.add(socket)
-    const processes = new Map<string, LiveProcess>()
-    const ptys = new Map<string, LivePty>()
     const handles = new Map<string, LiveHandle>()
     const watches = new Map<string, LiveWatch>()
     let ready = authed
@@ -356,27 +619,16 @@ export class DaemonServer {
       this.sockets.delete(socket)
       this.live.delete(socket)
       this.notifyIncoming()
-      for (const live of processes.values()) {
-        try {
-          live.child.kill()
-          live.child.unref()
-        } catch {
-          /* ignore */
-        }
+      for (const live of this.processes.values()) {
+        if (live.socket === socket) live.socket = null
       }
-      for (const live of ptys.values()) {
-        try {
-          live.proc.kill()
-        } catch {
-          /* ignore */
-        }
+      for (const live of this.ptys.values()) {
+        if (live.socket === socket) live.socket = null
       }
       for (const live of handles.values()) {
         void live.handle.close()
       }
       for (const live of watches.values()) live.close()
-      processes.clear()
-      ptys.clear()
       handles.clear()
       watches.clear()
     }
@@ -479,7 +731,7 @@ export class DaemonServer {
         writeLine(socket, { type: 'pong' })
         return
       }
-      void this.dispatch(frame, socket, { processes, ptys, handles, watches, grantId: () => meta.grantId })
+      void this.dispatch(frame, socket, { handles, watches, grantId: () => meta.grantId })
     }, { leftover, leftoverRef })
   }
 
@@ -551,8 +803,6 @@ export class DaemonServer {
     req: DaemonReq,
     socket: Socket,
     live: {
-      processes: Map<string, LiveProcess>
-      ptys: Map<string, LivePty>
       handles: Map<string, LiveHandle>
       watches: Map<string, LiveWatch>
       grantId: () => string | null
@@ -584,8 +834,6 @@ export class DaemonServer {
     params: unknown,
     socket: Socket,
     live: {
-      processes: Map<string, LiveProcess>
-      ptys: Map<string, LivePty>
       handles: Map<string, LiveHandle>
       watches: Map<string, LiveWatch>
       grantId: () => string | null
@@ -606,6 +854,22 @@ export class DaemonServer {
           home: this.opts.home,
           tmp: this.opts.tmp
         }
+      case 'host.pairing':
+        return { pairing: this.opts.pairing?.() ?? null }
+      case 'host.rotateOffer': {
+        if (!this.opts.rotateOffer) throw new Error('host does not rotate offers')
+        return { pairing: (await this.opts.rotateOffer()) ?? null }
+      }
+      case 'host.incoming':
+        return { controllers: this.incoming() }
+      case 'host.disconnectIncoming': {
+        const grantId = asString(p.grantId || p.id)
+        return { ok: this.disconnectGrant(grantId) }
+      }
+      case 'host.unpairIncoming': {
+        const grantId = asString(p.grantId || p.id)
+        return { ok: this.unpairGrant(grantId) }
+      }
       case 'fs.readdir': {
         const path = asString(p.path)
         const dirents = await fs.readdir(path)
@@ -715,47 +979,370 @@ export class DaemonServer {
         live.watches.delete(stream)
         return { ok: true }
       }
+      case 'fs.reveal': {
+        const path = asString(p.path)
+        if (!path) throw new Error('empty path')
+        let isDirectory = false
+        try {
+          isDirectory = (await fs.stat(path)).isDirectory()
+        } catch {
+          /* still try to reveal */
+        }
+        return this.spawnHostFile(
+          revealSpawn(this.opts.host.info.platform, path, isDirectory),
+          'reveal unavailable'
+        )
+      }
+      case 'fs.openPath': {
+        const path = asString(p.path)
+        if (!path) throw new Error('empty path')
+        return this.spawnHostFile(openSpawn(this.opts.host.info.platform, path), 'open unavailable')
+      }
+      case 'fs.preview': {
+        const path = asString(p.path)
+        if (!path) throw new Error('empty path')
+        return this.spawnHostFile(
+          previewSpawn(this.opts.host.info.platform, path),
+          'preview unavailable'
+        )
+      }
+      case 'fs.getInfo': {
+        const path = asString(p.path)
+        if (!path) throw new Error('empty path')
+        return this.spawnHostFile(
+          getInfoSpawn(this.opts.host.info.platform, path),
+          'Get Info is only available on macOS and Windows'
+        )
+      }
+      case 'fs.copyAsFile': {
+        const paths = asStringArray(p.paths).filter(Boolean)
+        if (paths.length === 0) {
+          const single = asString(p.path)
+          if (single) paths.push(single)
+        }
+        if (paths.length === 0) throw new Error('no paths')
+        return this.spawnHostFile(
+          copyAsFileSpawn(this.opts.host.info.platform, paths),
+          'Copy file is only available on macOS and Windows'
+        )
+      }
       case 'process.spawn':
-        return this.spawnProcess(p, socket, live.processes)
+        return this.spawnProcess(p, socket)
       case 'process.write': {
-        const entry = live.processes.get(asString(p.stream))
+        const entry = this.processes.get(asString(p.stream))
         if (!entry?.child.stdin) throw new Error('unknown process')
         entry.child.stdin.write(Buffer.from(asString(p.base64), 'base64'))
         return { ok: true }
       }
       case 'process.end': {
-        const entry = live.processes.get(asString(p.stream))
+        const entry = this.processes.get(asString(p.stream))
         if (!entry?.child.stdin) return { ok: false }
         entry.child.stdin.end()
         return { ok: true }
       }
       case 'process.kill': {
-        const entry = live.processes.get(asString(p.stream))
+        const entry = this.processes.get(asString(p.stream))
         if (!entry) return { ok: false }
         const signal = asString(p.signal) as NodeJS.Signals | ''
         return { ok: entry.child.kill(signal || undefined) }
       }
       case 'process.unref': {
-        live.processes.get(asString(p.stream))?.child.unref()
+        this.processes.get(asString(p.stream))?.child.unref()
         return { ok: true }
       }
       case 'pty.spawn':
-        return this.spawnPty(p, socket, live.ptys)
+        return this.spawnPty(p, socket)
       case 'pty.write': {
-        const entry = live.ptys.get(asString(p.stream))
+        const entry = this.ptys.get(asString(p.stream))
         if (!entry) throw new Error('unknown pty')
         entry.proc.write(asString(p.data))
         return { ok: true }
       }
       case 'pty.resize': {
-        const entry = live.ptys.get(asString(p.stream))
+        const entry = this.ptys.get(asString(p.stream))
         if (!entry) throw new Error('unknown pty')
         entry.proc.resize(Number(p.cols) || 80, Number(p.rows) || 24)
         return { ok: true }
       }
       case 'pty.kill': {
-        live.ptys.get(asString(p.stream))?.proc.kill(asString(p.signal) || undefined)
+        this.ptys.get(asString(p.stream))?.proc.kill(asString(p.signal) || undefined)
         return { ok: true }
+      }
+      case 'plugins.list':
+        return (
+          this.opts.plugins?.snapshot(asString(p.host) || null) ??
+          emptyPluginSnapshot(pluginHostKind(asString(p.host) || null))
+        )
+      case 'plugins.setEnabled': {
+        if (!this.opts.plugins) return { ok: false, error: 'unavailable' }
+        return this.opts.plugins.setEnabled(
+          asString(p.host) || 'vav',
+          asString(p.pluginId) || asString(p.id),
+          p.enabled === true
+        )
+      }
+      case 'plugins.create': {
+        if (!this.opts.plugins) return { ok: false, error: 'unavailable' }
+        return this.opts.plugins.create(asString(p.kind), asString(p.name))
+      }
+      case 'plugins.write': {
+        if (!this.opts.plugins) return { ok: false, error: 'unavailable' }
+        return this.opts.plugins.writeConfig(asString(p.path), asString(p.content))
+      }
+      case 'fileSessions.open':
+        return this.opts.fileSessions?.open(asString(p.path)) ?? null
+      case 'fileSessions.create':
+        return this.opts.fileSessions?.create(asString(p.path)) ?? null
+      case 'fileSessions.setActive':
+        return this.opts.fileSessions?.setActive(asString(p.fileId), asString(p.sessionId)) ?? null
+      case 'fileSessions.list':
+        return this.opts.fileSessions?.list(asString(p.fileId)) ?? null
+      case 'fileSessions.listAll':
+        return this.opts.fileSessions?.listAll() ?? []
+      case 'fileSessions.resolve':
+        return this.opts.fileSessions?.resolve(asString(p.fileId)) ?? null
+      case 'fileSessions.rename':
+        return (
+          this.opts.fileSessions?.rename(asString(p.fileId), asString(p.sessionId), asString(p.title)) ??
+          null
+        )
+      case 'fileSessions.delete': {
+        const ids = Array.isArray(p.sessionIds) ? p.sessionIds.map((id) => String(id)) : []
+        return this.opts.fileSessions?.delete(asString(p.fileId), ids) ?? null
+      }
+      case 'fileSessions.forceDelete': {
+        const ids = Array.isArray(p.sessionIds) ? p.sessionIds.map((id) => String(id)) : []
+        return this.opts.fileSessions?.forceDelete(asString(p.fileId), ids) ?? { ok: true, removed: [] }
+      }
+      case 'fileSessions.setReadOnly':
+        this.opts.fileSessions?.setReadOnly(asString(p.sessionId), p.readOnly === true)
+        return { ok: true }
+      case 'accounts.getPage':
+        return (
+          this.opts.accounts?.getPage(asString(p.workspaceKey) || undefined) ?? {
+            workspaceKey: '',
+            workspaceLabel: '',
+            groups: [],
+            accounts: [],
+            usage: []
+          }
+        )
+      case 'accounts.createVav': {
+        if (!this.opts.accounts) throw new Error('unavailable')
+        return this.opts.accounts.createVav({
+          name: asString(p.name),
+          endpoint: asString(p.endpoint),
+          apiKey: asString(p.apiKey),
+          agentId: asString(p.agentId) || undefined,
+          provider: asString(p.provider) || undefined
+        })
+      }
+      case 'accounts.createDraft': {
+        if (!this.opts.accounts) throw new Error('unavailable')
+        return this.opts.accounts.createDraft({
+          agentId: asString(p.agentId) || undefined,
+          kind: asString(p.kind) || undefined,
+          endpoint: asString(p.endpoint) || undefined
+        })
+      }
+      case 'accounts.updateVav': {
+        if (!this.opts.accounts) throw new Error('unavailable')
+        return this.opts.accounts.updateVav(asString(p.id), {
+          alias: typeof p.alias === 'string' || p.alias === null ? p.alias : undefined,
+          endpoint: typeof p.endpoint === 'string' ? p.endpoint : undefined,
+          apiKey: typeof p.apiKey === 'string' ? p.apiKey : undefined
+        })
+      }
+      case 'accounts.setCurrent': {
+        if (!this.opts.accounts) throw new Error('unavailable')
+        return this.opts.accounts.setCurrent(asString(p.id))
+      }
+      case 'accounts.activate': {
+        if (!this.opts.accounts) throw new Error('unavailable')
+        return this.opts.accounts.activate(asString(p.id))
+      }
+      case 'accounts.remove': {
+        if (!this.opts.accounts) throw new Error('unavailable')
+        return this.opts.accounts.remove(asString(p.id))
+      }
+      case 'accounts.verify': {
+        if (!this.opts.accounts) throw new Error('unavailable')
+        return this.opts.accounts.verify(asString(p.id), asString(p.apiKey) || undefined)
+      }
+      case 'accounts.revealKey':
+        return { key: this.opts.accounts?.revealKey(asString(p.id)) ?? null }
+      case 'accounts.beginOAuth': {
+        if (!this.opts.accounts) throw new Error('unavailable')
+        return this.opts.accounts.beginOAuth(
+          asString(p.agentId),
+          asString(p.accountId) || undefined
+        )
+      }
+      case 'accounts.cancelOAuth': {
+        if (!this.opts.accounts) throw new Error('unavailable')
+        return this.opts.accounts.cancelOAuth(asString(p.agentId))
+      }
+      case 'accounts.signOut': {
+        if (!this.opts.accounts) throw new Error('unavailable')
+        return this.opts.accounts.signOut(asString(p.agentId))
+      }
+      case 'settings.get':
+        return this.opts.settings?.get() ?? {}
+      case 'settings.update':
+        return this.opts.settings?.update(p) ?? {}
+      case 'settings.reset':
+        return this.opts.settings?.reset() ?? {}
+      case 'settings.setSecret': {
+        if (!this.opts.settings) throw new Error('unavailable')
+        return this.opts.settings.setSecret(asString(p.slot), asString(p.value))
+      }
+      case 'settings.secretHint':
+        return { hint: this.opts.settings?.secretHint(asString(p.slot)) ?? null }
+      case 'settings.revealSecret':
+        return { key: this.opts.settings?.revealSecret(asString(p.slot)) ?? null }
+      case 'changeSets.get':
+        return this.opts.changeSets?.get(asString(p.id)) ?? null
+      case 'changeSets.active':
+        return this.opts.changeSets?.active(asString(p.conversationId)) ?? null
+      case 'changeSets.seedReview': {
+        if (!this.opts.changeSets?.seedReview) throw new Error('unavailable')
+        return this.opts.changeSets.seedReview(asString(p.conversationId))
+      }
+      case 'changeSets.accept':
+        return this.opts.changeSets?.accept(asString(p.setId), asStringArray(p.filePaths)) ?? null
+      case 'changeSets.reject':
+        return this.opts.changeSets?.reject(asString(p.setId), asStringArray(p.filePaths)) ?? null
+      case 'changeSets.acceptAll':
+        return this.opts.changeSets?.acceptAll(asString(p.setId)) ?? null
+      case 'changeSets.rejectAll':
+        return this.opts.changeSets?.rejectAll(asString(p.setId)) ?? null
+      case 'changeSets.undo':
+        return this.opts.changeSets?.undo(asString(p.setId), asString(p.filePath)) ?? null
+      case 'changeSets.applyEdit':
+        return (
+          this.opts.changeSets?.applyEdit(asString(p.setId), asString(p.filePath), asString(p.content)) ??
+          null
+        )
+      case 'git.status':
+        return getGitSnapshot(asString(p.cwd), asString(p.conversationId) || undefined)
+      case 'git.diff':
+        return getGitDiff(asString(p.cwd), asString(p.path), {
+          staged: p.staged === true,
+          conversationId: asString(p.conversationId) || undefined
+        })
+      case 'git.showBase64':
+        return getGitShowBase64(
+          asString(p.cwd),
+          asString(p.path),
+          asString(p.ref) || 'HEAD',
+          asString(p.conversationId) || undefined
+        )
+      case 'git.init':
+        return initGitRepo(asString(p.cwd), asString(p.conversationId) || undefined)
+      case 'git.createBranch':
+        return createGitBranch(asString(p.cwd), asString(p.name), {
+          checkout: p.checkout === true,
+          conversationId: asString(p.conversationId) || undefined
+        })
+      case 'git.checkoutBranch':
+        return checkoutGitBranch(
+          asString(p.cwd),
+          asString(p.name),
+          asString(p.conversationId) || undefined
+        )
+      case 'git.createWorktree':
+        return createGitWorktree(
+          asString(p.cwd),
+          {
+            path: asString(p.path),
+            newBranch: asString(p.newBranch) || undefined,
+            branch: asString(p.branch) || undefined
+          },
+          asString(p.conversationId) || undefined
+        )
+      case 'github.listPulls':
+        return listGithubPulls(
+          asString(p.cwd),
+          p.state === 'closed' || p.state === 'all' || p.state === 'open' ? p.state : 'open'
+        )
+      case 'github.getPull':
+        return getGithubPull(asString(p.cwd), Number(p.number) || 0)
+      case 'github.listActions':
+        return listGithubActions(
+          asString(p.cwd),
+          p.scope === 'history' || p.scope === 'running' ? p.scope : undefined
+        )
+      case 'github.getActionRun':
+        return getGithubActionRun(asString(p.cwd), Number(p.runId) || 0)
+      case 'github.getSite':
+        return getGithubSite(asString(p.cwd))
+      case 'github.listReleases':
+        return listGithubReleases(asString(p.cwd))
+      case 'timers.listJobs':
+        return this.opts.timers?.listJobs() ?? []
+      case 'timers.createScheduled': {
+        if (!this.opts.timers) return { ok: false, error: 'unavailable' }
+        return this.opts.timers.createScheduled()
+      }
+      case 'timers.getJobForConversation':
+        return this.opts.timers?.getJobForConversation(asString(p.conversationId) || asString(p.id)) ?? null
+      case 'timers.createJob': {
+        if (!this.opts.timers) return { ok: false, error: 'unavailable' }
+        return this.opts.timers.createJob(p.input ?? p)
+      }
+      case 'timers.updateJob': {
+        if (!this.opts.timers) return { ok: false, error: 'unavailable' }
+        return this.opts.timers.updateJob(asString(p.id), p.patch ?? {})
+      }
+      case 'timers.removeJob':
+        return this.opts.timers?.removeJob(asString(p.id)) ?? false
+      case 'timers.runNow':
+        return this.opts.timers?.runNow(asString(p.id)) ?? null
+      case 'timers.listRuns':
+        return this.opts.timers?.listRuns(asString(p.jobId) || undefined) ?? []
+      case 'timers.listSessions':
+        return this.opts.timers?.listSessions() ?? []
+      case 'connectors.catalog':
+        return this.opts.connectors?.catalog() ?? []
+      case 'connectors.probe':
+        return this.opts.connectors?.probe(asString(p.cwd)) ?? []
+      case 'connectors.act': {
+        if (!this.opts.connectors) return { ok: false, error: 'unavailable' }
+        return this.opts.connectors.act(p.request ?? p)
+      }
+      case 'connectors.authStatus':
+        return (
+          this.opts.connectors?.authStatus() ?? {
+            rows: [],
+            login: { connector: null, status: 'idle' }
+          }
+        )
+      case 'connectors.beginLogin': {
+        if (!this.opts.connectors) {
+          return {
+            rows: [],
+            login: { connector: null, status: 'error', message: 'unavailable' }
+          }
+        }
+        return this.opts.connectors.beginLogin(asString(p.id) || asString(p.connector))
+      }
+      case 'connectors.cancelLogin': {
+        if (!this.opts.connectors) {
+          return { rows: [], login: { connector: null, status: 'idle' } }
+        }
+        return this.opts.connectors.cancelLogin(asString(p.id) || asString(p.connector) || undefined)
+      }
+      case 'cloudflare.status': {
+        if (!this.opts.connectors) return { ok: false, error: 'unavailable' }
+        return this.opts.connectors.cloudflareStatus(asString(p.cwd), p.query)
+      }
+      case 'supabase.status': {
+        if (!this.opts.connectors) return { ok: false, error: 'unavailable' }
+        return this.opts.connectors.supabaseStatus(asString(p.cwd), p.query)
+      }
+      case 'vercel.status': {
+        if (!this.opts.connectors) return { ok: false, error: 'unavailable' }
+        return this.opts.connectors.vercelStatus(asString(p.cwd), p.query)
       }
       case 'proc.which': {
         const candidates = Array.isArray(p.candidates)
@@ -787,6 +1374,45 @@ export class DaemonServer {
           : []
         return { paths }
       }
+      case 'logs.query':
+        return { records: this.opts.logs?.query(sanitizeLogQuery(p)) ?? [] }
+      case 'logs.stats':
+        return this.opts.logs?.stats() ?? EMPTY_LOG_STATS
+      case 'logs.clear': {
+        const scope: AppLogClearScope =
+          p.scope === 'all' || isLogRetentionClass(p.scope) ? p.scope : 'all'
+        return { removed: this.opts.logs?.clear(scope) ?? 0 }
+      }
+      case 'logs.export':
+        return { text: this.opts.logs?.exportText(sanitizeLogQuery(p)) ?? '' }
+      case 'logs.record': {
+        if (!this.opts.logs || p.channel !== 'user') return { ok: false }
+        const input: AppLogInput = {
+          channel: 'user',
+          event: asString(p.event),
+          message: asString(p.message),
+          conversationId: typeof p.conversationId === 'string' ? p.conversationId : undefined,
+          data: p.data && typeof p.data === 'object' && !Array.isArray(p.data)
+            ? (p.data as Record<string, unknown>)
+            : undefined,
+          level: p.level === 'debug' ? 'debug' : 'info'
+        }
+        return { ok: Boolean(this.opts.logs.append(input)) }
+      }
+      case 'logs.subscribe': {
+        const stream = `log-${randomUUID()}`
+        const off = this.opts.logs?.subscribe((record) => {
+          writeLine(socket, { type: 'stream', stream, event: 'append', data: record })
+        })
+        live.watches.set(stream, { close: () => off?.() })
+        return { stream }
+      }
+      case 'logs.unsubscribe': {
+        const stream = asString(p.stream)
+        live.watches.get(stream)?.close()
+        live.watches.delete(stream)
+        return { ok: true }
+      }
       default:
         throw new Error(`unknown method: ${method}`)
     }
@@ -794,8 +1420,7 @@ export class DaemonServer {
 
   private spawnProcess(
     p: Record<string, unknown>,
-    socket: Socket,
-    processes: Map<string, LiveProcess>
+    socket: Socket
   ): { stream: string; pid?: number } {
     const file = asString(p.file)
     const args = Array.isArray(p.args) ? p.args.map((a) => String(a)) : []
@@ -822,9 +1447,12 @@ export class DaemonServer {
       windowsHide: opts.windowsHide === true
     })
     const stream = `p-${randomUUID()}`
-    processes.set(stream, { child })
+    this.processes.set(stream, { child, socket })
     const push = (event: string, data?: unknown): void => {
-      writeLine(socket, { type: 'stream', stream, event, data })
+      const dest = this.processes.get(stream)?.socket
+      if (dest && !dest.destroyed) {
+        writeLine(dest, { type: 'stream', stream, event, data })
+      }
     }
     child.stdout?.on('data', (chunk: Buffer | string) => {
       const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
@@ -838,15 +1466,14 @@ export class DaemonServer {
     child.on('exit', (code, signal) => push('exit', { code, signal }))
     child.on('close', (code, signal) => {
       push('close', { code, signal })
-      processes.delete(stream)
+      this.processes.delete(stream)
     })
     return { stream, pid: child.pid }
   }
 
   private spawnPty(
     p: Record<string, unknown>,
-    socket: Socket,
-    ptys: Map<string, LivePty>
+    socket: Socket
   ): { stream: string; pid: number } {
     const file = asString(p.file)
     const args = Array.isArray(p.args) ? p.args.map((a) => String(a)) : []
@@ -865,23 +1492,29 @@ export class DaemonServer {
       useConpty: opts.useConpty === true
     })
     const stream = `t-${randomUUID()}`
-    ptys.set(stream, { proc })
+    this.ptys.set(stream, { proc, socket })
     proc.onData((data) => {
-      writeLine(socket, { type: 'stream', stream, event: 'pty-data', data: { text: data } })
+      const dest = this.ptys.get(stream)?.socket
+      if (dest && !dest.destroyed) {
+        writeLine(dest, { type: 'stream', stream, event: 'pty-data', data: { text: data } })
+      }
     })
     proc.onExit((e) => {
-      writeLine(socket, {
-        type: 'stream',
-        stream,
-        event: 'pty-exit',
-        data: { exitCode: e.exitCode, signal: e.signal }
-      })
+      const dest = this.ptys.get(stream)?.socket
+      if (dest && !dest.destroyed) {
+        writeLine(dest, {
+          type: 'stream',
+          stream,
+          event: 'pty-exit',
+          data: { exitCode: e.exitCode, signal: e.signal }
+        })
+      }
       try {
         proc.kill()
       } catch {
         /* ConPTY/worker teardown is idempotent */
       }
-      ptys.delete(stream)
+      this.ptys.delete(stream)
     })
     return { stream, pid: proc.pid }
   }

@@ -26,7 +26,7 @@ const OPTIONAL_WS_NATIVE = ['bufferutil', 'utf-8-validate']
  */
 function ensurePdfJsPublicAssets(): void {
   const root = resolve('node_modules/pdfjs-dist')
-  const destRoot = resolve('src/renderer/public/pdfjs')
+  const destRoot = resolve('packages/vav-desktop/src/renderer/public/pdfjs')
   mkdirSync(destRoot, { recursive: true })
   for (const dir of ['cmaps', 'standard_fonts'] as const) {
     const from = join(root, dir)
@@ -49,21 +49,24 @@ export default defineConfig({
     build: {
       rollupOptions: {
         input: {
-          index: resolve('src/main/index.ts'),
-          vavd: resolve('src/main/daemon/vavd.ts')
+          index: resolve('packages/vav-desktop/src/main/index.ts'),
+          vavd: resolve('packages/vavd/src/vavd.ts')
         },
         external: OPTIONAL_WS_NATIVE
       }
     },
     resolve: {
-      alias: { '@shared': resolve('src/shared') }
+      alias: {
+        '@shared': resolve('src/shared'),
+        '@main': resolve('src/main')
+      }
     }
   },
   preload: {
     plugins: [externalizeDepsPlugin()],
     build: {
       rollupOptions: {
-        input: { index: resolve('src/preload/index.ts') }
+        input: { index: resolve('packages/vav-desktop/src/preload/index.ts') }
       }
     },
     resolve: {
@@ -71,19 +74,19 @@ export default defineConfig({
     }
   },
   renderer: {
-    root: resolve('src/renderer'),
+    root: resolve('packages/vav-desktop/src/renderer'),
     plugins: [react()],
     resolve: {
       alias: {
         '@shared': resolve('src/shared'),
-        '@': resolve('src/renderer/src')
+        '@': resolve('packages/vav-desktop/src/renderer/src')
       }
     },
     build: {
       rollupOptions: {
         input: {
-          index: resolve('src/renderer/index.html'),
-          screenshot: resolve('src/renderer/screenshot.html')
+          index: resolve('packages/vav-desktop/src/renderer/index.html'),
+          screenshot: resolve('packages/vav-desktop/src/renderer/screenshot.html')
         }
       }
     }

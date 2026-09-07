@@ -93,3 +93,31 @@ export function connectorCan(id: ConnectorId, capability: ConnectorCapability): 
 export function parseConnectorAction(raw: unknown): ConnectorActionKind | null {
   return raw === 'deploy' ? 'deploy' : null
 }
+
+export function connectorCliName(id: ConnectorId): string {
+  if (id === 'github') return 'gh'
+  if (id === 'cloudflare') return 'wrangler'
+  if (id === 'supabase') return 'supabase'
+  return 'vercel'
+}
+
+export type ConnectorLoginStatus = 'idle' | 'running' | 'ok' | 'error' | 'cancelled'
+
+export interface ConnectorAuthRow {
+  id: ConnectorId
+  present: boolean
+  source: ConnectorAuthSource
+  settingsPresent: boolean
+  cliPresent: boolean
+}
+
+export interface ConnectorLoginState {
+  connector: ConnectorId | null
+  status: ConnectorLoginStatus
+  message?: string
+}
+
+export interface ConnectorAuthPage {
+  rows: ConnectorAuthRow[]
+  login: ConnectorLoginState
+}

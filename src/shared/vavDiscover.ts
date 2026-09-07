@@ -22,6 +22,8 @@ export type VavDiscoverInfo = {
   secret?: string
   /** Control-plane TCP port (`hello.role=phone`). Older daemons omit this. */
   port?: number
+  /** Loopback only: host can run a VAV turn (provider key present). */
+  hasKey?: boolean
 }
 
 export function isLoopbackAddress(addr?: string | null): boolean {
@@ -35,6 +37,32 @@ export function isLoopbackAddress(addr?: string | null): boolean {
   )
 }
 
+/** RFC1918 + link-local IPv4. Chrome / desktop Connect accept these; WAN stays on desktop. */
+export function isPrivateLanAddress(addr?: string | null): boolean {
+  if (!addr || isLoopbackAddress(addr)) return false
+  const normalized = addr
+    .trim()
+    .toLowerCase()
+    .replace(/^\[|\]$/g, '')
+    .replace(/^::ffff:/, '')
+  const match = normalized.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/)
+  if (!match) return false
+  const a = Number(match[1])
+  const b = Number(match[2])
+  const c = Number(match[3])
+  const d = Number(match[4])
+  if ([a, b, c, d].some((part) => part > 255)) return false
+  if (a === 10) return true
+  if (a === 192 && b === 168) return true
+  if (a === 172 && b >= 16 && b <= 31) return true
+  if (a === 169 && b === 254) return true
+  return false
+}
+
+export function isLocalPairingHost(addr?: string | null): boolean {
+  return isLoopbackAddress(addr) || isPrivateLanAddress(addr)
+}
+
 export function webScanPorts(hint?: number[]): number[] {
   const ports = new Set<number>()
   for (const port of hint ?? []) {
@@ -45,7 +73,13 @@ export function webScanPorts(hint?: number[]): number[] {
 }
 
 export function buildDiscoverPayload(
-  opts: { name?: string; version?: string; secret: () => string; port?: number },
+  opts: {
+    name?: string
+    version?: string
+    secret: () => string
+    port?: number
+    hasKey?: () => boolean
+  },
   loopback: boolean
 ): VavDiscoverInfo {
   const payload: VavDiscoverInfo = {
@@ -62,6 +96,7 @@ export function buildDiscoverPayload(
   if (loopback) {
     const secret = opts.secret()
     if (secret) payload.secret = secret
+    if (opts.hasKey) payload.hasKey = opts.hasKey() === true
   }
   return payload
 }

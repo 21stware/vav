@@ -3,7 +3,10 @@
  *
  * Transport: JSON lines over TCP. Same framing as iOS remote control
  * (`drainJsonLines`), different message set — fs / spawn / pty live here,
- * not on remoteControl v1.
+ * not on remoteControl v1. Host file-manager actions (`fs.reveal` /
+ * `fs.openPath` / `fs.preview` / `fs.getInfo` / `fs.copyAsFile`) open Finder
+ * / Explorer / the default app on the machine that holds the files so Chrome,
+ * desktop-remote, and `vavc file reveal` match the workbench.
  *
  * Handshake: first line is `hello` with `role: 'daemon'` and either the
  * ephemeral offer secret or a previously issued grant secret. Offer hellos
@@ -12,11 +15,41 @@
  * `welcome` (host identity + home/tmp + optional grant) or `error`.
  *
  * After welcome, the client issues `req` frames; the server answers `res`
- * and may push `stream` events for process / pty / watch.
+ * and may push `stream` events for process / pty / watch. Git RPCs
+ * (`git.status` / `diff` / `init` / …), plugin RPCs (`plugins.list`),
+ * GitHub (`github.listPulls` / Actions / Releases / Pages), timers
+ * (`timers.listJobs`), and connector / vendor status (`connectors.catalog`,
+ * `connectors.beginLogin`, `cloudflare.status`, `supabase.status`,
+ * `vercel.status`) run on the host
+ * so Chrome / web match the desktop workspace tabs.
  *
  * Optional catalog RPCs (desktop hosts only; headless `vavd` returns empty):
  * `sessions.list`, `sessions.get`, `workspace.recents` — so a paired client
  * can import that machine's sidebar sessions and folder recents.
+ *
+ * Diagnostic log RPCs (`logs.query` / `stats` / `clear` / `export` / `record`
+ * / `subscribe`) live on the control-plane host — `vavd`. The desktop Settings
+ * → Logs pane is a client of that sink, not a second store.
+ *
+ * Provider-account RPCs (`accounts.getPage`, `accounts.createVav`,
+ * `accounts.createDraft`, `accounts.updateVav`, `accounts.setCurrent`,
+ * `accounts.activate`, `accounts.remove`, `accounts.verify`,
+ * `accounts.revealKey` / `accounts.beginOAuth` / `accounts.cancelOAuth` /
+ * `accounts.signOut`) share the same AccountStore Chrome Settings and
+ * desktop IPC read when the workbench is a shell over spawned vavd.
+ *
+ * Host-preference RPCs (`settings.get` / `settings.update` / `settings.reset`)
+ * sync model, agents, trays, and workdir defaults. Theme / fonts stay client-side.
+ * Legacy API / connector tokens (`settings.setSecret` / `secretHint` / `revealSecret`)
+ * write the same NodeSecretStore Chrome Settings and desktop IPC use.
+ * Change-review (`changeSets.get` / `active` / `seedReview` / accept / reject)
+ * is the same in-memory store desktop, Chrome, and web Accept against.
+ *
+ * Incoming pairing (`host.pairing` / `host.rotateOffer`) is the same `vavrtp://`
+ * offer Chrome Settings, desktop Connect, and `vavc host` copy. Rotate mints a
+ * new offer secret; issued grants stay valid. Authorized controllers
+ * (`host.incoming` / `host.disconnectIncoming` / `host.unpairIncoming`) are
+ * that same grant list.
  *
  * This module is pure (no Node imports) so tests and a headless `vavd` share it.
  */
@@ -30,6 +63,27 @@ export const DAEMON_ANNOUNCE_PORT = 4751
 export const DAEMON_MULTICAST = '239.255.47.50'
 /** Cap a single inbound frame (base64 file bodies). */
 export const DAEMON_MAX_LINE_BYTES = 8 * 1024 * 1024
+/** Pairing URI scheme (`vavrtp://secret@host:port?…`). */
+export const DAEMON_PAIRING_SCHEME = 'vavrtp'
+/** Legacy scheme still accepted when pasting an older URI. */
+export const DAEMON_PAIRING_SCHEME_LEGACY = 'vav-daemon'
+
+export function isDaemonPairingUri(text: string): boolean {
+  const trimmed = text.trim()
+  return (
+    trimmed.startsWith(`${DAEMON_PAIRING_SCHEME}://`) ||
+    trimmed.startsWith(`${DAEMON_PAIRING_SCHEME_LEGACY}://`)
+  )
+}
+
+/** First line vavd prints after listen — current or legacy scheme. */
+export function isDaemonPairingLine(line: string): boolean {
+  const trimmed = line.trim()
+  return (
+    trimmed.startsWith(`${DAEMON_PAIRING_SCHEME}:`) ||
+    trimmed.startsWith(`${DAEMON_PAIRING_SCHEME_LEGACY}:`)
+  )
+}
 
 export type DaemonGrantWire = {
   id: string
@@ -246,8 +300,8 @@ export function parseDaemonServerFrame(value: unknown): DaemonServerMessage | nu
 
 /**
  * Payload a desktop / vavd prints or encodes in Settings.
- * `vav-daemon://secret@host:port?name=&token=&addresses=` — distinct from the
- * phone QR (`vav-remote:`).
+ * `vavrtp://secret@host:port?name=&token=&addresses=` — distinct from the
+ * phone QR (`vav-remote:`). Legacy `vav-daemon://` still parses.
  */
 export type DaemonPairing = {
   v: number
@@ -280,7 +334,7 @@ export function encodeDaemonPairing(pairing: DaemonPairing): string {
   if (pairing.addresses?.length) {
     query.push(`addresses=${encodePairingQueryValue(pairing.addresses.join(','))}`)
   }
-  return `vav-daemon://${encodeURIComponent(pairing.secret)}@${formatPairingAuthority(host, port)}?${query.join('&')}`
+  return `${DAEMON_PAIRING_SCHEME}://${encodeURIComponent(pairing.secret)}@${formatPairingAuthority(host, port)}?${query.join('&')}`
 }
 
 function parseDaemonPairingUri(text: string): DaemonPairing | null {
@@ -290,7 +344,12 @@ function parseDaemonPairingUri(text: string): DaemonPairing | null {
   } catch {
     return null
   }
-  if (url.protocol !== 'vav-daemon:') return null
+  if (
+    url.protocol !== `${DAEMON_PAIRING_SCHEME}:` &&
+    url.protocol !== `${DAEMON_PAIRING_SCHEME_LEGACY}:`
+  ) {
+    return null
+  }
   const secret = decodeURIComponent(url.username)
   if (secret.length < 16) return null
   const host = url.hostname.replace(/^\[|\]$/g, '')
@@ -321,7 +380,7 @@ function parseDaemonPairingUri(text: string): DaemonPairing | null {
 
 export function parseDaemonPairing(text: string): DaemonPairing | null {
   const trimmed = text.trim()
-  if (trimmed.startsWith('vav-daemon://')) return parseDaemonPairingUri(trimmed)
+  if (isDaemonPairingUri(trimmed)) return parseDaemonPairingUri(trimmed)
   return parseHostPortSecret(trimmed)
 }
 
@@ -344,7 +403,7 @@ function parseHostPortSecret(text: string): DaemonPairing | null {
 }
 
 /**
- * Desktop pair input: `vav-daemon://…`, `vav-remote:{…}` (same QR as the phone),
+ * Desktop pair input: `vavrtp://…`, `vav-remote:{…}` (same QR as the phone),
  * or `host:port secret`.
  */
 export function parseMachinePairing(text: string): DaemonPairing | null {

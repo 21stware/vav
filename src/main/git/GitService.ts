@@ -35,18 +35,31 @@ export function setGitHostFor(
   resolveGitHost = fn
 }
 
+const GIT_OVERRIDE_KEYS = [
+  'GIT_DIR',
+  'GIT_WORK_TREE',
+  'GIT_CEILING_DIRECTORIES',
+  'GIT_INDEX_FILE',
+  'GIT_OBJECT_DIRECTORY',
+  'GIT_ALTERNATE_OBJECT_DIRECTORIES',
+  'GIT_COMMON_DIR'
+] as const
+
 async function gitEnv(kind: 'local' | 'remote'): Promise<NodeJS.ProcessEnv> {
   const extra = {
     GIT_TERMINAL_PROMPT: '0',
     LANG: 'C'
   }
-  if (kind === 'remote') return extra
-  const { loginPath } = await import('../terminal/loginPath.ts')
-  return {
-    ...process.env,
-    PATH: loginPath(),
-    ...extra
-  }
+  const env: NodeJS.ProcessEnv =
+    kind === 'remote'
+      ? { ...extra }
+      : {
+          ...process.env,
+          PATH: (await import('../terminal/loginPath.ts')).loginPath(),
+          ...extra
+        }
+  for (const key of GIT_OVERRIDE_KEYS) delete env[key]
+  return env
 }
 
 function absCwd(cwd: string, kind: 'local' | 'remote'): string {

@@ -17,6 +17,7 @@ import {
   type RemoteConfigure,
   type RemoteControlsEvent,
   type RemoteDirsEvent,
+  type RemoteCompaction,
   type RemoteHello,
   type RemoteHostEvent,
   type RemoteNotification,
@@ -26,7 +27,8 @@ import {
   type RemoteSession,
   type RemoteThreadBlock,
   type RemoteThreadEvent,
-  type RemoteTurnEvent
+  type RemoteTurnEvent,
+  type RemoteTurnRecovery
 } from '../../shared/remoteControl.ts'
 import { applyLiveDelta, compactLiveBlocks, draftFromLiveBlocks } from '../../shared/remoteLiveLog.ts'
 
@@ -46,15 +48,54 @@ export type RemoteControlHubDeps = {
     text: string,
     attachments?: string[]
   ) => RemoteSendResult
-  createSession: () => RemoteSession
+  createSession: (conversationId?: string) => RemoteSession
   cancel: (conversationId: string) => RemoteSendResult
   reply: (conversationId: string, toolCallId: string, answer: string) => boolean
   rename: (conversationId: string, title: string) => RemoteSendResult
   archive: (conversationId: string) => RemoteSendResult
   pin: (conversationId: string, pinned: boolean) => RemoteSendResult
   favorite: (conversationId: string, favorite: boolean) => RemoteSendResult
-  browse: (conversationId: string, path?: string) => RemoteDirsEvent | 'not-found' | 'forbidden'
+  browse: (
+    conversationId: string,
+    path?: string,
+    files?: boolean
+  ) => RemoteDirsEvent | 'not-found' | 'forbidden'
   setWorkspace: (conversationId: string, path: string | null) => RemoteWorkspaceResult
+  compact?: (
+    conversationId: string,
+    keepAfterMessageId?: string
+  ) => Promise<{ ok: true; compaction: RemoteCompaction } | { ok: false; error: string }>
+  clearCompaction?: (
+    conversationId: string,
+    leafId: string
+  ) => { ok: true } | { ok: false; error: string }
+  regenerate?: (conversationId: string, messageId: string) => RemoteSendResult
+  edit?: (conversationId: string, messageId: string, text: string) => RemoteSendResult
+  fork?: (conversationId: string, messageId: string) => RemoteSendResult
+  deleteMessage?: (conversationId: string, messageId: string) => RemoteSendResult
+  setLeaf?: (conversationId: string, messageId: string, follow?: boolean) => RemoteSendResult
+  duplicate?: (conversationId: string) => RemoteSession | null
+  continueInNew?: (conversationId: string, messageId: string) => RemoteSession | null
+  applyGoal?: (
+    conversationId: string,
+    action: 'set' | 'pause' | 'resume' | 'clear',
+    objective?: string
+  ) =>
+    | { ok: true; via: 'rpc' }
+    | { ok: true; via: 'slash'; text: string }
+    | { ok: false; error: string }
+  locateWorkspace?: (
+    conversationId: string,
+    destinationDir: string
+  ) => Promise<{ ok: true; workdir: string } | { ok: false; error: string }>
+  review?: (
+    conversationId: string,
+    action: 'active' | 'get' | 'accept-all' | 'reject-all',
+    setId?: string
+  ) => Promise<
+    | { ok: true; set: import('../../shared/remoteControl.ts').RemoteReviewSet | null }
+    | { ok: false; error: string }
+  >
   secret: () => string
   /** Extra accepted hellos (issued machine grants). Phone secret stays `secret()`. */
   acceptAuth?: (auth: string) => boolean
@@ -89,6 +130,7 @@ export class RemoteControlHub {
   private draftTimers = new Map<string, NodeJS.Timeout>()
   private liveSlots = new Map<string, Map<number, RemoteThreadBlock>>()
   private liveAwaiting = new Map<string, Extract<RemoteThreadBlock, { kind: 'awaiting' }>>()
+  private liveRecovery = new Map<string, RemoteTurnRecovery>()
 
   private deps: RemoteControlHubDeps
 
@@ -202,19 +244,18 @@ export class RemoteControlHub {
     conversationId: string,
     index: number,
     kind: 'text' | 'reasoning',
-    chunk: string
+    chunk: string,
+    replace = false
   ): void {
-    if (!chunk) return
+    if (!chunk && !replace) return
     let slots = this.liveSlots.get(conversationId)
     if (!slots) {
       slots = new Map()
       this.liveSlots.set(conversationId, slots)
     }
-    applyLiveDelta(slots, index, kind, chunk)
-    const cur = this.drafts.get(conversationId) ?? { text: '', thinking: '' }
-    if (kind === 'reasoning') cur.thinking += chunk
-    else cur.text += chunk
-    this.drafts.set(conversationId, cur)
+    applyLiveDelta(slots, index, kind, chunk, replace)
+    const derived = draftFromLiveBlocks(compactLiveBlocks(slots))
+    this.drafts.set(conversationId, derived)
     this.scheduleLiveFlush(conversationId)
   }
 
@@ -230,6 +271,16 @@ export class RemoteControlHub {
       this.liveAwaiting.delete(conversationId)
     }
     this.scheduleLiveFlush(conversationId)
+  }
+
+  setLiveRecovery(conversationId: string, recovery: RemoteTurnRecovery): void {
+    this.liveRecovery.set(conversationId, recovery)
+    this.scheduleLiveFlush(conversationId)
+  }
+
+  flushThread(conversationId: string): void {
+    const thread = this.deps.listThread(conversationId)
+    if (thread) this.broadcast(thread)
   }
 
   finishTurn(conversationId: string, phase: RemoteTurnEvent['phase'], error?: string): void {
@@ -334,7 +385,7 @@ export class RemoteControlHub {
         return true
       case 'create': {
         try {
-          const session = this.deps.createSession()
+          const session = this.deps.createSession(message.conversationId)
           this.send(client, { type: 'created', session })
           this.send(client, { type: 'sessions', sessions: this.deps.listSessions() })
           this.schedulePushSessions()
@@ -467,7 +518,7 @@ export class RemoteControlHub {
         return true
       }
       case 'browse': {
-        const result = this.deps.browse(message.conversationId, message.path)
+        const result = this.deps.browse(message.conversationId, message.path, message.files)
         if (result === 'not-found' || result === 'forbidden') {
           this.send(client, {
             type: 'error',
@@ -506,6 +557,197 @@ export class RemoteControlHub {
         }
         return true
       }
+      case 'compact': {
+        const id = message.conversationId
+        if (!this.deps.compact) {
+          this.send(client, { type: 'compacted', conversationId: id, ok: false, error: 'unavailable' })
+          return true
+        }
+        void this.deps.compact(id, message.keepAfterMessageId).then((result) => {
+          if (result.ok) {
+            this.send(client, { type: 'compacted', conversationId: id, ok: true, compaction: result.compaction })
+            const thread = this.deps.listThread(id)
+            if (thread) this.send(client, thread)
+          } else {
+            this.send(client, { type: 'compacted', conversationId: id, ok: false, error: result.error })
+          }
+        })
+        return true
+      }
+      case 'clear-compaction': {
+        const id = message.conversationId
+        const result = this.deps.clearCompaction?.(id, message.leafId) ?? {
+          ok: false as const,
+          error: 'unavailable'
+        }
+        if (result.ok) {
+          this.send(client, { type: 'compacted', conversationId: id, ok: true })
+          const thread = this.deps.listThread(id)
+          if (thread) this.send(client, thread)
+        } else {
+          this.send(client, { type: 'compacted', conversationId: id, ok: false, error: result.error })
+        }
+        return true
+      }
+      case 'regenerate': {
+        this.ackMutation(
+          client,
+          message.conversationId,
+          this.deps.regenerate?.(message.conversationId, message.messageId) ?? 'not-found',
+          false
+        )
+        return true
+      }
+      case 'edit': {
+        this.ackMutation(
+          client,
+          message.conversationId,
+          this.deps.edit?.(message.conversationId, message.messageId, message.text) ?? 'not-found',
+          false
+        )
+        return true
+      }
+      case 'fork': {
+        this.ackMutation(
+          client,
+          message.conversationId,
+          this.deps.fork?.(message.conversationId, message.messageId) ?? 'not-found',
+          true
+        )
+        return true
+      }
+      case 'delete-message': {
+        this.ackMutation(
+          client,
+          message.conversationId,
+          this.deps.deleteMessage?.(message.conversationId, message.messageId) ?? 'not-found',
+          true
+        )
+        return true
+      }
+      case 'leaf': {
+        this.ackMutation(
+          client,
+          message.conversationId,
+          this.deps.setLeaf?.(message.conversationId, message.messageId, message.follow === true) ??
+            'not-found',
+          true
+        )
+        return true
+      }
+      case 'duplicate': {
+        const session = this.deps.duplicate?.(message.conversationId) ?? null
+        if (session) {
+          this.send(client, { type: 'created', session })
+          this.send(client, { type: 'sessions', sessions: this.deps.listSessions() })
+        } else {
+          this.send(client, {
+            type: 'error',
+            code: 'not-found',
+            message: 'no such conversation',
+            conversationId: message.conversationId
+          })
+        }
+        return true
+      }
+      case 'continue': {
+        const session = this.deps.continueInNew?.(message.conversationId, message.messageId) ?? null
+        if (session) {
+          this.send(client, { type: 'created', session })
+          this.send(client, { type: 'sessions', sessions: this.deps.listSessions() })
+        } else {
+          this.send(client, {
+            type: 'error',
+            code: 'not-found',
+            message: 'no such conversation',
+            conversationId: message.conversationId
+          })
+        }
+        return true
+      }
+      case 'goal': {
+        const result = this.deps.applyGoal?.(
+          message.conversationId,
+          message.action,
+          message.objective
+        ) ?? { ok: false as const, error: 'unavailable' }
+        if (result.ok && result.via === 'slash') {
+          this.schedulePushSessions()
+          this.send(client, {
+            type: 'goaled',
+            conversationId: message.conversationId,
+            ok: true,
+            via: 'slash',
+            text: result.text
+          })
+        } else if (result.ok) {
+          this.schedulePushSessions()
+          this.send(client, {
+            type: 'goaled',
+            conversationId: message.conversationId,
+            ok: true,
+            via: 'rpc'
+          })
+        } else {
+          this.send(client, {
+            type: 'goaled',
+            conversationId: message.conversationId,
+            ok: false,
+            error: result.error
+          })
+        }
+        return true
+      }
+      case 'review': {
+        const id = message.conversationId
+        if (!this.deps.review) {
+          this.send(client, {
+            type: 'reviewed',
+            conversationId: id,
+            ok: false,
+            error: 'unavailable',
+            set: null
+          })
+          return true
+        }
+        void this.deps.review(id, message.action, message.setId).then((result) => {
+          if (result.ok) {
+            this.send(client, { type: 'reviewed', conversationId: id, ok: true, set: result.set })
+          } else {
+            this.send(client, {
+              type: 'reviewed',
+              conversationId: id,
+              ok: false,
+              error: result.error,
+              set: null
+            })
+          }
+        })
+        return true
+      }
+      case 'locate': {
+        const id = message.conversationId
+        if (!this.deps.locateWorkspace) {
+          this.send(client, { type: 'located', conversationId: id, ok: false, error: 'unavailable' })
+          return true
+        }
+        void this.deps.locateWorkspace(id, message.destinationDir).then((result) => {
+          if (result.ok) {
+            this.send(client, {
+              type: 'located',
+              conversationId: id,
+              ok: true,
+              workdir: result.workdir
+            })
+            const controls = this.deps.listControls(id)
+            if (controls) this.send(client, controls)
+            this.send(client, { type: 'sessions', sessions: this.deps.listSessions() })
+          } else {
+            this.send(client, { type: 'located', conversationId: id, ok: false, error: result.error })
+          }
+        })
+        return true
+      }
       case 'send': {
         const attachments = this.deps.materializeImages?.(message.images) ?? []
         const text = message.text
@@ -537,6 +779,28 @@ export class RemoteControlHub {
     return true
   }
 
+  private ackMutation(
+    client: HubClient,
+    conversationId: string,
+    result: RemoteSendResult,
+    pushThread: boolean
+  ): void {
+    if (result === 'ok') {
+      this.send(client, { type: 'sent', conversationId })
+      if (pushThread) {
+        const thread = this.deps.listThread(conversationId)
+        if (thread) this.send(client, thread)
+      }
+      return
+    }
+    this.send(client, {
+      type: 'error',
+      code: result,
+      message: result === 'archived' ? 'conversation is archived' : 'no such conversation',
+      conversationId
+    })
+  }
+
   private send(client: HubClient, message: RemoteServerMessage): void {
     if (client.socket.destroyed) return
     client.socket.write(encodeLine(message))
@@ -560,6 +824,7 @@ export class RemoteControlHub {
         const blocks = compactLiveBlocks(slots)
         const derived = draftFromLiveBlocks(blocks)
         const awaiting = this.liveAwaiting.get(conversationId)
+        const recovery = this.liveRecovery.get(conversationId)
         this.broadcast({
           type: 'turn',
           conversationId,
@@ -567,7 +832,8 @@ export class RemoteControlHub {
           ...(blocks.length ? { blocks } : {}),
           ...(derived.text ? { draft: derived.text } : {}),
           ...(derived.thinking ? { thinking: derived.thinking } : {}),
-          ...(awaiting ? { awaiting } : {})
+          ...(awaiting ? { awaiting } : {}),
+          ...(recovery ? { recovery } : {})
         })
       }, DRAFT_FLUSH_MS)
     )
@@ -586,5 +852,6 @@ export class RemoteControlHub {
     this.clearDraft(conversationId)
     this.liveSlots.delete(conversationId)
     this.liveAwaiting.delete(conversationId)
+    this.liveRecovery.delete(conversationId)
   }
 }

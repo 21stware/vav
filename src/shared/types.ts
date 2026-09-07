@@ -827,6 +827,13 @@ export const COLOR_TINTS: readonly ColorTint[] = [
 export const PRESET_COLOR_TINTS: readonly Exclude<ColorTint, 'custom'>[] = COLOR_TINTS.filter(
   (tint): tint is Exclude<ColorTint, 'custom'> => tint !== 'custom'
 )
+
+/** Per-connection theme / tint overlay. Missing fields inherit the global look. */
+export type MachineAppearance = {
+  theme?: ThemeMode
+  colorTint?: ColorTint
+  customAccentColor?: string
+}
 /** Sidebar list grouping; default is time buckets ("无分组" in the UI). */
 export type SidebarGroupingMode = 'none' | 'workspace' | 'provider'
 /** Per-conversation tool approval policy (main-chat.rpml). */
@@ -1016,6 +1023,11 @@ export interface AppSettings {
    * Empty until the colour well is used.
    */
   customAccentColor: string
+  /**
+   * Per-connection theme / tint. Keys are machine ids (`local`, paired host).
+   * Missing keys inherit {@link theme} / {@link colorTint}.
+   */
+  machineAppearances: Record<string, MachineAppearance>
   /**
    * Repeating wash on the content column (conversation / settings).
    * Does not paint the sidebar, document previews, or the bash terminal.
@@ -1227,6 +1239,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   bashBackground: 'theme',
   colorTint: 'system',
   customAccentColor: '',
+  machineAppearances: {},
   surfacePattern: 'none',
   customSurfacePatternUrl: '',
   customSurfacePatternSize: '',
@@ -1617,6 +1630,8 @@ export interface ValidateKeyResult {
 
 export interface AboutInfo {
   version: string
+  /** Running or bundled `@21stware/vavd` version. */
+  vavdVersion: string
   /** CFBundleVersion when available; falls back to the short version. */
   buildNumber: string
   electron: string

@@ -10,9 +10,14 @@ export function applyLiveDelta(
   slots: Map<number, RemoteThreadBlock>,
   index: number,
   kind: 'text' | 'reasoning',
-  chunk: string
+  chunk: string,
+  replace = false
 ): void {
-  if (!chunk) return
+  if (!chunk && !replace) return
+  if (replace) {
+    slots.set(index, { kind, text: chunk.slice(0, REMOTE_LIVE_TEXT_CAP) })
+    return
+  }
   const cur = slots.get(index)
   if (cur && cur.kind === kind && typeof cur.text === 'string') {
     slots.set(index, { kind, text: `${cur.text}${chunk}`.slice(0, REMOTE_LIVE_TEXT_CAP) })

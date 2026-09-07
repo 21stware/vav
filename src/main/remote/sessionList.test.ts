@@ -84,6 +84,35 @@ describe('mapRemoteSessions', () => {
     assert.equal(listed[2]?.favorite, true)
   })
 
+  it('forwards an ACP goal so remotes can paint the same banner as desktop', () => {
+    const listed = mapRemoteSessions(
+      [
+        {
+          id: 'g1',
+          title: 'Goal session',
+          updatedAt: 1,
+          messages: [msg('m1')],
+          activeLeafId: 'm1',
+          acpSession: {
+            goal: { objective: 'Ship the remotes', status: 'active', lastReason: 'waiting on review' }
+          }
+        }
+      ],
+      {
+        fallbackTitle: 'Session',
+        tmpdir: '/tmp',
+        dirLabel: () => '~',
+        statusOf: () => 'idle',
+        surfaceOf: () => 'vav'
+      }
+    )
+    assert.deepEqual(listed[0]?.goal, {
+      status: 'active',
+      objective: 'Ship the remotes',
+      lastReason: 'waiting on review'
+    })
+  })
+
   it('builds a create-session fallback row and hides archived threads', () => {
     const row = fallbackRemoteSession(
       { id: 'c1', title: '  ', updatedAt: 9 },

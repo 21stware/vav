@@ -4,7 +4,9 @@ import {
   VAVD_WEB_DEFAULT_PORT,
   VAVD_WEB_SCAN_LAST,
   buildDiscoverPayload,
+  isLocalPairingHost,
   isLoopbackAddress,
+  isPrivateLanAddress,
   webScanPorts
 } from './vavDiscover.ts'
 
@@ -21,6 +23,21 @@ describe('vavDiscover', () => {
     assert.equal(isLoopbackAddress(null), false)
   })
 
+  it('treats RFC1918 and link-local IPv4 as LAN, not WAN', () => {
+    assert.equal(isPrivateLanAddress('192.168.1.8'), true)
+    assert.equal(isPrivateLanAddress('10.0.0.2'), true)
+    assert.equal(isPrivateLanAddress('172.16.0.1'), true)
+    assert.equal(isPrivateLanAddress('172.31.255.1'), true)
+    assert.equal(isPrivateLanAddress('169.254.1.1'), true)
+    assert.equal(isPrivateLanAddress('127.0.0.1'), false)
+    assert.equal(isPrivateLanAddress('172.32.0.1'), false)
+    assert.equal(isPrivateLanAddress('8.8.8.8'), false)
+    assert.equal(isPrivateLanAddress('1.1.1.1'), false)
+    assert.equal(isLocalPairingHost('127.0.0.1'), true)
+    assert.equal(isLocalPairingHost('192.168.1.8'), true)
+    assert.equal(isLocalPairingHost('8.8.8.8'), false)
+  })
+
   it('includes the pairing secret only for loopback clients', () => {
     const secret = () => '0123456789abcdef01234567'
     const local = buildDiscoverPayload({ name: 'office', version: '1.19.0', secret, port: 4750 }, true)
@@ -33,6 +50,17 @@ describe('vavDiscover', () => {
     const lan = buildDiscoverPayload({ name: 'office', version: '1.19.0', secret }, false)
     assert.equal(lan.loopback, false)
     assert.equal(lan.secret, undefined)
+    assert.equal(lan.hasKey, undefined)
+    const keyed = buildDiscoverPayload(
+      { name: 'office', version: '1.19.0', secret, hasKey: () => true },
+      true
+    )
+    assert.equal(keyed.hasKey, true)
+    const lanKeyed = buildDiscoverPayload(
+      { name: 'office', version: '1.19.0', secret, hasKey: () => true },
+      false
+    )
+    assert.equal(lanKeyed.hasKey, undefined)
   })
 
   it('scans the well-known web range plus hints', () => {

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import {
+  acpSessionFromControls,
   chatMessagesFromRemoteThread,
   conversationFromRemoteSession,
   favoriteIdsFromRemoteSessions,
@@ -106,6 +107,23 @@ describe('remoteDesktop (phone → desktop session model)', () => {
     assert.equal(user.type, 'user')
   })
 
+  it('projects host recovery chrome so Chrome matches the desktop stream status', () => {
+    const events = turnEventsFromRemoteTurn({
+      type: 'turn',
+      conversationId: 's1',
+      phase: 'running',
+      draft: 'partial e2e reply',
+      recovery: { kind: 'healing', attempt: 1, limit: 3 }
+    })
+    const phase = events.find((event) => event.type === 'phase')
+    assert.equal(phase?.type === 'phase' ? phase.phase : null, 'healing')
+    assert.deepEqual(phase?.type === 'phase' ? phase.recovery : null, {
+      kind: 'healing',
+      attempt: 1,
+      limit: 3
+    })
+  })
+
   it('maps awaiting cards onto desktop toolCall blocks', () => {
     const block = messageBlockFromRemote({
       kind: 'awaiting',
@@ -119,5 +137,36 @@ describe('remoteDesktop (phone → desktop session model)', () => {
     assert.equal(block.kind, 'toolCall')
     assert.equal(block.status, 'pending')
     assert.deepEqual(block.choices, ['A'])
+  })
+
+  it('maps control-plane modes and slash commands onto acpSession', () => {
+    const state = acpSessionFromControls({
+      type: 'controls',
+      conversationId: 's1',
+      agentLocked: true,
+      agent: 'cursor',
+      agents: [],
+      model: 'grok-4.6',
+      models: [],
+      thinking: null,
+      thinkingLevels: [],
+      mode: 'agent',
+      modes: [{ id: 'agent', label: 'Agent' }],
+      commands: [
+        { id: 'compact', label: 'Compact this session' },
+        { id: 'cost', label: 'Show session cost' }
+      ],
+      approval: 'auto',
+      approvals: [],
+      fast: false,
+      workingDirectory: '/tmp',
+      dirLabel: 'tmp',
+      temporary: true
+    })
+    assert.equal(state?.currentModeId, 'agent')
+    assert.deepEqual(
+      state?.commands?.map((row) => row.name),
+      ['compact', 'cost']
+    )
   })
 })

@@ -2,10 +2,14 @@
   "include": [
     "electron.vite.config.ts",
     "src/main/**/*",
-    "src/preload/**/*",
-    "src/shared/**/*"
+    "src/shared/**/*",
+    "packages/vav-desktop/src/main/**/*",
+    "packages/vav-desktop/src/preload/**/*",
+    "packages/vavd/src/**/*",
+    "packages/vavc/src/**/*",
+    "packages/vav-cli/src/**/*"
   ],
-  "exclude": ["src/**/*.test.ts"],
+  "exclude": ["src/**/*.test.ts", "packages/**/*.test.ts"],
   "compilerOptions": {
     "composite": true,
     "target": "ES2022",
@@ -25,7 +29,8 @@
     "noEmit": true,
     "baseUrl": ".",
     "paths": {
-      "@shared/*": ["src/shared/*"]
+      "@shared/*": ["src/shared/*"],
+      "@main/*": ["src/main/*"]
     }
   }
 }

@@ -157,10 +157,20 @@ export function catalogRowForModel(
   const exact = list.find((row) => row.id === trimmed)
   if (exact) return exact
   const family = cursorModelFamilyId(trimmed)
-  return (
-    list.find((row) => row.id === family) ??
-    list.find((row) => cursorModelFamilyId(row.id) === family)
-  )
+  const familyRow = list.find((row) => row.id === family)
+  if (familyRow) return familyRow
+  const variants = list.filter((row) => cursorModelFamilyId(row.id) === family)
+  if (!variants.length) return undefined
+  // Stored hyphen / atomic ids keep their own row. A family id on a hyphen
+  // catalogue must not bind the first variant ("Grok 4.6 Fast") — chips live
+  // on the family, not on a leftover --list-models suffix.
+  if (isHyphenVariant(trimmed)) {
+    return variants.find((row) => row.id === trimmed) ?? variants[0]
+  }
+  return {
+    id: family,
+    label: cleanCursorLabel(variants[0]?.label || family, family)
+  }
 }
 
 export function sessionModelIsAtomic(cliHost: string | null | undefined, modelId: string | null | undefined): boolean {
@@ -183,10 +193,11 @@ export function encodeCursorCliModelId(
   return buildCursorCliId(parsed.family, mergePrefs(parsed, prefs))
 }
 
-/** ACP `session/set_model` id — exact advertised row for the family, or null. */
+/** ACP `session/set_model` id — advertised family row, or the chip-matching row. */
 export function encodeCursorAcpModelId(
   wanted: string | null | undefined,
-  catalog: readonly CatalogRow[] = []
+  catalog: readonly CatalogRow[] = [],
+  prefs?: ModelPrefs
 ): string | null {
   const trimmed = wanted?.trim()
   if (!trimmed) return null
@@ -199,11 +210,40 @@ export function encodeCursorAcpModelId(
   }
   const family = parsed.family
   const keys = unique([family, family.replace(/^cursor-/, ''), `cursor-${family}`])
-  const hit = catalog.find((row) => {
+  const hits = catalog.filter((row) => {
     const rowFamily = parseHostModelId(row.id).family
     return keys.includes(rowFamily) || keys.includes(row.name ?? '') || keys.includes(row.label ?? '')
   })
-  return hit?.id ?? null
+  if (!hits.length) return null
+  const merged = mergePrefs(parsed, prefs)
+  return pickAdvertisedRow(hits, merged) ?? hits[0]!.id
+}
+
+function pickAdvertisedRow(
+  hits: readonly CatalogRow[],
+  prefs: Required<ModelPrefs>
+): string | null {
+  let best: { id: string; score: number } | null = null
+  for (const row of hits) {
+    const parsed = parseHostModelId(row.id)
+    const thinking =
+      effortToLevel(parsed.params.find((param) => THINKING_KEYS.has(param.key) || param.key === 'thinking')?.value ?? '') ??
+      null
+    const fastParam = parsed.params.find((param) => param.key === 'fast')
+    const fast =
+      fastParam?.value === 'true' ? true : fastParam?.value === 'false' ? false : null
+    let score = 0
+    if (prefs.thinkingLevel != null) {
+      if (thinking === prefs.thinkingLevel) score += 2
+      else if (thinking != null) score -= 1
+    }
+    if (prefs.fast != null) {
+      if (fast === prefs.fast) score += 2
+      else if (fast != null) score -= 1
+    }
+    if (!best || score > best.score) best = { id: row.id, score }
+  }
+  return best && best.score > 0 ? best.id : null
 }
 
 export function thinkingParamValue(level: ThinkingLevel | null | undefined): string | null {

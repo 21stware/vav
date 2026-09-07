@@ -4,7 +4,7 @@ import {
   chooseNativeMenu,
   E2E_SESSION_ID,
   extraWorkspaceLabel,
-  launchVav,
+  launchWorkbench,
   openFilesTray,
   pressAccelerator
 } from '../launch'
@@ -14,7 +14,7 @@ import {
  * "Choose another folder…" opens a native dialog and is out of scope.
  */
 test('chip action switches to a recent project folder and refreshes Files', async () => {
-  const harness = await launchVav({ extraWorkspace: true })
+  const harness = await launchWorkbench({ extraWorkspace: true })
   try {
     const { page, extraWorkspace } = harness
     if (!extraWorkspace) throw new Error('expected extraWorkspace')
@@ -44,7 +44,7 @@ test('chip action switches to a recent project folder and refreshes Files', asyn
 })
 
 test('⌘⇧O → A new temp folder leaves the seeded files behind', async () => {
-  const harness = await launchVav()
+  const harness = await launchWorkbench()
   try {
     const { page } = harness
     await pressAccelerator(harness, 'Meta+Shift+o')

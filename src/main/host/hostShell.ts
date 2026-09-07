@@ -3,9 +3,16 @@
  *
  * Local windows use Electron `shell` (Finder, Quick Look). Remote daemons
  * have no Finder on this computer — spawn the equivalent on that machine.
+ * Chrome / web / `vavc` use the same commands over `fs.reveal` / `fs.openPath`.
  */
 
 import path from 'node:path'
+import {
+  copyFilesAppleScript,
+  copyFilesPowerShell,
+  getInfoAppleScript,
+  propertiesPowerShell
+} from '../fs/fileNativeTransfer.ts'
 
 export function hostDirname(platform: string | undefined, filePath: string): string {
   return (platform === 'win32' ? path.win32 : path.posix).dirname(filePath)
@@ -40,4 +47,37 @@ export function previewSpawn(
 ): { file: string; args: string[] } {
   if (platform === 'darwin') return { file: 'qlmanage', args: ['-p', filePath] }
   return openSpawn(platform, filePath)
+}
+
+/** Finder Get Info / Explorer Properties. Linux has no equivalent dialog. */
+export function getInfoSpawn(
+  platform: string | undefined,
+  filePath: string
+): { file: string; args: string[] } | null {
+  if (!filePath) return null
+  if (platform === 'darwin') return { file: 'osascript', args: ['-e', getInfoAppleScript(filePath)] }
+  if (platform === 'win32') {
+    return {
+      file: 'powershell.exe',
+      args: ['-NoProfile', '-NonInteractive', '-Command', propertiesPowerShell(filePath)]
+    }
+  }
+  return null
+}
+
+/** Put the files on the host OS clipboard (Finder Copy / Explorer Copy). */
+export function copyAsFileSpawn(
+  platform: string | undefined,
+  paths: string[]
+): { file: string; args: string[] } | null {
+  const list = paths.filter((path) => Boolean(path))
+  if (list.length === 0) return null
+  if (platform === 'darwin') return { file: 'osascript', args: ['-e', copyFilesAppleScript(list)] }
+  if (platform === 'win32') {
+    return {
+      file: 'powershell.exe',
+      args: ['-NoProfile', '-NonInteractive', '-Command', copyFilesPowerShell(list)]
+    }
+  }
+  return null
 }

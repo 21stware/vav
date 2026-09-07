@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { DAEMON_PROTO_VERSION, encodeDaemonPairing } from '../../shared/daemonProtocol.ts'
-import { loopbackVavdShell } from './vavdShellPairing.ts'
+import { isLoopbackPairedHost, loopbackVavdShell } from './vavdShellPairing.ts'
 
 describe('loopbackVavdShell', () => {
   it('accepts a 127.0.0.1 vavd pairing', () => {
@@ -32,6 +32,11 @@ describe('loopbackVavdShell', () => {
       addresses: ['10.0.0.8']
     })
     assert.equal(loopbackVavdShell(pairing), null)
+  })
+
+  it('treats loopback-only persisted hosts as the local shell', () => {
+    assert.equal(isLoopbackPairedHost({ host: '127.0.0.1', addresses: ['127.0.0.1'] }), true)
+    assert.equal(isLoopbackPairedHost({ host: '10.0.0.8', addresses: ['10.0.0.8'] }), false)
   })
 
   it('rejects empty or malformed pairing', () => {

@@ -112,7 +112,14 @@ const models = {
   currentModelId: 'e2e-model[thinking=true,context=123k,effort=high]',
   availableModels: [
     { modelId: 'default[]', name: 'Auto' },
+    { modelId: 'grok-4.6[effort=high,fast=false]', name: 'grok-4.6' },
     { modelId: 'grok-4.6[effort=high,fast=true]', name: 'grok-4.6' },
+    { modelId: 'grok-4.6[effort=low,fast=false]', name: 'grok-4.6' },
+    { modelId: 'grok-4.6[effort=low,fast=true]', name: 'grok-4.6' },
+    {
+      modelId: 'claude-fable-5[thinking=true,context=300k,effort=high,fast=false]',
+      name: 'claude-fable-5'
+    },
     {
       modelId: 'claude-fable-5[thinking=true,context=300k,effort=high]',
       name: 'claude-fable-5'

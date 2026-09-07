@@ -1,0 +1,36 @@
+{
+  "name": "@21stware/vav-cli",
+  "version": "1.19.1",
+  "description": "Claude Code-style VAV agent CLI against a running vavd. Interactive REPL, print, JSON, RPC.",
+  "license": "PolyForm-Noncommercial-1.0.0",
+  "author": "Oboo Cheng",
+  "type": "commonjs",
+  "bin": {
+    "vav-cli": "vavcli.js",
+    "vavcli": "vavcli.js"
+  },
+  "files": [
+    "vavcli.js",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21stware/vav.git",
+    "directory": "packages/vav-cli"
+  },
+  "homepage": "https://github.com/21stware/vav/tree/main/packages/vav-cli",
+  "keywords": [
+    "vav",
+    "vav-cli",
+    "vavcli",
+    "claude-code",
+    "agent"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}

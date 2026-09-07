@@ -1,12 +1,12 @@
 import { test, expect } from '@playwright/test'
-import { chooseNativeMenu, dismissNativeMenu, E2E_SESSION_ID, launchVav, peekNativeMenu } from '../launch'
+import { chooseNativeMenu, dismissNativeMenu, E2E_SESSION_ID, launchWorkbench, peekNativeMenu } from '../launch'
 
 /**
  * ACP session chrome on the composer — slash commands and session modes.
  * No ACP stdio host is spawned. Native AppKit is intercepted under VAV_E2E.
  */
 test('ACP slash menu lists seeded commands and inserts one', async () => {
-  const harness = await launchVav({ seedConversation: 'acp' })
+  const harness = await launchWorkbench({ seedConversation: 'acp' })
   try {
     const { page } = harness
     const input = page.locator('[data-testid="composer-input"]')
@@ -24,7 +24,7 @@ test('ACP slash menu lists seeded commands and inserts one', async () => {
 })
 
 test('ACP slash menu filters as the draft grows', async () => {
-  const harness = await launchVav({ seedConversation: 'acp' })
+  const harness = await launchWorkbench({ seedConversation: 'acp' })
   try {
     const { page } = harness
     await page.locator('[data-testid="composer-input"]').fill('/comp')
@@ -36,7 +36,7 @@ test('ACP slash menu filters as the draft grows', async () => {
 })
 
 test('ACP slash menu has no rows for an unknown command', async () => {
-  const harness = await launchVav({ seedConversation: 'acp' })
+  const harness = await launchWorkbench({ seedConversation: 'acp' })
   try {
     const { page } = harness
     await page.locator('[data-testid="composer-input"]').fill('/zzz-unknown')
@@ -47,7 +47,7 @@ test('ACP slash menu has no rows for an unknown command', async () => {
 })
 
 test('ACP slash keyboard highlights, inserts, and Escape dismisses', async () => {
-  const harness = await launchVav({ seedConversation: 'acp' })
+  const harness = await launchWorkbench({ seedConversation: 'acp' })
   try {
     const { page } = harness
     const input = page.locator('[data-testid="composer-input"]')
@@ -76,7 +76,7 @@ test('ACP slash keyboard highlights, inserts, and Escape dismisses', async () =>
 })
 
 test('ACP session mode chip shows the current mode', async () => {
-  const harness = await launchVav({ seedConversation: 'acp' })
+  const harness = await launchWorkbench({ seedConversation: 'acp' })
   try {
     const mode = harness.page.locator('[data-testid="session-run-controls"]')
     await expect(mode).toBeVisible()
@@ -87,7 +87,7 @@ test('ACP session mode chip shows the current mode', async () => {
 })
 
 test('ACP session mode native menu switches to Plan and persists', async () => {
-  const harness = await launchVav({ seedConversation: 'acp' })
+  const harness = await launchWorkbench({ seedConversation: 'acp' })
   try {
     const { page } = harness
     const mode = page.locator('[data-testid="session-run-controls"]')
@@ -121,7 +121,7 @@ test('ACP session mode native menu switches to Plan and persists', async () => {
 })
 
 test('ACP session mode native menu can be dismissed without changing mode', async () => {
-  const harness = await launchVav({ seedConversation: 'acp' })
+  const harness = await launchWorkbench({ seedConversation: 'acp' })
   try {
     const { page } = harness
     const mode = page.locator('[data-testid="session-run-controls"]')

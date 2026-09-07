@@ -29,4 +29,19 @@ describe('listRemoteChildEntries', () => {
     })
     assert.deepEqual(listed, [{ name: 'src', path: '/home/ada/src' }])
   })
+
+  it('includes regular files when asked, with isDirectory', () => {
+    const listed = listRemoteChildEntries('/home/ada', ['/home/ada'], {
+      readdir: () => [
+        { name: 'src', isDirectory: () => true, isSymbolicLink: () => false },
+        { name: 'README', isDirectory: () => false, isSymbolicLink: () => false }
+      ],
+      join: (a, b) => `${a}/${b}`,
+      includeFiles: true
+    })
+    assert.deepEqual(listed, [
+      { name: 'src', path: '/home/ada/src', isDirectory: true },
+      { name: 'README', path: '/home/ada/README', isDirectory: false }
+    ])
+  })
 })

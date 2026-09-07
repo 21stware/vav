@@ -65,11 +65,15 @@ export function cliHostFromAgent(agent: string | null | undefined): CliHostKind 
 }
 
 export function acpSessionFromControls(controls?: RemoteControlsEvent | null): AcpSessionState | null {
-  if (!controls?.modes?.length) return null
+  if (!controls?.modes?.length && !controls?.commands?.length) return null
   return {
     currentModeId: controls.mode ?? controls.modes[0]?.id ?? null,
-    modes: controls.modes.map((mode) => ({ id: mode.id, name: mode.label })),
-    thinkingLevels: controls.thinkingLevels
+    modes: (controls.modes ?? []).map((mode) => ({ id: mode.id, name: mode.label })),
+    commands: (controls.commands ?? []).map((command) => ({
+      name: command.id,
+      description: command.label
+    })),
+    thinkingLevels: (controls.thinkingLevels ?? [])
       .map((row) => asThinkingLevel(row.id))
       .filter((level): level is ThinkingLevel => Boolean(level))
   }
@@ -204,7 +208,8 @@ export function chatMessagesFromRemoteThread(messages: RemoteThreadMessage[]): C
       blocks: blocks.length ? blocks : content ? [{ kind: 'text', text: content }] : [],
       createdAt: message.at || Date.now(),
       ...(message.cancelled ? { cancelled: true } : {}),
-      ...(message.error ? { errorText: message.error } : {})
+      ...(message.error ? { errorText: message.error } : {}),
+      ...(message.changeSetId ? { changeSetId: message.changeSetId } : {})
     }
     rows.push(row)
     parentId = message.id
@@ -231,6 +236,14 @@ export function turnEventsFromRemoteTurn(event: RemoteTurnEvent): TurnEvent[] {
   const id = event.conversationId
   if (event.phase === 'running') {
     const events: TurnEvent[] = [{ type: 'start', conversationId: id }]
+    if (event.recovery) {
+      events.push({
+        type: 'phase',
+        conversationId: id,
+        phase: event.recovery.kind,
+        recovery: event.recovery
+      })
+    }
     const blocks = event.blocks ?? []
     blocks.forEach((block, index) => {
       if (block.kind === 'text') {
@@ -279,7 +292,7 @@ export function turnEventsFromRemoteTurn(event: RemoteTurnEvent): TurnEvent[] {
         replace: true
       })
     }
-    if (event.awaiting) {
+    if (event.awaiting && !blocks.some((block) => 'id' in block && block.id === event.awaiting?.id)) {
       const tool = toolBlockFromRemote(event.awaiting)
       events.push({
         type: 'awaiting',

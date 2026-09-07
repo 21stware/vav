@@ -1,12 +1,12 @@
 import { test, expect } from '@playwright/test'
-import { launchVav, openFilesTray } from '../launch'
+import { launchWorkbench, openFilesTray } from '../launch'
 
 /**
  * Sealed agent output: thinking process, tool cards, plan overlay, plan doc,
  * turn error, and an ask card. No live provider.
  */
 test('seeded assistant turn paints tools, plan, error, and ask', async () => {
-  const harness = await launchVav({ seedConversation: 'agent' })
+  const harness = await launchWorkbench({ seedConversation: 'agent' })
   try {
     const { page } = harness
     await expect(page.locator('[data-testid="message-user"]').first()).toContainText(

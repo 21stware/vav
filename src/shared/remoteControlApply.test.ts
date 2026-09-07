@@ -37,6 +37,14 @@ describe('mergeRemoteThreadMessages', () => {
     assert.equal(merged.leafId, 'u1')
   })
 
+  it('copies a host changeSetId onto a new assistant row', () => {
+    const merged = mergeRemoteThreadMessages([], [
+      { id: 'u1', role: 'user', text: 'please update', at: 1 },
+      { id: 'a1', role: 'assistant', text: 'updated', at: 2, changeSetId: 'cs-host' }
+    ])
+    assert.equal(merged.messages[1]?.changeSetId, 'cs-host')
+  })
+
   it('keeps a local changeSetId when the phone thread omits it', () => {
     const existing: ChatMessage[] = [
       {
@@ -136,6 +144,46 @@ describe('turnEventsFromRemoteTurn', () => {
     assert.equal(done.events[0]?.type, 'end')
     if (done.events[0]?.type !== 'end') return
     assert.equal(done.events[0].cancelled, false)
+  })
+
+  it('does not project the same awaiting plan-doc twice', () => {
+    const awaiting = {
+      kind: 'awaiting' as const,
+      id: 'plan-1',
+      tool: 'plan_doc',
+      name: 'Plan',
+      title: 'Plan',
+      prompt: '',
+      choices: [{ id: 'accept', label: 'Accept plan' }]
+    }
+    const projected = turnEventsFromRemoteTurn(
+      'c1',
+      {
+        type: 'turn',
+        conversationId: 'host-1',
+        phase: 'awaiting',
+        blocks: [awaiting],
+        awaiting
+      },
+      true
+    )
+    assert.equal(projected.events.filter((event) => event.type === 'awaiting').length, 1)
+  })
+
+  it('projects host recovery chrome onto the desktop turn', () => {
+    const projected = turnEventsFromRemoteTurn(
+      'c1',
+      {
+        type: 'turn',
+        conversationId: 'host-1',
+        phase: 'running',
+        draft: 'partial e2e reply',
+        recovery: { kind: 'healing', attempt: 1, limit: 3 }
+      },
+      true
+    )
+    const phase = projected.events.find((event) => event.type === 'phase')
+    assert.equal(phase?.type === 'phase' ? phase.phase : null, 'healing')
   })
 })
 

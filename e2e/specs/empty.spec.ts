@@ -1,14 +1,15 @@
 import { test, expect } from '@playwright/test'
-import { dismissNativeMenu, launchVav, peekNativeMenu } from '../launch'
+import { dismissNativeMenu, launchWorkbench, peekNativeMenu } from '../launch'
 
 /**
  * first-run/first-run-no-api-key.rpml + session/main-chat-empty.rpml
  *
- * Keychain is already open. Empty VAV session: files/terminal usable,
- * send blocked until a key exists, tools tray starts collapsed.
+ * Same spawned local vavd as production. Empty session: files/terminal
+ * usable, no-key hero visible until the host catalog has a key, tools
+ * tray starts collapsed.
  */
 test('empty VAV session shows the no-key empty state and keeps local tools', async () => {
-  const harness = await launchVav()
+  const harness = await launchWorkbench()
   try {
     const { page } = harness
     const empty = page.locator('.empty-state-session')
@@ -40,7 +41,7 @@ test('empty VAV session shows the no-key empty state and keeps local tools', asy
 })
 
 test('Open Settings from the no-key empty state opens Providers', async () => {
-  const harness = await launchVav()
+  const harness = await launchWorkbench()
   try {
     const opened = harness.app.waitForEvent('window')
     await harness.page.locator('[data-testid="empty-open-settings"]').click()
@@ -53,7 +54,7 @@ test('Open Settings from the no-key empty state opens Providers', async () => {
 })
 
 test('empty session hero plays logo and name empty-in on a new visit', async () => {
-  const harness = await launchVav({ reduceMotion: false })
+  const harness = await launchWorkbench({ reduceMotion: false })
   try {
     const { page } = harness
     await expect(page.locator('.empty-state-session')).toBeVisible()

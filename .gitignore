@@ -3,8 +3,8 @@ playwright-report/
 blob-report/
 node_modules/
 out/
-# Built from src/phone-ui (npm run build:phone-ui)
-extension/phone/
+# Built from packages/vav-chrome-extension/phone-ui (npm run build:phone-ui)
+packages/vav-chrome-extension/extension/phone/
 release/
 release-sidecars/
 dist/

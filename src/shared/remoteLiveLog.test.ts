@@ -40,4 +40,12 @@ describe('remoteLiveLog', () => {
     assert.equal(blocks[0]?.kind, 'text')
     assert.equal(blocks[0] && 'text' in blocks[0] ? blocks[0].text : '', 'before after')
   })
+
+  it('replace drops a leaked RetriableError tail instead of appending', () => {
+    const slots = new Map()
+    applyLiveDelta(slots, 0, 'text', 'partial e2e reply\nError: RetriableError: leaked')
+    applyLiveDelta(slots, 0, 'text', 'partial e2e reply', true)
+    const block = compactLiveBlocks(slots)[0]
+    assert.equal(block && 'text' in block ? block.text : '', 'partial e2e reply')
+  })
 })

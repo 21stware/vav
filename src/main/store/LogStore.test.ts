@@ -104,4 +104,16 @@ describe('LogStore', () => {
     assert.equal(store.stats().total, 0)
     store.dispose()
   })
+
+  it('notifies subscribers on append', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'vav-logs-'))
+    const store = new LogStore({ dir, now: () => 1, id: () => 's1' })
+    const events: string[] = []
+    const off = store.subscribe((row) => events.push(row.event))
+    store.append({ channel: 'system', event: LOG_EVENT.systemBoot, message: 'ready' })
+    off()
+    store.append({ channel: 'system', event: LOG_EVENT.systemQuit, message: 'Quit' })
+    assert.deepEqual(events, [LOG_EVENT.systemBoot])
+    store.dispose()
+  })
 })

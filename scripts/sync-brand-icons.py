@@ -11,8 +11,8 @@ This script only regenerates the derivatives that drifted in v1.4.0:
 
     build/icon.ico              — multi-size Windows shell icon (tighter inset)
     site/assets/favicon.png     — 256px plate matching the Dock tile
-    src/renderer/public/icon.png
-    src/renderer/public/icon-dark.png
+    packages/vav-desktop/src/renderer/public/icon.png
+    packages/vav-desktop/src/renderer/public/icon-dark.png
 
 macOS keeps ~10% margin so the tile sits correctly in the Dock. Windows draws
 the bitmap edge-to-edge in the taskbar / Start menu, so we replate with a much
@@ -33,7 +33,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BUILD = os.path.join(ROOT, 'build')
 SITE = os.path.join(ROOT, 'site', 'assets')
 PUBLIC = os.path.join(ROOT, 'src', 'renderer', 'public')
-EXT_ICONS = os.path.join(ROOT, 'extension', 'icons')
+EXT_ICONS = os.path.join(ROOT, 'packages/vav-chrome-extension/extension', 'icons')
 EXT_ICON_SIZES = (16, 32, 48, 128)
 
 ICON_PNG = os.path.join(BUILD, 'icon.png')
@@ -107,14 +107,14 @@ def main() -> None:
         y = (size - fitted.size[1]) // 2
         canvas.alpha_composite(fitted, (x, y))
         canvas.save(os.path.join(EXT_ICONS, f'icon{size}.png'), format='PNG')
-    print('extension/icons icon16/32/48/128')
+    print('packages/vav-chrome-extension/extension/icons icon16/32/48/128')
 
     os.makedirs(PUBLIC, exist_ok=True)
     shutil.copy2(ICON_PNG, os.path.join(PUBLIC, 'icon.png'))
-    print('src/renderer/public/icon.png ← build/icon.png')
+    print('packages/vav-desktop/src/renderer/public/icon.png ← build/icon.png')
     if os.path.isfile(ICON_DARK_PNG):
         shutil.copy2(ICON_DARK_PNG, os.path.join(PUBLIC, 'icon-dark.png'))
-        print('src/renderer/public/icon-dark.png ← build/icon-dark.png')
+        print('packages/vav-desktop/src/renderer/public/icon-dark.png ← build/icon-dark.png')
     else:
         print('warn: build/icon-dark.png missing — skipped public dark copy', file=sys.stderr)
 

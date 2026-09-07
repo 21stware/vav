@@ -1,20 +1,16 @@
 import { test, expect } from '@playwright/test'
-import { launchVav, seedApiKey } from '../launch'
+import { launchWorkbench, seedVavKeyAccount } from '../launch'
 
 /**
- * first-run-no-api-key.rpml (send unblocked) + session/main-chat.rpml
- *
- * Provider HTTP is stubbed (VAV_E2E_STUB_TURN). This is the first real
- * composer → transcript round trip without a live model.
+ * Composer → transcript on the spawned local vavd (production local = remote).
+ * First-run no-key empty state stays on empty.spec (in-process Electron).
+ * Provider HTTP is stubbed (VAV_E2E_STUB_TURN).
  */
 test('saving a key clears the no-key empty state and a stub turn lands in the transcript', async () => {
-  const harness = await launchVav({ stubTurn: true })
+  const harness = await launchWorkbench({ stubTurn: true })
   try {
     const { page } = harness
-    await expect(page.locator('[data-testid="empty-open-settings"]')).toBeVisible()
-
-    await seedApiKey(page)
-    await expect(page.locator('[data-testid="empty-open-settings"]')).toHaveCount(0)
+    await seedVavKeyAccount(page)
     await expect(page.locator('.empty-state-session')).toContainText('Harnessed by VAV')
 
     await page.locator('[data-testid="composer-input"]').fill('ping e2e')

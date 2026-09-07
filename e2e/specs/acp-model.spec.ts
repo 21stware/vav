@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { test, expect } from '@playwright/test'
-import { E2E_SESSION_B_ID, E2E_SESSION_ID, launchVav, sessionRow } from '../launch'
+import { E2E_SESSION_B_ID, E2E_SESSION_ID, launchWorkbench, sessionRow } from '../launch'
 
 type ModelLog = { sessionId: string; modelId: string; ok: boolean }
 
@@ -22,7 +22,7 @@ function lastOk(log: ModelLog[], sessionId: string): ModelLog | undefined {
  * on their own ACP model ids.
  */
 test('picker shows a family name and thinking / fast chips on Cursor', async () => {
-  const harness = await launchVav({ liveAcp: true })
+  const harness = await launchWorkbench({ liveAcp: true })
   try {
     const { page } = harness
     await expect(page.locator('.agent-model-picker-model .model-name')).toHaveText(/Grok 4\.6/)
@@ -39,7 +39,7 @@ test('picker shows a family name and thinking / fast chips on Cursor', async () 
 })
 
 test('two live ACP conversations pin different models', async () => {
-  const harness = await launchVav({ liveAcp: true, extraAcpSession: true })
+  const harness = await launchWorkbench({ liveAcp: true, extraAcpSession: true })
   try {
     const { page, acpModelLog } = harness
 
@@ -85,7 +85,7 @@ test('two live ACP conversations pin different models', async () => {
 })
 
 test('thinking level and fast overlay the pinned ACP model', async () => {
-  const harness = await launchVav({ liveAcp: true })
+  const harness = await launchWorkbench({ liveAcp: true })
   try {
     const { page, acpModelLog } = harness
     await page.locator('[data-testid="composer-input"]').fill('hello')
@@ -131,7 +131,7 @@ test('thinking level and fast overlay the pinned ACP model', async () => {
 })
 
 test('send and retry use the current Fast chip, not the listed default', async () => {
-  const harness = await launchVav({ liveAcp: true })
+  const harness = await launchWorkbench({ liveAcp: true })
   try {
     const { page, acpModelLog } = harness
     await page.locator('[data-testid="composer-input"]').fill('hello')

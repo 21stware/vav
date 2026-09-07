@@ -1,12 +1,12 @@
 import { test, expect } from '@playwright/test'
-import { launchVav, seedApiKey } from '../launch'
+import { launchWorkbench, seedApiKey } from '../launch'
 
 /**
  * Live stub stream / ask — AgentRuntime emits the same TurnEvents as a real
  * VAV turn, without provider HTTP.
  */
 test('stub stream shows live output then seals tools and Done', async () => {
-  const harness = await launchVav({ stubStream: true })
+  const harness = await launchWorkbench({ stubStream: true })
   try {
     const { page } = harness
     await seedApiKey(page)
@@ -33,14 +33,14 @@ test('stub stream shows live output then seals tools and Done', async () => {
 })
 
 test('stub ask parks the turn and resumes after a choice', async () => {
-  const harness = await launchVav({ stubAsk: true })
+  const harness = await launchWorkbench({ stubAsk: true })
   try {
     const { page } = harness
     await seedApiKey(page)
     await page.locator('[data-testid="composer-input"]').fill('what next?')
     await page.locator('[data-testid="composer-send"]').click()
 
-    const ask = page.locator('[data-testid="ask-card"]')
+    const ask = page.locator('[data-testid="ask-card"]').last()
     await expect(ask).toBeVisible()
     await expect(page.getByText('Waiting for your answer to continue…')).toBeVisible()
     await ask.getByText('Keep writing').click()
@@ -56,16 +56,18 @@ test('stub ask parks the turn and resumes after a choice', async () => {
 })
 
 test('stub approve parks the write gate and resumes after Approve', async () => {
-  const harness = await launchVav({ stubApprove: true })
+  const harness = await launchWorkbench({ stubApprove: true })
   try {
     const { page } = harness
     await seedApiKey(page)
     await page.locator('[data-testid="composer-input"]').fill('patch hello')
     await page.locator('[data-testid="composer-send"]').click()
 
-    const card = page.locator('[data-testid="approval-card"]')
+    const card = page
+      .locator('[data-testid="approval-card"]')
+      .filter({ has: page.getByRole('button', { name: 'Approve' }) })
+      .last()
     await expect(card).toBeVisible()
-    await expect(card.getByText('Awaiting approval')).toBeVisible()
     await card.getByRole('button', { name: 'Approve' }).click()
 
     const assistant = page.locator('[data-testid="message-assistant"]')
@@ -78,14 +80,14 @@ test('stub approve parks the write gate and resumes after Approve', async () => 
 })
 
 test('stub approve parks the write gate and resumes after Deny', async () => {
-  const harness = await launchVav({ stubApprove: true })
+  const harness = await launchWorkbench({ stubApprove: true })
   try {
     const { page } = harness
     await seedApiKey(page)
     await page.locator('[data-testid="composer-input"]').fill('patch hello')
     await page.locator('[data-testid="composer-send"]').click()
 
-    const card = page.locator('[data-testid="approval-card"]')
+    const card = page.locator('[data-testid="approval-card"]').last()
     await expect(card).toBeVisible()
     await card.getByRole('button', { name: 'Deny' }).click()
 

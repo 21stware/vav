@@ -1,6 +1,12 @@
 import type { IpcMain, IpcMainInvokeEvent } from 'electron'
 import { IPC } from '@shared/ipc'
 import type { AppSettings } from '@shared/types'
+import {
+  mergeHostSettings,
+  omitHostSettings,
+  pickHostSettings,
+  pickSecretPresent
+} from '@shared/hostSettings'
 import type { CliInstallLocation } from '../cli'
 import { parseHexToRgb16, parseOsascriptColorText } from '../window/appleColor'
 import { LOG_EVENT } from '@shared/appLog'
@@ -56,6 +62,8 @@ export type SettingsIpcHost = {
   setFileAssociation: (formatId: string) => unknown
   unsetFileAssociation: (formatId: string) => unknown
   registerAllFileAssociations: () => unknown
+  /** Spawned loopback vavd — host prefs share the store Chrome Settings writes. */
+  remote?: () => { request: (method: string, params?: unknown) => Promise<unknown> } | null
 }
 
 /** Settings get/update/keys/fonts/CLI/file-associations. Analysis stays in the entry. */
@@ -65,84 +73,141 @@ export function registerSettingsIpc(
   secrets: SettingsIpcSecrets,
   host: SettingsIpcHost
 ): void {
-  ipcMain.handle(IPC.settingsGet, () => host.currentSettings())
+  const remote = (): { request: (method: string, params?: unknown) => Promise<unknown> } | null =>
+    host.remote?.() ?? null
 
-  ipcMain.handle(IPC.settingsUpdate, (_event, patch: Partial<AppSettings>) => {
+  const mergedSettings = async (): Promise<unknown> => {
+    const local = host.currentSettings() as AppSettings
+    const client = remote()
+    if (!client) return local
+    try {
+      const hostSnap = (await client.request('settings.get')) as Partial<AppSettings>
+      return {
+        ...mergeHostSettings(local, pickHostSettings(hostSnap)),
+        ...pickSecretPresent(hostSnap)
+      }
+    } catch {
+      return local
+    }
+  }
+
+  ipcMain.handle(IPC.settingsGet, () => mergedSettings())
+
+  ipcMain.handle(IPC.settingsUpdate, async (_event, patch: Partial<AppSettings>) => {
     const previous = store.get()
-    const next = store.update(patch)
+    const client = remote()
+    const hostPatch = pickHostSettings(patch)
+    const localPatch = omitHostSettings(patch)
+    if (Object.keys(localPatch).length) store.update(localPatch)
+    if (client && Object.keys(hostPatch).length) {
+      await client.request('settings.update', hostPatch)
+    } else if (!client && Object.keys(hostPatch).length) {
+      store.update(hostPatch)
+    }
     const keys = Object.keys(patch ?? {}).filter((key) => key !== 'apiKeyPresent')
     if (keys.length) {
       appLog().user(LOG_EVENT.userSettingsUpdate, keys.join(', '), { data: { keys } })
     }
+    const next = (await mergedSettings()) as AppSettings
     host.applyUpdateSideEffects(previous, patch, next)
-    const settings = host.currentSettings()
-    host.broadcastSettings(settings)
-    return settings
+    host.broadcastSettings(next)
+    return next
   })
 
-  ipcMain.handle(IPC.settingsReset, () => {
+  ipcMain.handle(IPC.settingsReset, async () => {
     secrets.clear('api')
     secrets.clear('braveSearch')
     secrets.clear('cloudflare')
     secrets.clear('supabase')
     secrets.clear('vercel')
-    const next = store.reset()
-    host.applyResetSideEffects(next)
-    const settings = host.currentSettings()
-    host.broadcastSettings(settings)
-    return settings
+    const nextLocal = store.reset()
+    const client = remote()
+    if (client) {
+      try {
+        await client.request('settings.reset')
+      } catch {
+        /* keep local reset */
+      }
+    }
+    const next = (await mergedSettings()) as AppSettings
+    host.applyResetSideEffects(nextLocal)
+    host.broadcastSettings(next)
+    return next
   })
+
+  const setHostSecret = async (
+    slot: 'api' | 'braveSearch' | 'tinyfish' | 'cloudflare' | 'supabase' | 'vercel',
+    value: string
+  ): Promise<{ hint: string | null }> => {
+    const client = remote()
+    if (client) {
+      const row = (await client.request('settings.setSecret', { slot, value })) as {
+        hint?: string | null
+      }
+      host.broadcastSettings(await mergedSettings())
+      return { hint: row.hint ?? null }
+    }
+    secrets.set(value, slot)
+    host.broadcastSettings(host.currentSettings())
+    return { hint: secrets.maskedHint(slot) }
+  }
+
+  const hintHostSecret = async (
+    slot: 'api' | 'braveSearch' | 'tinyfish' | 'cloudflare' | 'supabase' | 'vercel'
+  ): Promise<string | null> => {
+    const client = remote()
+    if (client) {
+      const row = (await client.request('settings.secretHint', { slot })) as { hint?: string | null }
+      return row.hint ?? null
+    }
+    return secrets.maskedHint(slot)
+  }
+
+  const revealHostSecret = async (
+    event: IpcMainInvokeEvent,
+    slot: 'api' | 'braveSearch' | 'tinyfish' | 'cloudflare' | 'supabase' | 'vercel'
+  ): Promise<string | null> => {
+    if (!(await host.confirmRevealSecret(event))) return null
+    const client = remote()
+    if (client) {
+      const row = (await client.request('settings.revealSecret', { slot })) as { key?: string | null }
+      return row.key ?? null
+    }
+    return secrets.get(slot)
+  }
 
   ipcMain.handle(IPC.settingsKeepAwakeStatus, () => host.keepAwakeStatus())
   ipcMain.handle(IPC.settingsKeepAwakeGrant, () => host.keepAwakeGrant())
   ipcMain.handle(IPC.settingsKeepAwakeRevoke, () => host.keepAwakeRevoke())
 
-  ipcMain.handle(IPC.settingsSetKey, (_event, key: string) => {
-    secrets.set(key, 'api')
-    host.broadcastSettings(host.currentSettings())
-    return { hint: secrets.maskedHint('api') }
-  })
+  ipcMain.handle(IPC.settingsSetKey, (_event, key: string) => setHostSecret('api', key))
+  ipcMain.handle(IPC.settingsRevealKey, (event) => revealHostSecret(event, 'api'))
+  ipcMain.handle(IPC.settingsKeyHint, () => hintHostSecret('api'))
 
-  ipcMain.handle(IPC.settingsRevealKey, async (event) => {
-    if (!(await host.confirmRevealSecret(event))) return null
-    return secrets.get('api')
-  })
-  ipcMain.handle(IPC.settingsKeyHint, () => secrets.maskedHint('api'))
+  ipcMain.handle(IPC.settingsSetBraveSearchKey, (_event, key: string) =>
+    setHostSecret('braveSearch', key)
+  )
+  ipcMain.handle(IPC.settingsBraveSearchKeyHint, () => hintHostSecret('braveSearch'))
 
-  ipcMain.handle(IPC.settingsSetBraveSearchKey, (_event, key: string) => {
-    secrets.set(key, 'braveSearch')
-    host.broadcastSettings(host.currentSettings())
-    return { hint: secrets.maskedHint('braveSearch') }
-  })
-  ipcMain.handle(IPC.settingsBraveSearchKeyHint, () => secrets.maskedHint('braveSearch'))
+  ipcMain.handle(IPC.settingsSetTinyfishSearchKey, (_event, key: string) =>
+    setHostSecret('tinyfish', key)
+  )
+  ipcMain.handle(IPC.settingsTinyfishSearchKeyHint, () => hintHostSecret('tinyfish'))
 
-  ipcMain.handle(IPC.settingsSetTinyfishSearchKey, (_event, key: string) => {
-    secrets.set(key, 'tinyfish')
-    host.broadcastSettings(host.currentSettings())
-    return { hint: secrets.maskedHint('tinyfish') }
-  })
-  ipcMain.handle(IPC.settingsTinyfishSearchKeyHint, () => secrets.maskedHint('tinyfish'))
+  ipcMain.handle(IPC.settingsSetCloudflareToken, (_event, token: string) =>
+    setHostSecret('cloudflare', token)
+  )
+  ipcMain.handle(IPC.settingsCloudflareTokenHint, () => hintHostSecret('cloudflare'))
 
-  ipcMain.handle(IPC.settingsSetCloudflareToken, (_event, token: string) => {
-    secrets.set(token, 'cloudflare')
-    host.broadcastSettings(host.currentSettings())
-    return { hint: secrets.maskedHint('cloudflare') }
-  })
-  ipcMain.handle(IPC.settingsCloudflareTokenHint, () => secrets.maskedHint('cloudflare'))
+  ipcMain.handle(IPC.settingsSetSupabaseToken, (_event, token: string) =>
+    setHostSecret('supabase', token)
+  )
+  ipcMain.handle(IPC.settingsSupabaseTokenHint, () => hintHostSecret('supabase'))
 
-  ipcMain.handle(IPC.settingsSetSupabaseToken, (_event, token: string) => {
-    secrets.set(token, 'supabase')
-    host.broadcastSettings(host.currentSettings())
-    return { hint: secrets.maskedHint('supabase') }
-  })
-  ipcMain.handle(IPC.settingsSupabaseTokenHint, () => secrets.maskedHint('supabase'))
-
-  ipcMain.handle(IPC.settingsSetVercelToken, (_event, token: string) => {
-    secrets.set(token, 'vercel')
-    host.broadcastSettings(host.currentSettings())
-    return { hint: secrets.maskedHint('vercel') }
-  })
-  ipcMain.handle(IPC.settingsVercelTokenHint, () => secrets.maskedHint('vercel'))
+  ipcMain.handle(IPC.settingsSetVercelToken, (_event, token: string) =>
+    setHostSecret('vercel', token)
+  )
+  ipcMain.handle(IPC.settingsVercelTokenHint, () => hintHostSecret('vercel'))
 
   ipcMain.handle(IPC.settingsValidateKey, async (_event, key: string) => {
     const settings = store.get()

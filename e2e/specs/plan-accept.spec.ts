@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { E2E_SESSION_ID, launchVav } from '../launch'
+import { E2E_SESSION_ID, launchWorkbench } from '../launch'
 
 /**
  * Cursor createPlan contract (verified against cursor-agent 2026.08.25):
@@ -10,7 +10,7 @@ import { E2E_SESSION_ID, launchVav } from '../launch'
  * the same turn going instead of sealing the conversation.
  */
 test('accepting a plan auto-continues the same turn', async () => {
-  const harness = await launchVav({ liveAcp: true, acpPlan: true })
+  const harness = await launchWorkbench({ liveAcp: true, acpPlan: true })
   try {
     const { page } = harness
     await page.locator('[data-testid="composer-input"]').fill('plan accept probe')

@@ -1,11 +1,11 @@
 import { test, expect } from '@playwright/test'
-import { E2E_SESSION_ID, launchVav } from '../launch'
+import { E2E_SESSION_ID, launchWorkbench } from '../launch'
 
 /**
  * Live Grok ACP fixture (`grok agent stdio` shape). No vendor CLI.
  */
 test('Grok ACP turn streams a reply, thinking chip, and slash commands', async () => {
-  const harness = await launchVav({ liveAcp: true, liveAcpHost: 'grok' })
+  const harness = await launchWorkbench({ liveAcp: true, liveAcpHost: 'grok' })
   try {
     const { page } = harness
     await expect(page.getByText('E2E Grok ACP live')).toBeVisible()
@@ -48,7 +48,7 @@ test('Grok ACP turn streams a reply, thinking chip, and slash commands', async (
 })
 
 test('Grok follow-up stays on the same native session', async () => {
-  const harness = await launchVav({ liveAcp: true, liveAcpHost: 'grok' })
+  const harness = await launchWorkbench({ liveAcp: true, liveAcpHost: 'grok' })
   try {
     const { page } = harness
     await page.locator('[data-testid="composer-input"]').fill('first turn')
@@ -97,7 +97,7 @@ test('Grok follow-up stays on the same native session', async () => {
 })
 
 test('Grok plan accept auto-continues the same turn', async () => {
-  const harness = await launchVav({ liveAcp: true, liveAcpHost: 'grok', acpPlan: true })
+  const harness = await launchWorkbench({ liveAcp: true, liveAcpHost: 'grok', acpPlan: true })
   try {
     const { page } = harness
     await page.locator('[data-testid="composer-input"]').fill('plan accept probe')
@@ -139,7 +139,7 @@ test('Grok plan accept auto-continues the same turn', async () => {
 })
 
 test('Grok network error retries in place and completes the turn', async () => {
-  const harness = await launchVav({ liveAcp: true, liveAcpHost: 'grok', acpFailPrompts: 1 })
+  const harness = await launchWorkbench({ liveAcp: true, liveAcpHost: 'grok', acpFailPrompts: 1 })
   try {
     const { page } = harness
     await page.locator('[data-testid="composer-input"]').fill('flaky grok probe')

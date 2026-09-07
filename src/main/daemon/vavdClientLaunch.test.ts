@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { resolveVavdPairing, resolveVavdSpawn } from './vavdClientLaunch.ts'
+import { resolveVavdPairing, resolveVavdSpawn, shouldRestoreInProcessPty } from './vavdClientLaunch.ts'
 
 describe('resolveVavdPairing', () => {
   it('reads VAVD_URI', () => {
@@ -44,5 +44,20 @@ describe('resolveVavdSpawn', () => {
   it('does not spawn when a pairing URI is already set', () => {
     assert.equal(resolveVavdSpawn({ VAVD_SPAWN: '1', VAVD_URI: 'vav-daemon://x' }, []), false)
     assert.equal(resolveVavdSpawn({}, [], { packaged: true }), true)
+  })
+})
+
+describe('shouldRestoreInProcessPty', () => {
+  it('skips restore when the window is a shell over vavd', () => {
+    assert.equal(shouldRestoreInProcessPty({}, []), false)
+    assert.equal(shouldRestoreInProcessPty({ VAVD_SPAWN: '1' }, []), false)
+    assert.equal(shouldRestoreInProcessPty({ VAVD_URI: 'vavrtp://x' }, []), false)
+    assert.equal(shouldRestoreInProcessPty({ VAV_SNAPSHOT: '1' }, []), false)
+  })
+
+  it('restores only for an in-process host', () => {
+    assert.equal(shouldRestoreInProcessPty({ VAVD_SPAWN: '0' }, []), true)
+    assert.equal(shouldRestoreInProcessPty({ VAV_E2E: '1' }, []), true)
+    assert.equal(shouldRestoreInProcessPty({ VAV_E2E: '1', VAVD_SPAWN: '1' }, []), false)
   })
 })

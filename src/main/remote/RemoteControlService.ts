@@ -63,7 +63,11 @@ type Deps = {
   archive: (conversationId: string) => RemoteSendResult
   pin: (conversationId: string, pinned: boolean) => RemoteSendResult
   favorite: (conversationId: string, favorite: boolean) => RemoteSendResult
-  browse: (conversationId: string, path?: string) => RemoteDirsEvent | 'not-found' | 'forbidden'
+  browse: (
+    conversationId: string,
+    path?: string,
+    files?: boolean
+  ) => RemoteDirsEvent | 'not-found' | 'forbidden'
   setWorkspace: (conversationId: string, path: string | null) => RemoteWorkspaceResult
   onStatusChange: (status: RemoteControlStatus) => void
   /** Tailcat hello with `role: 'daemon'` — hand the socket to the host RPC. */
@@ -108,7 +112,7 @@ export class RemoteControlService {
       archive: (id) => deps.archive(id),
       pin: (id, pinned) => deps.pin(id, pinned),
       favorite: (id, favorite) => deps.favorite(id, favorite),
-      browse: (id, path) => deps.browse(id, path),
+      browse: (id, path, files) => deps.browse(id, path, files),
       setWorkspace: (id, path) => deps.setWorkspace(id, path),
       secret: () => this.loadOrCreateSecret(),
       acceptAuth: (auth) => deps.acceptAuth?.(auth) === true,
@@ -244,9 +248,10 @@ export class RemoteControlService {
     conversationId: string,
     index: number,
     kind: 'text' | 'reasoning',
-    chunk: string
+    chunk: string,
+    replace = false
   ): void {
-    this.hub.appendLive(conversationId, index, kind, chunk)
+    this.hub.appendLive(conversationId, index, kind, chunk, replace)
   }
 
   setLiveBlock(conversationId: string, index: number, block: RemoteThreadBlock): void {

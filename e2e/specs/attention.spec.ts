@@ -2,8 +2,8 @@ import { test, expect } from '@playwright/test'
 import {
   E2E_SESSION_B_ID,
   E2E_SESSION_ID,
-  launchVav,
-  seedApiKey,
+  launchWorkbench,
+  seedVavKeyAccount,
   sessionRow
 } from '../launch'
 
@@ -12,10 +12,10 @@ import {
  * Dock badge text is driven by native app.dock.setBadge.
  */
 test('background stub complete marks the other session unseen', async () => {
-  const harness = await launchVav({ stubTurn: true, extraSession: true })
+  const harness = await launchWorkbench({ stubTurn: true, extraSession: true })
   try {
     const { page } = harness
-    await seedApiKey(page)
+    await seedVavKeyAccount(page)
     await sessionRow(page, E2E_SESSION_B_ID).click()
     await expect(sessionRow(page, E2E_SESSION_B_ID)).toHaveClass(/selected/)
 
@@ -41,10 +41,10 @@ test('background stub complete marks the other session unseen', async () => {
 })
 
 test('selecting the completed session clears the Done badge', async () => {
-  const harness = await launchVav({ stubTurn: true, extraSession: true })
+  const harness = await launchWorkbench({ stubTurn: true, extraSession: true })
   try {
     const { page } = harness
-    await seedApiKey(page)
+    await seedVavKeyAccount(page)
     await sessionRow(page, E2E_SESSION_B_ID).click()
     await page.evaluate(
       (id) => window.vav.agent.send(id, 'ping e2e', []),
@@ -71,10 +71,10 @@ test('selecting the completed session clears the Done badge', async () => {
 })
 
 test('foreground stub complete does not mark the open session unseen', async () => {
-  const harness = await launchVav({ stubTurn: true })
+  const harness = await launchWorkbench({ stubTurn: true })
   try {
     const { page } = harness
-    await seedApiKey(page)
+    await seedVavKeyAccount(page)
     await page.locator('[data-testid="composer-input"]').fill('ping e2e')
     await page.locator('[data-testid="composer-send"]').click()
     await expect(page.locator('[data-testid="message-assistant"]')).toContainText('e2e stub reply')

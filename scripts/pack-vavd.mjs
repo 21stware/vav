@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Bundle src/main/daemon/vavd.ts into packages/vavd/vavd.js for npm publish.
+ * Bundle packages/vavd/src/vavd.ts into packages/vavd/vavd.js for npm publish.
  *
  *   node scripts/pack-vavd.mjs
  *   node scripts/pack-vavd.mjs --dir /tmp/vavd-pack
@@ -56,7 +56,10 @@ const shared = {
   platform: 'node',
   format: 'cjs',
   target: 'node22',
-  alias: { '@shared': join(root, 'src/shared') },
+  alias: {
+    '@shared': join(root, 'src/shared'),
+    '@main': join(root, 'src/main')
+  },
   external: [
     'node-pty',
     'electron',
@@ -70,7 +73,7 @@ const shared = {
 
 await build({
   ...shared,
-  entryPoints: [join(root, 'src/main/daemon/vavd.ts')],
+  entryPoints: [join(root, 'packages/vavd/src/vavd.ts')],
   outfile
 })
 await build({
@@ -80,12 +83,12 @@ await build({
 })
 await build({
   ...shared,
-  entryPoints: [join(root, 'src/main/cli/vavc.ts')],
+  entryPoints: [join(root, 'packages/vavc/src/vavc.ts')],
   outfile: vavcOutfile
 })
 await build({
   ...shared,
-  entryPoints: [join(root, 'src/main/cli/vavcli.ts')],
+  entryPoints: [join(root, 'packages/vav-cli/src/vavcli.ts')],
   outfile: vavcliOutfile
 })
 
@@ -98,7 +101,7 @@ for (const file of [outfile, cliOutfile, vavcOutfile, vavcliOutfile]) {
 
 const phoneUi = existsSync(join(root, 'out', 'phone-ui', 'phone.js'))
   ? join(root, 'out', 'phone-ui')
-  : join(root, 'extension', 'phone')
+  : join(root, 'packages/vav-chrome-extension/extension', 'phone')
 if (existsSync(join(phoneUi, 'phone.js')) || existsSync(join(phoneUi, 'index.html'))) {
   cpSync(phoneUi, join(pkgDir, 'phone-ui'), { recursive: true })
 }
@@ -108,4 +111,26 @@ const readme = join(canonicalDir, 'README.md')
 if (existsSync(readme) && pkgDir !== canonicalDir) {
   cpSync(readme, join(pkgDir, 'README.md'))
 }
+
+function writeProductPackage(name, binFile, source) {
+  const destDir = join(root, 'packages', name)
+  mkdirSync(destDir, { recursive: true })
+  const destPkg = join(destDir, 'package.json')
+  if (existsSync(destPkg)) {
+    const next = JSON.parse(readFileSync(destPkg, 'utf8'))
+    next.version = rootPkg.version
+    writeFileSync(destPkg, `${JSON.stringify(next, null, 2)}\n`)
+  }
+  cpSync(source, join(destDir, binFile))
+  chmodSync(join(destDir, binFile), 0o755)
+  if (existsSync(join(root, 'LICENSE'))) cpSync(join(root, 'LICENSE'), join(destDir, 'LICENSE'))
+}
+
+if (pkgDir === canonicalDir) {
+  writeProductPackage('vavc', 'vavc.js', vavcOutfile)
+  writeProductPackage('vav-cli', 'vavcli.js', vavcliOutfile)
+  const { syncProductIdentities } = await import(pathToFileURL(join(root, 'scripts/sync-product-identities.mjs')).href)
+  syncProductIdentities(root)
+}
+
 console.log(`[pack-vavd] ${pkg.name}@${pkg.version} → ${outfile} + ${cliOutfile} + ${vavcOutfile} + ${vavcliOutfile}`)

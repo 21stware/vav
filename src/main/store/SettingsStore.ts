@@ -264,6 +264,29 @@ export class SettingsStore {
     if (typeof s.customAccentColor !== 'string') s.customAccentColor = ''
     else s.customAccentColor = normalizeAccentHex(s.customAccentColor) ?? ''
     if (s.colorTint === 'custom' && !s.customAccentColor) s.colorTint = 'system'
+    if (!s.machineAppearances || typeof s.machineAppearances !== 'object') {
+      s.machineAppearances = {}
+    } else {
+      const cleaned: AppSettings['machineAppearances'] = {}
+      for (const [id, row] of Object.entries(s.machineAppearances)) {
+        if (!id.trim() || !row || typeof row !== 'object') continue
+        const theme =
+          row.theme === 'light' || row.theme === 'dark' || row.theme === 'system'
+            ? row.theme
+            : undefined
+        const colorTint = COLOR_TINTS.includes(row.colorTint as ColorTint)
+          ? (row.colorTint as ColorTint)
+          : undefined
+        const customAccentColor = normalizeAccentHex(row.customAccentColor) ?? ''
+        if (!theme && !colorTint && !customAccentColor) continue
+        cleaned[id.trim()] = {
+          ...(theme ? { theme } : {}),
+          ...(colorTint ? { colorTint } : {}),
+          ...(customAccentColor ? { customAccentColor } : {})
+        }
+      }
+      s.machineAppearances = cleaned
+    }
     if (s.sendKey !== 'enter' && s.sendKey !== 'mod-enter') s.sendKey = 'enter'
     s.keyBindings = sanitizeKeyBindings(s.keyBindings)
     s.temperature = Math.min(2, Math.max(0, s.temperature))

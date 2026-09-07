@@ -1,12 +1,37 @@
+import { execFile } from 'node:child_process'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
+import { promisify } from 'node:util'
 import { test, expect } from '@playwright/test'
-import { launchVav, openSettingsWindow, readUserSetting, seedVavKeyAccount } from '../launch'
+import { parseDaemonPairing } from '../../src/shared/daemonProtocol.ts'
+import {
+  launchWorkbench,
+  openSettingsWindow,
+  readUserSetting,
+  readVavdSetting,
+  seedVavKeyAccount,
+  waitForDaemonPairing
+} from '../launch'
+
+const execFileAsync = promisify(execFile)
+const root = join(__dirname, '../..')
+const aliasHook = pathToFileURL(join(root, 'scripts/register-shared-alias.mjs')).href
+
+function vavc(args: string[]): Promise<{ stdout: string; stderr: string }> {
+  return execFileAsync(
+    process.execPath,
+    ['--import', aliasHook, '--experimental-strip-types', join(root, 'packages/vavc/src/vavc.ts'), ...args],
+    { cwd: root, timeout: 20_000 }
+  )
+}
 
 /**
  * README.rpml §1.4 / §2.6 — Settings is its own window, save-on-change,
  * Escape / chrome closes, no Done footer.
  */
 test('settings is a separate window with category nav and no Done footer', async () => {
-  const harness = await launchVav()
+  const harness = await launchWorkbench()
   try {
     const settings = await openSettingsWindow(harness, 'appearance')
     const categories = [
@@ -38,7 +63,7 @@ test('settings is a separate window with category nav and no Done footer', async
 })
 
 test('appearance toggle persists on change', async () => {
-  const harness = await launchVav()
+  const harness = await launchWorkbench()
   try {
     const settings = await openSettingsWindow(harness, 'appearance')
     const toggle = settings.locator('[data-testid="settings-reduce-motion"]')
@@ -56,7 +81,7 @@ test('appearance toggle persists on change', async () => {
 })
 
 test('Providers lists CLI hosts and keeps Swarm off', async () => {
-  const harness = await launchVav()
+  const harness = await launchWorkbench()
   try {
     const settings = await openSettingsWindow(harness, 'agents')
     await expect(settings.locator('.settings-head')).toHaveText('Providers')
@@ -75,8 +100,24 @@ test('Providers lists CLI hosts and keeps Swarm off', async () => {
   }
 })
 
+test('accounts catalog drafts and lists a VAV key through the same IPC Settings uses', async () => {
+  const harness = await launchWorkbench()
+  try {
+    const drafted = await harness.page.evaluate(async () => {
+      const { id } = await window.vav.accounts.createDraft({ agentId: 'vav', kind: 'vav_key' })
+      const page = await window.vav.accounts.getPage()
+      return { id, listed: page.accounts.some((row) => row.id === id) }
+    })
+    expect(drafted.id).toBeTruthy()
+    expect(drafted.listed).toBe(true)
+    await harness.page.evaluate((id) => window.vav.accounts.remove(id), drafted.id)
+  } finally {
+    await harness.dispose()
+  }
+})
+
 test('Providers VAV editor shows the API key form after a profile is saved', async () => {
-  const harness = await launchVav()
+  const harness = await launchWorkbench()
   try {
     await seedVavKeyAccount(harness.page)
     const settings = await openSettingsWindow(harness, 'agents')
@@ -94,7 +135,7 @@ test('Providers VAV editor shows the API key form after a profile is saved', asy
 })
 
 test('Key Bindings shows send-key and accelerator groups', async () => {
-  const harness = await launchVav()
+  const harness = await launchWorkbench()
   try {
     const settings = await openSettingsWindow(harness, 'keybindings')
     await expect(settings.locator('[data-testid="settings-keybindings"]')).toBeVisible()
@@ -109,7 +150,7 @@ test('Key Bindings shows send-key and accelerator groups', async () => {
 })
 
 test('Workspace, Notifications, About, Usage, Command Line, and File Associations paint', async () => {
-  const harness = await launchVav()
+  const harness = await launchWorkbench()
   try {
     const settings = await openSettingsWindow(harness, 'workspace')
     await expect(settings.locator('[data-testid="settings-default-dir"]')).toHaveValue(
@@ -117,6 +158,8 @@ test('Workspace, Notifications, About, Usage, Command Line, and File Association
     )
     await settings.locator('[data-testid="settings-nav-connectors"]').click()
     await expect(settings.locator('[data-testid="settings-connectors"]')).toBeVisible()
+    await expect(settings.locator('[data-testid="settings-connector-login-github"]')).toBeVisible()
+    await expect(settings.locator('[data-testid="settings-connector-login-vercel"]')).toBeVisible()
     await expect(settings.locator('[data-testid="settings-github-tray"]')).toHaveAttribute(
       'aria-checked',
       'true'
@@ -134,7 +177,8 @@ test('Workspace, Notifications, About, Usage, Command Line, and File Association
       'false'
     )
     await settings.locator('[data-testid="settings-github-tray"]').click()
-    await expect.poll(() => readUserSetting(harness.userData, 'githubTrayEnabled')).toBe(false)
+    await expect.poll(() => readVavdSetting(harness.userData, 'githubTrayEnabled')).toBe(false)
+    expect(readUserSetting(harness.userData, 'githubTrayEnabled')).not.toBe(false)
     await settings.locator('[data-testid="settings-nav-workspace"]').click()
 
     await settings.locator('[data-testid="settings-nav-notifications"]').click()
@@ -165,7 +209,7 @@ test('Workspace, Notifications, About, Usage, Command Line, and File Association
 })
 
 test('About update policy persists and Check for Updates shows a loading indicator', async () => {
-  const harness = await launchVav()
+  const harness = await launchWorkbench()
   try {
     const settings = await openSettingsWindow(harness, 'about')
     const updatePolicy = settings.locator('[data-testid="settings-auto-update-policy"]')
@@ -183,21 +227,75 @@ test('About update policy persists and Check for Updates shows a loading indicat
 })
 
 test('Logs shows retention policy and empty-or-boot records', async () => {
-  const harness = await launchVav()
+  const harness = await launchWorkbench()
   try {
     const settings = await openSettingsWindow(harness, 'logs')
     await expect(settings.locator('.settings-head')).toHaveText('Logs')
     await expect(settings.locator('[data-testid="settings-log-retention"]')).toHaveValue('7')
     await expect(settings.locator('[data-testid="settings-log-list"]')).toBeVisible()
     await settings.locator('[data-testid="settings-log-retention"]').selectOption('3')
-    await expect.poll(() => readUserSetting(harness.userData, 'logRetentionDays')).toBe(3)
+    await expect.poll(() => readVavdSetting(harness.userData, 'logRetentionDays')).toBe(3)
+    expect(readUserSetting(harness.userData, 'logRetentionDays')).not.toBe(3)
+  } finally {
+    await harness.dispose()
+  }
+})
+
+test('spawned vavd host settings match desktop Settings and vavc', async () => {
+  test.setTimeout(90_000)
+  const harness = await launchWorkbench()
+  try {
+    await expect
+      .poll(async () => {
+        const hosts = await harness.page.evaluate(() => window.vav.hosts.list())
+        return hosts.some((host) => host.localShell && host.controlPlane === true && host.online)
+      })
+      .toBe(true)
+
+    const settings = await openSettingsWindow(harness, 'connectors')
+    await settings.locator('[data-testid="settings-github-tray"]').click()
+    await expect
+      .poll(async () => {
+        const page = await harness.page.evaluate(() => window.vav.settings.get())
+        return page.githubTrayEnabled
+      })
+      .toBe(false)
+    await expect.poll(() => readVavdSetting(harness.userData, 'githubTrayEnabled')).toBe(false)
+    expect(readUserSetting(harness.userData, 'githubTrayEnabled')).not.toBe(false)
+
+    const pairing = parseDaemonPairing(await waitForDaemonPairing(harness.page))
+    expect(pairing?.secret).toBeTruthy()
+    const auth = ['--host', '127.0.0.1', '--port', String(pairing!.port), '--secret', pairing!.secret]
+    const updated = JSON.parse(
+      (await vavc(['settings', 'set', '--approval', 'edit', ...auth])).stdout
+    ) as { defaultApprovalMode?: string }
+    expect(updated.defaultApprovalMode).toBe('edit')
+    await expect
+      .poll(async () => {
+        const page = await harness.page.evaluate(() => window.vav.settings.get())
+        return page.defaultApprovalMode
+      })
+      .toBe('edit')
+    await expect.poll(() => readVavdSetting(harness.userData, 'defaultApprovalMode')).toBe('edit')
+    expect(readUserSetting(harness.userData, 'defaultApprovalMode')).not.toBe('edit')
+
+    await harness.page.evaluate(() => window.vav.settings.setApiKey('sk-e2e-vavd-key'))
+    await expect
+      .poll(() => {
+        try {
+          return readFileSync(join(harness.userData, 'vavd', 'apikey'), 'utf8').trim()
+        } catch {
+          return ''
+        }
+      })
+      .toBe('sk-e2e-vavd-key')
   } finally {
     await harness.dispose()
   }
 })
 
 test('Escape hides the settings window', async () => {
-  const harness = await launchVav()
+  const harness = await launchWorkbench()
   try {
     const settings = await openSettingsWindow(harness, 'appearance')
     await settings.evaluate(() => {

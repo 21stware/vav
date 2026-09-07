@@ -6,7 +6,20 @@
  * Headless `vavd`: cwd / resources only — no Electron import on the load path.
  */
 import { existsSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+function moduleDir(): string {
+  try {
+    return __dirname
+  } catch {
+    try {
+      return dirname(fileURLToPath(import.meta.url))
+    } catch {
+      return process.cwd()
+    }
+  }
+}
 
 let cachedDir: string | null | undefined
 
@@ -27,12 +40,13 @@ function appPathSafe(): string | null {
 export function bundledBinDir(): string | null {
   if (cachedDir !== undefined) return cachedDir
   const appPath = appPathSafe()
+  const here = moduleDir()
   const candidates = [
     typeof process.resourcesPath === 'string' ? join(process.resourcesPath, 'bin') : '',
     appPath ? join(appPath, 'resources', 'bin') : '',
     appPath ? join(appPath, '..', 'resources', 'bin') : '',
-    join(__dirname, '../../resources/bin'),
-    join(__dirname, '../../../resources/bin'),
+    join(here, '../../resources/bin'),
+    join(here, '../../../resources/bin'),
     join(process.cwd(), 'resources', 'bin')
   ].filter(Boolean)
   const name = officecliName()

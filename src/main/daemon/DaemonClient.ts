@@ -53,7 +53,7 @@ export function enqueueStreamBacklog<T>(queued: T[], item: T, cap = STREAM_BACKL
 }
 
 /**
- * Ask a LAN peer to confirm pairing. On allow they send their `vav-daemon://` URI.
+ * Ask a LAN peer to confirm pairing. On allow they send their `vavrtp://` URI.
  * Does not leave a live session — caller then `pair()`s with that line.
  */
 export function requestLanPairOffer(opts: {
@@ -632,7 +632,11 @@ export function createRemoteHostPty(client: DaemonClient): HostPty {
   }
 }
 
-export function createRemoteWorkspaceHost(client: DaemonClient, welcome: DaemonWelcome): WorkspaceHost {
+export function createRemoteWorkspaceHost(
+  client: DaemonClient,
+  welcome: DaemonWelcome,
+  extra?: { localShell?: boolean }
+): WorkspaceHost {
   const info: WorkspaceHostInfo = {
     id: welcome.host.id,
     name: welcome.host.name,
@@ -640,7 +644,8 @@ export function createRemoteWorkspaceHost(client: DaemonClient, welcome: DaemonW
     online: true,
     platform: welcome.host.platform,
     home: welcome.home,
-    tmp: welcome.tmp
+    tmp: welcome.tmp,
+    localShell: extra?.localShell
   }
   return {
     id: info.id,

@@ -105,6 +105,14 @@ export class RemoteControlDial {
     this.write({ type: 'archive', conversationId })
   }
 
+  pin(conversationId: string, pinned: boolean): void {
+    this.write({ type: 'pin', conversationId, pinned })
+  }
+
+  favorite(conversationId: string, favorite: boolean): void {
+    this.write({ type: 'favorite', conversationId, favorite })
+  }
+
   cancel(conversationId: string): void {
     this.write({ type: 'cancel', conversationId })
   }
@@ -113,19 +121,142 @@ export class RemoteControlDial {
     this.write({ type: 'reply', conversationId, toolCallId, answer })
   }
 
-  create(): void {
-    this.write({ type: 'create' })
+  regenerate(conversationId: string, messageId: string): void {
+    this.write({ type: 'regenerate', conversationId, messageId })
   }
 
-  async createSession(timeoutMs = 5_000): Promise<string> {
+  edit(conversationId: string, messageId: string, text: string): void {
+    this.write({ type: 'edit', conversationId, messageId, text })
+  }
+
+  async duplicateSession(conversationId: string, timeoutMs = 8_000): Promise<string> {
     const before = new Set(this.state.sessions.map((session) => session.id))
-    this.create()
+    this.write({ type: 'duplicate', conversationId })
     const next = await this.waitFor(
       (state) => state.sessions.some((session) => !before.has(session.id)),
       timeoutMs,
-      'create'
+      'duplicate'
     )
     const created = next.sessions.find((session) => !before.has(session.id))
+    if (!created) throw new Error('control plane duplicate produced no session')
+    return created.id
+  }
+
+  async continueSession(
+    conversationId: string,
+    messageId: string,
+    timeoutMs = 8_000
+  ): Promise<string> {
+    const before = new Set(this.state.sessions.map((session) => session.id))
+    this.write({ type: 'continue', conversationId, messageId })
+    const next = await this.waitFor(
+      (state) => state.sessions.some((session) => !before.has(session.id)),
+      timeoutMs,
+      'continue'
+    )
+    const created = next.sessions.find((session) => !before.has(session.id))
+    if (!created) throw new Error('control plane continue produced no session')
+    return created.id
+  }
+
+  fork(conversationId: string, messageId: string): void {
+    this.write({ type: 'fork', conversationId, messageId })
+  }
+
+  deleteMessage(conversationId: string, messageId: string): void {
+    this.write({ type: 'delete-message', conversationId, messageId })
+  }
+
+  setLeaf(conversationId: string, messageId: string, follow = false): void {
+    this.write({
+      type: 'leaf',
+      conversationId,
+      messageId,
+      ...(follow ? { follow: true } : {})
+    })
+  }
+
+  async compact(
+    conversationId: string,
+    keepAfterMessageId?: string | null,
+    timeoutMs = 30_000
+  ): Promise<Extract<RemoteServerMessage, { type: 'compacted' }>> {
+    this.write({
+      type: 'compact',
+      conversationId,
+      ...(keepAfterMessageId ? { keepAfterMessageId } : {})
+    })
+    const message = await this.waitMessage(
+      (msg) =>
+        (msg.type === 'compacted' && msg.conversationId === conversationId) ||
+        (msg.type === 'error' && msg.conversationId === conversationId),
+      timeoutMs,
+      'compact'
+    )
+    if (message.type === 'error') {
+      return { type: 'compacted', conversationId, ok: false, error: message.message }
+    }
+    if (message.type !== 'compacted') throw new Error('compact failed')
+    return message
+  }
+
+  async clearCompaction(
+    conversationId: string,
+    leafId: string,
+    timeoutMs = 8_000
+  ): Promise<{ ok: boolean; error?: string }> {
+    this.write({ type: 'clear-compaction', conversationId, leafId })
+    const message = await this.waitMessage(
+      (msg) =>
+        (msg.type === 'compacted' && msg.conversationId === conversationId) ||
+        (msg.type === 'error' && msg.conversationId === conversationId),
+      timeoutMs,
+      'clear-compaction'
+    )
+    if (message.type === 'error') return { ok: false, error: message.message }
+    if (message.type === 'compacted') {
+      return message.ok ? { ok: true } : { ok: false, error: message.error }
+    }
+    return { ok: false, error: 'unavailable' }
+  }
+
+  async waitThread(
+    conversationId: string,
+    timeoutMs = 8_000
+  ): Promise<Extract<RemoteServerMessage, { type: 'thread' }> | null> {
+    const message = await this.waitMessage(
+      (msg) =>
+        (msg.type === 'thread' && msg.conversationId === conversationId) ||
+        (msg.type === 'error' && msg.conversationId === conversationId),
+      timeoutMs,
+      'thread'
+    )
+    return message.type === 'thread' ? message : null
+  }
+
+  create(conversationId?: string): void {
+    const id = conversationId?.trim()
+    this.write(id ? { type: 'create', conversationId: id } : { type: 'create' })
+  }
+
+  async createSession(timeoutMs = 15_000, conversationId?: string): Promise<string> {
+    const requested = conversationId?.trim()
+    if (requested && this.state.sessions.some((session) => session.id === requested)) {
+      return requested
+    }
+    const before = new Set(this.state.sessions.map((session) => session.id))
+    this.create(requested)
+    const next = await this.waitFor(
+      (state) =>
+        requested
+          ? state.sessions.some((session) => session.id === requested)
+          : state.sessions.some((session) => !before.has(session.id)),
+      timeoutMs,
+      'create'
+    )
+    const created = requested
+      ? next.sessions.find((session) => session.id === requested)
+      : next.sessions.find((session) => !before.has(session.id))
     if (!created) throw new Error('control plane create produced no session')
     return created.id
   }
@@ -186,6 +317,30 @@ export class RemoteControlDial {
       this.state = applyRemoteServerMessage(this.state, parsed)
       for (const listener of this.listeners) listener(this.state, parsed)
     }
+  }
+
+  private waitMessage(
+    match: (message: RemoteServerMessage) => boolean,
+    timeoutMs: number,
+    label: string
+  ): Promise<RemoteServerMessage> {
+    return new Promise((resolve, reject) => {
+      let settled = false
+      const finish = (fn: () => void): void => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        off()
+        fn()
+      }
+      const timer = setTimeout(() => {
+        finish(() => reject(new Error(`control plane ${label} timed out`)))
+      }, timeoutMs)
+      const off = this.onFrame((_state, message) => {
+        if (!match(message)) return
+        finish(() => resolve(message))
+      })
+    })
   }
 
   private waitFor(

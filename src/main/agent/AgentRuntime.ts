@@ -86,6 +86,7 @@ import { compactClearGate, planConversationCompact } from './compactPlan'
 import { mergeVavCredentials } from './agentConfig'
 import {
   completeE2eStubTurn as runE2eStubTurn,
+  e2eStubReplyMessage,
   startE2eStubAsk as runE2eStubAsk,
   startE2eStubApprove as runE2eStubApprove,
   startE2eStubStream as runE2eStubStream
@@ -473,6 +474,9 @@ export class AgentRuntime {
     apiKey: string,
     maxTokens: number
   ): Promise<string> {
+    if (isE2eRuntime() && process.env.VAV_E2E_STUB_TURN === '1') {
+      return 'e2e compact summary'
+    }
     const source = pathToSummarySource(messages)
     const prompt =
       'Summarize the following conversation for continuity. Use this structure:\n' +
@@ -807,6 +811,15 @@ export class AgentRuntime {
 
   cancel(conversationId: string): void {
     this.pendingCancels.add(conversationId)
+    if (this.e2eAskWaiters.size > 0 && !this.turns.has(conversationId)) {
+      this.e2eAskWaiters.clear()
+      const message = e2eStubReplyMessage(null, 'e2e stub cancelled')
+      this.deps.conversations.appendMessage(conversationId, message)
+      this.deps.conversations.flush()
+      this.deps.emit({ type: 'end', conversationId, message, tokensUsed: 0, cancelled: true })
+      this.pendingCancels.delete(conversationId)
+      return
+    }
     const stopTurn = (id: string, turn: TurnState): void => {
       turn.cancelled = true
       // An interactive tool waiting on the user must be released, or the loop

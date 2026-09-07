@@ -1,0 +1,18 @@
+{
+  "name": "@21stware/vav-chrome-extension",
+  "version": "1.19.1",
+  "role": "vav-chrome-extension",
+  "kind": "extension",
+  "sources": [
+    "packages/vav-chrome-extension/extension/manifest.json",
+    "packages/vav-chrome-extension/extension/sidepanel.html",
+    "packages/vav-chrome-extension/phone-ui/PhoneApp.tsx"
+  ],
+  "talksTo": [
+    "vavd"
+  ],
+  "hello": [
+    "phone",
+    "daemon"
+  ]
+}

@@ -30,7 +30,7 @@ New session: pick a workspace, pick an agent, ask one thing. Multi-split CLI TUI
 - **Spending** — Settings panel for local usage plus provider subscriptions, and DeepSeek API balance when VAV talks to official DeepSeek
 - **Swarm** (optional) — multi-split raw CLI TUIs; off by default in Settings → Providers
 - **Remote** — Settings → Allow other devices; pair VAV Remote (iOS) or another computer. Conversations and keys stay on this machine
-- **Headless VAV** — `npx @21stware/vavd` (or `npm i -g @21stware/vavd && vavd`) hosts sessions, keys, files, PTY, and agent turns. `vavc` is the herdr-style control client; `vavcli` is the pi-style agent CLI. Desktop, iOS Remote, the local web UI, and the Chrome extension are shells over that same daemon.
+- **Headless VAV** — `npx @21stware/vavd` hosts sessions, keys, files, PTY, and agent turns. `vavc` is the herdr-style control client; `vav-cli` / `vavcli` is the Claude Code-style agent CLI. Seven products live under `packages/*` (npm workspaces): vav-desktop, vavd, vav-cli, vavc, vav-iOS, vav-android, vav-chrome-extension. Shared kernel stays in `src/main` + `src/shared`. See [docs/PRODUCT_MATRIX.md](docs/PRODUCT_MATRIX.md).
 
 ## Website
 
@@ -129,15 +129,16 @@ Most things match; these are OS differences, not missing features:
 
 ```
 src/
-  shared/      domain types, IPC contracts, i18n
-  main/
-    store/     settings, secrets, conversation persistence
-    agent/     LLM client, tool defs, turn loop
-    terminal/  sticky shell, PTY management
-    fs/        file listing and watchers
-    cli.ts     `vav` command install and open-path parsing
-  preload/     contextBridge `window.vav`
-  renderer/    React UI, zustand stores, stream projection
+  shared/      domain types, IPC + phone/daemon contracts, i18n
+  main/        shared kernel (stores, agent, daemon server, host, ipc)
+packages/
+  vavd/        daemon entry (`src/vavd.ts`)
+  vav-desktop/ Electron main + preload + renderer
+  vav-cli/     Claude Code-style agent CLI
+  vavc/        herdr-style control client
+  vav-ios/     native Remote
+  vav-android/ native Remote (same protocol as iOS)
+  vav-chrome-extension/  MV3 side panel + phone-ui
 ```
 
 Implementation notes: [docs/TECH_DESIGN.md](docs/TECH_DESIGN.md). Product behavior is specified in RPML via Origin and pulled by `.agents/skills/origin-product-spec-management` into `.agents/specs/` (not checked in).

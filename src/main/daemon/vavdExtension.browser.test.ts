@@ -14,7 +14,7 @@ import { spawnLocalVavd } from './vavdSpawn.ts'
 import { assertDesktopSessionLayout, readPhoneSessionLayout } from './phoneSessionLayout.ts'
 
 const SECRET = '0123456789abcdef01234567'
-const EXT = join(import.meta.dirname, '../../../extension')
+const EXT = join(import.meta.dirname, '../../../packages/vav-chrome-extension/extension')
 
 function chromePath(): string | undefined {
   if (process.env.CHROME_PATH && existsSync(process.env.CHROME_PATH)) return process.env.CHROME_PATH
@@ -146,6 +146,156 @@ describe('vavd Chrome extension', () => {
     else process.env.VAV_E2E = prevE2e
     if (prevStub === undefined) delete process.env.VAV_E2E_STUB_TURN
     else process.env.VAV_E2E_STUB_TURN = prevStub
+  })
+
+  it('opens the real side panel, picks a model, and sends without a missing-key error', async (t) => {
+    if (!exe) {
+      t.skip('Chrome is not installed')
+      return
+    }
+
+    const prevKey = process.env.VAV_API_KEY
+    process.env.VAV_API_KEY = 'sk-test-extension-picker'
+    const dir = await mkdtemp(join(tmpdir(), 'vav-ext-pick-'))
+    const profile = await mkdtemp(join(tmpdir(), 'vav-ext-pick-profile-'))
+    const host = createLocalWorkspaceHost({ name: 'picker-host' })
+    const plane = createVavControlPlane({
+      stateDir: dir,
+      host,
+      secret: () => SECRET,
+      appVersion: 'test'
+    })
+    plane.load()
+    assert.equal(plane.hasApiKey(), true)
+    const web = await startVavWebBridge({
+      listen: '127.0.0.1',
+      port: 0,
+      hub: plane.hub,
+      secret: () => SECRET,
+      name: 'picker-host',
+      version: 'test',
+      hasKey: () => plane.hasApiKey()
+    })
+    let context: BrowserContext | undefined
+    try {
+      context = await launchExtension(profile, exe)
+      await new Promise((resolve) => setTimeout(resolve, 800))
+      const panel = await openSidePanel(context)
+      await panel.evaluate(
+        async ({ port, secret }) => {
+          await chrome.storage.local.set({
+            vavDiscoverHint: { ports: [port], hosts: ['127.0.0.1'], secret }
+          })
+          await chrome.runtime.sendMessage({ type: 'rediscover' })
+        },
+        { port: web.port, secret: SECRET }
+      )
+      await panel.locator('#status').getByText(/Connected/).waitFor({ timeout: 12_000 })
+      await panel.waitForFunction(async () => {
+        const settings = await window.vav.settings.get()
+        return settings.apiKeyPresent === true
+      }, null, { timeout: 12_000 })
+      await panel.getByRole('button', { name: /Choose agent/ }).first().click()
+      const menu = panel.locator('.vav-dom-menu')
+      await menu.waitFor({ timeout: 8_000 })
+      const menuText = await menu.innerText()
+      assert.match(menuText, /Claude|Cursor|Codex|Agents/)
+      const modelRow = menu.locator('.vav-dom-menu-item:not([disabled])').first()
+      const modelLabel = (await modelRow.innerText()).trim()
+      assert.notEqual(modelLabel, '')
+      assert.doesNotMatch(modelLabel, /loading/i)
+      await modelRow.click()
+      await panel.getByPlaceholder(/Message/).fill('hello from extension picker')
+      await panel.getByTestId('composer-send').click()
+      await panel.getByText('e2e stub reply').waitFor({ timeout: 8_000 })
+      const body = await panel.locator('body').innerText()
+      assert.doesNotMatch(body, /No API key configured/)
+      t.diagnostic(`picked ${modelLabel}`)
+    } finally {
+      if (prevKey === undefined) delete process.env.VAV_API_KEY
+      else process.env.VAV_API_KEY = prevKey
+      try {
+        await context?.close()
+      } catch {
+        // Chromium can throw EIO when its stdio is already gone.
+      }
+      web.close()
+      plane.dispose()
+      await rm(dir, { recursive: true, force: true })
+      await rm(profile, { recursive: true, force: true })
+    }
+  })
+
+  it('opens the real side panel and connects despite a stale LAN websocket hint', async (t) => {
+    if (!exe) {
+      t.skip('Chrome is not installed')
+      return
+    }
+
+    const dir = await mkdtemp(join(tmpdir(), 'vav-ext-lan-'))
+    const profile = await mkdtemp(join(tmpdir(), 'vav-ext-lan-profile-'))
+    const host = createLocalWorkspaceHost({ name: 'lan-hint' })
+    const plane = createVavControlPlane({
+      stateDir: dir,
+      host,
+      secret: () => SECRET,
+      appVersion: 'test'
+    })
+    plane.load()
+    const web = await startVavWebBridge({
+      listen: '127.0.0.1',
+      port: 0,
+      hub: plane.hub,
+      secret: () => SECRET,
+      name: 'lan-rewrite-host',
+      version: 'test'
+    })
+    let context: BrowserContext | undefined
+    try {
+      context = await launchExtension(profile, exe)
+      const panel = await openSidePanel(context)
+      const attempted: string[] = []
+      context.on('websocket', (socket) => attempted.push(socket.url()))
+      await panel.evaluate(
+        async ({ port, secret }) => {
+          await chrome.storage.local.set({
+            vavDiscoverHint: {
+              origin: `http://192.168.1.5:${port}`,
+              wsUrl: `ws://192.168.1.5:${port}/vav`,
+              ports: [port],
+              hosts: ['192.168.1.5'],
+              secret
+            }
+          })
+          await chrome.runtime.sendMessage({ type: 'rediscover' })
+        },
+        { port: web.port, secret: SECRET }
+      )
+      await panel.locator('#status').getByText(/Connected/).waitFor({ timeout: 12_000 })
+      const chip = await panel.locator('.phone-link-chip').innerText()
+      t.diagnostic(`side panel chip: ${chip.replaceAll('\n', ' · ')}`)
+      const saved = await panel.evaluate(async () => {
+        const { vavDiscoverHint } = await chrome.storage.local.get('vavDiscoverHint')
+        return vavDiscoverHint
+      })
+      assert.match(chip, /Connected/)
+      assert.equal(saved.origin, `http://127.0.0.1:${web.port}`)
+      assert.equal(saved.wsUrl, `ws://127.0.0.1:${web.port}/vav`)
+      assert.ok(
+        attempted.every((url) => !url.includes('192.168.1.5')),
+        `websocket attempts: ${JSON.stringify(attempted)}`
+      )
+    } finally {
+      try {
+        await context?.close()
+      } catch {
+        // Chromium can throw EIO when its stdio is already gone.
+      }
+      web.close()
+      plane.dispose()
+      await rm(dir, { recursive: true, force: true })
+      await rm(profile, { recursive: true, force: true })
+    }
   })
 
   it('loads the side panel, pairs, and shows a vavd stub reply', async (t) => {
@@ -419,7 +569,7 @@ describe('vavd Chrome extension', () => {
     })
     let context: BrowserContext | undefined
     try {
-      assert.match(spawned.pairing, /^vav-daemon:\/\//)
+      assert.match(spawned.pairing, /^vavrtp:\/\//)
       context = await launchExtension(profile, exe)
       const panel = await openSidePanel(context)
       await panel.evaluate(async (uri) => {

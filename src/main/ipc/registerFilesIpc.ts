@@ -16,6 +16,14 @@ export type FilesIpcShell = {
   previewOn: (machineId: string, path: string) => Promise<void>
   openOn: (machineId: string, path: string) => Promise<unknown>
   takePreloadedInspect: (path: string) => Promise<FileInspectResult> | null
+  getInfoOn: (
+    machineId: string,
+    path: string
+  ) => Promise<{ ok: true } | { ok: false; error: string }>
+  copyAsFileOn: (
+    machineId: string,
+    paths: string[]
+  ) => Promise<{ ok: true } | { ok: false; error: string }>
   showSaveDialog: (
     event: IpcMainInvokeEvent,
     options: Electron.SaveDialogOptions
@@ -139,11 +147,11 @@ export function registerFilesIpc(
     if (!files.isAllowedPath(next)) return
     await prefetchDragIcon(next)
   })
-  ipcMain.handle(IPC.filesCopyAsFile, (_event, paths: string[], conversationId?: string) =>
-    files.copyAsFile(Array.isArray(paths) ? paths : [], conversationId)
+  ipcMain.handle(IPC.filesCopyAsFile, (event, paths: string[]) =>
+    shell.copyAsFileOn(shell.machineIdFor(event, String(paths?.[0] || '')), Array.isArray(paths) ? paths : [])
   )
-  ipcMain.handle(IPC.filesGetInfo, (_event, path: string, conversationId?: string) =>
-    files.getInfo(String(path || ''), conversationId)
+  ipcMain.handle(IPC.filesGetInfo, (event, path: string) =>
+    shell.getInfoOn(shell.machineIdFor(event, String(path || '')), String(path || ''))
   )
   ipcMain.handle(IPC.filesWatch, (_event, id: string, root: string | null) =>
     files.watchRoot(id, root)

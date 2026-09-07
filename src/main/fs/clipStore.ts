@@ -1,25 +1,18 @@
 import { createHash } from 'node:crypto'
 import { mkdirSync, writeFileSync, existsSync } from 'node:fs'
-import { join, basename } from 'node:path'
+import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { CLIP_FOLDER, clipDest, clipDisplayName } from '@shared/clipLayout'
 
-const CLIP_ROOT = join(tmpdir(), 'vav-clips')
+const CLIP_ROOT = join(tmpdir(), CLIP_FOLDER)
 
 export function isClipPath(path: string): boolean {
   if (!path) return false
-  return path.replace(/\\/g, '/').includes('/vav-clips/')
+  return path.replace(/\\/g, '/').includes(`/${CLIP_FOLDER}/`)
 }
-
-const SAFE_NAME = /[^A-Za-z0-9._-]+/g
 
 export function clipRoot(): string {
   return CLIP_ROOT
-}
-
-function safeFilename(name: string, fallback: string): string {
-  const base = basename(name || '').replace(SAFE_NAME, '_')
-  const trimmed = base.replace(/^\.+/, '')
-  return trimmed || fallback
 }
 
 function hashBytes(bytes: Buffer): string {
@@ -32,9 +25,8 @@ export function writeClipBytes(input: {
 }): { ok: true; path: string; displayName: string } | { ok: false; error: string } {
   const bytes = input.bytes
   if (bytes.length === 0) return { ok: false, error: 'Empty clip' }
-  const displayName = safeFilename(input.filename, 'image.png')
-  const dir = join(CLIP_ROOT, hashBytes(bytes))
-  const dest = join(dir, displayName)
+  const displayName = clipDisplayName(input.filename)
+  const { dir, dest } = clipDest(CLIP_ROOT, hashBytes(bytes), displayName)
   try {
     mkdirSync(dir, { recursive: true })
     if (!existsSync(dest)) writeFileSync(dest, bytes)

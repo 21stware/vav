@@ -5,6 +5,9 @@
   "description": "Local-first agent workbench: open files, ask and edit beside them, and run VAV or Claude/Codex in the same thread — with a real terminal on the side.",
   "license": "PolyForm-Noncommercial-1.0.0",
   "author": "Oboo Cheng",
+  "workspaces": [
+    "packages/*"
+  ],
   "main": "./out/main/index.js",
   "scripts": {
     "preinstall": "node scripts/ensure-setuptools.mjs",
@@ -19,22 +22,25 @@
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "pretest:e2e": "electron-vite build",
     "test:e2e": "playwright test --config e2e/playwright.config.ts",
-    "test:e2e:vavd": "playwright test --config e2e/playwright.config.ts e2e/specs/remote-daemon.spec.ts e2e/specs/remote-control.spec.ts",
-    "vavd": "node --import ./scripts/register-shared-alias.mjs --experimental-strip-types src/main/daemon/vavd.ts",
+    "test:e2e:vavd": "playwright test --config e2e/playwright.config.ts e2e/specs/remote-daemon.spec.ts e2e/specs/remote-control.spec.ts e2e/specs/vavc-cli.spec.ts e2e/specs/product-matrix.spec.ts e2e/specs/desktop-vavd-matrix.spec.ts e2e/specs/empty.spec.ts e2e/specs/phone-remote.spec.ts e2e/specs/phone-ui.spec.ts e2e/specs/chrome-extension.spec.ts",
+    "vavd": "node --import ./scripts/register-shared-alias.mjs --experimental-strip-types packages/vavd/src/vavd.ts",
     "vav": "node --import ./scripts/register-shared-alias.mjs --experimental-strip-types src/main/cli/vavRemoteCli.ts",
-    "vavc": "node --import ./scripts/register-shared-alias.mjs --experimental-strip-types src/main/cli/vavc.ts",
-    "vavcli": "node --import ./scripts/register-shared-alias.mjs --experimental-strip-types src/main/cli/vavcli.ts",
+    "vavc": "node --import ./scripts/register-shared-alias.mjs --experimental-strip-types packages/vavc/src/vavc.ts",
+    "vavcli": "node --import ./scripts/register-shared-alias.mjs --experimental-strip-types packages/vav-cli/src/vavcli.ts",
+    "vav-cli": "node --import ./scripts/register-shared-alias.mjs --experimental-strip-types packages/vav-cli/src/vavcli.ts",
     "build:phone-ui": "node scripts/build-phone-ui.mjs",
     "pack:vavd": "node scripts/build-phone-ui.mjs && node scripts/pack-vavd.mjs",
+    "pack:desktop": "node scripts/pack-vav-desktop.mjs",
+    "sync:products": "node scripts/sync-product-identities.mjs",
     "publish:vavd": "node scripts/publish-vavd.mjs",
     "test": "node scripts/run-tests.mjs",
     "test:live": "node scripts/run-tests.mjs --live",
     "test:file-path-mentions": "node --test --experimental-strip-types src/shared/filePathMentions.test.ts",
     "site:images": "node scripts/optimize-site-images.mjs",
     "brand:icons": "python3 scripts/sync-brand-icons.py",
-    "dist": "node scripts/fetch-officecli.mjs --target darwin-arm64 --clean && node scripts/build-tailcat-sidecar.mjs --target darwin-arm64 && npm run pack:vavd && npm run build && electron-builder --mac",
-    "dist:win": "node scripts/fetch-officecli.mjs --target win32-x64 --clean && node scripts/build-tailcat-sidecar.mjs --target win32-x64 && npm run pack:vavd && npm run build && electron-builder --win",
-    "release": "node scripts/fetch-officecli.mjs --target darwin-arm64 --clean && node scripts/build-tailcat-sidecar.mjs --target darwin-arm64 && npm run pack:vavd && npm run build && electron-builder --publish always",
+    "dist": "node scripts/fetch-officecli.mjs --target darwin-arm64 --clean && node scripts/build-tailcat-sidecar.mjs --target darwin-arm64 && npm run pack:vavd && npm run build && electron-builder --mac --config packages/vav-desktop/electron-builder.json --project .",
+    "dist:win": "node scripts/fetch-officecli.mjs --target win32-x64 --clean && node scripts/build-tailcat-sidecar.mjs --target win32-x64 && npm run pack:vavd && npm run build && electron-builder --win --config packages/vav-desktop/electron-builder.json --project .",
+    "release": "node scripts/fetch-officecli.mjs --target darwin-arm64 --clean && node scripts/build-tailcat-sidecar.mjs --target darwin-arm64 && npm run pack:vavd && npm run build && electron-builder --publish always --config packages/vav-desktop/electron-builder.json --project .",
     "pack:release-sidecars": "node scripts/pack-release-sidecars.mjs"
   },
   "dependencies": {
@@ -91,315 +97,6 @@
     "electron-vite": "^5.0.0",
     "sharp": "^0.35.3",
     "vite": "^7.1.0"
-  },
-  "build": {
-    "appId": "com.vav.app",
-    "productName": "VAV",
-    "directories": {
-      "output": "release",
-      "buildResources": "build"
-    },
-    "files": [
-      "out/**/*",
-      "resources/**/*",
-      "!resources/bin/**"
-    ],
-    "extraResources": [
-      {
-        "from": "finish_alert.mp3",
-        "to": "finish_alert.mp3"
-      },
-      {
-        "from": "build/icon.png",
-        "to": "icon.png"
-      },
-      {
-        "from": "build/icon-dark.png",
-        "to": "icon-dark.png"
-      },
-      {
-        "from": "build/icon-mark.png",
-        "to": "icon-mark.png"
-      },
-      {
-        "from": "resources/agent-skills",
-        "to": "agent-skills"
-      },
-      {
-        "from": "resources/bin",
-        "to": "bin",
-        "filter": [
-          "**/*",
-          "!README.md"
-        ]
-      },
-      {
-        "from": "packages/vavd/vavd.js",
-        "to": "vavd/vavd.js"
-      },
-      {
-        "from": "packages/vavd/vav.js",
-        "to": "vavd/vav.js"
-      },
-      {
-        "from": "packages/vavd/vavc.js",
-        "to": "vavd/vavc.js"
-      },
-      {
-        "from": "packages/vavd/vavcli.js",
-        "to": "vavd/vavcli.js"
-      }
-    ],
-    "asarUnpack": [
-      "**/node_modules/node-pty/**",
-      "**/node_modules/@duckdb/**",
-      "**/node_modules/electron-trackpad-utils/**"
-    ],
-    "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
-    "publish": [
-      {
-        "provider": "github",
-        "owner": "21stware",
-        "repo": "vav"
-      }
-    ],
-    "mac": {
-      "category": "public.app-category.developer-tools",
-      "icon": "build/icon.png",
-      "artifactName": "${productName}-${version}-macos-${arch}.${ext}",
-      "target": [
-        {
-          "target": "dmg",
-          "arch": [
-            "arm64"
-          ]
-        },
-        {
-          "target": "zip",
-          "arch": [
-            "arm64"
-          ]
-        }
-      ],
-      "darkModeSupport": true,
-      "identity": "Cheng Aobo (R54TY86R4C)",
-      "hardenedRuntime": true,
-      "gatekeeperAssess": false,
-      "entitlements": "build/entitlements.mac.plist",
-      "entitlementsInherit": "build/entitlements.mac.plist",
-      "notarize": true,
-      "extendInfo": {
-        "NSLocalNetworkUsageDescription": "VAV pairs with other computers and phones on your local network to open folders and run agents.",
-        "NSBonjourServices": [
-          "_vav-daemon._tcp"
-        ],
-        "NSScreenCaptureUsageDescription": "VAV hides its windows so you can capture the screen, annotate the image, and attach it to a conversation.",
-        "NSServices": [
-          {
-            "NSMenuItem": {
-              "default": "Open Directory in VAV",
-              "zh_CN": "用 VAV 打开目录",
-              "zh-Hans": "用 VAV 打开目录"
-            },
-            "NSMessage": "openDirectoryInVAV",
-            "NSPortName": "VAV",
-            "NSSendFileTypes": [
-              "public.folder",
-              "public.directory"
-            ],
-            "NSRequiredContext": {
-              "NSTextContent": "FilePath"
-            },
-            "NSTimeout": 30000
-          }
-        ],
-        "CFBundleDocumentTypes": [
-          {
-            "CFBundleTypeName": "Folders",
-            "CFBundleTypeRole": "Viewer",
-            "LSHandlerRank": "Alternate",
-            "LSItemContentTypes": [
-              "public.folder"
-            ]
-          },
-          {
-            "CFBundleTypeName": "Markdown",
-            "CFBundleTypeRole": "Viewer",
-            "LSHandlerRank": "Alternate",
-            "CFBundleTypeExtensions": [
-              "md",
-              "markdown",
-              "mdx"
-            ],
-            "LSItemContentTypes": [
-              "net.daringfireball.markdown",
-              "public.plain-text"
-            ]
-          },
-          {
-            "CFBundleTypeName": "CSV",
-            "CFBundleTypeRole": "Viewer",
-            "LSHandlerRank": "Alternate",
-            "CFBundleTypeExtensions": [
-              "csv",
-              "tsv"
-            ],
-            "LSItemContentTypes": [
-              "public.comma-separated-values-text"
-            ]
-          },
-          {
-            "CFBundleTypeName": "Source Code",
-            "CFBundleTypeRole": "Viewer",
-            "LSHandlerRank": "Alternate",
-            "CFBundleTypeExtensions": [
-              "txt",
-              "json",
-              "yaml",
-              "yml",
-              "ipynb",
-              "swift",
-              "py",
-              "ts",
-              "tsx",
-              "js",
-              "jsx"
-            ],
-            "LSItemContentTypes": [
-              "public.source-code",
-              "public.json",
-              "public.plain-text"
-            ]
-          },
-          {
-            "CFBundleTypeName": "Files",
-            "CFBundleTypeRole": "Viewer",
-            "LSHandlerRank": "Alternate",
-            "LSItemContentTypes": [
-              "public.data",
-              "public.item",
-              "public.content"
-            ]
-          }
-        ]
-      }
-    },
-    "fileAssociations": [
-      {
-        "ext": [
-          "md",
-          "markdown",
-          "mdx"
-        ],
-        "name": "Markdown",
-        "description": "Markdown Document",
-        "role": "Viewer",
-        "rank": "Alternate"
-      },
-      {
-        "ext": [
-          "html",
-          "htm",
-          "xhtml"
-        ],
-        "name": "HTML",
-        "description": "HTML Document",
-        "role": "Viewer",
-        "rank": "Alternate"
-      },
-      {
-        "ext": [
-          "csv",
-          "tsv"
-        ],
-        "name": "CSV",
-        "description": "Comma-Separated Values",
-        "role": "Viewer",
-        "rank": "Alternate"
-      },
-      {
-        "ext": [
-          "txt",
-          "text",
-          "json",
-          "yaml",
-          "yml",
-          "ipynb",
-          "swift",
-          "py",
-          "ts",
-          "tsx",
-          "js",
-          "jsx",
-          "mjs",
-          "cjs"
-        ],
-        "name": "Source",
-        "description": "Source / Text",
-        "role": "Viewer",
-        "rank": "Alternate"
-      },
-      {
-        "ext": "pdf",
-        "name": "PDF",
-        "description": "PDF Document",
-        "role": "Viewer",
-        "rank": "Alternate"
-      },
-      {
-        "ext": [
-          "docx",
-          "xlsx",
-          "pptx"
-        ],
-        "name": "Office Open XML",
-        "description": "Office Open XML Document",
-        "role": "Viewer",
-        "rank": "Alternate"
-      },
-      {
-        "ext": [
-          "heic",
-          "heif"
-        ],
-        "name": "HEIC Image",
-        "description": "HEIC Image",
-        "role": "Viewer",
-        "rank": "Alternate"
-      },
-      {
-        "ext": "zip",
-        "name": "ZIP Archive",
-        "description": "ZIP Archive",
-        "role": "Viewer",
-        "rank": "Alternate"
-      }
-    ],
-    "dmg": {
-      "sign": true,
-      "writeUpdateInfo": false,
-      "artifactName": "${productName}-${version}-macos-${arch}.${ext}"
-    },
-    "afterAllArtifactBuild": "./scripts/after-all-artifact-build.mjs",
-    "win": {
-      "icon": "build/icon.ico",
-      "target": [
-        {
-          "target": "nsis",
-          "arch": [
-            "x64"
-          ]
-        }
-      ]
-    },
-    "nsis": {
-      "artifactName": "${productName}-${version}-windows-${arch}-setup.${ext}",
-      "oneClick": false,
-      "perMachine": false,
-      "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true,
-      "shortcutName": "VAV"
-    }
   },
   "allowScripts": {
     "electron@43.2.0": true,

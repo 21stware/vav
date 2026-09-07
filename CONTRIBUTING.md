@@ -15,7 +15,7 @@ Do not add new tests only to a hardcoded list — the runner globs.
 
 ## Pull requests
 
-- Keep changes reviewable. The main process (`src/main/index.ts`) and renderer stores are large; prefer extracting a helper + test over growing them.
+- Keep changes reviewable. The main process (`packages/vav-desktop/src/main/index.ts`) and renderer stores are large; prefer extracting a helper + test over growing them.
 - Pair a behavior change with a unit test when the logic is pure (protocol, i18n matching, hydration, buffers).
 - `npm test` and `npm run typecheck` must stay green.
 - Add a line under **Unreleased** in [CHANGELOG.md](CHANGELOG.md) for user-facing changes.

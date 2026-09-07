@@ -62,7 +62,7 @@ describe('resolveAcpModelId', () => {
     assert.equal(resolveAcpModelId('auto', []), 'default[]')
   })
 
-  it('ignores thinking / fast prefs and keeps the advertised row', () => {
+  it('keeps a single advertised family row (no invented overlay)', () => {
     assert.equal(
       resolveAcpModelId('grok-4.6', CURSOR_AVAILABLE, { thinkingLevel: 'low', fast: true }),
       'grok-4.6[effort=high,fast=true]'
@@ -70,6 +70,22 @@ describe('resolveAcpModelId', () => {
     assert.equal(
       resolveAcpModelId('kimi-k3', CURSOR_AVAILABLE, { thinkingLevel: 'low' }),
       'kimi-k3[reasoning=max]'
+    )
+  })
+
+  it('picks the advertised row that matches thinking / fast chips', () => {
+    const listed = [
+      ...CURSOR_AVAILABLE,
+      { modelId: 'grok-4.6[effort=high,fast=false]', name: 'grok-4.6' },
+      { modelId: 'grok-4.6[effort=low,fast=true]', name: 'grok-4.6' }
+    ]
+    assert.equal(
+      resolveAcpModelId('grok-4.6', listed, { thinkingLevel: 'low', fast: true }),
+      'grok-4.6[effort=low,fast=true]'
+    )
+    assert.equal(
+      resolveAcpModelId('grok-4.6', listed, { thinkingLevel: 'high', fast: false }),
+      'grok-4.6[effort=high,fast=false]'
     )
   })
 })

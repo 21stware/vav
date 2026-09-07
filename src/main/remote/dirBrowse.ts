@@ -1,6 +1,6 @@
 import { remoteParentPath, remotePathAllowed } from '../../shared/remoteWorkspace.ts'
 
-export type RemoteDirEntry = { name: string; path: string }
+export type RemoteDirEntry = { name: string; path: string; isDirectory?: boolean }
 
 export function listRemoteRootEntries(
   roots: string[],
@@ -22,18 +22,27 @@ export function listRemoteChildEntries(
   opts: {
     readdir: (path: string) => { name: string; isDirectory(): boolean; isSymbolicLink(): boolean }[]
     join: (dir: string, name: string) => string
+    includeFiles?: boolean
   }
 ): RemoteDirEntry[] | 'forbidden' {
   if (!remotePathAllowed(path, roots)) return 'forbidden'
   let entries: RemoteDirEntry[] = []
   try {
     for (const dirent of opts.readdir(path)) {
-      if (!dirent.isDirectory() && !dirent.isSymbolicLink()) continue
+      const isDirectory = dirent.isDirectory() || dirent.isSymbolicLink()
+      if (!isDirectory && !opts.includeFiles) continue
       if (dirent.name.startsWith('.')) continue
-      entries.push({ name: dirent.name, path: opts.join(path, dirent.name) })
+      entries.push({
+        name: dirent.name,
+        path: opts.join(path, dirent.name),
+        ...(opts.includeFiles ? { isDirectory } : {})
+      })
       if (entries.length >= 200) break
     }
-    entries.sort((a, b) => a.name.localeCompare(b.name))
+    entries.sort((a, b) => {
+      if (opts.includeFiles && a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1
+      return a.name.localeCompare(b.name)
+    })
   } catch {
     return 'forbidden'
   }

@@ -6,6 +6,7 @@ import {
   mkdtempSync,
   mkdirSync,
   writeFileSync,
+  copyFileSync,
   rmSync,
   existsSync,
   readFileSync
@@ -146,7 +147,9 @@ function extraWorkspaceRoot(): string {
 
 function seedGitRepo(workspace: string): void {
   execSync('git init -b main', { cwd: workspace })
-  execSync('git add hello.md notes.md', { cwd: workspace })
+  // Preview fixtures are already on disk — they belong in the seed commit so
+  // Git tab shows the one dirty file (`hello.md`), not every canvas kind.
+  execSync('git add -A', { cwd: workspace })
   execSync('git -c user.email=e2e@vav.test -c user.name=e2e commit -m seed', {
     cwd: workspace
   })
@@ -250,6 +253,28 @@ function seedUserData(
     ids.push(extra.id)
   }
   writeFileSync(join(conversationsDir, 'index.json'), JSON.stringify({ version: 2, ids }))
+  if (options.spawnVavd) {
+    const vavdRoot = join(userData, 'vavd')
+    const vavdDir = join(vavdRoot, 'conversations')
+    mkdirSync(vavdDir, { recursive: true })
+    for (const id of ids) {
+      copyFileSync(join(conversationsDir, `${id}.json`), join(vavdDir, `${id}.json`))
+    }
+    copyFileSync(join(conversationsDir, 'index.json'), join(vavdDir, 'index.json'))
+    writeFileSync(
+      join(vavdRoot, 'settings.json'),
+      JSON.stringify(
+        {
+          defaultWorkingDirectory: workspace,
+          recentWorkspaceDirectories: settings.recentWorkspaceDirectories ?? [],
+          ...(options.swarmMode ? { swarmModeEnabled: true } : {}),
+          ...(Array.isArray(settings.cliAgents) ? { cliAgents: settings.cliAgents } : {})
+        },
+        null,
+        2
+      )
+    )
+  }
 }
 
 /** Extra File Preview kinds used by files-preview.spec.ts (not the default chat fixtures). */
@@ -415,46 +440,53 @@ export async function launchVav(options: LaunchVavOptions = {}): Promise<VavHarn
   }
   seedUserData(userData, workspace, options, extraWorkspace)
 
+  const env: Record<string, string | undefined> = {
+    ...process.env,
+    VAV_E2E: '1',
+    VAV_USER_DATA: userData,
+    ELECTRON_ENABLE_LOGGING: '1',
+    ...(options.seedReview ? { VAV_E2E_SEED_REVIEW: '1' } : {}),
+    ...(options.stubTurn || options.stubStream || options.stubAsk || options.stubApprove
+      ? { VAV_E2E_STUB_TURN: '1' }
+      : {}),
+    ...(options.stubStream ? { VAV_E2E_STUB_STREAM: '1' } : {}),
+    ...(options.stubAsk ? { VAV_E2E_STUB_ASK: '1' } : {}),
+    ...(options.stubApprove ? { VAV_E2E_STUB_APPROVE: '1' } : {}),
+    ...(options.acpUsage ? { E2E_ACP_USAGE: '1' } : {}),
+    ...(options.acpPlan ? { E2E_ACP_PLAN: '1' } : {}),
+    ...(options.liveAcp ? { E2E_ACP_MODEL_LOG: acpModelLog } : {}),
+    ...(options.liveAcpHost === 'grok' ? { E2E_ACP_FLAVOR: 'grok' } : {}),
+    ...(options.acpFailPrompts
+      ? {
+          E2E_ACP_FAIL_PROMPTS: String(options.acpFailPrompts),
+          E2E_ACP_FAIL_STATE: join(userData, 'acp-fail-count')
+        }
+      : {}),
+    ...(options.acpLeakPrompts ? { E2E_ACP_LEAK_PROMPTS: String(options.acpLeakPrompts) } : {}),
+    ...(options.acpLeakTail ? { E2E_ACP_LEAK_TAIL: '1' } : {}),
+    ...(options.acpLeakPartialTransport ? { E2E_ACP_LEAK_PARTIAL_TRANSPORT: '1' } : {}),
+    ...(options.vavdUri ? { VAVD_URI: options.vavdUri } : {}),
+    ...(options.spawnVavd
+      ? { VAVD_SPAWN: '1', NODE_BINARY: process.execPath }
+      : options.vavdUri
+        ? {}
+        : { VAVD_SPAWN: '0' })
+  }
+  // Hosts that run Electron-as-Node (this agent, some CI images) leak
+  // ELECTRON_RUN_AS_NODE into the child. Playwright then passes
+  // --remote-debugging-port and the binary prints `vav: bad option`.
+  delete env.ELECTRON_RUN_AS_NODE
+
   const app = await electron.launch({
     executablePath: electronExecutable(),
     args: [root],
     cwd: root,
-    env: {
-      ...process.env,
-      VAV_E2E: '1',
-      VAV_USER_DATA: userData,
-      ELECTRON_ENABLE_LOGGING: '1',
-      ...(options.seedReview ? { VAV_E2E_SEED_REVIEW: '1' } : {}),
-      ...(options.stubTurn || options.stubStream || options.stubAsk || options.stubApprove
-        ? { VAV_E2E_STUB_TURN: '1' }
-        : {}),
-      ...(options.stubStream ? { VAV_E2E_STUB_STREAM: '1' } : {}),
-      ...(options.stubAsk ? { VAV_E2E_STUB_ASK: '1' } : {}),
-      ...(options.stubApprove ? { VAV_E2E_STUB_APPROVE: '1' } : {}),
-      ...(options.acpUsage ? { E2E_ACP_USAGE: '1' } : {}),
-      ...(options.acpPlan ? { E2E_ACP_PLAN: '1' } : {}),
-      ...(options.liveAcp ? { E2E_ACP_MODEL_LOG: acpModelLog } : {}),
-      ...(options.liveAcpHost === 'grok' ? { E2E_ACP_FLAVOR: 'grok' } : {}),
-      ...(options.acpFailPrompts
-        ? {
-            E2E_ACP_FAIL_PROMPTS: String(options.acpFailPrompts),
-            E2E_ACP_FAIL_STATE: join(userData, 'acp-fail-count')
-          }
-        : {}),
-      ...(options.acpLeakPrompts ? { E2E_ACP_LEAK_PROMPTS: String(options.acpLeakPrompts) } : {}),
-      ...(options.acpLeakTail ? { E2E_ACP_LEAK_TAIL: '1' } : {}),
-      ...(options.acpLeakPartialTransport ? { E2E_ACP_LEAK_PARTIAL_TRANSPORT: '1' } : {}),
-      ...(options.vavdUri ? { VAVD_URI: options.vavdUri } : {}),
-      ...(options.spawnVavd
-        ? { VAVD_SPAWN: '1', NODE_BINARY: process.execPath }
-        : options.vavdUri
-          ? {}
-          : { VAVD_SPAWN: '0' })
-    }
+    env
   })
 
   const page = await app.firstWindow()
   await page.locator('[data-testid="app-shell"]').waitFor({ state: 'visible', timeout: 25_000 })
+  if (options.spawnVavd) await waitForLocalShell(page)
 
   const dispose = async (): Promise<void> => {
     try {
@@ -475,6 +507,24 @@ export async function launchVav(options: LaunchVavOptions = {}): Promise<VavHarn
   }
 
   return { app, page, userData, workspace, extraWorkspace, acpModelLog, dispose }
+}
+
+/** Spawned loopback vavd is the default local service (`localShell`). */
+export async function waitForLocalShell(page: Page): Promise<void> {
+  await expect
+    .poll(async () => {
+      const hosts = await page.evaluate(() => window.vav.hosts.list())
+      return hosts.some((host) => host.localShell && host.controlPlane === true && host.online)
+    })
+    .toBe(true)
+}
+
+/**
+ * Desktop workbench over spawned vavd — the production local = remote path.
+ * Two-app pairing / listen-host specs should keep calling `launchVav` directly.
+ */
+export async function launchWorkbench(options: LaunchVavOptions = {}): Promise<VavHarness> {
+  return launchVav({ ...options, spawnVavd: options.spawnVavd ?? true })
 }
 
 export async function waitForDaemonPairing(page: Page): Promise<string> {
@@ -556,6 +606,38 @@ export function readUserSetting(userData: string, key: string): unknown {
   }
 }
 
+/** Conversation shard on the spawned local vavd (`userData/vavd/conversations`). */
+export function readVavdConversation(userData: string, id: string): string | null {
+  const shard = join(userData, 'vavd', 'conversations', `${id}.json`)
+  try {
+    return readFileSync(shard, 'utf8')
+  } catch {
+    return null
+  }
+}
+
+export function readElectronConversation(userData: string, id: string): string | null {
+  const shard = join(userData, 'conversations', `${id}.json`)
+  try {
+    return readFileSync(shard, 'utf8')
+  } catch {
+    return null
+  }
+}
+
+/** Host prefs on the spawned local vavd (`userData/vavd/settings.json`). */
+export function readVavdSetting(userData: string, key: string): unknown {
+  try {
+    const raw = JSON.parse(readFileSync(join(userData, 'vavd', 'settings.json'), 'utf8')) as Record<
+      string,
+      unknown
+    >
+    return raw[key]
+  } catch {
+    return undefined
+  }
+}
+
 /** Wait for a new BrowserWindow after `action` — no hanging `waitForEvent`. */
 export async function waitForNewWindow(
   harness: VavHarness,
@@ -574,36 +656,38 @@ export async function waitForNewWindow(
   return found
 }
 
-/** Host window opened after Connect / `VAVD_URI` auto-pair. */
+/** Sidebar switched to a paired daemon (same window). */
 export async function waitForHostWindow(
   harness: VavHarness,
   name: string,
   timeout = 30_000
 ): Promise<Page> {
-  let found: Page | undefined
-  await expect
-    .poll(
-      async () => {
-        for (const win of harness.app.windows()) {
-          try {
-            const label = await win
-              .locator('[data-testid="sidebar-connect"]')
-              .textContent({ timeout: 400 })
-            if (label?.includes(name)) {
-              found = win
-              return true
-            }
-          } catch {
-            // window still loading
-          }
-        }
-        return false
-      },
-      { timeout }
-    )
-    .toBe(true)
-  if (!found) throw new Error(`expected a host window labeled ${name}`)
-  return found
+  const page = harness.page
+  await expect(page.locator('[data-testid="sidebar-connect"]')).toContainText(name, { timeout })
+  return page
+}
+
+export async function ensureSelectedSession(page: Page): Promise<void> {
+  const selected = page.locator('[data-testid="session-row"].selected')
+  if ((await selected.count()) > 0) return
+  await page.locator('[data-testid="new-session"]').click()
+  await expect(selected).toBeVisible({ timeout: 15_000 })
+}
+
+/** Pair a daemon and wait for the sidebar accordion to expand onto it. */
+export async function pairRemoteDaemon(
+  page: Page,
+  pairing: string
+): Promise<{ ok: true; host: { id: string } }> {
+  const paired = await page.evaluate((payload) => window.vav.hosts.pair(payload), pairing)
+  expect(paired.ok).toBe(true)
+  if (!paired.ok) throw new Error(paired.error)
+  await expect(page.locator('[data-testid="sidebar-connect"]')).toHaveAttribute(
+    'data-machine-id',
+    paired.host.id,
+    { timeout: 25_000 }
+  )
+  return paired
 }
 
 /** Independent Settings window (README.rpml §1.4 / §2.6). */

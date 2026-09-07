@@ -19,6 +19,33 @@ describe('buildRemoteControls', () => {
     assert.deepEqual(snap.approvals.map((row) => row.id), ['auto', 'bypass', 'edit'])
   })
 
+  it('carries ACP slash commands next to session modes', () => {
+    const snap = buildRemoteControls({
+      conversationId: 'c1',
+      cliHost: 'cursor',
+      model: 'grok-4.6',
+      hasMessages: true,
+      agents: [{ id: 'cursor', label: 'Cursor' }],
+      models: [{ id: 'grok-4.6', label: 'Grok' }],
+      acpSession: {
+        currentModeId: 'agent',
+        modes: [{ id: 'agent', name: 'Agent' }],
+        commands: [
+          { name: 'compact', description: 'Compact this session' },
+          { name: 'cost', description: 'Show session cost' }
+        ]
+      }
+    })
+    assert.equal(snap.mode, 'agent')
+    assert.deepEqual(
+      snap.commands,
+      [
+        { id: 'compact', label: 'Compact this session' },
+        { id: 'cost', label: 'Show session cost' }
+      ]
+    )
+  })
+
   it('exposes thinking levels for a VAV reasoning model', () => {
     const snap = buildRemoteControls({
       conversationId: 'c1',

@@ -12,12 +12,24 @@ import {
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 
-test('extension and vavd package versions match the app', () => {
+test('extension and every product package version match the app', () => {
   const version = packageVersion()
-  const extension = JSON.parse(readFileSync(join(root, 'extension/manifest.json'), 'utf8'))
-  const vavd = JSON.parse(readFileSync(join(root, 'packages/vavd/package.json'), 'utf8'))
+  const extension = JSON.parse(readFileSync(join(root, 'packages/vav-chrome-extension/extension/manifest.json'), 'utf8'))
   assert.equal(extension.version, version)
-  assert.equal(vavd.version, version)
+  for (const dir of [
+    'vavd',
+    'vav-desktop',
+    'vav-cli',
+    'vavc',
+    'vav-chrome-extension',
+    'vav-ios',
+    'vav-android'
+  ]) {
+    const pkg = JSON.parse(readFileSync(join(root, 'packages', dir, 'package.json'), 'utf8'))
+    assert.equal(pkg.version, version, dir)
+    const product = JSON.parse(readFileSync(join(root, 'packages', dir, 'product.json'), 'utf8'))
+    assert.equal(product.version, version, `${dir} product.json`)
+  }
 })
 
 test('every release lists desktop installers, updater feeds, vavd, and the Chrome extension', () => {

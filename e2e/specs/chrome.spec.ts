@@ -1,12 +1,12 @@
 import { test, expect } from '@playwright/test'
-import { launchVav } from '../launch'
+import { launchVav, launchWorkbench } from '../launch'
 
 /**
  * session/main-chat.rpml + main-chat-search.rpml + terminal-panel.rpml
  * + companions/token-usage.rpml — session chrome only, no CLI hosts.
  */
 test('tools tray expands, New bash opens a user PTY, and collapse works', async () => {
-  const harness = await launchVav()
+  const harness = await launchWorkbench()
   try {
     const { page } = harness
     await expect(page.locator('[data-testid="tools-panel"]')).toHaveAttribute(
@@ -35,7 +35,7 @@ test('tools tray expands, New bash opens a user PTY, and collapse works', async 
 })
 
 test('New bash sits after tabs and pins right when the tab strip overflows', async () => {
-  const harness = await launchVav()
+  const harness = await launchWorkbench()
   try {
     const { app, page } = harness
     const header = page.locator('.tools-header')
@@ -83,7 +83,7 @@ test('New bash sits after tabs and pins right when the tab strip overflows', asy
 })
 
 test('tools fullscreen expands the tray to 70% height', async () => {
-  const harness = await launchVav()
+  const harness = await launchWorkbench()
   try {
     const { page } = harness
     const panel = page.locator('[data-testid="tools-panel"]')
@@ -93,21 +93,33 @@ test('tools fullscreen expands the tray to 70% height', async () => {
     await expect(panel).toHaveAttribute('data-tools-collapsed', 'false')
     await expect(panel).toHaveAttribute('data-tools-snapped', 'true')
 
-    const ratio = await page.evaluate(() => {
-      const well = document.querySelector('.tools-body-well')
-      const column = well?.closest('main')
-      if (!well || !column) return 0
-      return well.getBoundingClientRect().height / column.getBoundingClientRect().height
-    })
-    expect(ratio).toBeGreaterThan(0.64)
-    expect(ratio).toBeLessThan(0.76)
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const well = document.querySelector('.tools-body-well')
+          const column = well?.closest('main')
+          if (!well || !column) return 0
+          return well.getBoundingClientRect().height / column.getBoundingClientRect().height
+        })
+      )
+      .toBeGreaterThan(0.64)
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const well = document.querySelector('.tools-body-well')
+          const column = well?.closest('main')
+          if (!well || !column) return 0
+          return well.getBoundingClientRect().height / column.getBoundingClientRect().height
+        })
+      )
+      .toBeLessThan(0.76)
   } finally {
     await harness.dispose()
   }
 })
 
 test('transcript search strip finds no matches then closes', async () => {
-  const harness = await launchVav()
+  const harness = await launchWorkbench()
   try {
     const { page } = harness
     await page.locator('[data-testid="session-search"]').click()
@@ -122,7 +134,7 @@ test('transcript search strip finds no matches then closes', async () => {
 })
 
 test('composer exposes attach and screenshot actions', async () => {
-  const harness = await launchVav()
+  const harness = await launchWorkbench()
   try {
     const { page } = harness
     await expect(page.locator('[data-testid="composer-attach"]')).toBeVisible()
@@ -135,7 +147,7 @@ test('composer exposes attach and screenshot actions', async () => {
 test('composer token ring opens the Context window popup', async () => {
   // The ring lives on the agent model picker; once the thread has messages
   // the picker locks and clicking the host button opens the usage popup.
-  const harness = await launchVav({ liveAcp: true, acpUsage: true })
+  const harness = await launchWorkbench({ liveAcp: true, acpUsage: true })
   try {
     const { app, page } = harness
     await page.locator('[data-testid="composer-input"]').fill('ring probe')

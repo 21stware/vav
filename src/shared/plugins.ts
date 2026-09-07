@@ -90,6 +90,37 @@ export function pluginHostIsAcp(host: PluginHostKind): boolean {
   return host !== 'vav' && isAcpCliHost(host)
 }
 
+export function emptyPluginSnapshot(host: PluginHostKind = 'vav'): PluginSnapshot {
+  return {
+    host,
+    hostLabel: host === 'vav' ? 'VAV' : host,
+    root: '',
+    writable: false,
+    plugins: []
+  }
+}
+
+export function isPluginSnapshot(value: unknown): value is PluginSnapshot {
+  if (!value || typeof value !== 'object') return false
+  const snap = value as Partial<PluginSnapshot>
+  return typeof snap.host === 'string' && Array.isArray(snap.plugins)
+}
+
+/** Daemon `plugins.*` mutations return `{ ok, snapshot }`; desktop IPC unwraps to the snapshot. */
+export function unwrapPluginMutation(
+  value: unknown
+): PluginSnapshot | { ok: false; error: string } {
+  if (isPluginSnapshot(value)) return value
+  if (value && typeof value === 'object') {
+    const row = value as { ok?: unknown; snapshot?: unknown; error?: unknown }
+    if (row.ok === false) {
+      return { ok: false, error: typeof row.error === 'string' ? row.error : 'unavailable' }
+    }
+    if (row.ok === true && isPluginSnapshot(row.snapshot)) return row.snapshot
+  }
+  return { ok: false, error: 'unavailable' }
+}
+
 export function emptyPluginEnabledMap(): PluginEnabledMap {
   return { version: 1, enabled: {} }
 }

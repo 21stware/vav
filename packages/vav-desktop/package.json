@@ -1,0 +1,27 @@
+{
+  "name": "@21stware/vav-desktop",
+  "version": "1.19.1",
+  "private": true,
+  "type": "module",
+  "description": "VAV desktop workbench. Same sidebar for a local vavd and a paired remote. Electron source is packages/vav-desktop/src.",
+  "license": "PolyForm-Noncommercial-1.0.0",
+  "author": "Oboo Cheng",
+  "scripts": {
+    "dev": "npm run dev --prefix ../..",
+    "start": "npm start --prefix ../..",
+    "pack": "node ../../scripts/pack-vav-desktop.mjs",
+    "dist": "npm run dist --prefix ../.."
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21stware/vav.git",
+    "directory": "packages/vav-desktop"
+  },
+  "homepage": "https://github.com/21stware/vav/tree/main/packages/vav-desktop",
+  "keywords": [
+    "vav",
+    "vav-desktop",
+    "electron",
+    "workbench"
+  ]
+}

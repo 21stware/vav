@@ -26,7 +26,7 @@ function isLiveFile(file) {
   return file.replaceAll('\\', '/').includes('.live.test.')
 }
 
-const files = ['src/**/*.test.ts', 'scripts/**/*.test.mjs']
+const files = ['src/**/*.test.ts', 'packages/**/*.test.ts', 'scripts/**/*.test.mjs']
   .flatMap((pattern) => globSync(pattern))
   .filter((file) => live || !isLiveFile(file))
   .sort()

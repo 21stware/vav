@@ -41,6 +41,7 @@ export class LogStore {
   private session: AppLogRecord[] = []
   private durable: AppLogRecord[] = []
   private persistWriter = createDebouncedWriter(() => this.writeFiles(), 200)
+  private readonly listeners = new Set<(record: AppLogRecord) => void>()
   onAppend: ((record: AppLogRecord) => void) | null = null
 
   constructor(opts: LogStoreOptions) {
@@ -66,7 +67,15 @@ export class LogStore {
     this.prune()
     if (record.retention !== 'ephemeral') this.persistWriter.schedule()
     this.onAppend?.(record)
+    for (const fn of this.listeners) fn(record)
     return record
+  }
+
+  subscribe(fn: (record: AppLogRecord) => void): () => void {
+    this.listeners.add(fn)
+    return () => {
+      this.listeners.delete(fn)
+    }
   }
 
   query(query: AppLogQuery = {}): AppLogRecord[] {

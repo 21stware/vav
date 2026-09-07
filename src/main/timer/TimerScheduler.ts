@@ -16,6 +16,12 @@ export type TimerSchedulerDeps = {
   isRunning: (conversationId: string) => boolean
   now?: () => number
   tickMs?: number
+  /** Re-read jobs from disk so a sibling process (desktop ↔ vavd) stays current. */
+  reload?: () => void
+  /** When true, skip firing — another host (usually vavd) owns the clock. */
+  shouldDefer?: () => boolean | Promise<boolean>
+  /** Push the new run conversation to the desktop sidebar. */
+  publish?: () => void
 }
 
 function lastAssistantText(store: ConversationStore, conversationId: string): string {
@@ -25,7 +31,7 @@ function lastAssistantText(store: ConversationStore, conversationId: string): st
   for (let i = path.length - 1; i >= 0; i--) {
     const message = path[i]!
     if (message.role !== 'assistant') continue
-    const text = (textOf(message) ?? '').trim()
+    const text = (message.content || textOf(message.blocks) || '').trim()
     if (text) return text
   }
   return ''
@@ -39,7 +45,7 @@ export function timerTurnPrompt(job: TimerJob): string {
   return [
     job.prompt.trim(),
     '',
-    'This is a timer run. Do not ask the user questions. Do not wait for approval.',
+    'This is a scheduled task. Do not ask the user questions. Do not wait for approval.',
     `When finished, write a Markdown report to ${TIMER_OUTPUT_FILE} in the working directory (title, what you did, result, any URLs).`,
     connectors
   ].join('\n')
@@ -69,8 +75,11 @@ export class TimerScheduler {
   }
 
   async tick(now = this.deps.now?.() ?? Date.now()): Promise<void> {
+    this.deps.reload?.()
+    if (await this.deps.shouldDefer?.()) return
     for (const job of this.deps.store.dueJobs(now)) {
       if (this.inflight.has(job.id)) continue
+      if (!job.prompt.trim()) continue
       try {
         this.fire(job, now)
       } catch (err) {
@@ -80,6 +89,7 @@ export class TimerScheduler {
   }
 
   fire(job: TimerJob, now = this.deps.now?.() ?? Date.now()): { conversationId: string; runId: string } | null {
+    if (!job.prompt.trim()) return null
     const workdir =
       job.workdirPolicy === 'source' && job.sourceWorkdir && existsSync(job.sourceWorkdir)
         ? job.sourceWorkdir
@@ -106,6 +116,7 @@ export class TimerScheduler {
     this.deps.conversations.updateMeta(conversation.id, { timerRunId: run.id })
     this.inflight.set(job.id, conversation.id)
     this.deps.runTurn(conversation.id, timerTurnPrompt(job))
+    this.deps.publish?.()
     return { conversationId: conversation.id, runId: run.id }
   }
 

@@ -27,8 +27,8 @@ import type {
   ThinkingLevel,
   TokenSnapshot
 } from '@shared/types'
-import { conversationOnMachine, LOCAL_MACHINE_ID } from '@shared/workspaceHost'
-import { isWorkspaceSession } from '@shared/sessionKind'
+import { conversationOnMachine, isLocalMachine, LOCAL_MACHINE_ID } from '@shared/workspaceHost'
+import { isWorkspaceSession, sessionKindOf } from '@shared/sessionKind'
 import { mergeAdoptedHostMessages } from '@shared/remoteControlApply'
 import { parseThinkingLevel } from '@shared/thinkingLevel'
 import { normalizeCursorConversationModel } from '@shared/cursorModel'
@@ -73,6 +73,10 @@ type ConversationIndex = { version: number; ids: string[] }
  * Writes are debounced, dirty-tracked (only changed shards + index), and atomic
  * (tmp + rename). Callers persist at tool boundaries and turn end, never per token.
  * Quit / turn-end use sync {@link flush}; the debounce path uses async I/O.
+ *
+ * When the workbench is a shell over spawned vavd, {@link setShouldPersist}
+ * skips local rows so `userData/conversations` is not a second copy of
+ * `userData/vavd/conversations`. The sidebar still holds those rows in memory.
  */
 export class ConversationStore {
   /** Directory holding `index.json` and per-conversation shards. */
@@ -105,10 +109,31 @@ export class ConversationStore {
    * has none" — and only the second one is safe to write to disk.
    */
   private loaded = false
+  /**
+   * Return false to keep a row in memory only. Null = persist everything.
+   * Desktop sets this when the spawned local vavd owns local chats.
+   */
+  private persistGate: ((conversation: Conversation) => boolean) | null = null
 
   /** Path shown in About / diagnostics — the sharded conversations directory. */
   get path(): string {
     return this.dir
+  }
+
+  /**
+   * Host-owned rows stay in the sidebar cache but leave this directory.
+   * Passing `null` restores persist-all (no spawned vavd).
+   */
+  setShouldPersist(gate: ((conversation: Conversation) => boolean) | null): void {
+    this.persistGate = gate
+    if (!this.loaded) return
+    for (const conversation of this.conversations) {
+      if (this.allowsPersist(conversation)) continue
+      this.dirty.delete(conversation.id)
+      this.dirtyGen.delete(conversation.id)
+      this.deleted.add(conversation.id)
+    }
+    this.scheduleFlush()
   }
 
   load(defaults: { model: string; mintWorkdir: () => string }): Conversation[] {
@@ -222,6 +247,14 @@ export class ConversationStore {
       .sort((a, b) => b.updatedAt - a.updatedAt)
   }
 
+  /** Workspace + timer rows for the renderer. File-preview sessions stay omitted. */
+  listClientMeta(): ConversationMeta[] {
+    return this.conversations
+      .filter((c) => sessionKindOf(c) !== 'file')
+      .map(conversationToMeta)
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+  }
+
   get(id: string): Conversation | undefined {
     return this.conversations.find((c) => c.id === id)
   }
@@ -230,11 +263,23 @@ export class ConversationStore {
   findOnHost(machineId: string, hostConversationId: string): Conversation | undefined {
     const hostId = hostConversationId.trim()
     if (!hostId) return undefined
-    return this.conversations.find(
+    const matches = this.conversations.filter(
       (c) =>
-        conversationOnMachine(c, machineId) &&
+        (conversationOnMachine(c, machineId) || isLocalMachine(c.machineId)) &&
         (c.id === hostId || (c.duplicateSourceId ?? '').trim() === hostId)
     )
+    return matches.find((c) => isLocalMachine(c.machineId)) ?? matches[0]
+  }
+
+  /** Map a local chat onto a spawned-vavd session (same sidebar, turns on the daemon). */
+  bindHostSession(id: string, hostConversationId: string): Conversation | undefined {
+    const conversation = this.get(id)
+    const hostId = hostConversationId.trim()
+    if (!conversation || !hostId) return undefined
+    if ((conversation.duplicateSourceId ?? '').trim() === hostId) return conversation
+    conversation.duplicateSourceId = hostId
+    this.markDirty(id)
+    return conversation
   }
 
   create(
@@ -257,12 +302,14 @@ export class ConversationStore {
       accountId?: string | null
       swarmParentId?: string | null
       machineId?: string | null
+      /** Reuse a workbench id so spawned vavd turns project onto the same row. */
+      id?: string
     }
   ): Conversation {
     const now = Date.now()
     const cliHost = options?.cliHost ?? null
     const conversation: Conversation = {
-      id: randomUUID(),
+      id: options?.id?.trim() || randomUUID(),
       title: options?.title ?? defaultSessionTitle(currentLocale()),
       createdAt: now,
       updatedAt: now,
@@ -403,6 +450,65 @@ export class ConversationStore {
     if (!source || typeof source.id !== 'string' || !source.id.trim()) return null
     if (source.fileId) return null
     const hostId = hostMachineId.trim() || LOCAL_MACHINE_ID
+    const existingLocal = this.conversations.find(
+      (c) => isLocalMachine(c.machineId) && c.id === source.id
+    )
+    if (existingLocal) {
+      // Spawned vavd echoing the workbench id — do not mint a remote duplicate.
+      if (!isLocalMachine(hostId)) return null
+      // Catalog refresh of a Chrome-created / local-shell row already adopted.
+      let changed = false
+      if (Array.isArray(source.messages) && source.messages.length > 0) {
+        existingLocal.messages = mergeAdoptedHostMessages(source.messages, existingLocal.messages)
+        if (typeof source.updatedAt === 'number' && source.updatedAt > existingLocal.updatedAt) {
+          existingLocal.updatedAt = source.updatedAt
+        }
+        if (source.title) existingLocal.title = source.title
+        this.adoptTreeShape(existingLocal)
+        changed = true
+      }
+      if (typeof source.tokensUsed === 'number') {
+        existingLocal.tokensUsed = source.tokensUsed
+        changed = true
+      }
+      if (typeof source.tokenLimit === 'number') {
+        existingLocal.tokenLimit = source.tokenLimit
+        changed = true
+      }
+      if (Array.isArray(source.tokenHistory)) {
+        existingLocal.tokenHistory = source.tokenHistory
+        changed = true
+      }
+      if (source.cliResumeCursor !== undefined) {
+        existingLocal.cliResumeCursor = source.cliResumeCursor
+        changed = true
+      }
+      if (source.acpSession !== undefined) {
+        existingLocal.acpSession = source.acpSession
+        changed = true
+      }
+      if (source.cliHost !== undefined) {
+        existingLocal.cliHost = source.cliHost
+        changed = true
+      }
+      if (source.model) {
+        existingLocal.model = source.model
+        changed = true
+      }
+      if (typeof source.fast === 'boolean') {
+        existingLocal.fast = source.fast
+        changed = true
+      }
+      if (source.thinkingLevel !== undefined) {
+        existingLocal.thinkingLevel = parseThinkingLevel(source.thinkingLevel)
+        changed = true
+      }
+      if (changed) {
+        this.markDirty(existingLocal.id)
+        return existingLocal
+      }
+      return null
+    }
     const now = Date.now()
     const cloned = structuredClone(source)
 
@@ -1037,6 +1143,10 @@ export class ConversationStore {
     return list
   }
 
+  private allowsPersist(conversation: Conversation): boolean {
+    return this.persistGate?.(conversation) !== false
+  }
+
   private markDirty(id: string): void {
     this.deleted.delete(id)
     this.dirty.add(id)
@@ -1115,17 +1225,22 @@ export class ConversationStore {
     for (const id of dirtyIds) gens.set(id, this.dirtyGen.get(id) ?? 0)
 
     const payloads: { id: string; body: string }[] = []
+    const dropFromDisk = new Set(deletedIds)
     for (const id of dirtyIds) {
       const conversation = this.get(id)
       if (!conversation) continue
+      if (!this.allowsPersist(conversation)) {
+        dropFromDisk.add(id)
+        continue
+      }
       payloads.push({ id, body: JSON.stringify(conversation) })
     }
     const indexBody = JSON.stringify({
       version: INDEX_VERSION,
-      ids: this.conversations.map((c) => c.id)
+      ids: this.conversations.filter((c) => this.allowsPersist(c)).map((c) => c.id)
     } satisfies ConversationIndex)
 
-    return { dirtyIds, deletedIds, gens, payloads, indexBody }
+    return { dirtyIds, deletedIds: [...dropFromDisk], gens, payloads, indexBody }
   }
 
   private clearPersisted(

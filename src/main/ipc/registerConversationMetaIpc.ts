@@ -7,6 +7,7 @@ import type { Conversation, ConversationMeta } from '@shared/types'
 
 export type ConversationMetaIpcStore = {
   listMeta: () => ConversationMeta[]
+  listClientMeta: () => ConversationMeta[]
   get: (id: string) => Conversation | undefined
   hydrateMissingHostUsage: (id: string) => boolean
   updateMeta: (id: string, patch: Partial<ConversationMeta>) => unknown
@@ -24,6 +25,7 @@ export type ConversationMetaIpcHost = {
   untitledTitle: () => string
   publish: () => void
   renameDetached: (id: string, title: string) => void
+  onRenamed?: (id: string, title: string) => void
   onArchive: (id: string) => void
   cliOwns: (id: string) => boolean
   applyThinkingLevel: (id: string) => void
@@ -45,11 +47,17 @@ export type ConversationMetaIpcHost = {
   forwardRename?: (id: string, title: string) => Promise<boolean>
   /** Host-driven archive; true means the local store was already pulled. */
   forwardArchive?: (id: string, archived: boolean) => Promise<boolean>
+  /** Host-driven pin. Return false so the local store still applies. */
+  forwardPin?: (id: string, pinned: boolean) => Promise<boolean>
   /** Host-driven configure; true means the local store was already pulled. */
   forwardConfigure?: (
     id: string,
     patch: { approvalMode?: string; thinkingLevel?: string; fast?: boolean; mode?: string }
   ) => Promise<boolean>
+  /** Host-driven leaf; true means the host already moved it. */
+  forwardSetLeaf?: (id: string, leafId: string) => Promise<boolean>
+  forwardDuplicate?: (id: string) => Promise<ConversationMeta | null | undefined>
+  forwardContinue?: (id: string, messageId: string) => Promise<ConversationMeta | null | undefined>
 }
 
 /** Sidebar list / pin / archive / model — create and host-switch stay in the entry. */
@@ -65,26 +73,29 @@ export function registerConversationMetaIpc(
   })
   ipcMain.handle(IPC.convRename, async (_event, id: string, title: string) => {
     const next = title.trim() || host.untitledTitle()
-    if (await host.forwardRename?.(id, next)) return store.listMeta()
+    if (await host.forwardRename?.(id, next)) return store.listClientMeta()
     store.updateMeta(id, { title: next })
     host.renameDetached(id, next)
+    host.onRenamed?.(id, next)
     host.publish()
-    return store.listMeta()
+    return store.listClientMeta()
   })
-  ipcMain.handle(IPC.convSetLeaf, (_event, id: string, leafId: string) => {
+  ipcMain.handle(IPC.convSetLeaf, async (_event, id: string, leafId: string) => {
+    if (await host.forwardSetLeaf?.(id, leafId)) return
     store.setActiveLeaf(id, leafId)
   })
-  ipcMain.handle(IPC.convSetPinned, (_event, id: string, pinned: boolean) => {
+  ipcMain.handle(IPC.convSetPinned, async (_event, id: string, pinned: boolean) => {
+    await host.forwardPin?.(id, pinned)
     store.setPinned(id, pinned)
     host.publish()
-    return store.listMeta()
+    return store.listClientMeta()
   })
   ipcMain.handle(IPC.convSetArchived, async (_event, id: string, archived: boolean) => {
-    if (await host.forwardArchive?.(id, archived)) return store.listMeta()
+    if (await host.forwardArchive?.(id, archived)) return store.listClientMeta()
     if (archived) host.onArchive(id)
     store.setArchived(id, archived)
     host.publish()
-    return store.listMeta()
+    return store.listClientMeta()
   })
   ipcMain.handle(IPC.convSetApprovalMode, async (_event, id: string, mode: string) => {
     if (mode === 'auto' || mode === 'bypass' || mode === 'edit') {
@@ -143,13 +154,17 @@ export function registerConversationMetaIpc(
       return { ...result, conversations: store.listMeta() }
     }
   )
-  ipcMain.handle(IPC.convContinueNew, (_event, id: string, messageId: string) => {
+  ipcMain.handle(IPC.convContinueNew, async (_event, id: string, messageId: string) => {
+    const forwarded = await host.forwardContinue?.(id, messageId)
+    if (forwarded !== undefined) return forwarded
     const conversation = store.branchToNewConversation(id, messageId)
     if (!conversation) return null
     host.publish()
     return conversationToMeta(conversation)
   })
-  ipcMain.handle(IPC.convDuplicate, (_event, id: string) => {
+  ipcMain.handle(IPC.convDuplicate, async (_event, id: string) => {
+    const forwarded = await host.forwardDuplicate?.(id)
+    if (forwarded !== undefined) return forwarded
     const conversation = store.duplicate(id)
     if (!conversation) return null
     host.publish()

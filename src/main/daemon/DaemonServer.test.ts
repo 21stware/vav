@@ -1,11 +1,15 @@
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, it } from 'node:test'
+import { getGitSnapshot } from '../git/GitService.ts'
 import { createLocalWorkspaceHost } from '../host/WorkspaceHost.ts'
-import { DaemonServer, type DaemonWorkspaceCatalog } from './DaemonServer.ts'
+import { DaemonServer, type DaemonLogCatalog, type DaemonWorkspaceCatalog } from './DaemonServer.ts'
 import { DaemonClient, createRemoteWorkspaceHost, requestLanPairOffer } from './DaemonClient.ts'
+import { LogStore } from '../store/LogStore.ts'
+import { LOG_EVENT } from '../../shared/appLog.ts'
 import { createConnection } from 'node:net'
 import { encodeLine, parseServerMessage } from '../../shared/remoteControl.ts'
 import { RemoteControlHub } from '../remote/RemoteControlHub.ts'
@@ -15,7 +19,8 @@ const SECRET = '0123456789abcdef01234567'
 
 async function startPair(
   dir: string,
-  catalog?: DaemonWorkspaceCatalog
+  catalog?: DaemonWorkspaceCatalog,
+  logs?: DaemonLogCatalog
 ): Promise<{
   server: DaemonServer
   client: DaemonClient
@@ -29,7 +34,8 @@ async function startPair(
     appVersion: 'test',
     home: dir,
     tmp: dir,
-    catalog
+    catalog,
+    logs
   })
   const client = new DaemonClient()
   const port = await server.listen(0, '127.0.0.1')
@@ -67,6 +73,46 @@ describe('daemon loopback', () => {
         child.on('close', () => resolve())
       })
       assert.equal(Buffer.concat(chunks).toString('utf8'), 'ok')
+    } finally {
+      client.close()
+      server.close()
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('reveals, opens, and Get-Infos a host path without a real Finder', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vav-daemon-'))
+    const spawned: Array<{ file: string; args: string[] }> = []
+    const host = createLocalWorkspaceHost({ name: 'loop' })
+    const server = new DaemonServer({
+      host,
+      identity: { machineId: 'loop-box', name: 'loop' },
+      secret: () => SECRET,
+      appVersion: 'test',
+      home: dir,
+      tmp: dir,
+      hostFileSpawn: (file, args) => {
+        spawned.push({ file, args })
+      }
+    })
+    const client = new DaemonClient()
+    try {
+      const port = await server.listen(0, '127.0.0.1')
+      await client.connect({ host: '127.0.0.1', port, secret: SECRET, device: 'test' })
+      const file = join(dir, 'note.txt')
+      await writeFile(file, 'hello')
+      assert.deepEqual(await client.request('fs.reveal', { path: file }), { ok: true })
+      assert.deepEqual(await client.request('fs.openPath', { path: file }), { ok: true })
+      assert.deepEqual(await client.request('fs.preview', { path: file }), { ok: true })
+      if (process.platform === 'linux') {
+        await assert.rejects(() => client.request('fs.getInfo', { path: file }), /Get Info/)
+        await assert.rejects(() => client.request('fs.copyAsFile', { paths: [file] }), /Copy file/)
+      } else {
+        assert.deepEqual(await client.request('fs.getInfo', { path: file }), { ok: true })
+        assert.deepEqual(await client.request('fs.copyAsFile', { paths: [file] }), { ok: true })
+      }
+      assert.ok(spawned.some((row) => row.args.includes(file) || row.args.some((arg) => arg.includes(file))))
+      assert.ok(spawned.length >= 3)
     } finally {
       client.close()
       server.close()
@@ -162,6 +208,66 @@ describe('daemon loopback', () => {
       assert.match(data, /pty-ok/)
     } finally {
       client.close()
+      server.close()
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps a PTY after the spawning client disconnects', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vav-daemon-pty-'))
+    const { server, client } = await startPair(dir)
+    try {
+      const spawned = (await client.request('pty.spawn', {
+        file: process.execPath,
+        args: ['-e', 'process.stdin.resume()'],
+        opts: { cols: 80, rows: 24, cwd: dir }
+      })) as { stream?: string }
+      assert.ok(spawned.stream)
+      client.close()
+      const next = new DaemonClient()
+      await next.connect({
+        host: '127.0.0.1',
+        port: server.port(),
+        secret: SECRET,
+        device: 'test-pty-rejoin'
+      })
+      const written = await next.request('pty.write', { stream: spawned.stream, data: 'x' })
+      assert.deepEqual(written, { ok: true })
+      await next.request('pty.kill', { stream: spawned.stream })
+      next.close()
+    } finally {
+      server.close()
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps a process after the spawning client disconnects', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vav-daemon-proc-'))
+    const { server, client } = await startPair(dir)
+    try {
+      const spawned = (await client.request('process.spawn', {
+        file: process.execPath,
+        args: ['-e', 'process.stdin.resume()'],
+        opts: { cwd: dir, stdio: ['pipe', 'pipe', 'pipe'] }
+      })) as { stream?: string }
+      assert.ok(spawned.stream)
+      client.close()
+      const next = new DaemonClient()
+      await next.connect({
+        host: '127.0.0.1',
+        port: server.port(),
+        secret: SECRET,
+        device: 'test-proc-rejoin'
+      })
+      const written = await next.request('process.write', {
+        stream: spawned.stream,
+        base64: Buffer.from('x').toString('base64')
+      })
+      assert.deepEqual(written, { ok: true })
+      const killed = await next.request('process.kill', { stream: spawned.stream })
+      assert.deepEqual(killed, { ok: true })
+      next.close()
+    } finally {
       server.close()
       await rm(dir, { recursive: true, force: true })
     }
@@ -373,6 +479,74 @@ describe('daemon loopback', () => {
       assert.deepEqual(listed.sessions, [])
       const recents = (await client.request('workspace.recents')) as { paths: unknown[] }
       assert.deepEqual(recents.paths, [])
+    } finally {
+      client.close()
+      server.close()
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('serves the control-plane log sink over logs.* RPCs', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vav-daemon-'))
+    const store = new LogStore({ dir: join(dir, 'logs'), now: () => 1_000, id: () => 'log-1' })
+    const logs: DaemonLogCatalog = {
+      query: (query) => store.query(query),
+      stats: () => store.stats(),
+      clear: (scope) => store.clear(scope),
+      exportText: (query) => store.exportText(query),
+      append: (input) => store.append(input),
+      subscribe: (fn) => store.subscribe(fn)
+    }
+    store.append({
+      channel: 'system',
+      event: LOG_EVENT.systemBoot,
+      message: 'vavd ready'
+    })
+    store.append({
+      channel: 'agent',
+      event: LOG_EVENT.agentTurnEnd,
+      message: 'Failed',
+      level: 'error'
+    })
+    const { server, client } = await startPair(dir, undefined, logs)
+    try {
+      const system = (await client.request('logs.query', { channel: 'system' })) as {
+        records: Array<{ event: string; message: string }>
+      }
+      assert.equal(system.records[0]?.event, LOG_EVENT.systemBoot)
+      assert.equal(system.records[0]?.message, 'vavd ready')
+      const agent = (await client.request('logs.query', { channel: 'agent' })) as {
+        records: Array<{ message: string }>
+      }
+      assert.equal(agent.records[0]?.message, 'Failed')
+      const stats = (await client.request('logs.stats')) as { durable: number; total: number }
+      assert.equal(stats.durable, 2)
+      const streamed = new Promise<string>((resolve) => {
+        void client.request('logs.subscribe').then((result) => {
+          const stream = (result as { stream: string }).stream
+          client.onStream(stream, (event, data) => {
+            if (event === 'append') resolve((data as { event: string }).event)
+          })
+          store.append({ channel: 'user', event: LOG_EVENT.userSend, message: 'Send' })
+        })
+      })
+      assert.equal(await streamed, LOG_EVENT.userSend)
+    } finally {
+      client.close()
+      server.close()
+      store.dispose()
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('returns empty logs when the host has no sink', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vav-daemon-'))
+    const { server, client } = await startPair(dir)
+    try {
+      const listed = (await client.request('logs.query')) as { records: unknown[] }
+      assert.deepEqual(listed.records, [])
+      const stats = (await client.request('logs.stats')) as { total: number }
+      assert.equal(stats.total, 0)
     } finally {
       client.close()
       server.close()
@@ -730,6 +904,332 @@ describe('daemon loopback', () => {
       }
       assert.equal(server.incoming().some((row) => row.state === 'revoked'), true)
       assert.equal(server.incoming().some((row) => row.state !== 'revoked'), false)
+    } finally {
+      client.close()
+      server.close()
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('serves git.status from the host working tree', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vav-daemon-git-'))
+    execFileSync('git', ['init', '-b', 'main'], { cwd: dir })
+    await writeFile(join(dir, 'hello.md'), 'from daemon git\n')
+    const { server, client } = await startPair(dir)
+    try {
+      const direct = await getGitSnapshot(dir)
+      const snap = (await client.request('git.status', { cwd: dir })) as {
+        isRepo?: boolean
+        branch?: string | null
+        changes?: Array<{ path?: string }>
+      }
+      assert.equal(snap.isRepo, direct.isRepo)
+      assert.equal(snap.branch, direct.branch)
+      assert.deepEqual(
+        (snap.changes ?? []).map((row) => row.path),
+        direct.changes.map((row) => row.path)
+      )
+      assert.equal(typeof snap.isRepo, 'boolean')
+    } finally {
+      client.close()
+      server.close()
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('serves fileSessions.open from the host catalog', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vav-daemon-filesess-'))
+    const host = createLocalWorkspaceHost({ name: 'loop' })
+    const server = new DaemonServer({
+      host,
+      identity: { machineId: 'loop-box', name: 'loop' },
+      secret: () => SECRET,
+      appVersion: 'test',
+      home: dir,
+      tmp: dir,
+      fileSessions: {
+        open: async (path) => ({
+          fileId: 'f1',
+          activeSessionId: 's1',
+          sessions: [{ id: 's1', title: 'New session', createdAt: 1, updatedAt: 1 }],
+          path
+        }),
+        create: async () => null,
+        setActive: () => null,
+        list: () => null,
+        listAll: () => [],
+        resolve: () => null,
+        rename: () => null,
+        delete: () => null,
+        forceDelete: () => ({ ok: true, removed: [] }),
+        setReadOnly: () => undefined
+      }
+    })
+    const client = new DaemonClient()
+    try {
+      const port = await server.listen(0, '127.0.0.1')
+      await client.connect({ host: '127.0.0.1', port, secret: SECRET, device: 'test' })
+      const opened = (await client.request('fileSessions.open', { path: join(dir, 'note.md') })) as {
+        fileId?: string
+        activeSessionId?: string
+      }
+      assert.equal(opened.fileId, 'f1')
+      assert.equal(opened.activeSessionId, 's1')
+    } finally {
+      client.close()
+      server.close()
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('serves accounts.getPage from the host catalog', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vav-daemon-accounts-'))
+    const host = createLocalWorkspaceHost({ name: 'loop' })
+    const server = new DaemonServer({
+      host,
+      identity: { machineId: 'loop-box', name: 'loop' },
+      secret: () => SECRET,
+      appVersion: 'test',
+      home: dir,
+      tmp: dir,
+      accounts: {
+        getPage: () => ({
+          workspaceKey: 'ws',
+          workspaceLabel: 'ws',
+          groups: [],
+          accounts: [{ id: 'a1', name: 'VAV', kind: 'vav_key' }],
+          usage: []
+        }),
+        createVav: async () => ({ accounts: [] }),
+        createDraft: () => ({ page: { accounts: [] }, id: 'd1' }),
+        updateVav: () => ({ accounts: [] }),
+        setCurrent: () => ({ accounts: [] }),
+        activate: async () => ({ page: { accounts: [] }, result: { kind: 'switched' } }),
+        remove: () => ({ accounts: [] }),
+        verify: async () => ({ ok: true, message: 'ok' }),
+        revealKey: () => 'sk-test',
+        beginOAuth: async () => ({ accounts: [] }),
+        cancelOAuth: () => ({ accounts: [] }),
+        signOut: async () => ({ accounts: [] })
+      }
+    })
+    const client = new DaemonClient()
+    try {
+      const port = await server.listen(0, '127.0.0.1')
+      await client.connect({ host: '127.0.0.1', port, secret: SECRET, device: 'test' })
+      const page = (await client.request('accounts.getPage')) as { accounts?: Array<{ id?: string }> }
+      assert.equal(page.accounts?.[0]?.id, 'a1')
+      const revealed = (await client.request('accounts.revealKey', { id: 'a1' })) as { key?: string }
+      assert.equal(revealed.key, 'sk-test')
+      const oauth = (await client.request('accounts.beginOAuth', { agentId: 'grok' })) as {
+        accounts?: unknown[]
+      }
+      assert.ok(Array.isArray(oauth.accounts))
+    } finally {
+      client.close()
+      server.close()
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('serves host.pairing from the listen offer', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vav-daemon-pairing-'))
+    const host = createLocalWorkspaceHost({ name: 'loop' })
+    let pairing = 'vavrtp://127.0.0.1:1'
+    const server = new DaemonServer({
+      host,
+      identity: { machineId: 'loop-box', name: 'loop' },
+      secret: () => SECRET,
+      appVersion: 'test',
+      home: dir,
+      tmp: dir,
+      pairing: () => pairing,
+      rotateOffer: () => {
+        pairing = 'vavrtp://127.0.0.1:1?rotated=1'
+        return pairing
+      }
+    })
+    const client = new DaemonClient()
+    try {
+      const port = await server.listen(0, '127.0.0.1')
+      await client.connect({ host: '127.0.0.1', port, secret: SECRET, device: 'test' })
+      const row = (await client.request('host.pairing')) as { pairing?: string }
+      assert.equal(row.pairing, 'vavrtp://127.0.0.1:1')
+      const rotated = (await client.request('host.rotateOffer')) as { pairing?: string }
+      assert.equal(rotated.pairing, 'vavrtp://127.0.0.1:1?rotated=1')
+      const after = (await client.request('host.pairing')) as { pairing?: string }
+      assert.equal(after.pairing, 'vavrtp://127.0.0.1:1?rotated=1')
+      const incoming = (await client.request('host.incoming')) as {
+        controllers?: Array<{ id?: string; online?: boolean }>
+      }
+      assert.ok(incoming.controllers?.some((row) => row.online === true))
+    } finally {
+      client.close()
+      server.close()
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('serves settings.get from the host catalog', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vav-daemon-settings-'))
+    const host = createLocalWorkspaceHost({ name: 'loop' })
+    const server = new DaemonServer({
+      host,
+      identity: { machineId: 'loop-box', name: 'loop' },
+      secret: () => SECRET,
+      appVersion: 'test',
+      home: dir,
+      tmp: dir,
+      settings: {
+        get: () => ({ defaultModel: 'hosted-model', apiKeyPresent: false }),
+        update: (patch) => patch,
+        reset: () => ({}),
+        setSecret: (_slot, value) => ({ hint: 'sk-…', apiKeyPresent: Boolean(value) }),
+        secretHint: () => 'sk-…',
+        revealSecret: () => 'sk-test'
+      }
+    })
+    const client = new DaemonClient()
+    try {
+      const port = await server.listen(0, '127.0.0.1')
+      await client.connect({ host: '127.0.0.1', port, secret: SECRET, device: 'test' })
+      const page = (await client.request('settings.get')) as { defaultModel?: string }
+      assert.equal(page.defaultModel, 'hosted-model')
+      const next = (await client.request('settings.update', { defaultModel: 'x' })) as {
+        defaultModel?: string
+      }
+      assert.equal(next.defaultModel, 'x')
+      const secret = (await client.request('settings.setSecret', { slot: 'api', value: 'sk-test' })) as {
+        apiKeyPresent?: boolean
+      }
+      assert.equal(secret.apiKeyPresent, true)
+    } finally {
+      client.close()
+      server.close()
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('serves changeSets.get from the host catalog', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vav-daemon-changesets-'))
+    const host = createLocalWorkspaceHost({ name: 'loop' })
+    const server = new DaemonServer({
+      host,
+      identity: { machineId: 'loop-box', name: 'loop' },
+      secret: () => SECRET,
+      appVersion: 'test',
+      home: dir,
+      tmp: dir,
+      changeSets: {
+        get: (id) => ({ id, conversationId: 'c1', files: [] }),
+        active: () => null,
+        seedReview: async (conversationId) => ({
+          set: { id: 'cs-seed', conversationId, files: [{ filePath: 'a.ts' }] },
+          user: null,
+          assistant: null
+        }),
+        accept: () => null,
+        reject: () => null,
+        acceptAll: () => null,
+        rejectAll: () => null,
+        undo: () => null,
+        applyEdit: () => null
+      }
+    })
+    const client = new DaemonClient()
+    try {
+      const port = await server.listen(0, '127.0.0.1')
+      await client.connect({ host: '127.0.0.1', port, secret: SECRET, device: 'test' })
+      const row = (await client.request('changeSets.get', { id: 'cs-1' })) as { id?: string }
+      assert.equal(row.id, 'cs-1')
+      const seeded = (await client.request('changeSets.seedReview', { conversationId: 'c1' })) as {
+        set?: { id?: string }
+      }
+      assert.equal(seeded.set?.id, 'cs-seed')
+    } finally {
+      client.close()
+      server.close()
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('serves plugins.list from the host catalog', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vav-daemon-plugins-'))
+    const host = createLocalWorkspaceHost({ name: 'loop' })
+    const server = new DaemonServer({
+      host,
+      identity: { machineId: 'loop-box', name: 'loop' },
+      secret: () => SECRET,
+      appVersion: 'test',
+      home: dir,
+      tmp: dir,
+      plugins: {
+        snapshot: (pluginHost) => ({ host: pluginHost || 'vav', root: dir, plugins: [] }),
+        setEnabled: () => ({ ok: false, error: 'unused' }),
+        create: () => ({ ok: false, error: 'unused' }),
+        writeConfig: () => ({ ok: false, error: 'unused' })
+      }
+    })
+    const client = new DaemonClient()
+    try {
+      const port = await server.listen(0, '127.0.0.1')
+      await client.connect({ host: '127.0.0.1', port, secret: SECRET, device: 'test' })
+      const snap = (await client.request('plugins.list', { host: 'vav' })) as {
+        host?: string
+        plugins?: unknown[]
+      }
+      assert.equal(snap.host, 'vav')
+      assert.ok(Array.isArray(snap.plugins))
+    } finally {
+      client.close()
+      server.close()
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('serves github.listPulls and timers.listJobs from the host', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vav-daemon-github-'))
+    const host = createLocalWorkspaceHost({ name: 'loop' })
+    const server = new DaemonServer({
+      host,
+      identity: { machineId: 'loop-box', name: 'loop' },
+      secret: () => SECRET,
+      appVersion: 'test',
+      home: dir,
+      tmp: dir,
+      timers: {
+        listJobs: () => [{ id: 'job-1', title: 'nightly' }],
+        createScheduled: () => ({ ok: false, error: 'unused' }),
+        getJobForConversation: () => null,
+        createJob: () => ({ ok: false, error: 'unused' }),
+        updateJob: () => null,
+        removeJob: () => false,
+        runNow: () => null,
+        listRuns: () => [],
+        listSessions: () => []
+      },
+      connectors: {
+        catalog: () => [{ id: 'github', name: 'GitHub' }],
+        probe: async () => [],
+        act: async () => ({ ok: false, error: 'unused' }),
+        authStatus: async () => ({ rows: [], login: { connector: null, status: 'idle' } }),
+        beginLogin: async () => ({ rows: [], login: { connector: null, status: 'error', message: 'unused' } }),
+        cancelLogin: async () => ({ rows: [], login: { connector: null, status: 'idle' } }),
+        cloudflareStatus: async () => ({ ok: false, error: 'unused' }),
+        supabaseStatus: async () => ({ ok: false, error: 'unused' }),
+        vercelStatus: async () => ({ ok: false, error: 'unused' })
+      }
+    })
+    const client = new DaemonClient()
+    try {
+      const port = await server.listen(0, '127.0.0.1')
+      await client.connect({ host: '127.0.0.1', port, secret: SECRET, device: 'test' })
+      const pulls = (await client.request('github.listPulls', { cwd: dir })) as { ok?: boolean }
+      assert.equal(typeof pulls.ok, 'boolean')
+      const jobs = (await client.request('timers.listJobs')) as Array<{ id?: string }>
+      assert.equal(jobs[0]?.id, 'job-1')
+      const connectors = (await client.request('connectors.catalog')) as Array<{ id?: string }>
+      assert.equal(connectors[0]?.id, 'github')
     } finally {
       client.close()
       server.close()

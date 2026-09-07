@@ -45,7 +45,7 @@ if (packed.status !== 0) process.exit(packed.status ?? 1)
 const version = packageVersion(root)
 const JSZip = require('jszip')
 const zip = new JSZip()
-const extDir = join(root, 'extension')
+const extDir = join(root, 'packages/vav-chrome-extension/extension')
 
 function addExtensionTree(abs, rel = '') {
   for (const name of readdirSync(abs)) {

@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { launchVav } from '../launch'
+import { launchWorkbench } from '../launch'
 
 /**
  * Shipped review is inline in the transcript (sessionStore change-review),
@@ -7,7 +7,7 @@ import { launchVav } from '../launch'
  * Accept All still resolves every pending file.
  */
 test('inline change review lists seeded files and accept-all resolves them', async () => {
-  const harness = await launchVav({ seedReview: true })
+  const harness = await launchWorkbench({ seedReview: true })
   try {
     const { page } = harness
     const review = page.locator('[data-testid="inline-review"]')

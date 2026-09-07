@@ -76,10 +76,11 @@ describe('presentHostCatalog', () => {
 })
 
 describe('catalogRowForModel', () => {
-  it('prefers an exact id then the family', () => {
+  it('prefers an exact id then a cleaned family row', () => {
     const list = presentHostCatalog(LIST_MODELS)
     assert.equal(catalogRowForModel(list, 'cursor-grok-4.6-medium')?.id, 'cursor-grok-4.6-medium')
-    assert.equal(catalogRowForModel(list, 'grok-4.6')?.id, 'cursor-grok-4.6-low')
+    assert.equal(catalogRowForModel(list, 'grok-4.6')?.id, 'grok-4.6')
+    assert.ok(!/Fast/i.test(catalogRowForModel(list, 'grok-4.6')?.label ?? ''))
   })
 })
 
@@ -128,6 +129,14 @@ describe('encodeCursorAcpModelId', () => {
     )
     assert.equal(encodeCursorAcpModelId('auto', ACP_AVAILABLE), 'default[]')
     assert.equal(encodeCursorAcpModelId('grok-4.6', []), null)
+    assert.equal(
+      encodeCursorAcpModelId('grok-4.6', [
+        ...ACP_AVAILABLE,
+        { id: 'grok-4.6[effort=high,fast=false]', name: 'grok-4.6' },
+        { id: 'grok-4.6[effort=low,fast=true]', name: 'grok-4.6' }
+      ], { thinkingLevel: 'low', fast: true }),
+      'grok-4.6[effort=low,fast=true]'
+    )
   })
 })
 

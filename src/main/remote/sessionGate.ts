@@ -79,7 +79,7 @@ export function remoteCatalogModelRows(opts: {
 }): { id: string; label: string }[] {
   const vendorId = opts.host == null ? vendorIdFromEndpoint(opts.apiEndpoint) : null
   const key = agentModelHostKey(opts.host, vendorId, opts.accountId)
-  const snap = opts.snapshot[key]
+  const snap = opts.snapshot[key] ?? (key !== 'vav' ? opts.snapshot.vav : undefined)
   const raw =
     snap?.models?.length
       ? snap.models
@@ -140,6 +140,7 @@ export function buildRemoteHostEvent(input: {
   thinking: string | null
   approval: 'auto' | 'bypass' | 'edit'
   recentDirs: { path: string; label: string }[]
+  hasKey?: boolean
 }): RemoteHostEvent {
   return {
     type: 'host',
@@ -148,6 +149,7 @@ export function buildRemoteHostEvent(input: {
     tmp: input.tmp,
     platform: input.platform,
     capabilities: REMOTE_PHONE_CAPABILITIES,
+    ...(input.hasKey != null ? { hasKey: input.hasKey } : {}),
     defaults: {
       agent: input.defaultAgent,
       model: input.defaultModel,

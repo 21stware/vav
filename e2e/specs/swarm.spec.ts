@@ -1,12 +1,12 @@
 import { test, expect } from '@playwright/test'
-import { launchVav, pressAccelerator } from '../launch'
+import { launchWorkbench, pressAccelerator } from '../launch'
 
 /**
  * Swarm mode: split VAV panes, focus by click / sidebar, close, CLI surface.
  * Does not spawn vendor CLI TUIs.
  */
 test('⌘D splits a Swarm thread into two panes and close restores one', async () => {
-  const harness = await launchVav({ swarmMode: true })
+  const harness = await launchWorkbench({ swarmMode: true })
   try {
     const { page } = harness
     await page.locator('[data-testid="app-shell"]').click()
@@ -36,7 +36,7 @@ test('⌘D splits a Swarm thread into two panes and close restores one', async (
 })
 
 test('sidebar click focuses the matching Swarm pane', async () => {
-  const harness = await launchVav({ swarmMode: true, extraSession: false })
+  const harness = await launchWorkbench({ swarmMode: true, extraSession: false })
   try {
     const { page } = harness
     await page.locator('[data-testid="app-shell"]').click()
@@ -62,7 +62,7 @@ test('sidebar click focuses the matching Swarm pane', async () => {
 })
 
 test('⌘⇧C / ⌘⇧V flip the Swarm CLI surface and back to VAV', async () => {
-  const harness = await launchVav({ swarmMode: true })
+  const harness = await launchWorkbench({ swarmMode: true })
   try {
     const { page } = harness
     await pressAccelerator(harness, 'Meta+Shift+c')
@@ -81,7 +81,7 @@ test('⌘⇧C / ⌘⇧V flip the Swarm CLI surface and back to VAV', async () =>
 })
 
 test('toolbar split buttons add Swarm panes', async () => {
-  const harness = await launchVav({ swarmMode: true })
+  const harness = await launchWorkbench({ swarmMode: true })
   try {
     const { page } = harness
     await page.locator('[data-testid="app-shell"]').click()
@@ -96,7 +96,7 @@ test('toolbar split buttons add Swarm panes', async () => {
 })
 
 test('⌘⇧D splits Swarm panes on the other axis', async () => {
-  const harness = await launchVav({ swarmMode: true })
+  const harness = await launchWorkbench({ swarmMode: true })
   try {
     const { page } = harness
     await page.locator('[data-testid="app-shell"]').click()

@@ -1,14 +1,32 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { parsePairing } from '../../../extension/lib/pairing.js'
+import { parsePairing } from '../../../packages/vav-chrome-extension/extension/lib/pairing.js'
 
 describe('Chrome extension pairing paste', () => {
   it('reads the desktop Connect vav-daemon URI onto the web bridge', () => {
     const parsed = parsePairing(
-      'vav-daemon://abcdefghijklmnopqrstuvwx@127.0.0.1:4750?name=VAV%20Daemon'
+      'vavrtp://abcdefghijklmnopqrstuvwx@127.0.0.1:4750?name=VAV%20Daemon'
     )
     assert.ok(parsed)
     assert.equal(parsed.secret, 'abcdefghijklmnopqrstuvwx')
+    assert.equal(parsed.host, '127.0.0.1')
+    assert.equal(parsed.origin, 'http://127.0.0.1:4752')
+    assert.equal(parsed.wsUrl, 'ws://127.0.0.1:4752/vav')
+  })
+
+  it('keeps a LAN daemon URI on that RFC1918 host', () => {
+    const parsed = parsePairing(
+      'vav-daemon://abcdefghijklmnopqrstuvwx@192.168.1.5:4750?name=Mac&addresses=192.168.1.5'
+    )
+    assert.ok(parsed)
+    assert.equal(parsed.host, '192.168.1.5')
+    assert.equal(parsed.origin, 'http://192.168.1.5:4752')
+    assert.equal(parsed.wsUrl, 'ws://192.168.1.5:4752/vav')
+  })
+
+  it('rewrites a WAN daemon URI onto loopback', () => {
+    const parsed = parsePairing('vavrtp://abcdefghijklmnopqrstuvwx@8.8.8.8:4750')
+    assert.ok(parsed)
     assert.equal(parsed.host, '127.0.0.1')
     assert.equal(parsed.origin, 'http://127.0.0.1:4752')
     assert.equal(parsed.wsUrl, 'ws://127.0.0.1:4752/vav')

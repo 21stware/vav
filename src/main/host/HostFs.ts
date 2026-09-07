@@ -3,8 +3,9 @@
  *
  * FileService, ACP `fs/*`, and the built-in agent's fs_* tools all go through
  * this surface so a later remote implementation can sit behind the same
- * interface. Reveal / Quick Look / Open With on a remote host spawn the
- * equivalent on that machine (see `hostShell`).
+ * interface. Reveal / Quick Look / Open With / Get Info on a remote host
+ * spawn the equivalent on that machine (see `hostShell`). Chrome and `vavc`
+ * call the same commands over `fs.reveal` / `fs.openPath` / `fs.getInfo`.
  */
 
 import { watch, type FSWatcher } from 'node:fs'

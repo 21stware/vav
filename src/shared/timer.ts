@@ -1,6 +1,8 @@
 /**
- * Timer jobs are a separate session kind. Each fire mints a timestamped
- * workspace and a conversation that never enters the main sidebar.
+ * Scheduled tasks. The user writes the prompt in the definition conversation
+ * (right panel) and sets the period there. Each fire mints a timestamped
+ * workspace and a run conversation under that schedule — never in the main
+ * project list. Jobs live in ~/.vavd so a running vavd can fire them.
  */
 import type { ConnectorId } from './connector.ts'
 
@@ -19,6 +21,8 @@ export interface TimerJob {
   prompt: string
   schedule: TimerSchedule
   enabled: boolean
+  /** Conversation where the user writes the task and sets the schedule. */
+  conversationId: string | null
   workdirPolicy: 'mint' | 'source'
   sourceWorkdir: string | null
   connectorIds: ConnectorId[]
@@ -46,6 +50,7 @@ export interface TimerJobInput {
   prompt: string
   schedule: TimerSchedule
   enabled?: boolean
+  conversationId?: string | null
   workdirPolicy?: 'mint' | 'source'
   sourceWorkdir?: string | null
   connectorIds?: ConnectorId[]

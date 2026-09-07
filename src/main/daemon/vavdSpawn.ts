@@ -8,7 +8,7 @@ import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { parseDaemonPairing } from '../../shared/daemonProtocol.ts'
+import { isDaemonPairingLine, parseDaemonPairing } from '../../shared/daemonProtocol.ts'
 
 export type SpawnedVavd = {
   pairing: string
@@ -37,9 +37,12 @@ export type SpawnLocalVavdOptions = {
 
 export function findVavdScript(from = process.cwd()): string | null {
   const candidates = [
-    join(from, 'src/main/daemon/vavd.ts'),
-    join(from, '..', 'src/main/daemon/vavd.ts'),
-    join(from, '../..', 'src/main/daemon/vavd.ts')
+    join(from, 'packages/vavd/src/vavd.ts'),
+    join(from, '..', 'packages/vavd/src/vavd.ts'),
+    join(from, '../..', 'packages/vavd/src/vavd.ts'),
+    join(from, 'packages/vavd/src/vavd.ts'),
+    join(from, '..', 'packages/vavd/src/vavd.ts'),
+    join(from, '../..', 'packages/vavd/src/vavd.ts')
   ]
   return candidates.find((path) => existsSync(path)) ?? null
 }
@@ -144,6 +147,9 @@ export async function spawnLocalVavd(
   const node = resolveNodeForVavd()
   const childEnv: NodeJS.ProcessEnv = {
     ...process.env,
+    ...(ephemeralState && !process.env.VAV_HOME && !options.extraEnv?.VAV_HOME
+      ? { VAV_HOME: join(stateDir, 'vav-home') }
+      : {}),
     ...(options.extraEnv ?? {}),
     ...(options.stubTurn || options.stubStream || options.stubApprove
       ? { VAV_E2E: '1', VAV_E2E_STUB_TURN: '1' }
@@ -214,7 +220,7 @@ function waitForPairing(
     child.stdout?.setEncoding('utf8')
     child.stdout?.on('data', (chunk: string) => {
       stdout += chunk
-      const line = stdout.split('\n').find((row) => row.startsWith('vav-daemon:'))
+      const line = stdout.split('\n').find((row) => isDaemonPairingLine(row))
       if (line) {
         clearTimeout(timer)
         resolve({ pairing: line.trim(), stdout })

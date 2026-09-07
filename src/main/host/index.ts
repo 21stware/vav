@@ -34,3 +34,9 @@ export {
   type HostRegistryListener,
   type WorkspaceHost
 } from './WorkspaceHost.ts'
+export {
+  conversationUsesLocalNode,
+  localShellHostOf,
+  waitForMountedLocalShell,
+  workspaceHostForConversation
+} from './localShellHost.ts'

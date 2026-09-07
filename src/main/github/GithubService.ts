@@ -158,6 +158,23 @@ async function ghAuthToken(host: string): Promise<string | null> {
 
 let cachedToken: { host: string; token: string | null; at: number } | null = null
 
+export function clearGithubTokenCache(): void {
+  cachedToken = null
+}
+
+export async function peekGithubAuth(): Promise<{
+  present: boolean
+  source: 'env' | 'cli' | null
+}> {
+  if (envToken()) return { present: true, source: 'env' }
+  if (cachedToken && cachedToken.host === 'github.com' && Date.now() - cachedToken.at < TOKEN_CACHE_MS) {
+    return { present: Boolean(cachedToken.token), source: cachedToken.token ? 'cli' : null }
+  }
+  const token = await ghAuthToken('github.com')
+  cachedToken = { host: 'github.com', token, at: Date.now() }
+  return { present: Boolean(token), source: token ? 'cli' : null }
+}
+
 async function resolveToken(host: string): Promise<string | null> {
   const fromEnv = envToken()
   if (fromEnv) return fromEnv

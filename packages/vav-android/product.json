@@ -1,0 +1,18 @@
+{
+  "name": "@21stware/vav-android",
+  "version": "1.19.1",
+  "role": "vav-android",
+  "kind": "native",
+  "sources": [
+    "packages/vav-android/VAVRemote/app/build.gradle.kts",
+    "packages/vav-android/VAVRemote/app/src/main/AndroidManifest.xml",
+    "packages/vav-android/VAVRemote/app/src/main/java/com/vav/remote/RemoteClient.kt",
+    "packages/vav-android/VAVRemote/app/src/main/java/com/vav/remote/ui/SessionDetailScreen.kt"
+  ],
+  "talksTo": [
+    "vavd"
+  ],
+  "hello": [
+    "phone"
+  ]
+}

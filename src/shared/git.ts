@@ -55,3 +55,26 @@ export interface GitSnapshot {
 }
 
 export type GitResult<T> = { ok: true; data: T } | { ok: false; error: string }
+
+export function emptyGitSnapshot(cwd = ''): GitSnapshot {
+  return {
+    cwd,
+    isRepo: false,
+    toplevel: null,
+    projectName: '',
+    branch: null,
+    detached: false,
+    headShort: null,
+    worktreeLabel: '',
+    isAdditionalWorktree: false,
+    worktrees: [],
+    branches: [],
+    changes: []
+  }
+}
+
+export function isGitSnapshot(value: unknown): value is GitSnapshot {
+  if (!value || typeof value !== 'object') return false
+  const snap = value as Partial<GitSnapshot>
+  return typeof snap.isRepo === 'boolean' && Array.isArray(snap.changes)
+}

@@ -25,7 +25,8 @@ export function decorateHosts(
       tmp,
       defaultPath,
       providers,
-      controlPlane: remote.controlPlaneOf?.(host.id)
+      controlPlane: remote.controlPlaneOf?.(host.id),
+      localShell: host.localShell
     }
   })
 }

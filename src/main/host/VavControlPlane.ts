@@ -9,23 +9,30 @@
 import { randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs'
 import { homedir, hostname, tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
+import { createAccountsCatalog } from '../accounts/daemonCatalog.ts'
 import { resolveVavCredentials } from '../accounts/vavCredentials.ts'
 import { AgentRuntime } from '../agent/AgentRuntime.ts'
 import { SkillService } from '../agent/SkillService.ts'
+import { pluginHostKind } from '../../shared/plugins.ts'
 import { PluginService } from '../plugins/PluginService.ts'
 import { pluginAccessPaths } from '../plugins/pluginPaths.ts'
 import { ChangeSetStore } from '../agent/ChangeSetStore.ts'
+import { seedChangeReviewTurn } from '../agent/seedChangeReview.ts'
 import { FileService } from '../fs/FileService.ts'
 import { currentLocale, t } from '../i18n.ts'
 import { RemoteControlHub } from '../remote/RemoteControlHub.ts'
+import type { RemoteCompaction, RemoteReviewSet } from '../../shared/remoteControl.ts'
 import { fanRemoteTurn } from '../remote/fanTurn.ts'
 import { RemoteSendQueue } from '../remote/sendQueue.ts'
 import {
   buildRemoteHostEvent,
+  cursorCatalogueDefaultThinking,
   remoteCatalogModelRows,
+  remoteControlAgentRows,
   remoteDefaultApproval,
   remoteHostRecentDirs,
+  remoteHostSwitchAction,
   remoteLiveConversation,
   remoteSendDisposition
 } from '../remote/sessionGate.ts'
@@ -46,12 +53,42 @@ import {
   buildRemoteControls
 } from '@shared/remoteSessionControls.ts'
 import { parseThinkingLevel } from '@shared/thinkingLevel.ts'
-import { VAV_DEFAULT_MODEL_ID, type Conversation, type TurnEvent } from '@shared/types'
+import {
+  isStructuredCliHost,
+  VAV_DEFAULT_MODEL_ID,
+  type ChatMessage,
+  type CliHostKind,
+  type Conversation,
+  type TurnEvent
+} from '@shared/types'
 import { remoteBrowseRoots, remoteIsTemporary, remoteParentPath, remotePathAllowed } from '@shared/remoteWorkspace.ts'
 import { listRemoteChildEntries, listRemoteRootEntries } from '../remote/dirBrowse.ts'
-import type { DaemonWorkspaceCatalog } from '../daemon/DaemonServer.ts'
+import { getModelCatalogSnapshot, listHostModels, seedModelCatalog } from '../agent/listHostModels.ts'
+import type {
+  DaemonAccountsCatalog,
+  DaemonSettingsCatalog,
+  DaemonChangeSetCatalog,
+  DaemonConnectorCatalog,
+  DaemonFileSessionCatalog,
+  DaemonLogCatalog,
+  DaemonPluginCatalog,
+  DaemonTimerCatalog,
+  DaemonWorkspaceCatalog
+} from '../daemon/DaemonServer.ts'
+import {
+  createChangeSetCatalog,
+  createConnectorCatalog,
+  createFileSessionCatalog,
+  createTimerCatalog
+} from '../daemon/shellCatalogs.ts'
+import { FileSessionStore } from '../store/FileSessionStore.ts'
+import { conversationToMeta } from '../store/conversationMeta.ts'
 import type { WorkspaceHost } from './WorkspaceHost.ts'
+import { locateTempWorkspaceToDir } from '../fs/locateTempWorkspace.ts'
+import { patchAcpConfigOption, patchAcpSessionMode } from '@shared/acpSession.ts'
+import { planSessionGoal } from '../agent/sessionGoal.ts'
 import { createConnectorRegistry } from '../connectors/registry.ts'
+import { createSettingsCatalog, vavAccountKeyPresent } from '../daemon/settingsCatalog.ts'
 import { TimerStore } from '../store/TimerStore.ts'
 import { TimerScheduler } from '../timer/TimerScheduler.ts'
 import { HostRegistry } from './WorkspaceHost.ts'
@@ -82,7 +119,16 @@ export type VavControlPlane = {
   secrets: NodeSecretStore
   files: FileService
   catalog: DaemonWorkspaceCatalog
+  logs: DaemonLogCatalog
+  plugins: DaemonPluginCatalog
   timers: TimerStore
+  timerCatalog: DaemonTimerCatalog
+  connectorCatalog: DaemonConnectorCatalog
+  fileSessionCatalog: DaemonFileSessionCatalog
+  changeSetCatalog: DaemonChangeSetCatalog
+  accountsCatalog: DaemonAccountsCatalog
+  settingsCatalog: DaemonSettingsCatalog
+  hasApiKey(): boolean
   load(): void
   dispose(): void
 }
@@ -107,6 +153,7 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
   const secrets = new NodeSecretStore(opts.stateDir)
   const accounts = new AccountStore(opts.stateDir)
   const conversations = new ConversationStore(opts.stateDir)
+  const fileSessions = new FileSessionStore(opts.stateDir)
   const logStore = new LogStore({
     dir: join(opts.stateDir, 'logs'),
     durableDays: () => settings.get().logRetentionDays
@@ -142,6 +189,10 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
     if (event.type === 'end') remoteSessionStatus.set(event.conversationId, 'done')
     logTurnEvent(event, conversations.get(event.conversationId), logger)
     fanRemoteTurn(event, hub, currentLocale())
+    if (event.type === 'cli-session') {
+      const next = listControls(event.conversationId)
+      if (next) hub.pushControls(next)
+    }
     if (event.type === 'end') {
       timerScheduler?.onTurnEnd(event.conversationId, false)
       flushSends()
@@ -154,6 +205,8 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
       accounts,
       secrets.asSecretStore()
     )
+
+  const hasApiKey = (): boolean => Boolean(resolveCreds().apiKey)
 
   const pluginService = new PluginService(home)
   const skillService = new SkillService()
@@ -177,8 +230,68 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
     skills: skillService,
     plugins: pluginService,
     connectors: connectorRegistry,
+    fileSessions,
     emit: handleAgentEvent
   })
+
+  type CliRuntime = {
+    owns(id: string): boolean
+    isRunning(id: string): boolean
+    run(
+      id: string,
+      text: string,
+      attachments: string[],
+      a: null,
+      b: null,
+      c: null
+    ): Promise<void>
+    cancel(id: string): void
+    answer(id: string, toolCallId: string, answer: string): boolean
+    dispose(id: string): void
+    disposeAll(): void
+    applyModel(id: string, model: string): void
+    applyThinkingLevel(id: string): void
+    applyFast(id: string): void
+    applySessionMode(id: string, modeId: string): void
+    applySessionConfig(id: string, configId: string, value: string | boolean): void
+    setWorkingDirectory(id: string, cwd: string, previous?: string | null): void
+    regenerate(id: string, messageId: string): Promise<void>
+    editUserMessage(id: string, messageId: string, text: string): Promise<void>
+    invalidateResume(id: string): void
+    applySessionGoal(
+      id: string,
+      action: 'set' | 'pause' | 'resume' | 'clear',
+      objective?: string
+    ):
+      | { ok: true; via: 'rpc' }
+      | { ok: true; via: 'slash'; text: string }
+      | { ok: false; error: string }
+  }
+  let cli: CliRuntime | null = null
+  let cliLoad: Promise<CliRuntime | null> | null = null
+  const loadCli = (): Promise<CliRuntime | null> => {
+    if (cli) return Promise.resolve(cli)
+    if (!cliLoad) {
+      cliLoad = import('../agent/CliAgentHost.ts')
+        .then(({ CliAgentHost }) => {
+          cli = new CliAgentHost({
+            conversations,
+            settings,
+            changeSets,
+            files,
+            hosts,
+            emit: handleAgentEvent,
+            publish: () => hub.schedulePushSessions()
+          })
+          return cli
+        })
+        .catch((err) => {
+          console.warn('[vavd] CliAgentHost unavailable', err)
+          return null
+        })
+    }
+    return cliLoad
+  }
 
   timerScheduler = new TimerScheduler({
     store: timerStore,
@@ -188,7 +301,8 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
     runTurn: (id, text) => {
       void agent.run(id, text, [], null, null, null)
     },
-    isRunning: (id) => agent.isRunning(id)
+    isRunning: (id) => agent.isRunning(id),
+    reload: () => timerStore.load()
   })
 
   function listSessions(): RemoteSession[] {
@@ -200,13 +314,27 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
         tmpdir: tmp,
         dirLabel,
         statusOf: (id, resultUnseen) => remoteSessionStatus.get(id) ?? (resultUnseen ? 'done' : 'idle'),
-        surfaceOf: () => 'vav',
+        surfaceOf: (id) => (isStructuredCliHost(conversations.get(id)?.cliHost) ? 'cli' : 'vav'),
         favoriteOf: (id) => favorites.has(id)
       }
     )
   }
 
-  function createSession(): RemoteSession {
+  function createSession(conversationId?: string): RemoteSession {
+    const requested = conversationId?.trim()
+    if (requested) {
+      const existing = conversations.get(requested)
+      if (existing && !existing.archived) {
+        return (
+          listSessions().find((session) => session.id === existing.id) ??
+          fallbackRemoteSession(existing, {
+            fallbackTitle: t('window.sessionFallback'),
+            dirLabel: dirLabel(existing.workingDirectory),
+            surface: isStructuredCliHost(existing.cliHost) ? 'cli' : 'vav'
+          })
+        )
+      }
+    }
     const snap = settings.get()
     const configured = snap.defaultWorkingDirectory?.trim()
     const workdir = configured || mintTempWorkdir(tmp)
@@ -214,7 +342,8 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
     const conversation = conversations.create(workdir, snap.defaultModel || VAV_DEFAULT_MODEL_ID, {
       approvalMode: snap.defaultApprovalMode ?? 'auto',
       thinkingLevel: parseThinkingLevel(snap.defaultThinkingLevel),
-      machineId: LOCAL_MACHINE_ID
+      machineId: LOCAL_MACHINE_ID,
+      ...(requested ? { id: requested } : {})
     })
     files.watchRoot(conversation.id, workdir)
     hub.schedulePushSessions()
@@ -240,25 +369,31 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
     const conversation = conversations.get(conversationId)
     if (!conversation || conversation.archived) return null
     const snap = settings.get()
+    const host = (conversation.cliHost ?? null) as CliHostKind | null
     const models = remoteCatalogModelRows({
-      host: null,
+      host,
       accountId: conversation.accountId,
       apiEndpoint: snap.apiEndpoint,
       customModels: snap.customModels,
       defaultModel: snap.defaultModel,
       disabledAgentModels: snap.disabledAgentModels,
-      snapshot: {}
+      snapshot: getModelCatalogSnapshot()
     })
     return buildRemoteControls({
       conversationId,
-      cliHost: null,
+      cliHost: host,
       model: conversation.model,
       thinkingLevel: conversation.thinkingLevel,
       approvalMode: conversation.approvalMode,
       acpSession: conversation.acpSession,
       hasMessages: conversation.messages.length > 0,
-      agents: [{ id: 'vav', label: 'VAV' }],
+      agents: remoteControlAgentRows(snap.cliAgents),
       models,
+      catalogueDefaultThinking: cursorCatalogueDefaultThinking(
+        getModelCatalogSnapshot(),
+        conversation.model,
+        host
+      ),
       workingDirectory: conversation.workingDirectory,
       dirLabel: dirLabel(conversation.workingDirectory),
       temporary: remoteIsTemporary(conversation.workingDirectory, tmp),
@@ -281,6 +416,7 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
       defaultModel: snap.defaultModel ?? '',
       thinking: parseThinkingLevel(snap.defaultThinkingLevel),
       approval: remoteDefaultApproval(snap.defaultApprovalMode),
+      hasKey: hasApiKey(),
       recentDirs: remoteHostRecentDirs(snap.pinnedWorkspaceDirectories ?? [], localRecents, {
         exists: existsSync,
         label: dirLabel,
@@ -297,13 +433,24 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
     if (message.agent !== undefined) {
       const parsed = parseAgentId(message.agent)
       if (!parsed) return 'not-found' as const
-      if (parsed !== 'vav') return 'locked' as const
+      const nextHost = parsed === 'vav' ? null : parsed
+      const prevHost = conversation.cliHost ?? null
+      const action = remoteHostSwitchAction(prevHost, nextHost, conversation.messages.length > 0)
+      if (action === 'locked') return 'locked' as const
+      if (action === 'switch') {
+        agent.disposeConversation(id)
+        cli?.dispose(id)
+        changeSets.clearConversation(id)
+        conversations.switchHostTranscript(id, nextHost)
+      }
     }
     if (message.model !== undefined) {
       conversations.updateMeta(id, { model: message.model })
+      if (cli?.owns(id)) cli.applyModel(id, message.model)
     }
     if (message.thinkingLevel !== undefined) {
       conversations.setThinkingLevel(id, parseThinkingLevel(message.thinkingLevel))
+      if (cli?.owns(id)) cli.applyThinkingLevel(id)
     }
     if (message.approvalMode !== undefined) {
       const mode = parseApprovalMode(message.approvalMode)
@@ -311,7 +458,40 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
     }
     if (message.fast !== undefined) {
       conversations.setFast(id, message.fast === true)
+      if (cli?.owns(id)) cli.applyFast(id)
     }
+    if (message.mode !== undefined && message.mode.trim()) {
+      const modeId = message.mode.trim()
+      const applyMode = (host: CliRuntime | null): void => {
+        if (host) {
+          const latest = conversations.get(id)
+          const config = latest?.acpSession?.configOptions?.find((option) => option.category === 'mode')
+          if (config) host.applySessionConfig(id, config.id, modeId)
+          else host.applySessionMode(id, modeId)
+          return
+        }
+        const latest = conversations.get(id)
+        if (!latest) return
+        const config = latest.acpSession?.configOptions?.find((option) => option.category === 'mode')
+        const next = config
+          ? patchAcpConfigOption(latest.acpSession, config.id, modeId)
+          : patchAcpSessionMode(latest.acpSession, modeId)
+        if (next) conversations.updateMeta(id, { acpSession: next })
+      }
+      if (cli) applyMode(cli)
+      else {
+        applyMode(null)
+        void loadCli().then(applyMode)
+      }
+    }
+    const latest = conversations.get(id)
+    const host = (latest?.cliHost ?? null) as CliHostKind | null
+    void listHostModels(host, settings, { endpoint: resolveCreds(latest).endpoint })
+      .then(() => {
+        const next = listControls(id)
+        if (next) hub.pushControls(next)
+      })
+      .catch(() => undefined)
     const controls = listControls(id)
     if (controls) hub.pushControls(controls)
     hub.schedulePushSessions()
@@ -319,10 +499,38 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
   }
 
   function busy(conversationId: string): boolean {
+    if (isStructuredCliHost(conversations.get(conversationId)?.cliHost)) {
+      return cli?.isRunning(conversationId) === true
+    }
     return agent.isRunning(conversationId)
   }
 
   function startTurn(conversationId: string, text: string, attachments: string[]): void {
+    if (isStructuredCliHost(conversations.get(conversationId)?.cliHost)) {
+      void loadCli().then((host) => {
+        if (!host) {
+          handleAgentEvent({
+            type: 'end',
+            conversationId,
+            message: {
+              id: `cli-missing-${conversationId}`,
+              parentId: null,
+              role: 'assistant',
+              content: 'CLI agent host is unavailable in this vavd.',
+              blocks: [{ kind: 'text', text: 'CLI agent host is unavailable in this vavd.' }],
+              createdAt: Date.now(),
+              errorText: 'CLI agent host is unavailable in this vavd.'
+            },
+            tokensUsed: 0,
+            error: 'CLI agent host is unavailable in this vavd.',
+            errorKind: 'generic'
+          })
+          return
+        }
+        void host.run(conversationId, text, attachments, null, null, null)
+      })
+      return
+    }
     void agent.run(conversationId, text, attachments, null, null, null)
   }
 
@@ -383,13 +591,15 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
     const gate = remoteLiveConversation(conversation)
     if (gate !== 'ok') return gate
     pendingSends.clear(conversationId)
-    agent.cancel(conversationId)
+    if (isStructuredCliHost(conversation.cliHost)) cli?.cancel(conversationId)
+    else agent.cancel(conversationId)
     logUserCancel(conversationId)
     return 'ok' as const
   }
 
   function reply(conversationId: string, toolCallId: string, answer: string): boolean {
     logUserAnswer(conversationId, toolCallId, answer.length)
+    if (cli?.owns(conversationId) && cli.answer(conversationId, toolCallId, answer)) return true
     return agent.answer(conversationId, toolCallId, answer)
   }
 
@@ -452,7 +662,11 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
     })
   }
 
-  function browse(conversationId: string, path?: string): RemoteDirsEvent | 'not-found' | 'forbidden' {
+  function browse(
+    conversationId: string,
+    path?: string,
+    files?: boolean
+  ): RemoteDirsEvent | 'not-found' | 'forbidden' {
     const roots = rootsFor(conversationId)
     if (!roots) return 'not-found'
     if (!path) {
@@ -466,7 +680,8 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
     }
     const entries = listRemoteChildEntries(path, roots, {
       readdir: (dir) => readdirSync(dir, { withFileTypes: true }),
-      join
+      join,
+      includeFiles: files === true
     })
     if (entries === 'forbidden') return 'forbidden'
     return {
@@ -487,13 +702,194 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
       const roots = rootsFor(conversationId)
       if (!roots || !remotePathAllowed(path, roots) || !existsSync(path)) return 'forbidden'
     }
+    const previous = conversation.workingDirectory
     conversations.updateMeta(conversationId, { workingDirectory: next })
     agent.setWorkingDirectory(conversationId, next)
+    if (cli?.owns(conversationId)) cli.setWorkingDirectory(conversationId, next, previous)
     files.watchRoot(conversationId, next)
     if (next) settings.rememberWorkspaceDirectory(next, tmp)
     const controls = listControls(conversationId)
     if (controls) hub.pushControls(controls)
     hub.schedulePushSessions()
+    return 'ok' as const
+  }
+
+  async function compact(
+    conversationId: string,
+    keepAfterMessageId?: string
+  ): Promise<{ ok: true; compaction: RemoteCompaction } | { ok: false; error: string }> {
+    const conversation = conversations.get(conversationId)
+    const gate = remoteLiveConversation(conversation)
+    if (gate !== 'ok') return { ok: false, error: gate }
+    if (cli?.owns(conversationId)) return { ok: false, error: t('compact.error.cliHost') }
+    const result = await agent.compact(conversationId, { keepAfterMessageId })
+    if (result.ok) hub.schedulePushSessions()
+    return result
+  }
+
+  function clearCompaction(conversationId: string, leafId: string) {
+    const conversation = conversations.get(conversationId)
+    const gate = remoteLiveConversation(conversation)
+    if (gate !== 'ok') return { ok: false as const, error: gate }
+    if (cli?.owns(conversationId)) return { ok: false as const, error: t('compact.error.cliHost') }
+    const result = agent.clearCompaction(conversationId, leafId)
+    if (result.ok) hub.schedulePushSessions()
+    return result
+  }
+
+  function regenerate(conversationId: string, messageId: string) {
+    const conversation = conversations.get(conversationId)
+    const gate = remoteLiveConversation(conversation)
+    if (gate !== 'ok') return gate
+    if (cli?.owns(conversationId)) void cli.regenerate(conversationId, messageId)
+    else void agent.regenerate(conversationId, messageId)
+    return 'ok' as const
+  }
+
+  function edit(conversationId: string, messageId: string, text: string) {
+    const conversation = conversations.get(conversationId)
+    const gate = remoteLiveConversation(conversation)
+    if (gate !== 'ok') return gate
+    if (cli?.owns(conversationId)) void cli.editUserMessage(conversationId, messageId, text)
+    else void agent.editUserMessage(conversationId, messageId, text)
+    return 'ok' as const
+  }
+
+  function fork(conversationId: string, messageId: string) {
+    const conversation = conversations.get(conversationId)
+    const gate = remoteLiveConversation(conversation)
+    if (gate !== 'ok') return gate
+    return agent.fork(conversationId, messageId) ? ('ok' as const) : ('not-found' as const)
+  }
+
+  function deleteMessage(conversationId: string, messageId: string) {
+    const conversation = conversations.get(conversationId)
+    const gate = remoteLiveConversation(conversation)
+    if (gate !== 'ok') return gate
+    const next = conversations.deleteMessage(conversationId, messageId)
+    if (!next) return 'not-found' as const
+    if (isStructuredCliHost(next.cliHost)) cli?.invalidateResume(conversationId)
+    hub.schedulePushSessions()
+    return 'ok' as const
+  }
+
+  function sessionOf(id: string): RemoteSession | null {
+    return (
+      listSessions().find((session) => session.id === id) ??
+      (conversations.get(id)
+        ? fallbackRemoteSession(conversations.get(id)!, {
+            fallbackTitle: t('window.sessionFallback'),
+            dirLabel: dirLabel(conversations.get(id)!.workingDirectory),
+            surface: isStructuredCliHost(conversations.get(id)!.cliHost) ? 'cli' : 'vav'
+          })
+        : null)
+    )
+  }
+
+  function duplicate(conversationId: string) {
+    const conversation = conversations.get(conversationId)
+    const gate = remoteLiveConversation(conversation)
+    if (gate !== 'ok') return null
+    const next = conversations.duplicate(conversationId)
+    if (!next) return null
+    hub.schedulePushSessions()
+    return sessionOf(next.id)
+  }
+
+  function continueInNew(conversationId: string, messageId: string) {
+    const conversation = conversations.get(conversationId)
+    const gate = remoteLiveConversation(conversation)
+    if (gate !== 'ok') return null
+    const next = conversations.branchToNewConversation(conversationId, messageId)
+    if (!next) return null
+    hub.schedulePushSessions()
+    return sessionOf(next.id)
+  }
+
+  function applyGoal(
+    conversationId: string,
+    action: 'set' | 'pause' | 'resume' | 'clear',
+    objective?: string
+  ) {
+    const conversation = conversations.get(conversationId)
+    if (!conversation) return { ok: false as const, error: 'no such conversation' }
+    if (cli?.applySessionGoal) return cli.applySessionGoal(conversationId, action, objective)
+    return planSessionGoal({
+      capability: conversation.acpSession?.goalCapability,
+      action,
+      objective,
+      connected: agent.isRunning(conversationId)
+    })
+  }
+
+  function toPhoneReview(set: ReturnType<ChangeSetStore['get']>): RemoteReviewSet | null {
+    if (!set) return null
+    return {
+      id: set.id,
+      status: set.status,
+      files: set.files.map((file) => ({
+        name: basename(file.filePath),
+        status: file.status
+      }))
+    }
+  }
+
+  async function review(
+    conversationId: string,
+    action: 'active' | 'get' | 'accept-all' | 'reject-all',
+    setId?: string
+  ): Promise<{ ok: true; set: RemoteReviewSet | null } | { ok: false; error: string }> {
+    const conversation = conversations.get(conversationId)
+    if (!conversation || conversation.archived) return { ok: false, error: 'not-found' }
+    if (action === 'active') return { ok: true, set: toPhoneReview(changeSets.activeFor(conversationId)) }
+    if (action === 'get') {
+      if (!setId) return { ok: false, error: 'setId required' }
+      return { ok: true, set: toPhoneReview(changeSets.get(setId)) }
+    }
+    if (!setId) return { ok: false, error: 'setId required' }
+    const set = action === 'accept-all' ? await changeSets.acceptAll(setId) : await changeSets.rejectAll(setId)
+    if (!set) return { ok: false, error: 'not-found' }
+    return { ok: true, set: toPhoneReview(set) }
+  }
+
+  async function locateWorkspace(conversationId: string, destinationDir: string) {
+    const conversation = conversations.get(conversationId)
+    const gate = remoteLiveConversation(conversation)
+    if (gate !== 'ok' || !conversation) return { ok: false as const, error: gate === 'ok' ? 'not-found' : gate }
+    if (!conversation.workingDirectory) return { ok: false as const, error: 'no workspace' }
+    const dest = destinationDir.trim()
+    if (!dest) return { ok: false as const, error: 'destination required' }
+    try {
+      const located = await locateTempWorkspaceToDir({
+        workdir: conversation.workingDirectory,
+        destinationDir: dest,
+        platform: process.platform,
+        fs: opts.host.fs,
+        crossDeviceCopy: true
+      })
+      if (!located.ok) {
+        return {
+          ok: false as const,
+          error: located.error === 'exists' ? 'destination exists' : 'not a temporary workspace'
+        }
+      }
+      const result = setWorkspace(conversationId, located.nextWorkdir)
+      if (result !== 'ok') return { ok: false as const, error: result }
+      return { ok: true as const, workdir: located.nextWorkdir }
+    } catch (err) {
+      return { ok: false as const, error: err instanceof Error ? err.message : String(err) }
+    }
+  }
+
+  function setLeaf(conversationId: string, messageId: string, follow?: boolean) {
+    const conversation = conversations.get(conversationId)
+    const gate = remoteLiveConversation(conversation)
+    if (gate !== 'ok') return gate
+    if (follow) {
+      if (!conversations.selectBranch(conversationId, messageId)) return 'not-found' as const
+    } else {
+      conversations.setActiveLeaf(conversationId, messageId)
+    }
     return 'ok' as const
   }
 
@@ -515,6 +911,18 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
     favorite,
     browse,
     setWorkspace,
+    compact,
+    clearCompaction,
+    regenerate,
+    edit,
+    fork,
+    deleteMessage,
+    setLeaf,
+    duplicate,
+    continueInNew,
+    applyGoal,
+    locateWorkspace,
+    review,
     secret: opts.secret,
     acceptAuth: opts.extraAuth
   })
@@ -528,6 +936,125 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
       )
   }
 
+  const logs: DaemonLogCatalog = {
+    query: (query) => logStore.query(query),
+    stats: () => logStore.stats(),
+    clear: (scope) => logStore.clear(scope),
+    exportText: (query) => logStore.exportText(query),
+    append: (input) => logStore.append(input),
+    subscribe: (fn) => logStore.subscribe(fn)
+  }
+
+  const plugins: DaemonPluginCatalog = {
+    snapshot: (host) => pluginService.snapshot(host),
+    setEnabled: (host, pluginId, enabled) =>
+      pluginService.setEnabled(pluginHostKind(host), pluginId, enabled),
+    create: (kind, name) => {
+      if (kind !== 'skill' && kind !== 'mcp' && kind !== 'hook' && kind !== 'plugin') {
+        return { ok: false, error: 'Unknown plugin kind' }
+      }
+      return pluginService.create(kind, name)
+    },
+    writeConfig: (path, content) => pluginService.writeConfig(path, content)
+  }
+
+  const timerCatalog = createTimerCatalog({
+    store: timerStore,
+    scheduler: () => timerScheduler,
+    conversations,
+    createScheduled: () => {
+      const snap = settings.get()
+      const workdir = mintTempWorkdir(tmp)
+      const conversation = conversations.create(workdir, snap.defaultModel || VAV_DEFAULT_MODEL_ID, {
+        sessionKind: 'timer',
+        title: t('timer.untitled'),
+        approvalMode: snap.defaultApprovalMode ?? 'auto',
+        thinkingLevel: parseThinkingLevel(snap.defaultThinkingLevel),
+        machineId: LOCAL_MACHINE_ID
+      })
+      const job = timerStore.createJob({
+        title: conversation.title,
+        prompt: '',
+        schedule: { kind: 'cron', expr: '0 9 * * *' },
+        enabled: false,
+        conversationId: conversation.id,
+        workdirPolicy: 'source',
+        sourceWorkdir: conversation.workingDirectory
+      })
+      conversations.updateMeta(conversation.id, { timerJobId: job.id, sessionKind: 'timer' })
+      hub.schedulePushSessions()
+      return { job, conversation: conversationToMeta(conversations.get(conversation.id) ?? conversation) }
+    }
+  })
+
+  const fileSessionCatalog = createFileSessionCatalog({
+    store: fileSessions,
+    conversations,
+    settings
+  })
+  const settingsCatalog = createSettingsCatalog(settings, secrets, {
+    hasVavKey: () => vavAccountKeyPresent(accounts, secrets)
+  })
+  const accountsCatalog = createAccountsCatalog({
+    accounts,
+    secrets: secrets.asSecretStore(),
+    settings,
+    conversations
+  })
+  async function seedReviewOnHost(conversationId: string): Promise<{
+    set: ReturnType<ChangeSetStore['get']>
+    user: ChatMessage | null
+    assistant: ChatMessage | null
+  } | null> {
+    const conversation = conversations.get(conversationId)
+    if (!conversation || conversation.archived) return null
+    const existing = changeSets.activeFor(conversationId)
+    if (existing) {
+      const assistant = conversation.messages.find((row) => row.changeSetId === existing.id) ?? null
+      const user = assistant
+        ? (conversation.messages.find((row) => row.id === assistant.parentId) ?? null)
+        : null
+      return { set: existing, user, assistant }
+    }
+    let captured: { user: ChatMessage; assistant: ChatMessage } | null = null
+    const seeded = await seedChangeReviewTurn({
+      conversationId,
+      workdir: conversation.workingDirectory || tmp,
+      model: conversation.model || 'test',
+      changeSets,
+      appendMessages: (user, assistant) => {
+        conversations.appendMessage(conversationId, user)
+        conversations.appendMessage(conversationId, assistant)
+        conversations.flush()
+        captured = { user, assistant }
+      }
+    })
+    if (!seeded) return null
+    hub.finishTurn(conversationId, 'done')
+    return {
+      set: changeSets.get(seeded.setId),
+      user: captured?.user ?? null,
+      assistant: captured?.assistant ?? null
+    }
+  }
+
+  const changeSetCatalog = createChangeSetCatalog(changeSets, seedReviewOnHost)
+
+  const connectorCatalog = createConnectorCatalog({
+    registry: connectorRegistry,
+    creds: () => ({
+      cloudflare: {
+        token: secrets.get('cloudflare') ?? null,
+        accountId: settings.get().cloudflareAccountId || null
+      },
+      supabase: {
+        token: secrets.get('supabase') ?? null,
+        projectRef: settings.get().supabaseProjectRef || null
+      },
+      vercel: { token: secrets.get('vercel') ?? null }
+    })
+  })
+
   return {
     hub,
     agent,
@@ -536,7 +1063,16 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
     secrets,
     files,
     catalog,
+    logs,
+    plugins,
     timers: timerStore,
+    timerCatalog,
+    connectorCatalog,
+    fileSessionCatalog,
+    changeSetCatalog,
+    accountsCatalog,
+    settingsCatalog,
+    hasApiKey,
     load() {
       mkdirSync(opts.stateDir, { recursive: true })
       settings.load()
@@ -546,6 +1082,7 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
         model: settings.get().defaultModel || VAV_DEFAULT_MODEL_ID,
         mintWorkdir: () => mintTempWorkdir(tmp)
       })
+      fileSessions.bind(conversations)
       timerStore.load()
       timerScheduler?.start()
       logStore.load()
@@ -555,6 +1092,7 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
       if (envKey) secrets.set(envKey, 'api')
       const envEndpoint = process.env.VAV_API_ENDPOINT?.trim()
       if (envEndpoint) settings.update({ apiEndpoint: envEndpoint })
+      seedModelCatalog(settings, { endpoint: resolveCreds().endpoint })
     },
     dispose() {
       logger.system(LOG_EVENT.systemQuit, 'Quit')
@@ -562,6 +1100,7 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
       logStore.dispose()
       setAppLogger(null)
       agent.disposeAll()
+      cli?.disposeAll()
       files.disposeAll()
       hub.dispose()
     }

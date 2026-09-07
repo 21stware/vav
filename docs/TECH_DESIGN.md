@@ -238,7 +238,21 @@ VAV_SNAPSHOT=/tmp/x.png VAV_SNAPSHOT_JS="<expr>" npm start
 - pi-agent-core 的 compaction、skills、prompt templates 都没接。上下文满了就是满了，目前只有 token 计数条提示。
 - 没有 diff 视图。Agent 改文件后你看到的是「变更条」加文件内容，不是补丁。
 
-## 15. Remote：daemon 与 control UI
+## 15. 产品矩阵与 Remote
+
+七个产品共用 vavd。回合、密钥、文件、PTY 只在 daemon 里发生；其余都是壳。见 [PRODUCT_MATRIX.md](PRODUCT_MATRIX.md)。
+
+| 产品 | 定义 |
+| --- | --- |
+| vavd | 核心服务（入口 `packages/vavd/src/vavd.ts`，内核 `src/main/daemon/`） |
+| vav-desktop | 本机工作台（`packages/vav-desktop/src/{main,preload,renderer}`）；本机与配对远程是同一套 sidebar |
+| vav-cli | Claude Code 式 agent CLI（`packages/vav-cli/src/vavcli.ts`） |
+| vavc | Herdr 式控制客户端（`packages/vavc/src/vavc.ts`） |
+| vav-iOS | 原生 Remote（`packages/vav-ios/VAVRemote/`） |
+| vav-android | 与 iOS 同构的 Remote（`packages/vav-android/VAVRemote/`） |
+| vav-chrome-extension | 侧栏（`packages/vav-chrome-extension/extension/` + `phone-ui/`）；与桌面同一套 session shell；第二条 `/vav` hello 为 `role: daemon`，走 fs / pty |
+
+## 15a. Remote：daemon 与 control UI
 
 Remote 不是「把会话拷到另一台电脑再跑一遍 agent」。那会让受控端 UI 变黑——回合发生在控制端进程里，受控桌面只是一份过期快照。
 
@@ -246,7 +260,7 @@ Remote 不是「把会话拷到另一台电脑再跑一遍 agent」。那会让�
 
 ```
 phone / desktop control UI ── hello.role=phone ──► RemoteControlHub  会话、回合、配置
-desktop / vavd             ── hello.role=daemon ─► DaemonServer      fs / spawn / pty
+desktop / vavd             ── hello.role=daemon ─► DaemonServer      fs / spawn / pty / git / plugins / github / timers / connectors / accounts / settings / logs / fileSessions / changeSets / fs.reveal|openPath|getInfo
 ```
 
 LAN 监听端口和 tailcat 本地回环都接到同一个 Hub。Hub 是 Electron-free 的；sidecar、配对文件、已知设备名单留在 `RemoteControlService`。
@@ -261,9 +275,9 @@ LAN 监听端口和 tailcat 本地回环都接到同一个 Hub。Hub 是 Electro
 | 桌面受控端 | 是 | 是 | 是 | 是 |
 | vavd | 是 | 是 | 是 | 是 |
 
-桌面 remote 窗口和 iOS `RemoteClient` 是同构的会话客户端：同一套帧、同一套 `applyRemoteServerMessage` 规则（Swift 镜像这份 TypeScript）。桌面多出来的只是 daemon 上的文件树和 PTY。
+桌面 remote 窗口和 iOS `RemoteClient` 是同构的会话客户端：同一套帧、同一套 `applyRemoteServerMessage` 规则（Swift 镜像这份 TypeScript）。桌面多出来的只是 daemon 上的文件树和 PTY。本机会话在 spawned loopback vavd 挂上之后，Files / git / PTY 走那个 host（`workspaceHostForConversation`），不再用 Electron 进程里的 Node fs / node-pty。Chrome 在该 vavd 上新建的会话 `adoptHostConversation(..., local)`，桌面 New Session 先 `createSession` 再拉目录，侧栏不另开一份。spawned vavd 挂上之后，本机会话不再写入 Electron `userData/conversations`（`setShouldPersist`），磁盘权威只在 vavd state dir。Chrome Settings → Connect 的 incoming URI 来自 `host.pairing`（同一条 `vavrtp://`）。更换配对串走 `host.rotateOffer`，已授权电脑走 `host.incoming`；桌面 Connect 与 `vavc host rotate|incoming` 共用这份 grant 表。
 
-控制端的 send / cancel / reply / create / configure（模型、审批、thinking、Fast、ACP mode）/ workspace / rename / archive 都走这套帧。Adopt 后本地 id 若发生碰撞，`hostSessionId` 用 `duplicateSourceId` 对回受控端。`vavd` 接 phone-role hello：回合在 daemon 里跑，桌面 / 手机 / 网页 / 扩展都是壳。Regenerate / edit / fork / compact 不在 phone 协议里，控制平面会话上直接拒绝，避免又在控制端起一轮。
+控制端的 send / cancel / reply / create / configure（模型、审批、thinking、Fast、ACP mode）/ workspace / rename / archive / compact / regenerate / edit / fork / delete-message / leaf / duplicate / continue / goal / locate 都走这套帧。Adopt 后本地 id 若发生碰撞，`hostSessionId` 用 `duplicateSourceId` 对回受控端。`vavd` 接 phone-role hello：回合在 daemon 里跑，桌面 / 手机 / 网页 / 扩展都是壳。
 
 回合只在持有会话的那台机器上跑。`handleAgentEvent` 同时 `fanRemoteTurn`（控制平面）和 `sendToWorkspaceWindows`（本机 UI）。所以手机或另一台桌面发一句话，受控端 transcript 会自己动。
 

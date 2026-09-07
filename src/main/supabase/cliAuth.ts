@@ -143,6 +143,10 @@ export async function resolveSupabaseToken(stored: string | null): Promise<Resol
   return value
 }
 
+export function clearSupabaseAuthCache(): void {
+  cache = null
+}
+
 /** Local-only: do not spawn `supabase` or unlock Keychain secrets. */
 export async function peekSupabaseAuth(stored: string | null): Promise<{
   present: boolean

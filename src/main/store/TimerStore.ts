@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import {
@@ -16,7 +16,7 @@ function coerceJob(raw: unknown, now: number): TimerJob | null {
   const row = raw as Record<string, unknown>
   if (typeof row.id !== 'string' || !row.id.trim()) return null
   if (typeof row.title !== 'string' || !row.title.trim()) return null
-  if (typeof row.prompt !== 'string' || !row.prompt.trim()) return null
+  if (typeof row.prompt !== 'string') return null
   const schedule = coerceTimerSchedule(row.schedule)
   if (!schedule) return null
   const connectorIds = Array.isArray(row.connectorIds)
@@ -34,6 +34,7 @@ function coerceJob(raw: unknown, now: number): TimerJob | null {
     prompt: row.prompt,
     schedule,
     enabled: row.enabled !== false,
+    conversationId: typeof row.conversationId === 'string' && row.conversationId.trim() ? row.conversationId : null,
     workdirPolicy: row.workdirPolicy === 'source' ? 'source' : 'mint',
     sourceWorkdir: typeof row.sourceWorkdir === 'string' ? row.sourceWorkdir : null,
     connectorIds: connectorIds as ConnectorId[],
@@ -74,16 +75,19 @@ function coerceRun(raw: unknown): TimerRun | null {
 export class TimerStore {
   private readonly jobsPath: string
   private readonly runsPath: string
+  private readonly migrateFrom: string | null
   private jobs: TimerJob[] = []
   private runs: TimerRun[] = []
 
-  constructor(stateDir: string) {
+  constructor(stateDir: string, options?: { migrateFrom?: string | null }) {
     const dir = join(stateDir, 'timers')
     this.jobsPath = join(dir, 'jobs.json')
     this.runsPath = join(dir, 'runs.json')
+    this.migrateFrom = options?.migrateFrom?.trim() || null
   }
 
   load(): void {
+    this.migrateFromUserData()
     this.jobs = this.readList(this.jobsPath, (row) => coerceJob(row, Date.now()))
     this.runs = this.readList(this.runsPath, coerceRun)
   }
@@ -94,6 +98,12 @@ export class TimerStore {
 
   getJob(id: string): TimerJob | undefined {
     return this.jobs.find((job) => job.id === id)
+  }
+
+  getJobForConversation(conversationId: string): TimerJob | undefined {
+    const id = conversationId.trim()
+    if (!id) return undefined
+    return this.jobs.find((job) => job.conversationId === id)
   }
 
   listRuns(jobId?: string): TimerRun[] {
@@ -111,16 +121,15 @@ export class TimerStore {
   createJob(input: TimerJobInput, now = Date.now()): TimerJob {
     const schedule = coerceTimerSchedule(input.schedule)
     if (!schedule) throw new Error('Invalid timer schedule')
-    const title = input.title.trim()
+    const title = input.title.trim() || 'Scheduled task'
     const prompt = input.prompt.trim()
-    if (!title) throw new Error('Timer title required')
-    if (!prompt) throw new Error('Timer prompt required')
     const job: TimerJob = {
       id: randomUUID(),
       title,
       prompt,
       schedule,
       enabled: input.enabled !== false,
+      conversationId: input.conversationId?.trim() || null,
       workdirPolicy: input.workdirPolicy === 'source' ? 'source' : 'mint',
       sourceWorkdir: input.sourceWorkdir ?? null,
       connectorIds: (input.connectorIds ?? []).filter(isConnectorId),
@@ -139,7 +148,10 @@ export class TimerStore {
     const job = this.jobs.find((row) => row.id === id)
     if (!job) return null
     if (typeof patch.title === 'string' && patch.title.trim()) job.title = patch.title.trim()
-    if (typeof patch.prompt === 'string' && patch.prompt.trim()) job.prompt = patch.prompt.trim()
+    if (typeof patch.prompt === 'string') job.prompt = patch.prompt.trim()
+    if (patch.conversationId !== undefined) {
+      job.conversationId = patch.conversationId?.trim() || null
+    }
     if (patch.schedule) {
       const schedule = coerceTimerSchedule(patch.schedule)
       if (!schedule) throw new Error('Invalid timer schedule')
@@ -236,6 +248,22 @@ export class TimerStore {
       return rows.map(coerce).filter((row): row is T => row != null)
     } catch {
       return []
+    }
+  }
+
+  private migrateFromUserData(): void {
+    if (!this.migrateFrom || existsSync(this.jobsPath)) return
+    const legacyJobs = join(this.migrateFrom, 'timers', 'jobs.json')
+    if (!existsSync(legacyJobs)) return
+    try {
+      mkdirSync(dirname(this.jobsPath), { recursive: true })
+      copyFileSync(legacyJobs, this.jobsPath)
+      const legacyRuns = join(this.migrateFrom, 'timers', 'runs.json')
+      if (existsSync(legacyRuns) && !existsSync(this.runsPath)) {
+        copyFileSync(legacyRuns, this.runsPath)
+      }
+    } catch (err) {
+      console.error('[timers] migrate from userData failed', err)
     }
   }
 

@@ -12,7 +12,7 @@ const require = createRequire(import.meta.url)
 const { build } = await import(pathToFileURL(require.resolve('esbuild')).href)
 
 const outDir = join(root, 'out', 'phone-ui')
-const extDir = join(root, 'extension', 'phone')
+const extDir = join(root, 'packages/vav-chrome-extension/extension', 'phone')
 if (existsSync(outDir)) rmSync(outDir, { recursive: true, force: true })
 if (existsSync(extDir)) rmSync(extDir, { recursive: true, force: true })
 mkdirSync(outDir, { recursive: true })
@@ -25,10 +25,6 @@ const STUB_MODULES = new Set([
   'vega-embed',
   'vega-lite',
   '@viz-js/viz',
-  '@xterm/xterm',
-  '@xterm/addon-fit',
-  '@xterm/addon-unicode11',
-  '@xterm/addon-web-links',
   'pdfjs-dist',
   'docx-preview',
   'pptxgenjs',
@@ -40,7 +36,7 @@ const STUB_MODULES = new Set([
 
 await build({
   absWorkingDir: root,
-  entryPoints: [join(root, 'src', 'phone-ui', 'main.tsx')],
+  entryPoints: [join(root, 'packages/vav-chrome-extension/phone-ui', 'main.tsx')],
   bundle: true,
   format: 'esm',
   outdir: outDir,
@@ -58,7 +54,7 @@ await build({
   logLevel: process.env.VAV_PACK_QUIET === '1' ? 'warning' : 'info',
   alias: {
     '@shared': join(root, 'src', 'shared'),
-    '@': join(root, 'src', 'renderer', 'src')
+    '@': join(root, 'packages/vav-desktop/src/renderer/src')
   },
   loader: {
     '.css': 'css',

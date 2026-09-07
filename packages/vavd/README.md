@@ -20,7 +20,7 @@ Prints a pairing URI. Use it from:
 - VAV Remote (iOS)
 - the local web UI (`http://127.0.0.1:4752`) — discovers and pairs on loopback
 - the Chrome extension side panel — same automatic discovery
-- `vavc` (herdr-style control: status / session / workspace / agent) and `vavcli` (pi-style print / JSON / RPC / interactive). Also `npm run vavc` / `npm run vavcli` in this repo. They read `VAVD_URI`, `~/.vavd`, or loopback `/discover`.
+- `vavc` (herdr-style control: session / workspace / agent / file / pane / host) and `vavcli` (Claude Code-style print / JSON / RPC / interactive + slash commands). Also `npm run vavc` / `npm run vavcli` in this repo. They read `VAVD_URI`, `~/.vavd`, or loopback `/discover`.
 
 All of those are the same control-plane client (`hello.role=phone`). Turns run in this process.
 

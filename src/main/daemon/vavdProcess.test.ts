@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { after, before, describe, it } from 'node:test'
 import { promisify } from 'node:util'
-import { parseDaemonPairing } from '../../shared/daemonProtocol.ts'
+import { isDaemonPairingLine, parseDaemonPairing } from '../../shared/daemonProtocol.ts'
 import { connectPhone } from '../cli/vavPhoneClient.ts'
 
 const execFileAsync = promisify(execFile)
@@ -31,7 +31,7 @@ async function spawnVavd(state: string): Promise<RunningVavd> {
       '--import',
       aliasHook,
       '--experimental-strip-types',
-      join(root, 'src/main/daemon/vavd.ts'),
+      join(root, 'packages/vavd/src/vavd.ts'),
       '--listen',
       '127.0.0.1',
       '--port',
@@ -67,7 +67,7 @@ async function spawnVavd(state: string): Promise<RunningVavd> {
     child.stdout?.setEncoding('utf8')
     child.stdout?.on('data', (chunk: string) => {
       stdout += chunk
-      const line = stdout.split('\n').find((row) => row.startsWith('vav-daemon:'))
+      const line = stdout.split('\n').find((row) => isDaemonPairingLine(row))
       if (line) {
         clearTimeout(timer)
         resolve(line.trim())
@@ -165,6 +165,34 @@ describe('vavd process', () => {
     }
   })
 
+  it('accepts a phone send with a JPEG attachment', async () => {
+    assert.ok(daemon)
+    const phone = await connectPhone({
+      host: '127.0.0.1',
+      port: daemon.port,
+      secret: daemon.secret,
+      device: 'process-photo'
+    })
+    try {
+      phone.send({ type: 'create' })
+      const createdFrames = await phone.waitNew((msg) => msg.type === 'created')
+      const created = createdFrames.findLast((msg) => msg.type === 'created')
+      assert.ok(created && created.type === 'created')
+      phone.send({
+        type: 'send',
+        conversationId: created.session.id,
+        text: '（附件）',
+        images: [{ name: 'photo.jpg', mime: 'image/jpeg', data: 'abc' }]
+      })
+      const turns = await phone.waitNew(
+        (msg) => msg.type === 'turn' && (msg.phase === 'start' || msg.phase === 'done' || msg.phase === 'error')
+      )
+      assert.ok(turns.some((msg) => msg.type === 'turn'))
+    } finally {
+      phone.close()
+    }
+  })
+
   it('lets the vav CLI send a turn over the same phone protocol', async () => {
     assert.ok(daemon)
     const { stdout } = await execFileAsync(
@@ -199,7 +227,7 @@ describe('vavd process', () => {
         '--import',
         aliasHook,
         '--experimental-strip-types',
-        join(root, 'src/main/cli/vavc.ts'),
+        join(root, 'packages/vavc/src/vavc.ts'),
         'session',
         'create',
         '--label',
@@ -221,7 +249,7 @@ describe('vavd process', () => {
         '--import',
         aliasHook,
         '--experimental-strip-types',
-        join(root, 'src/main/cli/vavc.ts'),
+        join(root, 'packages/vavc/src/vavc.ts'),
         'session',
         'list',
         '--state',
@@ -233,6 +261,198 @@ describe('vavd process', () => {
     assert.ok(rows.some((row) => row.id === session.id))
   })
 
+  it('lets vavc pin, browse, read files, and run a pane on the same vavd', async () => {
+    assert.ok(daemon)
+    const created = await execFileAsync(
+      process.execPath,
+      [
+        '--import',
+        aliasHook,
+        '--experimental-strip-types',
+        join(root, 'packages/vavc/src/vavc.ts'),
+        'session',
+        'create',
+        '--label',
+        'vavc-control',
+        '--cwd',
+        dir,
+        '--host',
+        '127.0.0.1',
+        '--port',
+        String(daemon.port),
+        '--secret',
+        daemon.secret
+      ],
+      { cwd: root, timeout: 15_000 }
+    )
+    const session = JSON.parse(created.stdout) as { id?: string }
+    assert.ok(session.id)
+
+    const pinned = await execFileAsync(
+      process.execPath,
+      [
+        '--import',
+        aliasHook,
+        '--experimental-strip-types',
+        join(root, 'packages/vavc/src/vavc.ts'),
+        'session',
+        'pin',
+        session.id,
+        '--host',
+        '127.0.0.1',
+        '--port',
+        String(daemon.port),
+        '--secret',
+        daemon.secret
+      ],
+      { cwd: root, timeout: 15_000 }
+    )
+    assert.equal((JSON.parse(pinned.stdout) as { pinned?: boolean }).pinned, true)
+
+    const host = await execFileAsync(
+      process.execPath,
+      [
+        '--import',
+        aliasHook,
+        '--experimental-strip-types',
+        join(root, 'packages/vavc/src/vavc.ts'),
+        'host',
+        '--host',
+        '127.0.0.1',
+        '--port',
+        String(daemon.port),
+        '--secret',
+        daemon.secret
+      ],
+      { cwd: root, timeout: 15_000 }
+    )
+    const info = JSON.parse(host.stdout) as { name?: string; home?: string }
+    assert.ok(info.name)
+    assert.ok(info.home)
+
+    const listed = await execFileAsync(
+      process.execPath,
+      [
+        '--import',
+        aliasHook,
+        '--experimental-strip-types',
+        join(root, 'packages/vavc/src/vavc.ts'),
+        'file',
+        'list',
+        dir,
+        '--host',
+        '127.0.0.1',
+        '--port',
+        String(daemon.port),
+        '--secret',
+        daemon.secret
+      ],
+      { cwd: root, timeout: 15_000 }
+    )
+    const files = JSON.parse(listed.stdout) as { entries?: Array<{ name?: string }> }
+    assert.ok(Array.isArray(files.entries))
+
+    const marker = join(dir, 'vavc-marker.txt')
+    await execFileAsync(
+      process.execPath,
+      [
+        '--import',
+        aliasHook,
+        '--experimental-strip-types',
+        join(root, 'packages/vavc/src/vavc.ts'),
+        'file',
+        'write',
+        marker,
+        '--text',
+        'written-by-vavc',
+        '--host',
+        '127.0.0.1',
+        '--port',
+        String(daemon.port),
+        '--secret',
+        daemon.secret
+      ],
+      { cwd: root, timeout: 15_000 }
+    )
+    const read = await execFileAsync(
+      process.execPath,
+      [
+        '--import',
+        aliasHook,
+        '--experimental-strip-types',
+        join(root, 'packages/vavc/src/vavc.ts'),
+        'file',
+        'read',
+        marker,
+        '--host',
+        '127.0.0.1',
+        '--port',
+        String(daemon.port),
+        '--secret',
+        daemon.secret
+      ],
+      { cwd: root, timeout: 15_000 }
+    )
+    assert.match((JSON.parse(read.stdout) as { text?: string }).text ?? '', /written-by-vavc/)
+
+    const browsed = await execFileAsync(
+      process.execPath,
+      [
+        '--import',
+        aliasHook,
+        '--experimental-strip-types',
+        join(root, 'packages/vavc/src/vavc.ts'),
+        'workspace',
+        'browse',
+        session.id,
+        dir,
+        '--files',
+        '--host',
+        '127.0.0.1',
+        '--port',
+        String(daemon.port),
+        '--secret',
+        daemon.secret
+      ],
+      { cwd: root, timeout: 15_000 }
+    )
+    const dirs = JSON.parse(browsed.stdout) as {
+      type?: string
+      entries?: Array<{ name?: string; isDirectory?: boolean }>
+    }
+    assert.equal(dirs.type, 'dirs')
+    assert.ok(dirs.entries?.some((entry) => entry.name === 'vavc-marker.txt' && entry.isDirectory === false))
+
+    const pane = await execFileAsync(
+      process.execPath,
+      [
+        '--import',
+        aliasHook,
+        '--experimental-strip-types',
+        join(root, 'packages/vavc/src/vavc.ts'),
+        'pane',
+        'run',
+        '--cwd',
+        dir,
+        '--timeout',
+        '8000',
+        '--host',
+        '127.0.0.1',
+        '--port',
+        String(daemon.port),
+        '--secret',
+        daemon.secret,
+        '--',
+        'echo',
+        'vavc-pane'
+      ],
+      { cwd: root, timeout: 20_000 }
+    )
+    const ran = JSON.parse(pane.stdout) as { stream?: string; output?: string }
+    assert.ok(ran.stream)
+    assert.match(ran.output ?? '', /vavc-pane/)
+  })
+
   it('lets vavcli print a turn on the same vavd', async () => {
     assert.ok(daemon)
     const { stdout } = await execFileAsync(
@@ -241,7 +461,7 @@ describe('vavd process', () => {
         '--import',
         aliasHook,
         '--experimental-strip-types',
-        join(root, 'src/main/cli/vavcli.ts'),
+        join(root, 'packages/vav-cli/src/vavcli.ts'),
         '--mode',
         'json',
         '-p',
@@ -255,7 +475,12 @@ describe('vavd process', () => {
       ],
       { cwd: root, timeout: 15_000 }
     )
-    const turn = JSON.parse(stdout.split('\n').find((line) => line.startsWith('{')) || stdout) as {
+    const turn = JSON.parse(
+      stdout
+        .split('\n')
+        .filter((line) => line.startsWith('{'))
+        .at(-1) || stdout
+    ) as {
       type?: string
       phase?: string
       draft?: string
@@ -319,6 +544,53 @@ describe('vavd process', () => {
         (msg) => msg.type === 'turn' && (msg.phase === 'done' || msg.phase === 'error')
       )
       assert.ok(turns.some((msg) => msg.type === 'turn' && msg.phase === 'done'))
+
+      phone.send({ type: 'compact', conversationId })
+      const compactedFrames = await phone.waitNew((msg) => msg.type === 'compacted')
+      const compacted = compactedFrames.findLast((msg) => msg.type === 'compacted')
+      assert.ok(compacted && compacted.type === 'compacted')
+      assert.equal(compacted.ok, false)
+      assert.match(String(compacted.error ?? ''), /not enough|太少|Not enough/i)
+
+      phone.send({ type: 'thread', conversationId })
+      const threadFrames = await phone.waitNew((msg) => msg.type === 'thread')
+      const thread = threadFrames.findLast((msg) => msg.type === 'thread')
+      assert.ok(thread && thread.type === 'thread')
+      const assistant = [...thread.messages].reverse().find((row) => row.role === 'assistant')
+      assert.ok(assistant?.id)
+      phone.send({ type: 'regenerate', conversationId, messageId: assistant.id })
+      const again = await phone.waitNew(
+        (msg) => msg.type === 'turn' && (msg.phase === 'done' || msg.phase === 'error')
+      )
+      assert.ok(again.some((msg) => msg.type === 'turn' && msg.phase === 'done'))
+
+      phone.send({ type: 'fork', conversationId, messageId: assistant.id })
+      const forked = await phone.waitNew(
+        (msg) =>
+          (msg.type === 'thread' && msg.conversationId === conversationId) ||
+          (msg.type === 'sent' && msg.conversationId === conversationId)
+      )
+      assert.ok(forked.some((msg) => msg.type === 'sent' || msg.type === 'thread'))
+
+      phone.send({ type: 'leaf', conversationId, messageId: assistant.id, follow: true })
+      const leafed = await phone.waitNew(
+        (msg) =>
+          (msg.type === 'thread' && msg.conversationId === conversationId) ||
+          (msg.type === 'sent' && msg.conversationId === conversationId)
+      )
+      assert.ok(leafed.some((msg) => msg.type === 'sent' || msg.type === 'thread'))
+
+      phone.send({ type: 'goal', conversationId, action: 'clear' })
+      const goaledFrames = await phone.waitNew((msg) => msg.type === 'goaled')
+      const goaled = goaledFrames.findLast((msg) => msg.type === 'goaled')
+      assert.ok(goaled && goaled.type === 'goaled')
+      assert.equal(goaled.ok, false)
+
+      phone.send({ type: 'locate', conversationId, destinationDir: join(tmpdir(), 'vav-locate-e2e') })
+      const locatedFrames = await phone.waitNew((msg) => msg.type === 'located')
+      const located = locatedFrames.findLast((msg) => msg.type === 'located')
+      assert.ok(located && located.type === 'located')
+      assert.equal(typeof located.ok, 'boolean')
     } finally {
       phone.close()
     }
@@ -331,7 +603,7 @@ describe('vavd process', () => {
         '--import',
         aliasHook,
         '--experimental-strip-types',
-        join(root, 'src/main/daemon/vavd.ts'),
+        join(root, 'packages/vavd/src/vavd.ts'),
         '--help'
       ],
       { cwd: root, timeout: 8_000 }
@@ -349,7 +621,7 @@ describe('vavd process', () => {
         '--import',
         aliasHook,
         '--experimental-strip-types',
-        join(root, 'src/main/daemon/vavd.ts'),
+        join(root, 'packages/vavd/src/vavd.ts'),
         '--listen',
         '127.0.0.1',
         '--port',
@@ -370,7 +642,7 @@ describe('vavd process', () => {
         child.stdout?.setEncoding('utf8')
         child.stdout?.on('data', (chunk: string) => {
           stdout += chunk
-          const line = stdout.split('\n').find((row) => row.startsWith('vav-daemon:'))
+          const line = stdout.split('\n').find((row) => isDaemonPairingLine(row))
           if (line) {
             clearTimeout(timer)
             resolve(line.trim())
@@ -381,7 +653,7 @@ describe('vavd process', () => {
           reject(new Error(`exited ${code}: ${stdout}`))
         })
       })
-      assert.match(pairing, /^vav-daemon:/)
+      assert.match(pairing, /^vavrtp:/)
       assert.equal(stdout.includes('vavd web on'), false)
     } finally {
       child.kill('SIGTERM')
@@ -398,7 +670,7 @@ describe('vavd process', () => {
           '--import',
           aliasHook,
           '--experimental-strip-types',
-          join(root, 'src/main/daemon/vavd.ts'),
+          join(root, 'packages/vavd/src/vavd.ts'),
           '--state',
           state,
           'clients'
@@ -415,7 +687,7 @@ describe('vavd process', () => {
           '--import',
           aliasHook,
           '--experimental-strip-types',
-          join(root, 'src/main/daemon/vavd.ts'),
+          join(root, 'packages/vavd/src/vavd.ts'),
           '--state',
           state,
           'clients'
@@ -430,7 +702,7 @@ describe('vavd process', () => {
           '--import',
           aliasHook,
           '--experimental-strip-types',
-          join(root, 'src/main/daemon/vavd.ts'),
+          join(root, 'packages/vavd/src/vavd.ts'),
           '--state',
           state,
           'unpair',
@@ -446,7 +718,7 @@ describe('vavd process', () => {
           '--import',
           aliasHook,
           '--experimental-strip-types',
-          join(root, 'src/main/daemon/vavd.ts'),
+          join(root, 'packages/vavd/src/vavd.ts'),
           '--state',
           state,
           'rotate-offer'
@@ -461,7 +733,7 @@ describe('vavd process', () => {
           '--import',
           aliasHook,
           '--experimental-strip-types',
-          join(root, 'src/main/daemon/vavd.ts'),
+          join(root, 'packages/vavd/src/vavd.ts'),
           '--state',
           state,
           'disconnect',
@@ -528,6 +800,71 @@ describe('vavd process', () => {
         (raw) => raw.type === 'turn' && raw.phase === 'done' && raw.conversationId === conversationId
       )) as Array<{ type?: string; phase?: string }>
       assert.ok(turns.some((item) => item.type === 'turn' && item.phase === 'done'))
+    } finally {
+      ws.close()
+    }
+  })
+
+  it('lets a daemon-role web socket list a planted file', async () => {
+    assert.ok(daemon?.webPort)
+    const planted = join(dir, 'remote-ws.md')
+    const { writeFileSync } = await import('node:fs')
+    writeFileSync(planted, 'planted for chrome daemon ws')
+    const ws = new WebSocket(`ws://127.0.0.1:${daemon.webPort}/vav`)
+    await new Promise<void>((resolve, reject) => {
+      ws.addEventListener('open', () => resolve())
+      ws.addEventListener('error', () => reject(new Error('ws error')))
+    })
+    try {
+      const next = (until: (raw: { type?: string; ok?: boolean; id?: string }) => boolean) =>
+        new Promise<unknown[]>((resolve, reject) => {
+          const got: unknown[] = []
+          const timer = setTimeout(() => reject(new Error('ws timeout')), 8000)
+          const onMsg = (event: MessageEvent): void => {
+            for (const line of String(event.data).split('\n').filter(Boolean)) {
+              const raw = JSON.parse(line) as { type?: string; ok?: boolean; id?: string }
+              got.push(raw)
+              if (until(raw)) {
+                clearTimeout(timer)
+                ws.removeEventListener('message', onMsg)
+                resolve(got)
+              }
+            }
+          }
+          ws.addEventListener('message', onMsg)
+        })
+      ws.send(
+        JSON.stringify({ type: 'hello', proto: 1, auth: daemon.secret, role: 'daemon', device: 'chrome' })
+      )
+      await next((raw) => raw.type === 'welcome')
+      ws.send(JSON.stringify({ type: 'req', id: 'r1', method: 'fs.readdir', params: { path: dir } }))
+      const frames = (await next((raw) => raw.type === 'res' && raw.id === 'r1')) as Array<{
+        type?: string
+        ok?: boolean
+        result?: { entries?: Array<{ name?: string; isDirectory?: boolean }> }
+      }>
+      const res = frames.find((row) => row.type === 'res')
+      assert.equal(res?.ok, true)
+      assert.ok(res?.result?.entries?.some((entry) => entry.name === 'remote-ws.md' && entry.isDirectory === false))
+
+      ws.send(
+        JSON.stringify({
+          type: 'req',
+          id: 'r2',
+          method: 'fileSessions.open',
+          params: { path: planted }
+        })
+      )
+      const openedFrames = (await next((raw) => raw.type === 'res' && raw.id === 'r2')) as Array<{
+        type?: string
+        ok?: boolean
+        id?: string
+        result?: { fileId?: string; activeSessionId?: string; sessions?: unknown[] }
+      }>
+      const opened = openedFrames.find((row) => row.type === 'res' && row.id === 'r2')
+      assert.equal(opened?.ok, true)
+      assert.ok(opened?.result?.fileId)
+      assert.ok(opened?.result?.activeSessionId)
     } finally {
       ws.close()
     }

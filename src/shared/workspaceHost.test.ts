@@ -11,6 +11,9 @@ import {
   parseWorkspaceRefList,
   pruneForgottenWorkspaceDirs,
   recentsForMachine,
+  listedServices,
+  serviceShortName,
+  userFacingRemotes,
   workspaceRef
 } from './workspaceHost.ts'
 
@@ -23,6 +26,49 @@ describe('normalizeMachineId', () => {
 
   it('keeps a remote id', () => {
     assert.equal(normalizeMachineId('build-server'), 'build-server')
+  })
+})
+
+describe('userFacingRemotes', () => {
+  it('hides local and the spawned loopback vavd', () => {
+    assert.deepEqual(
+      userFacingRemotes([
+        { id: LOCAL_MACHINE_ID, name: 'This Mac', kind: 'local', online: true },
+        { id: 'spawned', name: 'VAV Daemon', kind: 'remote', online: true, localShell: true },
+        { id: 'macmini-v1', name: 'macmini-v1', kind: 'remote', online: true }
+      ]).map((host) => host.id),
+      ['macmini-v1']
+    )
+  })
+})
+
+describe('listedServices', () => {
+  it('puts local first and skips the spawned shell', () => {
+    assert.deepEqual(
+      listedServices([
+        { id: LOCAL_MACHINE_ID, name: 'This Mac' },
+        { id: 'spawned', name: 'VAV Daemon', localShell: true },
+        { id: 'air', name: 'Mac air' }
+      ]),
+      [
+        { id: LOCAL_MACHINE_ID, name: LOCAL_MACHINE_ID },
+        { id: 'air', name: 'Mac air' }
+      ]
+    )
+  })
+})
+
+describe('serviceShortName', () => {
+  it('labels this process as local', () => {
+    assert.equal(serviceShortName(LOCAL_MACHINE_ID), LOCAL_MACHINE_ID)
+    assert.equal(serviceShortName(null), LOCAL_MACHINE_ID)
+  })
+
+  it('uses the host name for a paired service', () => {
+    assert.equal(
+      serviceShortName('abc', [{ id: 'abc', name: 'macmini-v1' }]),
+      'macmini-v1'
+    )
   })
 })
 

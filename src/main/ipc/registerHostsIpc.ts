@@ -16,6 +16,7 @@ export type HostsIpcWindows = {
   } | null
   applyDefaultMachine: (id: string) => void
   defaultMachineId: () => string | undefined
+  activeMachineId: () => string
   localHome: () => string
   broadcastHosts: () => void
 }
@@ -31,7 +32,7 @@ export function registerHostsIpc(
   ipcMain.handle(IPC.hostsPairing, () => attach.pairing())
   ipcMain.handle(IPC.hostsPair, async (_event, payload: string) => {
     const result = await attach.pair(String(payload || ''))
-    if (result.ok) await windows.show(result.host.id)
+    if (result.ok && !result.host.localShell) await windows.show(result.host.id)
     return result
   })
   ipcMain.handle(IPC.hostsPairLan, async (_event, peer: HostDiscoveryPeer) => {
@@ -41,7 +42,7 @@ export function registerHostsIpc(
       name: typeof peer?.name === 'string' ? peer.name : undefined,
       machineId: typeof peer?.machineId === 'string' ? peer.machineId : undefined
     })
-    if (result.ok) await windows.show(result.host.id)
+    if (result.ok && !result.host.localShell) await windows.show(result.host.id)
     return result
   })
   ipcMain.handle(IPC.hostsCancelPair, () => {
@@ -56,15 +57,15 @@ export function registerHostsIpc(
     windows.close(id)
     if (windows.defaultMachineId() === id) windows.applyDefaultMachine(LOCAL_MACHINE_ID)
   })
-  ipcMain.handle(IPC.hostsIncoming, () => attach.incoming())
-  ipcMain.handle(IPC.hostsDisconnectIncoming, (_event, grantId: string) => {
-    attach.disconnectIncoming(String(grantId || ''))
+  ipcMain.handle(IPC.hostsIncoming, () => attach.pullIncoming())
+  ipcMain.handle(IPC.hostsDisconnectIncoming, async (_event, grantId: string) => {
+    await attach.disconnectIncomingNow(String(grantId || ''))
   })
-  ipcMain.handle(IPC.hostsUnpairIncoming, (_event, grantId: string) => {
-    attach.unpairIncoming(String(grantId || ''))
+  ipcMain.handle(IPC.hostsUnpairIncoming, async (_event, grantId: string) => {
+    await attach.unpairIncomingNow(String(grantId || ''))
   })
-  ipcMain.handle(IPC.hostsRotateOffer, () => {
-    attach.rotateOffer()
+  ipcMain.handle(IPC.hostsRotateOffer, async () => {
+    await attach.rotateHostOffer()
   })
   ipcMain.handle(IPC.hostsDiscovered, () => attach.listDiscovered())
   ipcMain.handle(IPC.hostsHome, (_event, machineId: string) => {
@@ -74,6 +75,7 @@ export function registerHostsIpc(
   ipcMain.handle(IPC.hostsShow, (_event, machineId: string) => {
     void windows.show(machineId)
   })
+  ipcMain.handle(IPC.hostsActive, () => windows.activeMachineId())
   ipcMain.handle(IPC.hostsOpenFolder, async (_event, machineId: string) => {
     const id = normalizeMachineId(machineId)
     await windows.show(id)

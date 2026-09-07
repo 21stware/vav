@@ -94,6 +94,26 @@ export class NodeSecretStore {
     this.removeFile(this.accountPath(id))
   }
 
+  maskedHint(name: SecretName = 'api'): string | null {
+    return maskSecret(this.get(name))
+  }
+
+  maskedAccountHint(accountId: string): string | null {
+    return maskSecret(this.getAccountKey(accountId))
+  }
+
+  getOAuthSnapshot(_accountId: string): null {
+    return null
+  }
+
+  setOAuthSnapshot(_accountId: string, _snapshot: unknown): void {
+    /* headless vavd does not persist CLI OAuth snapshots */
+  }
+
+  clearOAuthSnapshot(_accountId: string): void {
+    /* no-op — NodeSecretStore has no oauth snapshot files */
+  }
+
   /** Enough of SecretStore for AgentRuntime + accounts. */
   asSecretStore(): SecretStore {
     return this as unknown as SecretStore
@@ -121,4 +141,10 @@ export class NodeSecretStore {
       /* ignore */
     }
   }
+}
+
+function maskSecret(key: string | null): string | null {
+  if (!key) return null
+  if (key.length <= 10) return '••••'
+  return `${key.slice(0, 7)}…${key.slice(-4)}`
 }

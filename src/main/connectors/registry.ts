@@ -4,20 +4,28 @@ import { promisify } from 'node:util'
 import { resolve } from 'node:path'
 import {
   CONNECTOR_CATALOG,
+  CONNECTOR_IDS,
   connectorCan,
   connectorDescriptor,
   parseConnectorAction,
   type ConnectorActionRequest,
   type ConnectorActionResult,
   type ConnectorAuth,
+  type ConnectorAuthPage,
+  type ConnectorAuthRow,
   type ConnectorAuthSource,
   type ConnectorId,
+  type ConnectorLoginState,
   type ConnectorProbe
 } from '@shared/connector'
 import { parseGithubRemote } from '@shared/github'
 import { getCloudflareStatus, scanCloudflareWorkspace } from '../cloudflare/CloudflareService'
+import { peekCloudflareAuth } from '../cloudflare/wranglerAuth'
+import { peekGithubAuth } from '../github/GithubService'
+import { peekSupabaseAuth } from '../supabase/cliAuth'
 import { getSupabaseStatus } from '../supabase/SupabaseService'
 import { getVercelStatus, isVercelWorkspace } from './vercel'
+import { peekVercelAuth } from './vercelAuth'
 import { deployConnector, type ConnectorCreds } from './deploy'
 import { loginPath } from '../terminal/loginPath'
 
@@ -54,11 +62,23 @@ async function githubBinding(cwd: string): Promise<{ present: boolean; label: st
   return { present: false, label: null }
 }
 
-function githubAuth(): ConnectorAuth {
-  if ((process.env.GH_TOKEN || process.env.GITHUB_TOKEN || '').trim()) {
-    return { present: true, source: 'env' }
+async function githubAuth(): Promise<ConnectorAuth> {
+  return peekGithubAuth()
+}
+
+function asRow(
+  id: ConnectorId,
+  auth: ConnectorAuth,
+  settingsPresent: boolean,
+  cliPresent: boolean
+): ConnectorAuthRow {
+  return {
+    id,
+    present: auth.present,
+    source: auth.source,
+    settingsPresent,
+    cliPresent
   }
-  return { present: false, source: 'cli' }
 }
 
 export function createConnectorRegistry(deps: ConnectorRegistryDeps) {
@@ -70,7 +90,7 @@ export function createConnectorRegistry(deps: ConnectorRegistryDeps) {
       return {
         id,
         binding: { present: binding.present, label: binding.label, configPath: null },
-        auth: githubAuth(),
+        auth: await githubAuth(),
         capabilities: [...desc.capabilities]
       }
     }
@@ -138,6 +158,64 @@ export function createConnectorRegistry(deps: ConnectorRegistryDeps) {
         return { ok: false, error: `${request.connector} does not deploy`, code: 'read-only' }
       }
       return deployConnector(request.connector, request.cwd, deps.creds())
+    },
+
+    async authPage(login: ConnectorLoginState): Promise<ConnectorAuthPage> {
+      const creds = deps.creds()
+      const rows: ConnectorAuthRow[] = []
+      for (const id of CONNECTOR_IDS) {
+        if (id === 'github') {
+          const auth = await peekGithubAuth()
+          rows.push(asRow(id, auth, false, auth.source === 'cli'))
+          continue
+        }
+        if (id === 'cloudflare') {
+          const settingsPresent = Boolean(creds.cloudflare.token?.trim())
+          const peeked = peekCloudflareAuth(null)
+          const source: ConnectorAuthSource = settingsPresent
+            ? 'settings'
+            : connectorAuthSource(peeked.source)
+          rows.push(
+            asRow(
+              id,
+              { present: settingsPresent || peeked.present, source },
+              settingsPresent,
+              peeked.source === 'wrangler'
+            )
+          )
+          continue
+        }
+        if (id === 'supabase') {
+          const settingsPresent = Boolean(creds.supabase.token?.trim())
+          const peeked = await peekSupabaseAuth(null)
+          const source: ConnectorAuthSource = settingsPresent
+            ? 'settings'
+            : connectorAuthSource(peeked.source)
+          rows.push(
+            asRow(
+              id,
+              { present: settingsPresent || peeked.present, source },
+              settingsPresent,
+              peeked.source === 'cli'
+            )
+          )
+          continue
+        }
+        const settingsPresent = Boolean(creds.vercel.token?.trim())
+        const peeked = peekVercelAuth(null)
+        const source: ConnectorAuthSource = settingsPresent
+          ? 'settings'
+          : connectorAuthSource(peeked.source)
+        rows.push(
+          asRow(
+            id,
+            { present: settingsPresent || peeked.present, source },
+            settingsPresent,
+            peeked.source === 'cli'
+          )
+        )
+      }
+      return { rows, login }
     }
   }
 }

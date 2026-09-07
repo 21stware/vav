@@ -22,8 +22,20 @@ import {
 } from '../../shared/workspaceHost.ts'
 import type { HostRegistry } from '../host/WorkspaceHost.ts'
 import { createOfflineRemoteHost } from '../host/WorkspaceHost.ts'
-import { DaemonServer, DAEMON_LAN_BIND, type DaemonWorkspaceCatalog } from './DaemonServer.ts'
+import {
+  DaemonServer,
+  DAEMON_LAN_BIND,
+  type DaemonChangeSetCatalog,
+  type DaemonConnectorCatalog,
+  type DaemonAccountsCatalog,
+  type DaemonSettingsCatalog,
+  type DaemonFileSessionCatalog,
+  type DaemonPluginCatalog,
+  type DaemonTimerCatalog,
+  type DaemonWorkspaceCatalog
+} from './DaemonServer.ts'
 import { DaemonClient, createRemoteWorkspaceHost, requestLanPairOffer, PAIRING_CANCELLED } from './DaemonClient.ts'
+import { isLoopbackPairedHost } from './vavdShellPairing.ts'
 import { RemoteControlDial } from '../remote/RemoteControlDial.ts'
 import type { RemoteHello, RemoteServerMessage } from '../../shared/remoteControl.ts'
 import { loadOrCreateIdentity, writePrivateJson, type DaemonIdentity } from './identity.ts'
@@ -64,6 +76,7 @@ export type PairedHostRecord = {
   tmp?: string
   defaultPath?: string
   grantId?: string
+  localShell?: boolean
 }
 
 type TunnelHandle = {
@@ -90,6 +103,13 @@ type AttachOpts = {
   confirmLanPair?: (from: { name: string; machineId: string }) => Promise<boolean>
   /** This computer's sessions + folder recents, served to a paired client. */
   catalog?: DaemonWorkspaceCatalog
+  plugins?: DaemonPluginCatalog
+  timers?: DaemonTimerCatalog
+  connectors?: DaemonConnectorCatalog
+  fileSessions?: DaemonFileSessionCatalog
+  changeSets?: DaemonChangeSetCatalog
+  accounts?: DaemonAccountsCatalog
+  settings?: DaemonSettingsCatalog
   /**
    * After a live daemon session is mounted (pair or reconnect). Pull the
    * host catalog here before the remote window bootstraps.
@@ -100,6 +120,11 @@ type AttachOpts = {
   /** Frames from a control-plane dial we opened to a paired desktop. */
   onControlEvent?: (machineId: string, message: RemoteServerMessage) => void
   onIncomingChanged?: (controllers: IncomingController[]) => void
+  /**
+   * After `host.rotateOffer` on the advertised local vavd — update the
+   * phone tunnel secret so QR and the copy line stay the same URI.
+   */
+  onAdvertisedPairingRotated?: (pairing: string) => void
 }
 
 export class DaemonAttachService {
@@ -129,6 +154,10 @@ export class DaemonAttachService {
   private disposed = false
   /** Loopback vavd pairing shown as this computer when the app is a shell. */
   private advertisedPairing: string | null = null
+  /** Grant list from that same vavd — Connect "authorized computers". */
+  private advertisedIncoming: IncomingController[] | null = null
+  /** Last welcome.version per host — About reads the local-shell vavd. */
+  private readonly versions = new Map<string, string>()
 
   constructor(opts: AttachOpts) {
     this.opts = opts
@@ -171,6 +200,7 @@ export class DaemonAttachService {
   }
 
   incoming(): IncomingController[] {
+    if (this.advertisedIncoming) return this.advertisedIncoming
     return this.server?.incoming() ?? incomingFromGrants(this.grants.list(), new Set())
   }
 
@@ -184,11 +214,70 @@ export class DaemonAttachService {
     this.emitIncoming()
   }
 
+  async disconnectIncomingNow(grantId: string): Promise<void> {
+    const remote = this.localShellClient()
+    if (remote) {
+      await remote.request('host.disconnectIncoming', { grantId })
+      await this.pullIncoming()
+      return
+    }
+    this.disconnectIncoming(grantId)
+  }
+
+  async unpairIncomingNow(grantId: string): Promise<void> {
+    const remote = this.localShellClient()
+    if (remote) {
+      await remote.request('host.unpairIncoming', { grantId })
+      await this.pullIncoming()
+      return
+    }
+    this.unpairIncoming(grantId)
+  }
+
+  async pullIncoming(): Promise<IncomingController[]> {
+    const remote = this.localShellClient()
+    if (!remote) {
+      this.advertisedIncoming = null
+      const rows = this.incoming()
+      this.emitIncoming()
+      return rows
+    }
+    try {
+      const row = (await remote.request('host.incoming')) as { controllers?: IncomingController[] }
+      this.advertisedIncoming = Array.isArray(row.controllers) ? row.controllers : []
+    } catch {
+      this.advertisedIncoming = []
+    }
+    this.emitIncoming()
+    return this.advertisedIncoming
+  }
+
   rotateOffer(): string {
     const secret = randomBytes(24).toString('base64url')
     writePrivateJson(this.offerFile, { secret })
     this.emitIncoming()
     return secret
+  }
+
+  /**
+   * Rotate the pairing line Connect copies. When this workbench is a shell
+   * over spawned vavd, mint that daemon's offer so Chrome / `vavc host rotate`
+   * and the desktop QR share one secret.
+   */
+  async rotateHostOffer(): Promise<string | null> {
+    const remote = this.localShellClient()
+    if (remote) {
+      const row = (await remote.request('host.rotateOffer')) as { pairing?: string | null }
+      const pairing = typeof row.pairing === 'string' ? row.pairing.trim() : ''
+      if (pairing) {
+        this.advertisedPairing = pairing
+        this.opts.onAdvertisedPairingRotated?.(pairing)
+      }
+      this.emitIncoming()
+      return pairing || this.pairing()
+    }
+    this.rotateOffer()
+    return this.pairing()
   }
 
   acceptsPairingAuth(auth: string): boolean {
@@ -263,6 +352,31 @@ export class DaemonAttachService {
 
   providersOf(machineId: string): HostProviderInfo[] {
     return this.providers.get(machineId) ?? []
+  }
+
+  /** Running vavd version from the last local-shell welcome, if any. */
+  vavdVersion(): string | null {
+    for (const host of this.opts.registry.list()) {
+      if (!host.localShell) continue
+      const version = this.versions.get(host.id)?.trim()
+      if (version) return version
+    }
+    return null
+  }
+
+  /** Live daemon client for a paired host. */
+  clientOf(machineId: string): DaemonClient | undefined {
+    return this.clients.get(machineId)
+  }
+
+  /** Spawned loopback vavd — the Settings → Logs sink. */
+  localShellClient(): DaemonClient | undefined {
+    for (const host of this.opts.registry.list()) {
+      if (!host.localShell) continue
+      const client = this.clients.get(host.id)
+      if (client?.connected) return client
+    }
+    return undefined
   }
 
   /**
@@ -343,7 +457,11 @@ export class DaemonAttachService {
     this.server?.adopt(socket, leftover, hello)
   }
 
-  async pair(text: string, signal?: AbortSignal): Promise<{ ok: true; host: WorkspaceHostInfo } | { ok: false; error: string }> {
+  async pair(
+    text: string,
+    signal?: AbortSignal,
+    extra?: { localShell?: boolean }
+  ): Promise<{ ok: true; host: WorkspaceHostInfo } | { ok: false; error: string }> {
     const parsed = parseMachinePairing(text)
     if (!parsed) return { ok: false, error: 'unrecognized pairing payload' }
     const owned = signal ? null : this.replacePairAbort()
@@ -356,23 +474,32 @@ export class DaemonAttachService {
       }
       const viaTunnel = Boolean(parsed.token && this.tunnelOfHost.get(welcome.host.id))
       const persistHost = viaTunnel ? lanHostOf(parsed) : target.host
-      this.remember({
-        machineId: welcome.host.id,
-        name: welcome.host.name || parsed.name,
-        secret: welcome.grant?.secret || parsed.secret,
-        grantId: welcome.grant?.id,
-        host: persistHost,
-        port: viaTunnel ? (parsed.port && persistHost ? parsed.port : 0) : target.port,
-        token: parsed.token,
-        addresses: uniqueAddresses([
-          ...(parsed.addresses ?? []),
-          persistHost || undefined,
-          viaTunnel ? undefined : target.host
-        ]).filter((host) => !viaTunnel || !isLoopbackHost(host)),
-        home: welcome.home,
-        tmp: welcome.tmp
+      const localShell = extra?.localShell === true
+      if (localShell) {
+        const stored = this.loadStore()
+        const next = stored.filter((row) => row.machineId !== welcome.host.id)
+        if (next.length !== stored.length) this.saveStore(next)
+      } else {
+        this.remember({
+          machineId: welcome.host.id,
+          name: welcome.host.name || parsed.name,
+          secret: welcome.grant?.secret || parsed.secret,
+          grantId: welcome.grant?.id,
+          host: persistHost,
+          port: viaTunnel ? (parsed.port && persistHost ? parsed.port : 0) : target.port,
+          token: parsed.token,
+          addresses: uniqueAddresses([
+            ...(parsed.addresses ?? []),
+            persistHost || undefined,
+            viaTunnel ? undefined : target.host
+          ]).filter((host) => !viaTunnel || !isLoopbackHost(host)),
+          home: welcome.home,
+          tmp: welcome.tmp
+        })
+      }
+      this.mount(client, welcome, target, welcome.grant?.secret || parsed.secret, {
+        localShell
       })
-      this.mount(client, welcome, target, welcome.grant?.secret || parsed.secret)
       await this.pendingControl
       await this.notifyHostAttached(welcome.host.id)
       return { ok: true, host: this.opts.registry.get(welcome.host.id)?.info ?? welcome.host }
@@ -443,6 +570,7 @@ export class DaemonAttachService {
     this.tmps.delete(machineId)
     this.providers.delete(machineId)
     this.whichCache.delete(machineId)
+    this.versions.delete(machineId)
     this.opts.registry.remove(machineId)
     this.saveStore(this.loadStore().filter((row) => row.machineId !== machineId))
     this.opts.onHostsChanged(this.opts.registry.list())
@@ -466,6 +594,7 @@ export class DaemonAttachService {
     this.tmps.delete(machineId)
     this.providers.delete(machineId)
     this.whichCache.delete(machineId)
+    this.versions.delete(machineId)
     this.releaseTunnel(machineId)
     this.opts.registry.remove(machineId)
     const next = this.loadStore().filter((row) => row.machineId !== machineId)
@@ -475,6 +604,9 @@ export class DaemonAttachService {
 
   restore(): void {
     for (const row of this.loadStore()) {
+      if (row.localShell) continue
+      // Pre-vavrtp leftover: spawned default vavd used to be persisted as a remote.
+      if (isLoopbackPairedHost(row) && (row.name === 'VAV Daemon' || !row.name?.trim())) continue
       void this.reconnect(row)
     }
     if (!this.stopBrowse) {
@@ -519,10 +651,18 @@ export class DaemonAttachService {
       home: homedir(),
       tmp: tmpdir(),
       pairing: (secret) => this.pairing(secret),
+      rotateOffer: () => this.rotateHostOffer(),
       onPairAsk: this.opts.confirmLanPair
         ? (from) => this.opts.confirmLanPair!(from)
         : undefined,
       catalog: this.opts.catalog,
+      plugins: this.opts.plugins,
+      timers: this.opts.timers,
+      connectors: this.opts.connectors,
+      fileSessions: this.opts.fileSessions,
+      changeSets: this.opts.changeSets,
+      accounts: this.opts.accounts,
+      settings: this.opts.settings,
       onControlHello: this.opts.onControlHello,
       onIncomingChanged: () => this.emitIncoming()
     })
@@ -748,7 +888,8 @@ export class DaemonAttachService {
     client: DaemonClient,
     welcome: import('../../shared/daemonProtocol.ts').DaemonWelcome,
     target?: DialTarget,
-    hostSecret?: string
+    hostSecret?: string,
+    extra?: { localShell?: boolean }
   ): void {
     const previous = this.clients.get(welcome.host.id)
     previous?.close()
@@ -756,9 +897,19 @@ export class DaemonAttachService {
     this.clients.set(welcome.host.id, client)
     this.homes.set(welcome.host.id, welcome.home)
     this.tmps.set(welcome.host.id, welcome.tmp)
-    const host = createRemoteWorkspaceHost(client, welcome)
+    if (welcome.version) this.versions.set(welcome.host.id, welcome.version)
+    const host = createRemoteWorkspaceHost(client, welcome, extra)
     this.opts.registry.register(host)
     this.opts.onHostsChanged(this.opts.registry.list())
+    if (extra?.localShell) {
+      client.onStream('incoming', (_event, data) => {
+        const controllers = incomingControllersFromRpc(data)
+        if (!controllers) return
+        this.advertisedIncoming = controllers
+        this.emitIncoming()
+      })
+      void this.pullIncoming()
+    }
     client.onClose((reason) => {
       if (this.clients.get(welcome.host.id) !== client) return
       if (isPairAuthMessage(reason)) {
@@ -1005,4 +1156,14 @@ function pairErrorRank(err: Error): number {
 function preferPairError(failures: Error[]): Error {
   if (failures.length === 0) return new Error('no addresses')
   return [...failures].sort((a, b) => pairErrorRank(a) - pairErrorRank(b))[0]
+}
+
+function incomingControllersFromRpc(data: unknown): IncomingController[] | null {
+  const row = data && typeof data === 'object' ? (data as { controllers?: unknown }) : null
+  if (!row || !Array.isArray(row.controllers)) return null
+  return row.controllers.filter((entry): entry is IncomingController => {
+    if (!entry || typeof entry !== 'object') return false
+    const item = entry as IncomingController
+    return typeof item.id === 'string' && typeof item.name === 'string'
+  })
 }

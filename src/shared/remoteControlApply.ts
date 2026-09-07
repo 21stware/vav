@@ -93,7 +93,8 @@ export function chatMessageFromRemoteThread(
     blocks,
     createdAt: row.at || Date.now(),
     ...(row.cancelled ? { cancelled: true } : {}),
-    ...(row.error ? { errorText: row.error } : {})
+    ...(row.error ? { errorText: row.error } : {}),
+    ...(row.changeSetId ? { changeSetId: row.changeSetId } : {})
   }
 }
 
@@ -208,6 +209,14 @@ export function turnEventsFromRemoteTurn(
     if (turn.phase === 'awaiting') {
       events.push({ type: 'phase', conversationId, phase: 'awaiting-user' })
     }
+    if (turn.recovery) {
+      events.push({
+        type: 'phase',
+        conversationId,
+        phase: turn.recovery.kind,
+        recovery: turn.recovery
+      })
+    }
     if (turn.blocks?.length) {
       turn.blocks.forEach((block, index) => {
         events.push(...liveBlockEvents(conversationId, index, block))
@@ -234,7 +243,7 @@ export function turnEventsFromRemoteTurn(
         })
       }
     }
-    if (turn.awaiting) {
+    if (turn.awaiting && !turn.blocks?.some((block) => 'id' in block && block.id === turn.awaiting?.id)) {
       const block = remoteBlockToMessageBlock(turn.awaiting)
       if (block.kind === 'toolCall') {
         events.push({

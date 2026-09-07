@@ -86,6 +86,10 @@ export function buildRemoteControls(input: {
     thinkingLevels: allowed.map((id) => ({ id, label: THINKING_LABEL[id] })),
     mode: modeId,
     modes: modes.map((mode) => ({ id: mode.id, label: mode.name })),
+    commands: (input.acpSession?.commands ?? []).map((command) => ({
+      id: command.name,
+      label: command.description || command.name
+    })),
     approval,
     approvals: APPROVAL_OPTIONS,
     fast: showFast ? input.fast === true : null,

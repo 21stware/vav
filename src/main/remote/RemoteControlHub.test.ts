@@ -73,9 +73,9 @@ async function listenHub(
       }
       return 'ok'
     },
-    createSession: () => {
+    createSession: (conversationId) => {
       const session: RemoteSession = {
-        id: 'c-new',
+        id: conversationId?.trim() || 'c-new',
         title: 'New session',
         dirLabel: '',
         status: 'idle',
@@ -267,6 +267,26 @@ describe('RemoteControlHub', () => {
     } finally {
       hub.dispose()
       server.close()
+    }
+  })
+
+  it('creates a session with the requested workbench id', async () => {
+    const sent: string[] = []
+    const { port, close } = await listenHub(sent)
+    try {
+      const phone = createConnection({ host: '127.0.0.1', port })
+      await new Promise<void>((resolve, reject) => {
+        phone.once('connect', resolve)
+        phone.once('error', reject)
+      })
+      phone.write(encodeLine({ type: 'hello', proto: 1, auth: SECRET, device: 'desktop' }))
+      await readUntil(phone, (s) => s.welcomed)
+      phone.write(encodeLine({ type: 'create', conversationId: 'e2e-session' }))
+      const after = await readUntil(phone, (s) => s.sessions.some((row) => row.id === 'e2e-session'))
+      assert.ok(after.sessions.some((row) => row.id === 'e2e-session'))
+      phone.destroy()
+    } finally {
+      close()
     }
   })
 })

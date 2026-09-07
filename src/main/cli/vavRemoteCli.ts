@@ -4,7 +4,7 @@
  * Control-plane commands now live on `vavc` (herdr-style). This file stays so
  * `vav send` / `npm run vav` keep working against the same vavd.
  */
-import { runVavc } from './vavc.ts'
+import { runVavc } from '../../../packages/vavc/src/vavc.ts'
 
 void runVavc().then(
   (code) => {

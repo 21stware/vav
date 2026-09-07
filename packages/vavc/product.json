@@ -1,0 +1,16 @@
+{
+  "name": "@21stware/vavc",
+  "version": "1.19.1",
+  "role": "vavc",
+  "kind": "cli",
+  "sources": [
+    "packages/vavc/src/vavc.ts"
+  ],
+  "talksTo": [
+    "vavd"
+  ],
+  "hello": [
+    "phone",
+    "daemon"
+  ]
+}

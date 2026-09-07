@@ -7,7 +7,7 @@ import {
   launchVav,
   seedApiKey,
   waitForDaemonPairing,
-  waitForNewWindow
+  pairRemoteDaemon
 } from '../launch'
 
 const HOST_SESSION_ID = 'e2e-host-session'
@@ -33,12 +33,8 @@ test('remote desktop send drives the controlled host transcript', async () => {
   try {
     await seedApiKey(host.page)
     const pairing = await waitForDaemonPairing(host.page)
-    let paired: { ok: true; host: { id: string } } | { ok: false; error: string } | null = null
-    const remote = await waitForNewWindow(client, async () => {
-      paired = await client.page.evaluate((payload) => window.vav.hosts.pair(payload), pairing)
-    })
-    expect(paired?.ok).toBe(true)
-    if (!paired || !paired.ok) return
+    const paired = await pairRemoteDaemon(client.page, pairing)
+    const remote = client.page
 
     await remote.locator('[data-testid="app-shell"]').waitFor({ state: 'visible', timeout: 25_000 })
     await expect(

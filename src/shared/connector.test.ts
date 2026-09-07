@@ -4,6 +4,7 @@ import {
   CONNECTOR_CATALOG,
   CONNECTOR_IDS,
   connectorCan,
+  connectorCliName,
   connectorDescriptor,
   isConnectorId,
   parseConnectorAction
@@ -25,5 +26,12 @@ describe('connector catalog', () => {
     assert.equal(isConnectorId('plugin'), false)
     assert.equal(parseConnectorAction('deploy'), 'deploy')
     assert.equal(parseConnectorAction('merge'), null)
+  })
+
+  it('names the host CLI for each connector', () => {
+    assert.equal(connectorCliName('github'), 'gh')
+    assert.equal(connectorCliName('cloudflare'), 'wrangler')
+    assert.equal(connectorCliName('supabase'), 'supabase')
+    assert.equal(connectorCliName('vercel'), 'vercel')
   })
 })

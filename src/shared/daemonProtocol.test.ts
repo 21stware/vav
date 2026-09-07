@@ -121,7 +121,7 @@ describe('daemon pairing', () => {
     })
     assert.equal(
       encoded,
-      'vav-daemon://0123456789abcdef0123@10.0.0.2:4750?name=build&token=tcTOKEN:with.dots&addresses=10.0.0.2,build.local'
+      'vavrtp://0123456789abcdef0123@10.0.0.2:4750?name=build&token=tcTOKEN:with.dots&addresses=10.0.0.2,build.local'
     )
     const parsed = parseDaemonPairing(encoded)
     assert.ok(parsed)
@@ -131,6 +131,15 @@ describe('daemon pairing', () => {
     assert.equal(parsed.port, 4750)
     assert.equal(parsed.token, 'tcTOKEN:with.dots')
     assert.deepEqual(parsed.addresses, ['10.0.0.2', 'build.local'])
+  })
+
+  it('still parses a legacy vav-daemon:// URI', () => {
+    const parsed = parseDaemonPairing(
+      'vav-daemon://0123456789abcdef0123@10.0.0.2:4750?name=build'
+    )
+    assert.ok(parsed)
+    assert.equal(parsed.host, '10.0.0.2')
+    assert.equal(parsed.name, 'build')
   })
 
   it('parses the hand-copied URI form', () => {
@@ -164,7 +173,7 @@ describe('daemon pairing', () => {
       host: '::1',
       port: 4750
     })
-    assert.equal(encoded, 'vav-daemon://0123456789abcdef0123@[::1]:4750?name=box')
+    assert.equal(encoded, 'vavrtp://0123456789abcdef0123@[::1]:4750?name=box')
     const parsed = parseDaemonPairing(encoded)
     assert.ok(parsed)
     assert.equal(parsed.host, '::1')

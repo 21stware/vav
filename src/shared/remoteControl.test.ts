@@ -107,6 +107,10 @@ describe('parseClientMessage', () => {
   it('passes through sessions, create, and ping', () => {
     assert.deepEqual(parseClientMessage({ type: 'sessions' }), { type: 'sessions' })
     assert.deepEqual(parseClientMessage({ type: 'create' }), { type: 'create' })
+    assert.deepEqual(parseClientMessage({ type: 'create', conversationId: 'c-keep' }), {
+      type: 'create',
+      conversationId: 'c-keep'
+    })
     assert.deepEqual(parseClientMessage({ type: 'ping' }), { type: 'ping' })
   })
 
@@ -150,6 +154,77 @@ describe('parseClientMessage', () => {
     assert.equal(parseClientMessage({ type: 'favorite', conversationId: 'c1' }), null)
   })
 
+  it('accepts compact, clear-compaction, and regenerate', () => {
+    assert.deepEqual(parseClientMessage({ type: 'compact', conversationId: 'c1' }), {
+      type: 'compact',
+      conversationId: 'c1'
+    })
+    assert.deepEqual(
+      parseClientMessage({ type: 'compact', conversationId: 'c1', keepAfterMessageId: 'm2' }),
+      { type: 'compact', conversationId: 'c1', keepAfterMessageId: 'm2' }
+    )
+    assert.deepEqual(
+      parseClientMessage({ type: 'clear-compaction', conversationId: 'c1', leafId: 'leaf' }),
+      { type: 'clear-compaction', conversationId: 'c1', leafId: 'leaf' }
+    )
+    assert.deepEqual(
+      parseClientMessage({ type: 'regenerate', conversationId: 'c1', messageId: 'a1' }),
+      { type: 'regenerate', conversationId: 'c1', messageId: 'a1' }
+    )
+    assert.equal(parseClientMessage({ type: 'compact', conversationId: '' }), null)
+    assert.equal(parseClientMessage({ type: 'clear-compaction', conversationId: 'c1' }), null)
+    assert.equal(parseClientMessage({ type: 'regenerate', conversationId: 'c1' }), null)
+  })
+
+  it('accepts edit, fork, delete-message, and leaf', () => {
+    assert.deepEqual(
+      parseClientMessage({ type: 'edit', conversationId: 'c1', messageId: 'u1', text: 'rewritten' }),
+      { type: 'edit', conversationId: 'c1', messageId: 'u1', text: 'rewritten' }
+    )
+    assert.deepEqual(parseClientMessage({ type: 'fork', conversationId: 'c1', messageId: 'a1' }), {
+      type: 'fork',
+      conversationId: 'c1',
+      messageId: 'a1'
+    })
+    assert.deepEqual(
+      parseClientMessage({ type: 'delete-message', conversationId: 'c1', messageId: 'a1' }),
+      { type: 'delete-message', conversationId: 'c1', messageId: 'a1' }
+    )
+    assert.deepEqual(
+      parseClientMessage({ type: 'leaf', conversationId: 'c1', messageId: 'u1', follow: true }),
+      { type: 'leaf', conversationId: 'c1', messageId: 'u1', follow: true }
+    )
+    assert.equal(parseClientMessage({ type: 'edit', conversationId: 'c1', messageId: 'u1', text: '  ' }), null)
+    assert.equal(parseClientMessage({ type: 'fork', conversationId: 'c1' }), null)
+    assert.equal(parseClientMessage({ type: 'delete-message', conversationId: 'c1' }), null)
+    assert.equal(parseClientMessage({ type: 'leaf', conversationId: 'c1' }), null)
+    assert.deepEqual(parseClientMessage({ type: 'duplicate', conversationId: 'c1' }), {
+      type: 'duplicate',
+      conversationId: 'c1'
+    })
+    assert.deepEqual(
+      parseClientMessage({ type: 'continue', conversationId: 'c1', messageId: 'u1' }),
+      { type: 'continue', conversationId: 'c1', messageId: 'u1' }
+    )
+    assert.equal(parseClientMessage({ type: 'duplicate', conversationId: '' }), null)
+    assert.equal(parseClientMessage({ type: 'continue', conversationId: 'c1' }), null)
+    assert.deepEqual(
+      parseClientMessage({ type: 'goal', conversationId: 'c1', action: 'set', objective: 'ship' }),
+      { type: 'goal', conversationId: 'c1', action: 'set', objective: 'ship' }
+    )
+    assert.deepEqual(parseClientMessage({ type: 'goal', conversationId: 'c1', action: 'clear' }), {
+      type: 'goal',
+      conversationId: 'c1',
+      action: 'clear'
+    })
+    assert.equal(parseClientMessage({ type: 'goal', conversationId: 'c1', action: 'nope' }), null)
+    assert.deepEqual(
+      parseClientMessage({ type: 'locate', conversationId: 'c1', destinationDir: '/tmp/kept' }),
+      { type: 'locate', conversationId: 'c1', destinationDir: '/tmp/kept' }
+    )
+    assert.equal(parseClientMessage({ type: 'locate', conversationId: 'c1' }), null)
+  })
+
   it('accepts cancel, reply, rename, archive, browse, workspace, and fast', () => {
     assert.deepEqual(parseClientMessage({ type: 'cancel', conversationId: 'c1' }), {
       type: 'cancel',
@@ -172,6 +247,10 @@ describe('parseClientMessage', () => {
       type: 'browse',
       conversationId: 'c1'
     })
+    assert.deepEqual(
+      parseClientMessage({ type: 'browse', conversationId: 'c1', path: '/tmp', files: true }),
+      { type: 'browse', conversationId: 'c1', path: '/tmp', files: true }
+    )
     assert.deepEqual(
       parseClientMessage({ type: 'workspace', conversationId: 'c1', temp: true }),
       { type: 'workspace', conversationId: 'c1', temp: true }
@@ -242,10 +321,30 @@ describe('parseServerMessage', () => {
     })
     const sessions = parseServerMessage({
       type: 'sessions',
-      sessions: [{ id: 'c1', title: 'Host', status: 'idle', surface: 'vav', updatedAt: 1 }]
+      sessions: [
+        {
+          id: 'c1',
+          title: 'Host',
+          status: 'idle',
+          surface: 'vav',
+          updatedAt: 1,
+          pinned: true,
+          favorite: true,
+          goal: { status: 'active', objective: 'Ship remotes', lastReason: 'review' }
+        }
+      ]
     })
     assert.equal(sessions?.type, 'sessions')
-    if (sessions?.type === 'sessions') assert.equal(sessions.sessions[0]?.dirLabel, '')
+    if (sessions?.type === 'sessions') {
+      assert.equal(sessions.sessions[0]?.dirLabel, '')
+      assert.equal(sessions.sessions[0]?.pinned, true)
+      assert.equal(sessions.sessions[0]?.favorite, true)
+      assert.deepEqual(sessions.sessions[0]?.goal, {
+        status: 'active',
+        objective: 'Ship remotes',
+        lastReason: 'review'
+      })
+    }
     const turn = parseServerMessage({
       type: 'turn',
       conversationId: 'c1',

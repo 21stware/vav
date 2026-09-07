@@ -1287,6 +1287,9 @@ export interface VavApi {
     act(
       request: import('./connector').ConnectorActionRequest
     ): Promise<import('./connector').ConnectorActionResult>
+    authStatus(): Promise<import('./connector').ConnectorAuthPage>
+    beginLogin(id: import('./connector').ConnectorId): Promise<import('./connector').ConnectorAuthPage>
+    cancelLogin(id?: import('./connector').ConnectorId): Promise<import('./connector').ConnectorAuthPage>
   }
 
   vercel: {
@@ -1296,9 +1299,15 @@ export interface VavApi {
     ): Promise<import('./vercel').VercelResult<import('./vercel').VercelStatus>>
   }
 
-  /** Scheduled jobs. Runs are timer sessions, not main-sidebar chats. */
+  /** Scheduled jobs. Definition chats are timer sessions; fires mint run chats. */
   timers: {
     listJobs(): Promise<import('./timer').TimerJob[]>
+    /** New scheduled task: a conversation window plus an unbound-until-enabled job. */
+    createScheduled(): Promise<{
+      job: import('./timer').TimerJob
+      conversation: import('./types').ConversationMeta
+    }>
+    getJobForConversation(conversationId: string): Promise<import('./timer').TimerJob | null>
     createJob(input: import('./timer').TimerJobInput): Promise<import('./timer').TimerJob>
     updateJob(
       id: string,
@@ -1651,7 +1660,7 @@ export interface VavApi {
 
   hosts: {
     list(): Promise<import('./workspaceHost').WorkspaceHostInfo[]>
-    /** This machine's `vav-daemon://` pairing URI, when listening. */
+    /** This machine's `vavrtp://` pairing URI, when listening. */
     pairing(): Promise<string | null>
     pair(
       payload: string
@@ -1673,6 +1682,8 @@ export interface VavApi {
     listDir(machineId: string, path: string): Promise<DirectoryListing>
     home(machineId: string): Promise<string>
     show(machineId: string): Promise<void>
+    /** Machine the main shell is currently showing. */
+    active(): Promise<string>
     openFolder(machineId: string): Promise<void>
     probeProviders(machineId: string): Promise<import('./workspaceHost').HostProviderInfo[]>
     onChanged(handler: (hosts: import('./workspaceHost').WorkspaceHostInfo[]) => void): () => void
@@ -1681,6 +1692,7 @@ export interface VavApi {
       handler: (controllers: import('./daemonProtocol').IncomingController[]) => void
     ): () => void
     onPickFolder(handler: (machineId: string) => void): () => void
+    onActivate(handler: (machineId: string) => void): () => void
   }
 
   changeSets: {
@@ -2013,7 +2025,12 @@ export const IPC = {
   connectorsCatalog: 'vav:connectors:catalog',
   connectorsProbe: 'vav:connectors:probe',
   connectorsAct: 'vav:connectors:act',
+  connectorsAuthStatus: 'vav:connectors:auth-status',
+  connectorsBeginLogin: 'vav:connectors:begin-login',
+  connectorsCancelLogin: 'vav:connectors:cancel-login',
   timersListJobs: 'vav:timers:list-jobs',
+  timersCreateScheduled: 'vav:timers:create-scheduled',
+  timersGetJobForConversation: 'vav:timers:get-job-for-conversation',
   timersCreateJob: 'vav:timers:create-job',
   timersUpdateJob: 'vav:timers:update-job',
   timersRemoveJob: 'vav:timers:remove-job',
@@ -2102,6 +2119,8 @@ export const IPC = {
   hostsListDir: 'vav:hosts:list-dir',
   hostsHome: 'vav:hosts:home',
   hostsShow: 'vav:hosts:show',
+  hostsActive: 'vav:hosts:active',
+  hostsActivate: 'vav:hosts:activate',
   hostsOpenFolder: 'vav:hosts:open-folder',
   hostsProbeProviders: 'vav:hosts:probe-providers',
   hostsPickFolder: 'vav:hosts:pick-folder',

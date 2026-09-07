@@ -31,6 +31,7 @@ export type ConversationMutateIpcStore = {
   ) => Conversation
   updateMeta: (id: string, patch: Partial<ConversationMeta>) => unknown
   listMeta: () => ConversationMeta[]
+  listClientMeta: () => ConversationMeta[]
   switchHostTranscript: (id: string, host: CliHostKind | null) => unknown
   deleteMessage: (id: string, messageId: string) => Conversation | undefined | null
   flush: () => void
@@ -87,6 +88,8 @@ export type ConversationMutateIpcHost = {
   }
   invalidateCliResume: (id: string) => void
   onRemoved: (id: string) => void
+  /** Archive on the host before dropping the local row. */
+  forwardRemove?: (ids: string[]) => Promise<void>
   revealPath: (event: IpcMainInvokeEvent, path: string) => Promise<void>
   writeText: (text: string) => void
   readText: () => string
@@ -100,6 +103,15 @@ export type ConversationMutateIpcHost = {
   }) => Promise<ConversationMeta | null>
   forwardConfigure?: (id: string, patch: { model?: string }) => Promise<boolean>
   forwardSetWorkspace?: (id: string, path: string | null) => Promise<boolean>
+  forwardDeleteMessage?: (
+    id: string,
+    messageId: string
+  ) => Promise<{
+    conversations: ConversationMeta[]
+    messages: unknown
+    activeLeafId: string | null
+  } | null | undefined>
+  forwardSelectBranch?: (id: string, messageId: string) => Promise<string | null | undefined>
 }
 
 /** Create / host-switch / workdir / delete / clipboard — remaining conversation IPC. */
@@ -325,7 +337,9 @@ export function registerConversationMutateIpc(
     }
   })
 
-  ipcMain.handle(IPC.convDeleteMessage, (_event, id: string, messageId: string) => {
+  ipcMain.handle(IPC.convDeleteMessage, async (_event, id: string, messageId: string) => {
+    const forwarded = await host.forwardDeleteMessage?.(id, messageId)
+    if (forwarded !== undefined) return forwarded
     const conversation = store.deleteMessage(id, messageId)
     if (!conversation) return null
     if (isStructuredCliHost(conversation.cliHost)) {
@@ -340,7 +354,8 @@ export function registerConversationMutateIpc(
     }
   })
 
-  ipcMain.handle(IPC.convRemove, (_event, ids: string[]) => {
+  ipcMain.handle(IPC.convRemove, async (_event, ids: string[]) => {
+    await host.forwardRemove?.(Array.isArray(ids) ? ids : [])
     const removed = store.remove(ids)
     for (const id of removed) {
       appLog().user(LOG_EVENT.userSessionRemove, 'Remove session', { conversationId: id })
@@ -348,7 +363,7 @@ export function registerConversationMutateIpc(
     }
     if (removed.length) store.flush()
     host.publish()
-    return { removed, conversations: store.listMeta() }
+    return { removed, conversations: store.listClientMeta() }
   })
 
   ipcMain.handle(IPC.convReveal, async (event, path: string) => {
@@ -365,7 +380,9 @@ export function registerConversationMutateIpc(
 
   ipcMain.handle(IPC.convCopyImage, (_event, base64Png: string) => host.copyImage(base64Png))
 
-  ipcMain.handle(IPC.convSelectBranch, (_event, id: string, messageId: string) =>
-    store.selectBranch(id, messageId)
-  )
+  ipcMain.handle(IPC.convSelectBranch, async (_event, id: string, messageId: string) => {
+    const forwarded = await host.forwardSelectBranch?.(id, messageId)
+    if (forwarded !== undefined) return forwarded
+    return store.selectBranch(id, messageId)
+  })
 }

@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { hostDirname, openSpawn, previewSpawn, revealSpawn } from './hostShell.ts'
+import {
+  copyAsFileSpawn,
+  getInfoSpawn,
+  hostDirname,
+  openSpawn,
+  previewSpawn,
+  revealSpawn
+} from './hostShell.ts'
 
 describe('hostShell', () => {
   it('reveals in Finder on darwin and Explorer on Windows', () => {
@@ -44,5 +51,26 @@ describe('hostShell', () => {
   it('dirnames with the host separator', () => {
     assert.equal(hostDirname('linux', '/a/b/c'), '/a/b')
     assert.equal(hostDirname('win32', 'C:\\a\\b.txt'), 'C:\\a')
+  })
+
+  it('opens Get Info / Properties on darwin and Windows', () => {
+    const mac = getInfoSpawn('darwin', '/Users/me/note.md')
+    assert.equal(mac?.file, 'osascript')
+    assert.match(mac?.args[1] ?? '', /information window/)
+    const win = getInfoSpawn('win32', 'C:\\proj\\a.txt')
+    assert.equal(win?.file, 'powershell.exe')
+    assert.match(win?.args.at(-1) ?? '', /Properties/)
+    assert.equal(getInfoSpawn('linux', '/tmp/a.md'), null)
+  })
+
+  it('copies host file URLs onto the OS clipboard', () => {
+    const mac = copyAsFileSpawn('darwin', ['/Users/me/note.md'])
+    assert.equal(mac?.file, 'osascript')
+    assert.match(mac?.args[1] ?? '', /POSIX file/)
+    const win = copyAsFileSpawn('win32', ['C:\\proj\\a.txt'])
+    assert.equal(win?.file, 'powershell.exe')
+    assert.match(win?.args.at(-1) ?? '', /SetFileDropList/)
+    assert.equal(copyAsFileSpawn('linux', ['/tmp/a.md']), null)
+    assert.equal(copyAsFileSpawn('darwin', []), null)
   })
 })

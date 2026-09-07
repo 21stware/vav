@@ -1,11 +1,11 @@
 import { test, expect } from '@playwright/test'
-import { chooseNativeMenu, E2E_SESSION_ID, launchVav } from '../launch'
+import { chooseNativeMenu, E2E_SESSION_ID, launchWorkbench } from '../launch'
 
 /**
  * Live ACP stdio fixture (cursor transport). No vendor CLI.
  */
 test('live ACP turn streams a reply and publishes session modes', async () => {
-  const harness = await launchVav({ liveAcp: true })
+  const harness = await launchWorkbench({ liveAcp: true })
   try {
     const { page } = harness
     await expect(page.getByText('E2E ACP live')).toBeVisible()
@@ -28,7 +28,7 @@ test('live ACP turn streams a reply and publishes session modes', async () => {
 })
 
 test('live ACP session mode native menu reaches session/set_mode', async () => {
-  const harness = await launchVav({ liveAcp: true })
+  const harness = await launchWorkbench({ liveAcp: true })
   try {
     const { page } = harness
     await page.locator('[data-testid="composer-input"]').fill('boot')

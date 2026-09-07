@@ -7,11 +7,11 @@ import type {
   VercelErrorCode,
   VercelResult,
   VercelStatus,
-  VercelStatusQuery,
-  VercelTokenSource
+  VercelStatusQuery
 } from '@shared/vercel'
 import { mapVercelReadyState, vercelDashboardUrl } from '@shared/vercel'
 import { isVercelConfigName, parseVercelJsonName, parseVercelProjectJson } from '@shared/vercelConfig'
+import { peekVercelAuth, resolveVercelToken } from './vercelAuth'
 
 const API = 'https://api.vercel.com'
 const API_TIMEOUT_MS = 20_000
@@ -102,20 +102,6 @@ function scanVercelWorkspace(cwd: string): VercelResult<Scan> {
   }
 }
 
-function peekVercelAuth(token: string | null): { present: boolean; source: VercelTokenSource } {
-  if (token?.trim()) return { present: true, source: 'settings' }
-  if ((process.env.VERCEL_TOKEN || '').trim()) return { present: true, source: 'env' }
-  return { present: false, source: null }
-}
-
-function resolveVercelToken(token: string | null): { token: string | null; source: VercelTokenSource } {
-  const settings = token?.trim() || null
-  if (settings) return { token: settings, source: 'settings' }
-  const env = (process.env.VERCEL_TOKEN || '').trim() || null
-  if (env) return { token: env, source: 'env' }
-  return { token: null, source: null }
-}
-
 type VercelApiDeployment = {
   uid?: string
   id?: string
@@ -192,7 +178,7 @@ export async function getVercelStatus(
   }
   if (query?.remote === false) return { ok: true, data: status }
 
-  const resolved = resolveVercelToken(auth.token)
+  const resolved = await resolveVercelToken(auth.token)
   status.tokenPresent = Boolean(resolved.token)
   status.tokenSource = resolved.source
   if (!resolved.token) return { ok: true, data: status }

@@ -1,15 +1,15 @@
 import { test, expect } from '@playwright/test'
-import { launchVav, seedApiKey } from '../launch'
+import { launchWorkbench, seedVavKeyAccount } from '../launch'
 
 /**
  * Hover actions on a sealed stub turn: quote into the composer, regenerate
  * into a sibling branch.
  */
 test('quote pins a composer chip and regenerate opens a second branch', async () => {
-  const harness = await launchVav({ stubTurn: true })
+  const harness = await launchWorkbench({ stubTurn: true })
   try {
     const { page } = harness
-    await seedApiKey(page)
+    await seedVavKeyAccount(page)
     await page.locator('[data-testid="composer-input"]').fill('ping e2e')
     await page.locator('[data-testid="composer-send"]').click()
 

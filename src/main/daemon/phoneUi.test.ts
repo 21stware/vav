@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { renderBlock, renderSessionRows, turnHtml } from '../../../extension/lib/ui/render.js'
+import { renderBlock, renderSessionRows, turnHtml } from '../../../packages/vav-chrome-extension/extension/lib/ui/render.js'
 
 describe('shared phone UI (desktop agent log)', () => {
   it('renders You / Agent labels, not chat bubbles', () => {

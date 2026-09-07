@@ -31,7 +31,12 @@ import {
 } from '@shared/attentionBadge'
 import { isDevRuntime } from './devRuntime'
 import { t } from './i18n'
-import { LOCAL_MACHINE_ID, normalizeMachineId } from '@shared/workspaceHost'
+import {
+  LOCAL_MACHINE_ID,
+  normalizeMachineId,
+  serviceShortName,
+  userFacingRemotes
+} from '@shared/workspaceHost'
 
 /** One multi-res tray glyph for the process lifetime — avoid rebuild thrash. */
 let cachedTrayIcon: NativeImage | null = null
@@ -84,6 +89,7 @@ export type RunningSessionTarget = {
 export type TrayHostService = {
   id: string
   name: string
+  localShell?: boolean
 }
 
 type HostServices = {
@@ -204,8 +210,19 @@ export class NotificationCenter {
 
   isConversationForeground(conversationId: string): boolean {
     const focused = BrowserWindow.getFocusedWindow()
-    if (!focused || focused.isDestroyed()) return false
-    return isForegroundConversation(conversationId, focusedWindowState(focused), this.viewByWindow)
+    if (focused && !focused.isDestroyed()) {
+      if (isForegroundConversation(conversationId, focusedWindowState(focused), this.viewByWindow)) {
+        return true
+      }
+    }
+    // Visible window showing this transcript counts even if OS focus left
+    // (Playwright, another app). Background sessions still badge.
+    for (const [windowId, id] of this.viewByWindow) {
+      if (id !== conversationId) continue
+      const win = BrowserWindow.fromId(windowId)
+      if (win && !win.isDestroyed() && win.isVisible() && !win.isMinimized()) return true
+    }
+    return false
   }
 
   acknowledgeConversation(conversationId: string): void {
@@ -395,45 +412,40 @@ export class NotificationCenter {
     if (!this.tray) return
     const items: Electron.MenuItemConstructorOptions[] = []
     const hosts = this.hostServices?.list() ?? []
-    const remotes = hosts.filter((host) => host.id !== LOCAL_MACHINE_ID)
+    const remotes = userFacingRemotes(hosts)
     const defaultId = normalizeMachineId(this.hostServices?.defaultId())
-    if (remotes.length > 0) {
-      const ordered = [
-        hosts.find((host) => host.id === LOCAL_MACHINE_ID) ?? {
-          id: LOCAL_MACHINE_ID,
-          name: t('sidebar.thisMachine')
-        },
-        ...remotes
-      ]
-      for (const host of ordered) {
-        if (items.length > 0) items.push({ type: 'separator' })
-        const isDefault = host.id === defaultId
-        items.push({
-          label: isDefault ? `${host.name} · ${t('tray.defaultTag')}` : host.name,
-          click: () => this.hostServices?.show(host.id)
-        })
-        this.appendSessionItems(
-          items,
-          this.runningSessions.filter(
-            (row) => normalizeMachineId(row.machineId) === host.id
-          )
-        )
-      }
+    const ordered = [
+      hosts.find((host) => host.id === LOCAL_MACHINE_ID) ?? {
+        id: LOCAL_MACHINE_ID,
+        name: LOCAL_MACHINE_ID
+      },
+      ...remotes
+    ]
+    for (const host of ordered) {
+      if (items.length > 0) items.push({ type: 'separator' })
+      const isDefault = host.id === defaultId
+      const short = serviceShortName(host.id, hosts, host.name)
+      items.push({
+        label: isDefault ? `${short} · ${t('tray.defaultTag')}` : short,
+        click: () => this.hostServices?.show(host.id)
+      })
+      this.appendSessionItems(
+        items,
+        this.runningSessions.filter((row) => normalizeMachineId(row.machineId) === host.id)
+      )
+    }
+    if (ordered.length > 1) {
       items.push({ type: 'separator' })
       items.push({
         type: 'submenu',
         label: t('tray.setDefault'),
         submenu: ordered.map((host) => ({
-          label: host.name,
+          label: serviceShortName(host.id, hosts, host.name),
           type: 'checkbox' as const,
           checked: host.id === defaultId,
           click: () => this.hostServices?.setDefault(host.id)
         }))
       })
-    } else if (this.runningSessions.length === 0) {
-      items.push({ label: APP_NAME, enabled: false })
-    } else {
-      this.appendSessionItems(items, this.runningSessions)
     }
     items.push(
       { type: 'separator' },

@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { isWorkspaceSession, sessionKindOf } from './sessionKind.ts'
+import { isTimerDefinition, isWorkspaceSession, sessionKindOf } from './sessionKind.ts'
 
 describe('sessionKindOf', () => {
   it('prefers an explicit kind', () => {
@@ -12,6 +12,14 @@ describe('sessionKindOf', () => {
   it('treats fileId as a file session when kind is missing', () => {
     assert.equal(sessionKindOf({ fileId: 'ino-1' }), 'file')
     assert.equal(sessionKindOf({}), 'workspace')
+  })
+})
+
+describe('isTimerDefinition', () => {
+  it('is a timer chat without a run id', () => {
+    assert.equal(isTimerDefinition({ sessionKind: 'timer' }), true)
+    assert.equal(isTimerDefinition({ sessionKind: 'timer', timerRunId: 'r1' }), false)
+    assert.equal(isTimerDefinition({ sessionKind: 'workspace' }), false)
   })
 })
 

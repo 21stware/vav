@@ -29,6 +29,21 @@ describe('TimerStore', () => {
     b.load()
     assert.equal(b.getJob(job.id)?.title, 'Morning check')
     assert.deepEqual(b.getJob(job.id)?.connectorIds, ['cloudflare'])
+    assert.equal(b.getJob(job.id)?.conversationId, null)
+  })
+
+  it('allows an empty prompt and binds a definition conversation', () => {
+    const timers = store()
+    const job = timers.createJob({
+      title: '',
+      prompt: '',
+      schedule: { kind: 'interval', everyMs: 60_000 },
+      conversationId: 'conv-def'
+    })
+    assert.equal(job.title, 'Scheduled task')
+    assert.equal(job.prompt, '')
+    assert.equal(job.conversationId, 'conv-def')
+    assert.equal(timers.getJobForConversation('conv-def')?.id, job.id)
   })
 
   it('marks due jobs and finishes a run', () => {

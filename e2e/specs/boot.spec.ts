@@ -1,8 +1,8 @@
 import { test, expect } from '@playwright/test'
-import { launchVav } from '../launch'
+import { launchWorkbench } from '../launch'
 
 test('app boots past Keychain into an isolated English shell', async () => {
-  const harness = await launchVav()
+  const harness = await launchWorkbench()
   try {
     const about = await harness.page.evaluate(async () => {
       const boot = await window.vav.bootstrap()

@@ -1,11 +1,11 @@
 import { test, expect } from '@playwright/test'
-import { chooseNativeMenu, launchVav, waitForNewWindow } from '../launch'
+import { chooseNativeMenu, launchWorkbench, waitForNewWindow } from '../launch'
 
 /**
  * session/sidebar-conversation-list.rpml + session/main-chat-empty.rpml
  */
 test('sidebar lists the session, groups by workspace, and archives stay reachable', async () => {
-  const harness = await launchVav()
+  const harness = await launchWorkbench()
   try {
     const { page } = harness
     await expect(page.locator('[data-testid="sidebar"]')).toBeVisible()
@@ -23,11 +23,12 @@ test('sidebar lists the session, groups by workspace, and archives stay reachabl
 })
 
 test('Remote Tunnel button pops the tunnel window with phone and machine pairing', async () => {
-  const harness = await launchVav()
+  const harness = await launchWorkbench()
   try {
     const { page } = harness
     const connect = await waitForNewWindow(harness, async () => {
       await page.locator('[data-testid="sidebar-connect"]').click()
+      await chooseNativeMenu(page, 'Pair another device…')
     })
     await expect(connect.locator('[data-testid="connect-window"]')).toBeVisible()
     // Incoming (phone / QR) stacked above outgoing (pair a remote machine).
@@ -45,7 +46,7 @@ test('Remote Tunnel button pops the tunnel window with phone and machine pairing
 })
 
 test('new session is created and selected', async () => {
-  const harness = await launchVav()
+  const harness = await launchWorkbench()
   try {
     const { page } = harness
     await page.locator('[data-testid="new-session"]').click()
@@ -62,7 +63,7 @@ test('new session is created and selected', async () => {
 })
 
 test('Archived menu item opens the empty archive list and back restores grouping', async () => {
-  const harness = await launchVav()
+  const harness = await launchWorkbench()
   try {
     const { page } = harness
     await page.locator('[data-testid="sidebar-more"]').click()
@@ -78,7 +79,7 @@ test('Archived menu item opens the empty archive list and back restores grouping
 })
 
 test('sidebar search filters by title', async () => {
-  const harness = await launchVav()
+  const harness = await launchWorkbench()
   try {
     const { page } = harness
     const search = page.locator('[data-testid="sidebar-search"]')

@@ -1,0 +1,16 @@
+{
+  "name": "@21stware/vav-cli",
+  "version": "1.19.1",
+  "role": "vav-cli",
+  "kind": "cli",
+  "sources": [
+    "packages/vav-cli/src/vavcli.ts"
+  ],
+  "talksTo": [
+    "vavd"
+  ],
+  "hello": [
+    "phone",
+    "daemon"
+  ]
+}

@@ -294,6 +294,7 @@ export function wireAcp(
   let lastModelsField: unknown = null
   let wantedModel = options.model?.trim() || null
   let wantedThinking = options.thinkingLevel ?? null
+  let wantedFast = options.fast === true
   let applyModelChain: Promise<void> = Promise.resolve()
   const rejectedModels = new Set<string>()
 
@@ -483,7 +484,10 @@ export function wireAcp(
     }
     if (!wantedModel) return
     rejectedModels.clear()
-    const candidates = acpModelIdCandidates(wantedModel, availableModels)
+    const candidates = acpModelIdCandidates(wantedModel, availableModels, {
+      thinkingLevel: wantedThinking,
+      fast: wantedFast
+    })
     for (const modelId of candidates) {
       if (rejectedModels.has(modelId)) continue
       try {
@@ -1005,6 +1009,7 @@ export function wireAcp(
       if (opts.approvalMode) return false
       if (opts.model != null) wantedModel = opts.model.trim() || null
       if (opts.thinkingLevel !== undefined) wantedThinking = opts.thinkingLevel
+      if (opts.fast !== undefined) wantedFast = opts.fast === true
       if (opts.model != null) publishAdvertisedThinkingLevels()
       if (opts.model != null || opts.thinkingLevel !== undefined || opts.fast !== undefined) {
         // Re-apply the advertised family row after a model / chip change.

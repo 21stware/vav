@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import { PassThrough } from 'node:stream'
 import { execFileSync } from 'node:child_process'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, it } from 'node:test'
@@ -103,5 +103,37 @@ describe('GitService remote host', () => {
       true
     )
     assert.ok(seen.some((args) => args[0] === 'rev-parse'))
+  })
+})
+
+describe('GitService inherited git env', () => {
+  afterEach(() => {
+    resetGitHost()
+  })
+
+  it('does not let GIT_DIR from the parent process hide a real workdir', async () => {
+    const other = await mkdtemp(join(tmpdir(), 'vav-git-other-'))
+    const dir = await mkdtemp(join(tmpdir(), 'vav-git-cwd-'))
+    const prev = process.env.GIT_DIR
+    try {
+      execFileSync('git', ['init', '-b', 'main'], { cwd: other })
+      execFileSync('git', ['init', '-b', 'main'], { cwd: dir })
+      await writeFile(join(dir, 'hello.md'), 'from cwd\n')
+      execFileSync('git', ['add', 'hello.md'], { cwd: dir })
+      execFileSync('git', ['-c', 'user.email=e2e@vav.test', '-c', 'user.name=e2e', 'commit', '-m', 'seed'], {
+        cwd: dir
+      })
+      const before = await getGitSnapshot(dir)
+      assert.equal(before.isRepo, true, `baseline ${JSON.stringify(before)}`)
+      process.env.GIT_DIR = join(other, '.git')
+      const snap = await getGitSnapshot(dir)
+      assert.equal(snap.isRepo, true, `with GIT_DIR ${JSON.stringify(snap)}`)
+      assert.equal(snap.cwd, dir)
+    } finally {
+      if (prev === undefined) delete process.env.GIT_DIR
+      else process.env.GIT_DIR = prev
+      await rm(other, { recursive: true, force: true })
+      await rm(dir, { recursive: true, force: true })
+    }
   })
 })

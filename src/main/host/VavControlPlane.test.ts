@@ -85,6 +85,11 @@ describe('VavControlPlane', { concurrency: false }, () => {
     else process.env.VAV_E2E_STUB_TURN = prevStub
   })
 
+  it('loads CliAgentHost in Node without electron', async () => {
+    const { CliAgentHost } = await import('../agent/CliAgentHost.ts')
+    assert.equal(typeof CliAgentHost, 'function')
+  })
+
   it('accepts phone hello, creates a session, and runs the agent loop in-process', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'vav-plane-'))
     const host = createLocalWorkspaceHost({ name: 'plane' })
@@ -103,6 +108,7 @@ describe('VavControlPlane', { concurrency: false }, () => {
       home: dir,
       tmp: dir,
       catalog: plane.catalog,
+      logs: plane.logs,
       onControlHello: (socket, leftover, hello) => plane.hub.adoptAuthed(socket, leftover, hello)
     })
     const port = await server.listen(0, '127.0.0.1')
@@ -140,9 +146,84 @@ describe('VavControlPlane', { concurrency: false }, () => {
       assert.ok(controls && controls.type === 'controls')
       assert.equal(controls.approval, 'edit')
       assert.equal(controls.model, 'test-model')
+      plane.conversations.updateMeta(conversationId, {
+        cliHost: 'cursor',
+        acpSession: {
+          currentModeId: 'agent',
+          modes: [
+            { id: 'agent', name: 'Agent' },
+            { id: 'plan', name: 'Plan' }
+          ]
+        }
+      })
+      phone.write(encodeLine({ type: 'configure', conversationId, mode: 'plan' }))
+      const modeChanged = await readFrames(
+        phone,
+        (msg) =>
+          msg.type === 'controls' && msg.conversationId === conversationId && msg.mode === 'plan',
+        8000
+      )
+      const modeControls = modeChanged.find((m) => m.type === 'controls' && m.mode === 'plan')
+      assert.ok(modeControls && modeControls.type === 'controls')
+      assert.equal(modeControls.mode, 'plan')
       phone.write(encodeLine({ type: 'configure', conversationId, agent: 'claude' }))
       const locked = await readFrames(phone, (msg) => msg.type === 'error')
       assert.ok(locked.some((m) => m.type === 'error'))
+    } finally {
+      phone.destroy()
+      plane.dispose()
+      server.close()
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('switches an empty session onto a CLI agent', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vav-plane-cli-'))
+    const host = createLocalWorkspaceHost({ name: 'plane-cli' })
+    const plane = createVavControlPlane({
+      stateDir: dir,
+      host,
+      secret: () => SECRET,
+      appVersion: 'test'
+    })
+    plane.load()
+    const server = new DaemonServer({
+      host,
+      identity: { machineId: 'plane-cli-box', name: 'plane-cli' },
+      secret: () => SECRET,
+      appVersion: 'test',
+      home: dir,
+      tmp: dir,
+      catalog: plane.catalog,
+      logs: plane.logs,
+      onControlHello: (socket, leftover, hello) => plane.hub.adoptAuthed(socket, leftover, hello)
+    })
+    const port = await server.listen(0, '127.0.0.1')
+    const phone = createConnection({ host: '127.0.0.1', port })
+    await new Promise<void>((resolve, reject) => {
+      phone.once('connect', resolve)
+      phone.once('error', reject)
+    })
+    try {
+      phone.write(encodeLine({ type: 'hello', proto: 1, auth: SECRET, role: 'phone', device: 'test-phone' }))
+      await readFrames(phone, (msg) => msg.type === 'welcome')
+      phone.write(encodeLine({ type: 'create' }))
+      const created = await readFrames(phone, (msg) => msg.type === 'created')
+      const createdMsg = created.find((m) => m.type === 'created')
+      assert.ok(createdMsg && createdMsg.type === 'created')
+      const conversationId = createdMsg.session.id
+
+      phone.write(encodeLine({ type: 'configure', conversationId, agent: 'claude' }))
+      const configured = await readFrames(
+        phone,
+        (msg) => msg.type === 'controls' && msg.conversationId === conversationId
+      )
+      const controls = configured.find((m) => m.type === 'controls')
+      assert.ok(controls && controls.type === 'controls')
+      assert.equal(controls.agent, 'claude')
+      assert.ok(controls.agents.some((row) => row.id === 'claude'))
+      assert.ok(controls.agents.some((row) => row.id === 'vav'))
+      assert.equal(plane.conversations.get(conversationId)?.cliHost, 'claude')
     } finally {
       phone.destroy()
       plane.dispose()
@@ -170,6 +251,7 @@ describe('VavControlPlane', { concurrency: false }, () => {
       home: dir,
       tmp: dir,
       catalog: plane.catalog,
+      logs: plane.logs,
       onControlHello: (socket, leftover, hello) => plane.hub.adoptAuthed(socket, leftover, hello)
     })
     const port = await server.listen(0, '127.0.0.1')
@@ -227,6 +309,7 @@ describe('VavControlPlane', { concurrency: false }, () => {
       home: dir,
       tmp: dir,
       catalog: plane.catalog,
+      logs: plane.logs,
       onControlHello: (socket, leftover, hello) => plane.hub.adoptAuthed(socket, leftover, hello)
     })
     const port = await server.listen(0, '127.0.0.1')
@@ -288,6 +371,7 @@ describe('VavControlPlane', { concurrency: false }, () => {
       home: dir,
       tmp: dir,
       catalog: plane.catalog,
+      logs: plane.logs,
       onControlHello: (socket, leftover, hello) => plane.hub.adoptAuthed(socket, leftover, hello)
     })
     const port = await server.listen(0, '127.0.0.1')
@@ -376,6 +460,7 @@ describe('VavControlPlane', { concurrency: false }, () => {
       home: dir,
       tmp: dir,
       catalog: plane.catalog,
+      logs: plane.logs,
       onControlHello: (socket, leftover, hello) => plane.hub.adoptAuthed(socket, leftover, hello)
     })
     const port = await server.listen(0, '127.0.0.1')
@@ -612,6 +697,65 @@ describe('VavControlPlane', { concurrency: false }, () => {
       delete process.env.VAV_E2E_STUB_APPROVE
       ws.close()
       web.close()
+      plane.dispose()
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('serves the same timer and connector catalogs Chrome reads over the daemon', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vav-plane-catalog-'))
+    const host = createLocalWorkspaceHost({ name: 'plane' })
+    const plane = createVavControlPlane({
+      stateDir: dir,
+      host,
+      secret: () => SECRET,
+      appVersion: 'test'
+    })
+    plane.load()
+    try {
+      const jobs = plane.timerCatalog.listJobs() as unknown[]
+      assert.ok(Array.isArray(jobs))
+      assert.equal(jobs.length, 0)
+      const created = plane.timerCatalog.createScheduled() as {
+        job?: { id?: string; conversationId?: string }
+        conversation?: { id?: string; sessionKind?: string }
+      }
+      assert.ok(created.job?.id)
+      assert.equal(created.conversation?.sessionKind, 'timer')
+      assert.equal((plane.timerCatalog.listJobs() as unknown[]).length, 1)
+      const connectors = plane.connectorCatalog.catalog() as Array<{ id?: string }>
+      assert.ok(connectors.some((row) => row.id === 'github'))
+    } finally {
+      plane.dispose()
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('seeds a two-file change review onto an existing conversation', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vav-plane-review-'))
+    const host = createLocalWorkspaceHost({ name: 'plane-review' })
+    const plane = createVavControlPlane({
+      stateDir: dir,
+      host,
+      secret: () => SECRET,
+      appVersion: 'test',
+      tmp: dir
+    })
+    plane.load()
+    try {
+      const conversation = plane.conversations.create(dir, 'test')
+      const seeded = (await plane.changeSetCatalog.seedReview?.(conversation.id)) as {
+        set?: { id?: string; files?: Array<{ filePath?: string }> }
+        assistant?: { changeSetId?: string }
+      } | null
+      assert.ok(seeded?.set?.id)
+      assert.equal(seeded?.set?.files?.length, 2)
+      assert.equal(seeded?.assistant?.changeSetId, seeded.set.id)
+      const again = (await plane.changeSetCatalog.seedReview?.(conversation.id)) as {
+        set?: { id?: string }
+      } | null
+      assert.equal(again?.set?.id, seeded.set.id)
+    } finally {
       plane.dispose()
       await rm(dir, { recursive: true, force: true })
     }

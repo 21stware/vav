@@ -1,12 +1,12 @@
 import { test, expect } from '@playwright/test'
-import { launchVav, openFilesTray } from '../launch'
+import { launchWorkbench, openFilesTray } from '../launch'
 
 /**
  * files/files-panel.rpml — Files + Git always on; tree preview on double-click.
  * Session file drawer is the shipped preview (not the companion window).
  */
 test('Files tray lists workspace files and opens a session preview', async () => {
-  const harness = await launchVav()
+  const harness = await launchWorkbench()
   try {
     const { page } = harness
     await openFilesTray(page)
@@ -30,7 +30,7 @@ test('Files tray lists workspace files and opens a session preview', async () =>
 })
 
 test('Git tab stays available and swaps the Files toolbar', async () => {
-  const harness = await launchVav()
+  const harness = await launchWorkbench()
   try {
     const { page } = harness
     await openFilesTray(page)
@@ -50,7 +50,7 @@ test('Git tab stays available and swaps the Files toolbar', async () => {
 })
 
 test('New file commits from the inline create row', async () => {
-  const harness = await launchVav()
+  const harness = await launchWorkbench()
   try {
     const { page } = harness
     await openFilesTray(page)
@@ -70,7 +70,7 @@ test('New file commits from the inline create row', async () => {
 })
 
 test('Git tab explains a temp dir without version control', async () => {
-  const harness = await launchVav()
+  const harness = await launchWorkbench()
   try {
     const { page } = harness
     await openFilesTray(page)
@@ -86,7 +86,7 @@ test('Git tab explains a temp dir without version control', async () => {
 })
 
 test('session preview close collapses the drawer', async () => {
-  const harness = await launchVav()
+  const harness = await launchWorkbench()
   try {
     const { page } = harness
     await openFilesTray(page)
@@ -101,7 +101,7 @@ test('session preview close collapses the drawer', async () => {
 })
 
 test('Files view can switch from tree to columns', async () => {
-  const harness = await launchVav()
+  const harness = await launchWorkbench()
   try {
     const { page } = harness
     await openFilesTray(page)
@@ -114,7 +114,7 @@ test('Files view can switch from tree to columns', async () => {
 })
 
 test('seeded git repo lists the dirty file on the Git tab', async () => {
-  const harness = await launchVav({ seedGit: true })
+  const harness = await launchWorkbench({ seedGit: true })
   try {
     const { page } = harness
     await openFilesTray(page)
@@ -131,7 +131,7 @@ test('seeded git repo lists the dirty file on the Git tab', async () => {
 })
 
 test('double-clicking a git change opens the session diff drawer', async () => {
-  const harness = await launchVav({ seedGit: true })
+  const harness = await launchWorkbench({ seedGit: true })
   try {
     const { page } = harness
     await openFilesTray(page)

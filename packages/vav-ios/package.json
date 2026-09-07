@@ -1,0 +1,19 @@
+{
+  "name": "@21stware/vav-ios",
+  "version": "1.19.1",
+  "private": true,
+  "description": "VAV iOS Remote. Native phone-plane client; hello omits role.",
+  "license": "PolyForm-Noncommercial-1.0.0",
+  "author": "Oboo Cheng",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21stware/vav.git",
+    "directory": "packages/vav-ios"
+  },
+  "homepage": "https://github.com/21stware/vav/tree/main/packages/vav-ios",
+  "keywords": [
+    "vav",
+    "vav-ios",
+    "remote"
+  ]
+}

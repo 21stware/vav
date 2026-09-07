@@ -1,0 +1,17 @@
+{
+  "name": "@21stware/vav-ios",
+  "version": "1.19.1",
+  "role": "vav-ios",
+  "kind": "native",
+  "sources": [
+    "packages/vav-ios/VAVRemote/VAVRemote.xcodeproj/project.pbxproj",
+    "packages/vav-ios/VAVRemote/VAVRemote/RemoteClient.swift",
+    "packages/vav-ios/VAVRemote/VAVRemote/Views/SessionDetailView.swift"
+  ],
+  "talksTo": [
+    "vavd"
+  ],
+  "hello": [
+    "phone"
+  ]
+}

@@ -37,6 +37,11 @@ export type WorkspaceHostInfo = {
    * Headless `vavd` is true once the daemon hosts AgentRuntime.
    */
   controlPlane?: boolean
+  /**
+   * This process’s spawned loopback vavd — the default local service, not a
+   * user-facing remote in the switcher / tray.
+   */
+  localShell?: boolean
 }
 
 /** A directory on a specific host. */
@@ -59,6 +64,37 @@ export function normalizeMachineId(machineId: string | null | undefined): string
 
 export function isLocalMachine(machineId: string | null | undefined): boolean {
   return normalizeMachineId(machineId) === LOCAL_MACHINE_ID
+}
+
+/** Remotes the user paired — hides the spawned loopback vavd. */
+export function userFacingRemotes<T extends { id: string; localShell?: boolean }>(
+  hosts: readonly T[]
+): T[] {
+  return hosts.filter((host) => !isLocalMachine(host.id) && !host.localShell)
+}
+
+/** Sidebar accordion: this machine first, then paired remotes. */
+export function listedServices(
+  hosts: readonly Pick<WorkspaceHostInfo, 'id' | 'name' | 'localShell'>[]
+): Array<{ id: string; name: string }> {
+  return [
+    { id: LOCAL_MACHINE_ID, name: LOCAL_MACHINE_ID },
+    ...userFacingRemotes(hosts).map((host) => ({
+      id: host.id,
+      name: serviceShortName(host.id, hosts, host.name)
+    }))
+  ]
+}
+
+/** Short switcher / tray title: `local`, or the host’s name (`macmini-v1`). */
+export function serviceShortName(
+  machineId: string | null | undefined,
+  hosts: readonly Pick<WorkspaceHostInfo, 'id' | 'name'>[] = [],
+  fallback?: string
+): string {
+  const id = normalizeMachineId(machineId)
+  if (isLocalMachine(id)) return LOCAL_MACHINE_ID
+  return hosts.find((host) => host.id === id)?.name?.trim() || fallback?.trim() || id
 }
 
 /**

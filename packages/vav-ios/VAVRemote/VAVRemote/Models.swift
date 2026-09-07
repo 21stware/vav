@@ -1,0 +1,767 @@
+import Foundation
+
+/// Wire types mirroring `src/shared/remoteControl.ts` (JSON lines, proto 1).
+enum RemoteProto {
+    static let version = 1
+}
+
+enum RemoteTab: Hashable {
+    case sessions, notifications, settings
+}
+
+struct RemoteSession: Decodable, Identifiable, Equatable, Hashable {
+    let id: String
+    let title: String
+    let dirLabel: String
+    let status: String // running | done | idle
+    let surface: String // vav | cli
+    let updatedAt: Double
+    let preview: String?
+    let workdir: String?
+    let temporary: Bool
+    let pinned: Bool
+    let pinTime: Double
+    let favorite: Bool
+    let goal: RemoteSessionGoal?
+
+    enum CodingKeys: String, CodingKey {
+        case id, title, dirLabel, status, surface, updatedAt, preview, workdir, temporary
+        case pinned, pinTime, favorite, goal
+    }
+
+    init(
+        id: String,
+        title: String,
+        dirLabel: String,
+        status: String,
+        surface: String,
+        updatedAt: Double,
+        preview: String?,
+        workdir: String? = nil,
+        temporary: Bool = false,
+        pinned: Bool = false,
+        pinTime: Double = 0,
+        favorite: Bool = false,
+        goal: RemoteSessionGoal? = nil
+    ) {
+        self.id = id
+        self.title = title
+        self.dirLabel = dirLabel
+        self.status = status
+        self.surface = surface
+        self.updatedAt = updatedAt
+        self.preview = preview
+        self.workdir = workdir
+        self.temporary = temporary
+        self.pinned = pinned
+        self.pinTime = pinTime
+        self.favorite = favorite
+        self.goal = goal
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        title = try c.decode(String.self, forKey: .title)
+        dirLabel = try c.decodeIfPresent(String.self, forKey: .dirLabel) ?? ""
+        status = try c.decodeIfPresent(String.self, forKey: .status) ?? "idle"
+        surface = try c.decodeIfPresent(String.self, forKey: .surface) ?? "vav"
+        updatedAt = try c.decodeIfPresent(Double.self, forKey: .updatedAt) ?? 0
+        preview = try c.decodeIfPresent(String.self, forKey: .preview)
+        workdir = try c.decodeIfPresent(String.self, forKey: .workdir)
+        temporary = try c.decodeIfPresent(Bool.self, forKey: .temporary) ?? false
+        pinned = try c.decodeIfPresent(Bool.self, forKey: .pinned) ?? false
+        pinTime = try c.decodeIfPresent(Double.self, forKey: .pinTime) ?? 0
+        favorite = try c.decodeIfPresent(Bool.self, forKey: .favorite) ?? false
+        goal = try c.decodeIfPresent(RemoteSessionGoal.self, forKey: .goal)
+    }
+
+    func patching(
+        status: String? = nil,
+        preview: String? = nil,
+        updatedAt: Double? = nil,
+        title: String? = nil,
+        dirLabel: String? = nil,
+        workdir: String? = nil,
+        temporary: Bool? = nil,
+        pinned: Bool? = nil,
+        pinTime: Double? = nil,
+        favorite: Bool? = nil,
+        goal: RemoteSessionGoal? = nil
+    ) -> RemoteSession {
+        RemoteSession(
+            id: id,
+            title: title ?? self.title,
+            dirLabel: dirLabel ?? self.dirLabel,
+            status: status ?? self.status,
+            surface: surface,
+            updatedAt: updatedAt ?? self.updatedAt,
+            preview: preview ?? self.preview,
+            workdir: workdir ?? self.workdir,
+            temporary: temporary ?? self.temporary,
+            pinned: pinned ?? self.pinned,
+            pinTime: pinTime ?? self.pinTime,
+            favorite: favorite ?? self.favorite,
+            goal: goal ?? self.goal
+        )
+    }
+}
+
+struct RemoteSessionGoal: Decodable, Equatable, Hashable {
+    let status: String
+    let objective: String
+    let lastReason: String?
+
+    var statusLabel: String {
+        switch status {
+        case "active": return "进行中"
+        case "paused": return "已暂停"
+        case "blocked": return "受阻"
+        case "limited": return "额度受限"
+        case "complete": return "已完成"
+        default: return status
+        }
+    }
+}
+
+func sortedRemoteSessions(_ sessions: [RemoteSession]) -> [RemoteSession] {
+    sessions.sorted { a, b in
+        if a.pinned != b.pinned { return a.pinned && !b.pinned }
+        if a.pinned && b.pinned { return a.pinTime > b.pinTime }
+        return a.updatedAt > b.updatedAt
+    }
+}
+
+struct RemotePlanStep: Codable, Equatable, Hashable {
+    let text: String
+    let done: Bool
+}
+
+struct RemoteThreadBlock: Codable, Equatable {
+    let kind: String
+    let text: String?
+    let id: String?
+    let tool: String?
+    let name: String?
+    let summary: String?
+    let status: String?
+    let title: String?
+    let prompt: String?
+    let steps: [RemotePlanStep]?
+    let choices: [RemoteChoice]?
+    let multiSelect: Bool?
+
+    var stableId: String { id ?? "\(kind)-\(summary ?? title ?? text ?? "")" }
+
+    init(
+        kind: String,
+        text: String? = nil,
+        id: String? = nil,
+        tool: String? = nil,
+        name: String? = nil,
+        summary: String? = nil,
+        status: String? = nil,
+        title: String? = nil,
+        prompt: String? = nil,
+        steps: [RemotePlanStep]? = nil,
+        choices: [RemoteChoice]? = nil,
+        multiSelect: Bool? = nil
+    ) {
+        self.kind = kind
+        self.text = text
+        self.id = id
+        self.tool = tool
+        self.name = name
+        self.summary = summary
+        self.status = status
+        self.title = title
+        self.prompt = prompt
+        self.steps = steps
+        self.choices = choices
+        self.multiSelect = multiSelect
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        kind = (try? c.decode(String.self, forKey: .kind)) ?? ""
+        text = try? c.decodeIfPresent(String.self, forKey: .text) ?? nil
+        id = try? c.decodeIfPresent(String.self, forKey: .id) ?? nil
+        tool = try? c.decodeIfPresent(String.self, forKey: .tool) ?? nil
+        name = try? c.decodeIfPresent(String.self, forKey: .name) ?? nil
+        summary = try? c.decodeIfPresent(String.self, forKey: .summary) ?? nil
+        status = try? c.decodeIfPresent(String.self, forKey: .status) ?? nil
+        title = try? c.decodeIfPresent(String.self, forKey: .title) ?? nil
+        prompt = try? c.decodeIfPresent(String.self, forKey: .prompt) ?? nil
+        steps = try? c.decodeIfPresent([RemotePlanStep].self, forKey: .steps) ?? nil
+        choices = try? c.decodeIfPresent([RemoteChoice].self, forKey: .choices) ?? nil
+        multiSelect = try? c.decodeIfPresent(Bool.self, forKey: .multiSelect) ?? nil
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case kind, text, id, tool, name, summary, status, title, prompt, steps, choices, multiSelect
+    }
+}
+
+struct RemoteThreadMessage: Codable, Identifiable, Equatable {
+    let id: String
+    let role: String
+    let text: String
+    let at: Double
+    let blocks: [RemoteThreadBlock]?
+    let cancelled: Bool?
+    let error: String?
+    let changeSetId: String?
+
+    init(
+        id: String,
+        role: String,
+        text: String,
+        at: Double,
+        blocks: [RemoteThreadBlock]? = nil,
+        cancelled: Bool? = nil,
+        error: String? = nil,
+        changeSetId: String? = nil
+    ) {
+        self.id = id
+        self.role = role
+        self.text = text
+        self.at = at
+        self.blocks = blocks
+        self.cancelled = cancelled
+        self.error = error
+        self.changeSetId = changeSetId
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        role = try c.decodeIfPresent(String.self, forKey: .role) ?? "assistant"
+        text = try c.decodeIfPresent(String.self, forKey: .text) ?? ""
+        at = try c.decodeIfPresent(Double.self, forKey: .at) ?? 0
+        blocks = (try? c.decodeIfPresent([RemoteThreadBlock].self, forKey: .blocks)) ?? nil
+        cancelled = try c.decodeIfPresent(Bool.self, forKey: .cancelled)
+        error = try c.decodeIfPresent(String.self, forKey: .error)
+        changeSetId = try c.decodeIfPresent(String.self, forKey: .changeSetId)
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, role, text, at, blocks, cancelled, error, changeSetId
+    }
+}
+
+struct RemoteReviewFile: Codable, Equatable, Identifiable {
+    var id: String { name }
+    let name: String
+    let status: String
+}
+
+struct RemoteReviewSet: Codable, Equatable, Identifiable {
+    let id: String
+    let status: String
+    let files: [RemoteReviewFile]
+}
+
+struct RemoteChoice: Codable, Identifiable, Equatable, Hashable {
+    let id: String
+    let label: String
+}
+
+struct RemoteSessionControls: Codable, Equatable {
+    let conversationId: String
+    let agentLocked: Bool
+    let agent: String
+    let agents: [RemoteChoice]
+    let model: String
+    let models: [RemoteChoice]
+    let thinking: String?
+    let thinkingLevels: [RemoteChoice]
+    let mode: String?
+    let modes: [RemoteChoice]
+    let approval: String
+    let approvals: [RemoteChoice]
+    let fast: Bool?
+    let workingDirectory: String
+    let dirLabel: String
+    let temporary: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case conversationId, agentLocked, agent, agents, model, models
+        case thinking, thinkingLevels, mode, modes, approval, approvals
+        case fast, workingDirectory, dirLabel, temporary
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        conversationId = try c.decode(String.self, forKey: .conversationId)
+        agentLocked = try c.decodeIfPresent(Bool.self, forKey: .agentLocked) ?? false
+        agent = try c.decodeIfPresent(String.self, forKey: .agent) ?? "vav"
+        agents = try c.decodeIfPresent([RemoteChoice].self, forKey: .agents) ?? []
+        model = try c.decodeIfPresent(String.self, forKey: .model) ?? ""
+        models = try c.decodeIfPresent([RemoteChoice].self, forKey: .models) ?? []
+        thinking = try c.decodeIfPresent(String.self, forKey: .thinking)
+        thinkingLevels = try c.decodeIfPresent([RemoteChoice].self, forKey: .thinkingLevels) ?? []
+        mode = try c.decodeIfPresent(String.self, forKey: .mode)
+        modes = try c.decodeIfPresent([RemoteChoice].self, forKey: .modes) ?? []
+        approval = try c.decodeIfPresent(String.self, forKey: .approval) ?? "auto"
+        approvals = try c.decodeIfPresent([RemoteChoice].self, forKey: .approvals) ?? []
+        fast = try c.decodeIfPresent(Bool.self, forKey: .fast)
+        workingDirectory = try c.decodeIfPresent(String.self, forKey: .workingDirectory) ?? ""
+        dirLabel = try c.decodeIfPresent(String.self, forKey: .dirLabel) ?? ""
+        temporary = try c.decodeIfPresent(Bool.self, forKey: .temporary) ?? false
+    }
+
+    func label(in rows: [RemoteChoice], id: String?, fallback: String) -> String {
+        rows.first(where: { $0.id == id })?.label ?? fallback
+    }
+}
+
+struct RemoteNotificationItem: Codable, Identifiable, Equatable {
+    var id: String { "\(conversationId)-\(at)" }
+    let kind: String // turn-complete | ask | approval | request
+    let conversationId: String
+    let title: String
+    let body: String
+    let at: Double
+
+    var kindLabel: String {
+        switch kind {
+        case "turn-complete": return "完成"
+        case "ask": return "提问"
+        case "approval": return "待批准"
+        case "request": return "请求"
+        default: return kind
+        }
+    }
+}
+
+struct RemoteHostSnapshot: Codable, Equatable {
+    struct Caps: Codable, Equatable {
+        let cancel: Bool
+        let reply: Bool
+        let rename: Bool
+        let archive: Bool
+        let pin: Bool
+        let favorite: Bool
+        let workdirPick: Bool
+        let attachments: Bool
+        let pty: Bool
+        let spawn: Bool
+        let fsRead: Bool
+        let keys: Bool
+
+        enum CodingKeys: String, CodingKey {
+            case cancel, reply, rename, archive, pin, favorite, workdirPick
+            case attachments, pty, spawn, fsRead, keys
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            cancel = try c.decodeIfPresent(Bool.self, forKey: .cancel) ?? false
+            reply = try c.decodeIfPresent(Bool.self, forKey: .reply) ?? false
+            rename = try c.decodeIfPresent(Bool.self, forKey: .rename) ?? false
+            archive = try c.decodeIfPresent(Bool.self, forKey: .archive) ?? false
+            pin = try c.decodeIfPresent(Bool.self, forKey: .pin) ?? false
+            favorite = try c.decodeIfPresent(Bool.self, forKey: .favorite) ?? false
+            workdirPick = try c.decodeIfPresent(Bool.self, forKey: .workdirPick) ?? false
+            attachments = try c.decodeIfPresent(Bool.self, forKey: .attachments) ?? false
+            pty = try c.decodeIfPresent(Bool.self, forKey: .pty) ?? false
+            spawn = try c.decodeIfPresent(Bool.self, forKey: .spawn) ?? false
+            fsRead = try c.decodeIfPresent(Bool.self, forKey: .fsRead) ?? false
+            keys = try c.decodeIfPresent(Bool.self, forKey: .keys) ?? false
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(cancel, forKey: .cancel)
+            try c.encode(reply, forKey: .reply)
+            try c.encode(rename, forKey: .rename)
+            try c.encode(archive, forKey: .archive)
+            try c.encode(pin, forKey: .pin)
+            try c.encode(favorite, forKey: .favorite)
+            try c.encode(workdirPick, forKey: .workdirPick)
+            try c.encode(attachments, forKey: .attachments)
+            try c.encode(pty, forKey: .pty)
+            try c.encode(spawn, forKey: .spawn)
+            try c.encode(fsRead, forKey: .fsRead)
+            try c.encode(keys, forKey: .keys)
+        }
+    }
+    struct Defaults: Codable, Equatable {
+        let agent: String
+        let model: String
+        let thinking: String?
+        let approval: String
+    }
+    struct RecentDir: Codable, Equatable, Identifiable {
+        var id: String { path }
+        let path: String
+        let label: String
+    }
+    let name: String
+    let home: String
+    let tmp: String
+    let platform: String?
+    let capabilities: Caps
+    let defaults: Defaults
+    let recentDirs: [RecentDir]
+}
+
+struct RemoteTurnRecovery: Codable, Equatable {
+    let kind: String
+    let attempt: Int
+    let limit: Int
+}
+
+func turnRecoveryLabel(_ kind: String) -> String {
+    switch kind {
+    case "retrying": return "重试中"
+    case "reconnecting": return "重连中"
+    default: return "恢复中"
+    }
+}
+
+struct RemoteTurn: Codable, Equatable {
+    let conversationId: String
+    let phase: String
+    let draft: String?
+    let thinking: String?
+    let blocks: [RemoteThreadBlock]?
+    let awaiting: RemoteThreadBlock?
+    let recovery: RemoteTurnRecovery?
+    let error: String?
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        conversationId = try c.decode(String.self, forKey: .conversationId)
+        phase = try c.decodeIfPresent(String.self, forKey: .phase) ?? "running"
+        draft = try? c.decodeIfPresent(String.self, forKey: .draft) ?? nil
+        thinking = try? c.decodeIfPresent(String.self, forKey: .thinking) ?? nil
+        blocks = (try? c.decodeIfPresent([RemoteThreadBlock].self, forKey: .blocks)) ?? nil
+        awaiting = try? c.decodeIfPresent(RemoteThreadBlock.self, forKey: .awaiting) ?? nil
+        recovery = try? c.decodeIfPresent(RemoteTurnRecovery.self, forKey: .recovery) ?? nil
+        error = try? c.decodeIfPresent(String.self, forKey: .error) ?? nil
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case conversationId, phase, draft, thinking, blocks, awaiting, recovery, error
+    }
+}
+
+struct RemoteDirEntry: Codable, Equatable, Identifiable {
+    var id: String { path }
+    let name: String
+    let path: String
+}
+
+struct RemoteDirs: Codable, Equatable {
+    let conversationId: String
+    let path: String
+    let parent: String?
+    let entries: [RemoteDirEntry]
+}
+
+/// Pairing payload: Settings QR (`vav-remote:{…}`) or a printed `vavrtp://` URI.
+/// `token` is the tailcat identity when present; LAN-only pairings use `lan:host:port`.
+struct Pairing: Codable, Equatable, Identifiable, Hashable {
+    var id: String { token }
+    let v: Int
+    let token: String
+    let secret: String
+    var host: String?
+    var lanHost: String?
+    var lanPort: Int?
+
+    var displayName: String {
+        let name = (host ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return name.isEmpty ? "电脑" : name
+    }
+
+    func renaming(_ name: String) -> Pairing {
+        var next = self
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        next.host = trimmed.isEmpty ? host : trimmed
+        return next
+    }
+
+    static func parse(_ text: String) -> Pairing? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.hasPrefix("vav-remote:") { return parseRemote(trimmed) }
+        if trimmed.hasPrefix("vavrtp://") || trimmed.hasPrefix("vav-daemon://") {
+            return parseDaemon(trimmed)
+        }
+        return nil
+    }
+
+    private static func parseRemote(_ text: String) -> Pairing? {
+        let prefix = "vav-remote:"
+        guard text.hasPrefix(prefix),
+              let data = text.dropFirst(prefix.count).data(using: .utf8),
+              let pairing = try? JSONDecoder().decode(Pairing.self, from: data),
+              pairing.token.hasPrefix("tc"),
+              pairing.secret.count >= 16
+        else { return nil }
+        return pairing
+    }
+
+    /// Same URI `vav`, Connect, and `npx vavd` print.
+    private static func parseDaemon(_ text: String) -> Pairing? {
+        guard let comps = URLComponents(string: text),
+              comps.scheme == "vavrtp" || comps.scheme == "vav-daemon"
+        else { return nil }
+        let secret = (comps.user ?? "").removingPercentEncoding ?? comps.user ?? ""
+        guard secret.count >= 16 else { return nil }
+        let lanHost = comps.host?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !lanHost.isEmpty else { return nil }
+        let lanPort = comps.port ?? 4750
+        guard lanPort > 0 else { return nil }
+        let name = comps.queryItems?.first(where: { $0.name == "name" })?.value?
+            .removingPercentEncoding ?? lanHost
+        let tokenQuery = comps.queryItems?.first(where: { $0.name == "token" })?.value
+        let token = (tokenQuery?.hasPrefix("tc") == true) ? tokenQuery! : "lan:\(lanHost):\(lanPort)"
+        return Pairing(
+            v: 1,
+            token: token,
+            secret: secret,
+            host: name,
+            lanHost: lanHost,
+            lanPort: lanPort
+        )
+    }
+}
+
+/// Keychain envelope. Older installs stored a single `Pairing` at this key.
+struct PairingBook: Codable, Equatable {
+    var pairings: [Pairing]
+    var activeToken: String?
+
+    init(pairings: [Pairing] = [], activeToken: String? = nil) {
+        self.pairings = []
+        self.activeToken = nil
+        for pairing in pairings { upsert(pairing) }
+        if let activeToken, self.pairings.contains(where: { $0.token == activeToken }) {
+            self.activeToken = activeToken
+        } else {
+            self.activeToken = self.pairings.first?.token
+        }
+    }
+
+    var active: Pairing? {
+        pairings.first(where: { $0.token == activeToken }) ?? pairings.first
+    }
+
+    mutating func upsert(_ pairing: Pairing) {
+        if let index = pairings.firstIndex(where: { $0.token == pairing.token }) {
+            var merged = pairing
+            if (merged.host ?? "").isEmpty { merged.host = pairings[index].host }
+            pairings[index] = merged
+        } else {
+            pairings.append(pairing)
+        }
+    }
+
+    mutating func activate(_ token: String) {
+        guard pairings.contains(where: { $0.token == token }) else { return }
+        activeToken = token
+    }
+
+    mutating func remove(_ token: String) {
+        pairings.removeAll { $0.token == token }
+        if activeToken == token { activeToken = pairings.first?.token }
+    }
+}
+
+// --- inbound frames (server → phone) ---
+
+enum ServerFrame {
+    case welcome(app: String, version: String)
+    case host(RemoteHostSnapshot)
+    case sessions([RemoteSession])
+    case thread(conversationId: String, messages: [RemoteThreadMessage])
+    case controls(RemoteSessionControls)
+    case turn(RemoteTurn)
+    case dirs(RemoteDirs)
+    case notification(RemoteNotificationItem)
+    case sent(conversationId: String)
+    case created(RemoteSession)
+    case error(code: String, message: String, conversationId: String?)
+    case reviewed(conversationId: String, ok: Bool, set: RemoteReviewSet?)
+    case pong
+
+    static func parse(_ line: String) -> ServerFrame? {
+        guard let data = line.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let type = object["type"] as? String
+        else { return nil }
+        let decoder = JSONDecoder()
+        switch type {
+        case "welcome":
+            return .welcome(
+                app: object["app"] as? String ?? "?",
+                version: object["version"] as? String ?? "?"
+            )
+        case "host":
+            guard let host = try? decoder.decode(RemoteHostSnapshot.self, from: data) else { return nil }
+            return .host(host)
+        case "sessions":
+            guard let raw = object["sessions"],
+                  let payload = try? JSONSerialization.data(withJSONObject: raw),
+                  let sessions = try? decoder.decode([RemoteSession].self, from: payload)
+            else { return nil }
+            return .sessions(sessions)
+        case "thread":
+            guard let conversationId = object["conversationId"] as? String,
+                  let raw = object["messages"],
+                  let payload = try? JSONSerialization.data(withJSONObject: raw),
+                  let messages = try? decoder.decode([RemoteThreadMessage].self, from: payload)
+            else { return nil }
+            return .thread(conversationId: conversationId, messages: messages)
+        case "controls":
+            guard let controls = try? decoder.decode(RemoteSessionControls.self, from: data)
+            else { return nil }
+            return .controls(controls)
+        case "turn":
+            guard let turn = try? decoder.decode(RemoteTurn.self, from: data) else { return nil }
+            return .turn(turn)
+        case "dirs":
+            guard let dirs = try? decoder.decode(RemoteDirs.self, from: data) else { return nil }
+            return .dirs(dirs)
+        case "notification":
+            guard let item = try? decoder.decode(RemoteNotificationItem.self, from: data)
+            else { return nil }
+            return .notification(item)
+        case "sent":
+            return .sent(conversationId: object["conversationId"] as? String ?? "")
+        case "created":
+            guard let raw = object["session"],
+                  let payload = try? JSONSerialization.data(withJSONObject: raw),
+                  let session = try? decoder.decode(RemoteSession.self, from: payload)
+            else { return nil }
+            return .created(session)
+        case "error":
+            return .error(
+                code: object["code"] as? String ?? "unknown",
+                message: object["message"] as? String ?? "",
+                conversationId: object["conversationId"] as? String
+            )
+        case "reviewed":
+            let set: RemoteReviewSet?
+            if let raw = object["set"],
+               let payload = try? JSONSerialization.data(withJSONObject: raw) {
+                set = try? decoder.decode(RemoteReviewSet.self, from: payload)
+            } else {
+                set = nil
+            }
+            return .reviewed(
+                conversationId: object["conversationId"] as? String ?? "",
+                ok: object["ok"] as? Bool ?? false,
+                set: set
+            )
+        case "pong":
+            return .pong
+        default:
+            return nil
+        }
+    }
+}
+
+// --- outbound frames (phone → server) ---
+
+enum ClientFrame {
+    static func encode(_ object: [String: Any]) -> String? {
+        guard let data = try? JSONSerialization.data(withJSONObject: object),
+              let text = String(data: data, encoding: .utf8)
+        else { return nil }
+        return text
+    }
+
+    static func hello(secret: String, device: String) -> String? {
+        encode(["type": "hello", "proto": RemoteProto.version, "auth": secret, "device": device])
+    }
+
+    static func send(conversationId: String, text: String, images: [[String: String]] = []) -> String? {
+        var object: [String: Any] = ["type": "send", "conversationId": conversationId, "text": text]
+        if !images.isEmpty { object["images"] = images }
+        return encode(object)
+    }
+
+    static func sessions() -> String? { encode(["type": "sessions"]) }
+    static func create() -> String? { encode(["type": "create"]) }
+    static func thread(conversationId: String) -> String? {
+        encode(["type": "thread", "conversationId": conversationId])
+    }
+    static func controls(conversationId: String) -> String? {
+        encode(["type": "controls", "conversationId": conversationId])
+    }
+    static func configure(conversationId: String, patch: [String: String]) -> String? {
+        var object: [String: Any] = ["type": "configure", "conversationId": conversationId]
+        for (key, value) in patch { object[key] = value }
+        return encode(object)
+    }
+    static func ping() -> String? { encode(["type": "ping"]) }
+    static func cancel(conversationId: String) -> String? {
+        encode(["type": "cancel", "conversationId": conversationId])
+    }
+    static func reply(conversationId: String, toolCallId: String, answer: String) -> String? {
+        encode(["type": "reply", "conversationId": conversationId, "toolCallId": toolCallId, "answer": answer])
+    }
+    static func rename(conversationId: String, title: String) -> String? {
+        encode(["type": "rename", "conversationId": conversationId, "title": title])
+    }
+    static func archive(conversationId: String) -> String? {
+        encode(["type": "archive", "conversationId": conversationId])
+    }
+    static func pin(conversationId: String, pinned: Bool) -> String? {
+        encode(["type": "pin", "conversationId": conversationId, "pinned": pinned])
+    }
+    static func favorite(conversationId: String, favorite: Bool) -> String? {
+        encode(["type": "favorite", "conversationId": conversationId, "favorite": favorite])
+    }
+    static func browse(conversationId: String, path: String? = nil) -> String? {
+        var object: [String: Any] = ["type": "browse", "conversationId": conversationId]
+        if let path { object["path"] = path }
+        return encode(object)
+    }
+    static func workspace(conversationId: String, path: String? = nil, temp: Bool = false) -> String? {
+        var object: [String: Any] = ["type": "workspace", "conversationId": conversationId]
+        if let path { object["path"] = path }
+        if temp { object["temp"] = true }
+        return encode(object)
+    }
+    static func compact(conversationId: String) -> String? {
+        encode(["type": "compact", "conversationId": conversationId])
+    }
+    static func regenerate(conversationId: String, messageId: String) -> String? {
+        encode(["type": "regenerate", "conversationId": conversationId, "messageId": messageId])
+    }
+    static func edit(conversationId: String, messageId: String, text: String) -> String? {
+        encode(["type": "edit", "conversationId": conversationId, "messageId": messageId, "text": text])
+    }
+    static func fork(conversationId: String, messageId: String) -> String? {
+        encode(["type": "fork", "conversationId": conversationId, "messageId": messageId])
+    }
+    static func duplicate(conversationId: String) -> String? {
+        encode(["type": "duplicate", "conversationId": conversationId])
+    }
+    static func continueSession(conversationId: String, messageId: String) -> String? {
+        encode(["type": "continue", "conversationId": conversationId, "messageId": messageId])
+    }
+    static func goal(conversationId: String, action: String, objective: String? = nil) -> String? {
+        var object: [String: Any] = ["type": "goal", "conversationId": conversationId, "action": action]
+        if let objective, !objective.isEmpty { object["objective"] = objective }
+        return encode(object)
+    }
+    static func locate(conversationId: String, destinationDir: String) -> String? {
+        encode(["type": "locate", "conversationId": conversationId, "destinationDir": destinationDir])
+    }
+    static func deleteMessage(conversationId: String, messageId: String) -> String? {
+        encode(["type": "delete-message", "conversationId": conversationId, "messageId": messageId])
+    }
+    static func leaf(conversationId: String, messageId: String) -> String? {
+        encode(["type": "leaf", "conversationId": conversationId, "messageId": messageId])
+    }
+    static func review(conversationId: String, action: String, setId: String? = nil) -> String? {
+        var object: [String: Any] = ["type": "review", "conversationId": conversationId, "action": action]
+        if let setId, !setId.isEmpty { object["setId"] = setId }
+        return encode(object)
+    }
+}

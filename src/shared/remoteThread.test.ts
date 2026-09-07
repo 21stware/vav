@@ -114,4 +114,14 @@ describe('projectRemoteMessages', () => {
     const path = [msg('u1', null, 'user', 'pick this session about the daemon pairing')]
     assert.match(remoteSessionPreview(path), /daemon pairing/)
   })
+
+  it('forwards changeSetId so Chrome / web can paint inline review', () => {
+    const rows = projectRemoteMessages([
+      {
+        ...msg('a1', null, 'assistant', 'Updated two files.'),
+        changeSetId: 'cs-smoke'
+      }
+    ])
+    assert.equal(rows[0]?.changeSetId, 'cs-smoke')
+  })
 })

@@ -1,8 +1,8 @@
 import { test, expect } from '@playwright/test'
-import { launchVav } from '../launch'
+import { launchWorkbench } from '../launch'
 
 test('Grok goal banner shows the session objective and controls', async () => {
-  const harness = await launchVav({ seedConversation: 'acp-goal' })
+  const harness = await launchWorkbench({ seedConversation: 'acp-goal' })
   try {
     const { page } = harness
     const banner = page.locator('[data-testid="goal-banner"]')

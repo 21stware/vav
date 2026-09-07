@@ -10,6 +10,7 @@ export type VavdHandle = {
   machineId: string
   name: string
   workspace: string
+  webOrigin?: string
   stop: () => void
 }
 
@@ -20,6 +21,9 @@ export type StartVavdOptions = {
   stubStream?: boolean
   /** Park the stub on Approve/Deny until the client answers. */
   stubApprove?: boolean
+  /** Serve the loopback phone-ui / Chrome discover bridge. */
+  web?: boolean
+  extraEnv?: NodeJS.ProcessEnv
 }
 
 /**
@@ -41,7 +45,9 @@ export async function startVavd(options: StartVavdOptions = {}): Promise<VavdHan
     name: 'E2E Daemon',
     stubTurn: options.stubTurn,
     stubStream: options.stubStream,
-    stubApprove: options.stubApprove
+    stubApprove: options.stubApprove,
+    extraEnv: options.extraEnv,
+    noWeb: options.web ? false : true
   })
 
   return {
@@ -49,6 +55,7 @@ export async function startVavd(options: StartVavdOptions = {}): Promise<VavdHan
     machineId: spawned.machineId,
     name: spawned.name,
     workspace,
+    webOrigin: spawned.webOrigin,
     stop: () => {
       spawned.stop()
       rmSync(workspace, { recursive: true, force: true })

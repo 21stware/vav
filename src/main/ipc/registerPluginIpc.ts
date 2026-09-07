@@ -1,40 +1,80 @@
 import type { IpcMain } from 'electron'
 import { IPC } from '@shared/ipc'
 import type { PluginSnapshot } from '@shared/plugins'
-import { pluginHostKind } from '@shared/plugins'
+import { pluginHostKind, unwrapPluginMutation } from '@shared/plugins'
 import type { FileService } from '../fs/FileService'
 import type { PluginService } from '../plugins/PluginService'
 import { pluginAccessPaths } from '../plugins/pluginPaths'
 
+export type PluginIpcRemote = {
+  request: (method: string, params?: unknown) => Promise<unknown>
+}
+
 export function registerPluginIpc(
   ipcMain: IpcMain,
   plugins: PluginService,
-  files?: FileService
+  files?: FileService,
+  remote?: () => PluginIpcRemote | null
 ): void {
-  ipcMain.handle(IPC.pluginsList, (_event, host?: string | null) => {
-    const snap = plugins.snapshot(host)
-    grantPluginFiles(files, snap)
+  const clientOf = (): PluginIpcRemote | null => remote?.() ?? null
+
+  ipcMain.handle(IPC.pluginsList, async (_event, host?: string | null) => {
+    const client = clientOf()
+    const snap = client
+      ? ((await client.request('plugins.list', { host })) as PluginSnapshot)
+      : plugins.snapshot(host)
+    if (snap && Array.isArray(snap.plugins)) grantPluginFiles(files, snap)
     return snap
   })
   ipcMain.handle(
     IPC.pluginsSetEnabled,
-    (_event, host: string, pluginId: string, enabled: boolean) => {
-      const result = plugins.setEnabled(pluginHostKind(host), String(pluginId || ''), enabled === true)
-      if (result.ok) grantPluginFiles(files, result.snapshot)
-      return result.ok ? result.snapshot : result
+    async (_event, host: string, pluginId: string, enabled: boolean) => {
+      const client = clientOf()
+      const result = client
+        ? unwrapPluginMutation(
+            await client.request('plugins.setEnabled', {
+              host,
+              pluginId,
+              enabled: enabled === true
+            })
+          )
+        : (() => {
+            const row = plugins.setEnabled(
+              pluginHostKind(host),
+              String(pluginId || ''),
+              enabled === true
+            )
+            return row.ok ? row.snapshot : row
+          })()
+      if (!('ok' in result)) grantPluginFiles(files, result)
+      return result
     }
   )
-  ipcMain.handle(IPC.pluginsCreate, (_event, kind: string, name: string) => {
+  ipcMain.handle(IPC.pluginsCreate, async (_event, kind: string, name: string) => {
     const allowed = kind === 'skill' || kind === 'mcp' || kind === 'hook' || kind === 'plugin'
     if (!allowed) return { ok: false as const, error: 'Unknown plugin kind' }
-    const result = plugins.create(kind, String(name || ''))
-    if (result.ok) grantPluginFiles(files, result.snapshot)
-    return result.ok ? result.snapshot : result
+    const client = clientOf()
+    const result = client
+      ? unwrapPluginMutation(await client.request('plugins.create', { kind, name: String(name || '') }))
+      : (() => {
+          const row = plugins.create(kind, String(name || ''))
+          return row.ok ? row.snapshot : row
+        })()
+    if (!('ok' in result)) grantPluginFiles(files, result)
+    return result
   })
-  ipcMain.handle(IPC.pluginsWrite, (_event, path: string, content: string) => {
-    const result = plugins.writeConfig(String(path || ''), String(content ?? ''))
-    if (result.ok) grantPluginFiles(files, result.snapshot)
-    return result.ok ? result.snapshot : result
+  ipcMain.handle(IPC.pluginsWrite, async (_event, path: string, content: string) => {
+    const client = clientOf()
+    const result = client
+      ? unwrapPluginMutation(
+          await client.request('plugins.write', { path: String(path || ''), content: String(content ?? '') })
+        )
+      : (() => {
+          const row = plugins.writeConfig(String(path || ''), String(content ?? ''))
+          return row.ok ? row.snapshot : row
+        })()
+    if (!('ok' in result)) grantPluginFiles(files, result)
+    return result
   })
 }
 

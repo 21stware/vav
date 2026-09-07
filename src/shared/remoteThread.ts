@@ -109,7 +109,8 @@ export function projectRemoteMessages(
       at: message.createdAt,
       ...(blocks ? { blocks } : {}),
       ...(message.cancelled ? { cancelled: true } : {}),
-      ...(message.errorText ? { error: message.errorText.slice(0, 500) } : {})
+      ...(message.errorText ? { error: message.errorText.slice(0, 500) } : {}),
+      ...(message.changeSetId ? { changeSetId: message.changeSetId } : {})
     })
   }
   return rows.slice(-REMOTE_THREAD_MAX_MESSAGES)

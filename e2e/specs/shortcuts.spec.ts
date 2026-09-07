@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test'
 import {
   chooseNativeMenu,
   dismissNativeMenu,
-  launchVav,
+  launchWorkbench,
   peekNativeMenu,
   pressAccelerator
 } from '../launch'
@@ -12,7 +12,7 @@ import {
  * CLI hosts are out of scope; ⌘W / ⌘⇧O / swarm ⌘⇧C·V are skipped on purpose.
  */
 test('session and chrome accelerators drive find, tools, sidebar, composer, and new session', async () => {
-  const harness = await launchVav()
+  const harness = await launchWorkbench()
   try {
     const { page } = harness
 
@@ -50,7 +50,7 @@ test('session and chrome accelerators drive find, tools, sidebar, composer, and 
 })
 
 test('⌘, opens Settings and ⌘⇧P opens the native approval menu', async () => {
-  const harness = await launchVav()
+  const harness = await launchWorkbench()
   try {
     const { page } = harness
 
@@ -89,7 +89,7 @@ test('⌘, opens Settings and ⌘⇧P opens the native approval menu', async () 
 })
 
 test('⌘F / ⌘G walk transcript matches', async () => {
-  const harness = await launchVav({ seedConversation: 'agent' })
+  const harness = await launchWorkbench({ seedConversation: 'agent' })
   try {
     const { page } = harness
     await pressAccelerator(harness, 'Meta+f')

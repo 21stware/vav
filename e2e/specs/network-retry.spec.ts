@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { E2E_SESSION_ID, launchVav } from '../launch'
+import { E2E_SESSION_ID, launchWorkbench } from '../launch'
 
 /**
  * Transient network failures must self-recover on the SAME session: the
@@ -8,7 +8,7 @@ import { E2E_SESSION_ID, launchVav } from '../launch'
  * with no error surfaced and no context loss.
  */
 test('network error on prompt retries in place and completes the turn', async () => {
-  const harness = await launchVav({ liveAcp: true, acpFailPrompts: 1 })
+  const harness = await launchWorkbench({ liveAcp: true, acpFailPrompts: 1 })
   try {
     const { page } = harness
     await page.locator('[data-testid="composer-input"]').fill('flaky network probe')
@@ -42,7 +42,7 @@ test('network error on prompt retries in place and completes the turn', async ()
  * network is back (context preserved, same session).
  */
 test('exhausted network retries surface a clear error, then recover on resend', async () => {
-  const harness = await launchVav({ liveAcp: true, acpFailPrompts: 4 })
+  const harness = await launchWorkbench({ liveAcp: true, acpFailPrompts: 4 })
   try {
     const { page } = harness
     await page.locator('[data-testid="composer-input"]').fill('dead network probe')
@@ -80,7 +80,7 @@ test('exhausted network retries surface a clear error, then recover on resend', 
  * must strip the leaked tail and seal a clean message — no retry needed.
  */
 test('streamed retriable error trailing a full reply is stripped from the transcript', async () => {
-  const harness = await launchVav({ liveAcp: true, acpLeakTail: true })
+  const harness = await launchWorkbench({ liveAcp: true, acpLeakTail: true })
   try {
     const { page } = harness
     await page.locator('[data-testid="composer-input"]').fill('tail leak probe')
@@ -111,7 +111,7 @@ test('streamed retriable error trailing a full reply is stripped from the transc
  * the retried reply — the leaked error never reaches the transcript.
  */
 test('streamed retriable error as the whole reply retries in place and seals clean', async () => {
-  const harness = await launchVav({ liveAcp: true, acpLeakPrompts: 1 })
+  const harness = await launchWorkbench({ liveAcp: true, acpLeakPrompts: 1 })
   try {
     const { page } = harness
     await page.locator('[data-testid="composer-input"]').fill('whole reply leak probe')
@@ -147,7 +147,7 @@ test('streamed retriable error as the whole reply retries in place and seals cle
  * and seal one assistant message — the user must not type "continue".
  */
 test('partial reply cut off by a transport leak continues on the same turn', async () => {
-  const harness = await launchVav({ liveAcp: true, acpLeakPartialTransport: true })
+  const harness = await launchWorkbench({ liveAcp: true, acpLeakPartialTransport: true })
   try {
     const { page } = harness
     await page.locator('[data-testid="composer-input"]').fill('upgrade compile env')

@@ -1,12 +1,12 @@
 import { test, expect } from '@playwright/test'
-import { launchVav } from '../launch'
+import { launchWorkbench } from '../launch'
 
 /**
  * Extra agent chrome that does not fit the core sealed-turn seed:
  * branches, quote chip, subtask tree, cancelled, approval, request.
  */
 test('rich seed paints branch, quote, subtask, cancelled, approval, and request', async () => {
-  const harness = await launchVav({ seedConversation: 'rich' })
+  const harness = await launchWorkbench({ seedConversation: 'rich' })
   try {
     const { page } = harness
     const pager = page.locator('[data-testid="branch-pager"]')

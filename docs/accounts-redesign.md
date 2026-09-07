@@ -212,7 +212,7 @@ accounts.setKeyStatus(id, 'ok'); accounts.applyLiveOAuth(host, account.name, tru
 
 ### A1.5 登录后自动快照
 
-**改** `src/main/index.ts` `accountsBeginOAuth` 的 `onFinished`（`:5674` 附近）与
+**改** `packages/vav-desktop/src/main/index.ts` `accountsBeginOAuth` 的 `onFinished`（`:5674` 附近）与
 `syncOAuthProfiles` 成功分支：登录成功后
 ```ts
 const adapter = adapterFor(host)
@@ -230,11 +230,11 @@ if (adapter?.swappable) {
 **新 IPC** `accountsActivate`（不复用 `accountsSetCurrent`，因为要返回 ActivateResult）：
 - `src/shared/ipc.ts`: 常量 `accountsActivate: 'vav:accounts:activate'`；
   `accounts.activate(id: string): Promise<{ page: AccountsPagePayload; result: ActivateResult }>`
-- `src/preload/index.ts`: `activate: (id) => ipcRenderer.invoke(IPC.accountsActivate, id)`
-- `src/main/index.ts`: handler = `accountStore.setCurrent(id)` + `await activateAccount(...)` +
+- `packages/vav-desktop/src/preload/index.ts`: `activate: (id) => ipcRenderer.invoke(IPC.accountsActivate, id)`
+- `packages/vav-desktop/src/main/index.ts`: handler = `accountStore.setCurrent(id)` + `await activateAccount(...)` +
   `quotaService.refreshHosts([host], true)` → 返回 `{ page: accountsPage(), result }`。
 
-**改** `src/renderer/src/components/settings/AccountsSettings.tsx` `setCurrent`（`:245`）：
+**改** `packages/vav-desktop/src/renderer/src/components/settings/AccountsSettings.tsx` `setCurrent`（`:245`）：
 ```ts
 const { page, result } = await window.vav.accounts.activate(account.id)
 apply(page)
@@ -335,7 +335,7 @@ export async function fetchGrokAccountQuota(ctx?: { token: string }): Promise<Qu
   抽 access_token 的函数放在对应 adapter 里，复用现有解析）。
 
 ### B.3 身份枚举来源
-**改** `src/main/index.ts` 组装 `identitiesOf`：遍历 `accountStore.listAll()` 中
+**改** `packages/vav-desktop/src/main/index.ts` 组装 `identitiesOf`：遍历 `accountStore.listAll()` 中
 `kind==='oauth' && hasCredentialSnapshot` 的账户，产出 `{ identity: name, token }`，
 外加当前 live 身份。
 
@@ -450,7 +450,7 @@ WP-C (API 余额) ── 独立，可与 A 并行
 - `src/main/quota/{claude,codex,cursor,grok,opencode}Usage.ts`（token ctx）
 - `src/shared/apiBalance.ts`（泛化 source + 路由）
 - `src/shared/ipc.ts`（IPC 常量 + `AccountView` 字段 + `accounts.activate`）
-- `src/preload/index.ts`（`activate`）
-- `src/main/index.ts`（activate handler、登录后快照、identitiesOf、余额刷新、remove 清理）
-- `src/renderer/src/components/settings/AccountsSettings.tsx`（切换态、余额、额度可见性）
+- `packages/vav-desktop/src/preload/index.ts`（`activate`）
+- `packages/vav-desktop/src/main/index.ts`（activate handler、登录后快照、identitiesOf、余额刷新、remove 清理）
+- `packages/vav-desktop/src/renderer/src/components/settings/AccountsSettings.tsx`（切换态、余额、额度可见性）
 - `src/shared/i18n/messages.ts`（文案）

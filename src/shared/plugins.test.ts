@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import {
+  emptyPluginSnapshot,
   hookMatcherMatches,
+  isPluginSnapshot,
+  unwrapPluginMutation,
   parseHooksFile,
   parseMcpServersFile,
   parsePluginEnabledMap,
@@ -15,6 +18,32 @@ describe('pluginHostKind', () => {
     assert.equal(pluginHostKind(null), 'vav')
     assert.equal(pluginHostKind('vav'), 'vav')
     assert.equal(pluginHostKind('cursor'), 'cursor')
+  })
+})
+
+describe('isPluginSnapshot', () => {
+  it('emptyPluginSnapshot is a valid empty tray', () => {
+    const snap = emptyPluginSnapshot('cursor')
+    assert.equal(snap.host, 'cursor')
+    assert.deepEqual(snap.plugins, [])
+    assert.equal(isPluginSnapshot(snap), true)
+  })
+
+  it('rejects missing or incomplete replies', () => {
+    assert.equal(isPluginSnapshot(undefined), false)
+    assert.equal(isPluginSnapshot(null), false)
+    assert.equal(isPluginSnapshot({ host: 'vav' }), false)
+    assert.equal(isPluginSnapshot({ plugins: [] }), false)
+  })
+
+  it('unwraps daemon { ok, snapshot } the way desktop IPC does', () => {
+    const snap = emptyPluginSnapshot('vav')
+    assert.equal(unwrapPluginMutation(snap), snap)
+    assert.deepEqual(unwrapPluginMutation({ ok: true, snapshot: snap }), snap)
+    assert.deepEqual(unwrapPluginMutation({ ok: false, error: 'nope' }), {
+      ok: false,
+      error: 'nope'
+    })
   })
 })
 

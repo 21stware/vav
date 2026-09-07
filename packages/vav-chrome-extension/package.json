@@ -1,0 +1,23 @@
+{
+  "name": "@21stware/vav-chrome-extension",
+  "version": "1.19.1",
+  "private": true,
+  "type": "module",
+  "description": "VAV Chrome side panel. Same session shell as desktop; second /vav hello is role: daemon.",
+  "license": "PolyForm-Noncommercial-1.0.0",
+  "author": "Oboo Cheng",
+  "scripts": {
+    "build": "npm run build:phone-ui --prefix ../.."
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21stware/vav.git",
+    "directory": "packages/vav-chrome-extension"
+  },
+  "homepage": "https://github.com/21stware/vav/tree/main/packages/vav-chrome-extension",
+  "keywords": [
+    "vav",
+    "chrome-extension",
+    "side-panel"
+  ]
+}

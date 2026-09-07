@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, it } from 'node:test'
 
-const EXT = join(import.meta.dirname, '../../../extension')
+const EXT = join(import.meta.dirname, '../../../packages/vav-chrome-extension/extension')
 
 describe('Chrome extension pack', () => {
   it('ships brand icons, discovery, and a side panel — not a localhost paste form', () => {

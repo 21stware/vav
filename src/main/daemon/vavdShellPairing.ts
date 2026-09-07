@@ -11,9 +11,18 @@ export type VavdShellTarget = {
   secret: string
 }
 
-function isLoopbackHost(host?: string): boolean {
+export function isLoopbackHost(host?: string): boolean {
   const value = host?.trim().toLowerCase() ?? ''
   return value === '127.0.0.1' || value === '::1' || value === 'localhost' || value === ''
+}
+
+/** Persisted pair that only ever pointed at this computer's loopback vavd. */
+export function isLoopbackPairedHost(row: {
+  host?: string
+  addresses?: string[]
+}): boolean {
+  if (!isLoopbackHost(row.host)) return false
+  return (row.addresses ?? []).every((address) => isLoopbackHost(address))
 }
 
 /** Loopback vavd pairing the desktop can advertise as "this computer". */

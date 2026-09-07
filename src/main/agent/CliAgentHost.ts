@@ -59,7 +59,6 @@ import type { AcpSessionState, GoalAction } from '@shared/acpSession'
 import { patchAcpConfigOption, patchAcpSessionMode } from '@shared/acpSession'
 import { planSessionGoal } from './sessionGoal'
 import { currentLocale, t } from '../i18n'
-import { shell } from 'electron'
 import type { FileService } from '../fs/FileService'
 import type { HostRegistry } from '../host'
 import {
@@ -71,7 +70,15 @@ import {
   turnHasIncompleteWork as turnBlocksHaveIncompleteWork
 } from './cliHostTurn'
 import { describeCliHostError } from './cliHostError'
-import { readHostAuthIdentity } from './hostAuth'
+async function readHostAuthIdentitySafe(kind: CliHostKind): Promise<string | null> {
+  try {
+    const { readHostAuthIdentity } = await import('./hostAuth.ts')
+    return await readHostAuthIdentity(kind)
+  } catch {
+    // vavd is plain Node — quota readers import `electron`. Skip identity.
+    return null
+  }
+}
 import type { ConversationStore } from '../store/ConversationStore'
 import type { SettingsStore } from '../store/SettingsStore'
 import type { ChangeSetStore } from './ChangeSetStore'
@@ -257,6 +264,12 @@ export interface CliAgentHostDeps {
   }
 }
 
+function openExternalUrl(url: string): void {
+  void import('electron')
+    .then((mod) => mod.shell?.openExternal(url))
+    .catch(() => undefined)
+}
+
 /**
  * Hosts structured CLI agents (Claude / Codex / ACP / OpenCode / Pi) and
  * projects their protocol events onto the same TurnEvent stream the built-in
@@ -291,7 +304,11 @@ export class CliAgentHost {
    */
   private pendingCancels = new Set<string>()
 
-  constructor(private deps: CliAgentHostDeps) {}
+  private deps: CliAgentHostDeps
+
+  constructor(deps: CliAgentHostDeps) {
+    this.deps = deps
+  }
 
   owns(conversationId: string): boolean {
     const conv = this.deps.conversations.get(conversationId)
@@ -488,7 +505,7 @@ export class CliAgentHost {
       const url = extractUrlFromInput(
         turn.blocks.find((b) => b.kind === 'toolCall' && b.id === pending.toolCallId)
       )
-      if (url) void shell.openExternal(url)
+      if (url) void openExternalUrl(url)
     }
     if (pending.synthetic) {
       runtime?.driver.steer?.(text)
@@ -793,7 +810,7 @@ export class CliAgentHost {
     const wanted = this.conversationCwd(conversationId)
     const existing = this.runtimes.get(conversationId)
     if (existing) {
-      const identity = await readHostAuthIdentity(existing.kind)
+      const identity = await readHostAuthIdentitySafe(existing.kind)
       const authChanged = !!(
         identity &&
         existing.authIdentity &&
@@ -868,7 +885,7 @@ export class CliAgentHost {
     }
 
     const cwd = recreateEphemeralCliCwd(this.conversationCwd(conversationId)).cwd
-    const identity = await readHostAuthIdentity(kind)
+    const identity = await readHostAuthIdentitySafe(kind)
     const resume = spawnResumeCursor(
       conversation.cliResumeCursor ?? null,
       kind,

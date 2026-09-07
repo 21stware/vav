@@ -1,11 +1,11 @@
 import { test, expect } from '@playwright/test'
-import { E2E_SESSION_B_ID, E2E_SESSION_ID, launchVav } from '../launch'
+import { E2E_SESSION_B_ID, E2E_SESSION_ID, launchWorkbench } from '../launch'
 
 /**
  * Sidebar session selection — click switches the open transcript.
  */
 test('clicking a sidebar row selects that conversation', async () => {
-  const harness = await launchVav({ seedConversation: 'agent', extraSession: true })
+  const harness = await launchWorkbench({ seedConversation: 'agent', extraSession: true })
   try {
     const { page } = harness
     const first = page.locator(`[data-testid="session-row"][data-conversation-id="${E2E_SESSION_ID}"]`)
@@ -34,7 +34,7 @@ test('clicking a sidebar row selects that conversation', async () => {
 })
 
 test('new session is selected and the previous row stays listed', async () => {
-  const harness = await launchVav({ extraSession: true })
+  const harness = await launchWorkbench({ extraSession: true })
   try {
     const { page } = harness
     await expect(page.locator('[data-testid="session-row"]')).toHaveCount(2)

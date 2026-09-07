@@ -7,10 +7,12 @@ import { describe, it } from 'node:test'
 import {
   discoverOrigins,
   findLocalVavd,
+  loopbackWebOrigin,
+  loopbackWsUrl,
   probeDiscover,
   webScanPorts,
   wsUrlFromOrigin
-} from '../../../extension/lib/discover.js'
+} from '../../../packages/vav-chrome-extension/extension/lib/discover.js'
 import { createLocalWorkspaceHost } from '../host/WorkspaceHost.ts'
 import { createVavControlPlane } from '../host/VavControlPlane.ts'
 import { startVavWebBridge } from './VavWebBridge.ts'
@@ -26,9 +28,25 @@ describe('Chrome extension discover', () => {
     assert.ok(webScanPorts([4800]).includes(4800))
   })
 
+  it('keeps RFC1918 pairing hints and still scans loopback', () => {
+    const origins = discoverOrigins({ ports: [4752], origin: 'http://192.168.1.5:4752' }, [
+      '192.168.1.5'
+    ])
+    assert.ok(origins.includes('http://192.168.1.5:4752'))
+    assert.ok(origins.includes('http://127.0.0.1:4752'))
+  })
+
   it('builds a websocket URL from an HTTP origin', () => {
     assert.equal(wsUrlFromOrigin('http://127.0.0.1:4752'), 'ws://127.0.0.1:4752/vav')
     assert.equal(wsUrlFromOrigin('https://127.0.0.1:4752', '/sock'), 'wss://127.0.0.1:4752/sock')
+  })
+
+  it('keeps LAN web / websocket URLs and rewrites WAN onto 127.0.0.1', () => {
+    assert.equal(loopbackWebOrigin('http://192.168.1.5:4752'), 'http://192.168.1.5:4752')
+    assert.equal(loopbackWsUrl('ws://192.168.1.5:4752/vav'), 'ws://192.168.1.5:4752/vav')
+    assert.equal(loopbackWebOrigin('http://127.0.0.1:4753'), 'http://127.0.0.1:4753')
+    assert.equal(loopbackWebOrigin('http://8.8.8.8:4752'), 'http://127.0.0.1:4752')
+    assert.equal(loopbackWsUrl('ws://1.1.1.1:4752/vav'), 'ws://127.0.0.1:4752/vav')
   })
 
   it('probes a live vavd and prefers a secret-bearing host', async () => {
@@ -71,11 +89,51 @@ describe('Chrome extension discover', () => {
       assert.ok(found)
       assert.equal(found.secret, SECRET)
       assert.equal(found.name, 'discover-host')
+
+      const fromLanHint = await findLocalVavd({
+        origin: `http://192.168.1.5:${web.port}`,
+        hosts: ['192.168.1.5'],
+        ports: [web.port]
+      })
+      assert.ok(fromLanHint)
+      assert.equal(fromLanHint.origin, `http://127.0.0.1:${web.port}`)
+      assert.equal(fromLanHint.wsUrl, `ws://127.0.0.1:${web.port}/vav`)
     } finally {
       decoy.close()
       web.close()
       plane.dispose()
       await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('prefers a discover host that already has a provider key', async () => {
+    const empty = createServer((_req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ app: 'vavd', proto: 1, secret: 'aaaaaaaaaaaaaaaa', hasKey: false }))
+    })
+    const ready = createServer((_req, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end(
+        JSON.stringify({ app: 'vavd', proto: 1, secret: 'bbbbbbbbbbbbbbbb', hasKey: true, name: 'ready' })
+      )
+    })
+    await Promise.all([
+      new Promise<void>((resolve) => empty.listen(0, '127.0.0.1', resolve)),
+      new Promise<void>((resolve) => ready.listen(0, '127.0.0.1', resolve))
+    ])
+    const emptyPort = (empty.address() as { port: number }).port
+    const readyPort = (ready.address() as { port: number }).port
+    try {
+      const found = await findLocalVavd({
+        ports: [emptyPort, readyPort],
+        hosts: ['127.0.0.1']
+      })
+      assert.ok(found)
+      assert.equal(found.hasKey, true)
+      assert.equal(found.name, 'ready')
+    } finally {
+      empty.close()
+      ready.close()
     }
   })
 })

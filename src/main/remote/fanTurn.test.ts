@@ -19,6 +19,12 @@ function sink(): RemoteTurnSink & {
     },
     finishTurn(id, status, error) {
       calls.push(`end:${id}:${status}:${error ?? ''}`)
+    },
+    setLiveRecovery(id, recovery) {
+      calls.push(`recovery:${id}:${recovery.kind}`)
+    },
+    flushThread(id) {
+      calls.push(`thread:${id}`)
     }
   }
 }
@@ -46,5 +52,21 @@ describe('fanRemoteTurn', () => {
       'end:c1:error:boom',
       'end:c1:cancelled:'
     ])
+  })
+
+  it('fans healing chrome and user thread so the workbench matches in-process', () => {
+    const remote = sink()
+    fanRemoteTurn({ type: 'user', conversationId: 'c1' } as never, remote, 'en')
+    fanRemoteTurn(
+      {
+        type: 'phase',
+        conversationId: 'c1',
+        phase: 'healing',
+        recovery: { kind: 'healing', attempt: 1, limit: 3 }
+      } as never,
+      remote,
+      'en'
+    )
+    assert.deepEqual(remote.calls, ['thread:c1', 'recovery:c1:healing'])
   })
 })

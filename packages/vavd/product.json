@@ -1,0 +1,11 @@
+{
+  "name": "@21stware/vavd",
+  "version": "1.19.1",
+  "role": "vavd",
+  "kind": "service",
+  "sources": [
+    "packages/vavd/src/vavd.ts"
+  ],
+  "talksTo": [],
+  "hello": []
+}

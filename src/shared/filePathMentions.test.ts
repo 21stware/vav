@@ -12,7 +12,7 @@ function pathsIn(text: string): string[] {
 
 describe('looksLikeFilePath', () => {
   it('accepts real absolute / home / relative paths', () => {
-    assert.equal(looksLikeFilePath('/Users/oboo/repo/vav/src/main/index.ts'), true)
+    assert.equal(looksLikeFilePath('/Users/oboo/repo/vav/packages/vav-desktop/src/main/index.ts'), true)
     assert.equal(looksLikeFilePath('/tmp/out.log'), true)
     assert.equal(looksLikeFilePath('~/Documents/note.md'), true)
     assert.equal(looksLikeFilePath('./src/foo.ts'), true)
@@ -86,8 +86,8 @@ describe('findFilePathMentions — regression corpus', () => {
   })
 
   it('still finds real paths next to Chinese punctuation', () => {
-    assert.deepEqual(pathsIn('请打开 /Users/oboo/repo/vav/src/main/index.ts。'), [
-      '/Users/oboo/repo/vav/src/main/index.ts'
+    assert.deepEqual(pathsIn('请打开 /Users/oboo/repo/vav/packages/vav-desktop/src/main/index.ts。'), [
+      '/Users/oboo/repo/vav/packages/vav-desktop/src/main/index.ts'
     ])
     assert.deepEqual(pathsIn('修改 ./src/foo.ts，然后重跑。'), ['./src/foo.ts'])
     // Spaces end a mention (PATH_END includes whitespace); prefer contiguous paths.

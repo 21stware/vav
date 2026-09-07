@@ -146,6 +146,25 @@ describe('remoteCatalogModelRows', () => {
     })
     assert.deepEqual(rows, [{ id: 'sonnet', label: 'Sonnet' }])
   })
+
+  it('falls back to the vav snapshot when the vendor key is missing', () => {
+    const rows = remoteCatalogModelRows({
+      host: null,
+      apiEndpoint: 'https://api.deepseek.com',
+      customModels: [],
+      defaultModel: 'deepseek-v4-flash-vision-exp',
+      snapshot: {
+        vav: {
+          models: [
+            { id: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash' },
+            { id: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro' }
+          ]
+        }
+      }
+    })
+    assert.equal(rows.length, 2)
+    assert.equal(rows[0]?.id, 'deepseek-v4-flash')
+  })
 })
 
 describe('buildRemoteHostEvent', () => {
@@ -166,5 +185,22 @@ describe('buildRemoteHostEvent', () => {
     assert.equal(event.defaults.agent, 'vav')
     assert.deepEqual(event.recentDirs, [{ path: '/repo', label: 'repo' }])
     assert.ok(event.capabilities)
+    assert.equal(event.hasKey, undefined)
+  })
+
+  it('forwards hasKey when the host can run a turn', () => {
+    const event = buildRemoteHostEvent({
+      name: 'Studio',
+      home: '/Users/ada',
+      tmp: '/tmp',
+      platform: 'darwin',
+      defaultAgent: 'vav',
+      defaultModel: 'kimi',
+      thinking: 'low',
+      approval: 'auto',
+      recentDirs: [],
+      hasKey: true
+    })
+    assert.equal(event.hasKey, true)
   })
 })

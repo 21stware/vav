@@ -1,11 +1,35 @@
 import type { ChatMessage, AppLocale } from '../../shared/types.ts'
-import { compareRemoteSessions, type RemoteSession, type RemoteThreadEvent } from '../../shared/remoteControl.ts'
+import {
+  compareRemoteSessions,
+  type RemoteSession,
+  type RemoteSessionGoal,
+  type RemoteThreadEvent
+} from '../../shared/remoteControl.ts'
 import { projectRemoteMessages, remoteSessionPreview } from '../../shared/remoteThread.ts'
 import { remoteIsTemporary } from '../../shared/remoteWorkspace.ts'
 import { threadPath } from '../../shared/thread.ts'
 import { isWorkspaceSession } from '../../shared/sessionKind.ts'
 
 export const REMOTE_SESSION_LIST_CAP = 30
+
+type RemoteGoalSource = { objective?: string; status?: string; lastReason?: string } | null | undefined
+
+function remoteGoalOf(goal: RemoteGoalSource): RemoteSessionGoal | undefined {
+  if (!goal || typeof goal.objective !== 'string' || !goal.objective.trim()) return undefined
+  const status =
+    goal.status === 'active' ||
+    goal.status === 'paused' ||
+    goal.status === 'blocked' ||
+    goal.status === 'limited' ||
+    goal.status === 'complete'
+      ? goal.status
+      : 'active'
+  return {
+    status,
+    objective: goal.objective,
+    ...(typeof goal.lastReason === 'string' && goal.lastReason.trim() ? { lastReason: goal.lastReason } : {})
+  }
+}
 
 export type RemoteSessionSource = {
   id: string
@@ -21,6 +45,7 @@ export type RemoteSessionSource = {
   activeLeafId?: string | null
   pinned?: boolean
   pinTime?: number | null
+  acpSession?: { goal?: RemoteGoalSource } | null
 }
 
 /** Phone session list: live conversations only, newest first, capped. */
@@ -49,7 +74,11 @@ export function mapRemoteSessions(
       temporary: remoteIsTemporary(c.workingDirectory, opts.tmpdir),
       pinned: c.pinned === true,
       pinTime: c.pinned && c.pinTime ? c.pinTime : undefined,
-      favorite: opts.favoriteOf?.(c.id) === true
+      favorite: opts.favoriteOf?.(c.id) === true,
+      ...((): Partial<Pick<RemoteSession, 'goal'>> => {
+        const goal = remoteGoalOf(c.acpSession?.goal)
+        return goal ? { goal } : {}
+      })()
     }))
     .sort(compareRemoteSessions)
     .slice(0, REMOTE_SESSION_LIST_CAP)

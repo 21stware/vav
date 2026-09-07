@@ -89,22 +89,22 @@ export function acpBootstrapModelId(
 export function acpModelIdCandidates(
   wanted: string,
   available: AcpListedModel[] = [],
-  _prefs?: AcpModelPrefs
+  prefs?: AcpModelPrefs
 ): string[] {
   const trimmed = wanted.trim()
   if (!trimmed) return []
-  const advertised = encodeCursorAcpModelId(trimmed, toCatalogRows(available))
+  const advertised = encodeCursorAcpModelId(trimmed, toCatalogRows(available), prefs)
   return advertised ? [advertised] : []
 }
 
 export function resolveAcpModelId(
   wanted: string,
   available: AcpListedModel[] = [],
-  _prefs?: AcpModelPrefs
+  prefs?: AcpModelPrefs
 ): string {
   const trimmed = wanted.trim()
   if (!trimmed) return trimmed
-  return encodeCursorAcpModelId(trimmed, toCatalogRows(available)) ?? trimmed
+  return encodeCursorAcpModelId(trimmed, toCatalogRows(available), prefs) ?? trimmed
 }
 
 function findListedFamily(available: AcpListedModel[], family: string): AcpListedModel | undefined {

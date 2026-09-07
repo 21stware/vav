@@ -19,8 +19,10 @@
  * TCP stream — keep the first paint small.
  * The phone is a first-class session client: create / thread / configure /
  * cancel / reply (ask & approval) / rename / archive / pin / favorite, plus a
- * restricted workdir picker (`browse` + `workspace`). fs contents, pty, spawn,
- * and secrets stay on the daemon protocol — the phone never gets those.
+ * restricted workdir picker (`browse` + `workspace`). `browse` with `files: true`
+ * lists regular files for desktop-like shells (Chrome / web Files tray);
+ * file bytes, pty, spawn, and secrets stay on the daemon protocol — the phone
+ * never gets those.
  *
  * This module is pure (no Node imports) so it is unit-testable and shareable
  * with the renderer settings UI.
@@ -56,6 +58,15 @@ export type RemoteSession = {
   pinTime?: number
   /** Starred on the host (`favoriteConversationIds`). Older phones ignore this. */
   favorite?: boolean
+  /** ACP / `/goal` snapshot. Older phones ignore this. */
+  goal?: RemoteSessionGoal
+}
+
+/** Compact goal the remotes paint the same way as desktop GoalBanner. */
+export type RemoteSessionGoal = {
+  status: 'active' | 'paused' | 'blocked' | 'limited' | 'complete'
+  objective: string
+  lastReason?: string
 }
 
 export type RemoteThreadBlock =
@@ -91,6 +102,8 @@ export type RemoteThreadMessage = {
   blocks?: RemoteThreadBlock[]
   cancelled?: boolean
   error?: string
+  /** Host change-review set. Older phones ignore this; Chrome / web paint the card. */
+  changeSetId?: string
 }
 
 // --- client → server ---
@@ -124,7 +137,7 @@ export type RemoteSend = {
 }
 
 export type RemoteSessionsRequest = { type: 'sessions' }
-export type RemoteCreate = { type: 'create' }
+export type RemoteCreate = { type: 'create'; conversationId?: string }
 export type RemoteThreadRequest = { type: 'thread'; conversationId: string }
 export type RemoteControlsRequest = { type: 'controls'; conversationId: string }
 export type RemoteCancel = { type: 'cancel'; conversationId: string }
@@ -134,7 +147,13 @@ export type RemoteArchive = { type: 'archive'; conversationId: string }
 export type RemotePin = { type: 'pin'; conversationId: string; pinned: boolean }
 export type RemoteFavorite = { type: 'favorite'; conversationId: string; favorite: boolean }
 /** List directories the phone may pick (home / recents / current). */
-export type RemoteBrowse = { type: 'browse'; conversationId: string; path?: string }
+export type RemoteBrowse = {
+  type: 'browse'
+  conversationId: string
+  path?: string
+  /** Include regular files. Workspace pickers omit this and stay directories-only. */
+  files?: boolean
+}
 /**
  * Set this session's workdir. `path` omitted or `temp: true` mints a
  * Temporary Workspace on the host (same as desktop).
@@ -146,6 +165,102 @@ export type RemoteWorkspace = {
   temp?: boolean
 }
 export type RemotePing = { type: 'ping' }
+/** Manual context compact for the active leaf — same as desktop Compact. */
+export type RemoteCompact = {
+  type: 'compact'
+  conversationId: string
+  keepAfterMessageId?: string
+}
+export type RemoteClearCompaction = {
+  type: 'clear-compaction'
+  conversationId: string
+  leafId: string
+}
+export type RemoteRegenerate = {
+  type: 'regenerate'
+  conversationId: string
+  messageId: string
+}
+/** Rewrite a user prompt and start a new reply — same as desktop Edit. */
+export type RemoteEdit = {
+  type: 'edit'
+  conversationId: string
+  messageId: string
+  text: string
+}
+/** Move the leaf to a sibling branch without sending — same as desktop Fork. */
+export type RemoteFork = {
+  type: 'fork'
+  conversationId: string
+  messageId: string
+}
+/** Delete a message and its descendants. Sibling branches stay. */
+export type RemoteDeleteMessage = {
+  type: 'delete-message'
+  conversationId: string
+  messageId: string
+}
+/**
+ * Set the active leaf. `follow: true` walks to the newest descendant
+ * (desktop selectBranch); omit it to sit on `messageId` (desktop setLeaf).
+ */
+export type RemoteLeaf = {
+  type: 'leaf'
+  conversationId: string
+  messageId: string
+  follow?: boolean
+}
+/** Deep-copy the session — same as desktop Duplicate. */
+export type RemoteDuplicate = {
+  type: 'duplicate'
+  conversationId: string
+}
+/** Copy the visible thread up to `messageId` into a new session. */
+export type RemoteContinue = {
+  type: 'continue'
+  conversationId: string
+  messageId: string
+}
+/** ACP `_session/goal` or `/goal` slash — same as desktop setAcpGoal. */
+export type RemoteGoal = {
+  type: 'goal'
+  conversationId: string
+  action: 'set' | 'pause' | 'resume' | 'clear'
+  objective?: string
+}
+/** Move a Temporary Workspace onto a durable folder — same as desktop Locate. */
+export type RemoteLocate = {
+  type: 'locate'
+  conversationId: string
+  destinationDir: string
+}
+/**
+ * Phone-plane change review — names + status only, never file bytes.
+ * Same Accept / Reject all as desktop / Chrome / `vavc review`.
+ */
+export type RemoteReview = {
+  type: 'review'
+  conversationId: string
+  action: 'active' | 'get' | 'accept-all' | 'reject-all'
+  setId?: string
+}
+export type RemoteReviewFile = {
+  name: string
+  status: string
+}
+export type RemoteReviewSet = {
+  id: string
+  status: string
+  files: RemoteReviewFile[]
+}
+export type RemoteCompaction = {
+  leafId: string
+  keepAfterMessageId: string
+  summary: string
+  createdAt: number
+  compactedCount: number
+  estimatedContextTokens: number
+}
 
 export type RemoteChoice = { id: string; label: string }
 
@@ -166,6 +281,8 @@ export type RemoteControlsEvent = {
   /** Null when the CLI host has not advertised session modes. */
   mode: string | null
   modes: RemoteChoice[]
+  /** ACP slash commands. Older phones ignore this. */
+  commands?: RemoteChoice[]
   approval: 'auto' | 'bypass' | 'edit'
   approvals: RemoteChoice[]
   /** Null when this host has no Fast chip (Cursor only on desktop). */
@@ -202,6 +319,18 @@ export type RemoteClientMessage =
   | RemoteFavorite
   | RemoteBrowse
   | RemoteWorkspace
+  | RemoteCompact
+  | RemoteClearCompaction
+  | RemoteRegenerate
+  | RemoteEdit
+  | RemoteFork
+  | RemoteDeleteMessage
+  | RemoteLeaf
+  | RemoteDuplicate
+  | RemoteContinue
+  | RemoteGoal
+  | RemoteLocate
+  | RemoteReview
   | RemotePing
 
 // --- server → client ---
@@ -260,6 +389,34 @@ export type RemoteCapabilities = {
   keys: boolean
 }
 
+/** Client frames iOS and Android both send. Hello omits `role`. */
+export const REMOTE_PHONE_CLIENT_TYPES = [
+  'create',
+  'send',
+  'cancel',
+  'reply',
+  'thread',
+  'controls',
+  'configure',
+  'rename',
+  'archive',
+  'pin',
+  'favorite',
+  'browse',
+  'workspace',
+  'compact',
+  'regenerate',
+  'edit',
+  'fork',
+  'duplicate',
+  'continue',
+  'goal',
+  'locate',
+  'delete-message',
+  'leaf',
+  'review'
+] as const
+
 export const REMOTE_PHONE_CAPABILITIES: RemoteCapabilities = {
   cancel: true,
   reply: true,
@@ -282,6 +439,8 @@ export type RemoteHostEvent = {
   tmp: string
   platform?: string
   capabilities: RemoteCapabilities
+  /** Loopback host can run a VAV turn (provider key present). */
+  hasKey?: boolean
   defaults: {
     agent: string
     model: string
@@ -289,6 +448,12 @@ export type RemoteHostEvent = {
     approval: 'auto' | 'bypass' | 'edit'
   }
   recentDirs: { path: string; label: string }[]
+}
+
+export type RemoteTurnRecovery = {
+  kind: 'retrying' | 'reconnecting' | 'healing'
+  attempt: number
+  limit: number
 }
 
 export type RemoteTurnEvent = {
@@ -305,10 +470,12 @@ export type RemoteTurnEvent = {
    */
   blocks?: RemoteThreadBlock[]
   awaiting?: Extract<RemoteThreadBlock, { kind: 'awaiting' }>
+  /** Same-turn recovery chrome. Phase stays `running` so older phones keep the draft. */
+  recovery?: RemoteTurnRecovery
   error?: string
 }
 
-export type RemoteDirEntry = { name: string; path: string }
+export type RemoteDirEntry = { name: string; path: string; isDirectory?: boolean }
 
 export type RemoteDirsEvent = {
   type: 'dirs'
@@ -328,6 +495,39 @@ export type RemoteError = {
 
 export type RemotePong = { type: 'pong' }
 
+export type RemoteCompacted = {
+  type: 'compacted'
+  conversationId: string
+  ok: boolean
+  error?: string
+  compaction?: RemoteCompaction
+}
+
+export type RemoteGoaled = {
+  type: 'goaled'
+  conversationId: string
+  ok: boolean
+  via?: 'rpc' | 'slash'
+  text?: string
+  error?: string
+}
+
+export type RemoteLocated = {
+  type: 'located'
+  conversationId: string
+  ok: boolean
+  error?: string
+  workdir?: string
+}
+
+export type RemoteReviewed = {
+  type: 'reviewed'
+  conversationId: string
+  ok: boolean
+  error?: string
+  set?: RemoteReviewSet | null
+}
+
 export type RemoteServerMessage =
   | RemoteWelcome
   | RemoteHostEvent
@@ -341,6 +541,10 @@ export type RemoteServerMessage =
   | RemoteCreated
   | RemoteError
   | RemotePong
+  | RemoteCompacted
+  | RemoteGoaled
+  | RemoteLocated
+  | RemoteReviewed
 
 // --- framing ---
 
@@ -436,8 +640,13 @@ export function parseClientMessage(value: unknown): RemoteClientMessage | null {
     }
     case 'sessions':
       return { type: 'sessions' }
-    case 'create':
-      return { type: 'create' }
+    case 'create': {
+      const conversationId =
+        typeof raw.conversationId === 'string' && raw.conversationId.trim()
+          ? raw.conversationId.trim()
+          : undefined
+      return conversationId ? { type: 'create', conversationId } : { type: 'create' }
+    }
     case 'thread': {
       if (typeof raw.conversationId !== 'string' || raw.conversationId.length === 0) return null
       return { type: 'thread', conversationId: raw.conversationId }
@@ -514,9 +723,13 @@ export function parseClientMessage(value: unknown): RemoteClientMessage | null {
     case 'browse': {
       if (typeof raw.conversationId !== 'string' || raw.conversationId.length === 0) return null
       const path = typeof raw.path === 'string' && raw.path.length > 0 ? raw.path : undefined
-      return path
-        ? { type: 'browse', conversationId: raw.conversationId, path }
-        : { type: 'browse', conversationId: raw.conversationId }
+      const files = raw.files === true
+      return {
+        type: 'browse',
+        conversationId: raw.conversationId,
+        ...(path ? { path } : {}),
+        ...(files ? { files: true } : {})
+      }
     }
     case 'workspace': {
       if (typeof raw.conversationId !== 'string' || raw.conversationId.length === 0) return null
@@ -530,10 +743,170 @@ export function parseClientMessage(value: unknown): RemoteClientMessage | null {
         ...(temp ? { temp: true } : {})
       }
     }
+    case 'compact': {
+      if (typeof raw.conversationId !== 'string' || raw.conversationId.length === 0) return null
+      const keepAfterMessageId =
+        typeof raw.keepAfterMessageId === 'string' && raw.keepAfterMessageId
+          ? raw.keepAfterMessageId
+          : undefined
+      return keepAfterMessageId
+        ? { type: 'compact', conversationId: raw.conversationId, keepAfterMessageId }
+        : { type: 'compact', conversationId: raw.conversationId }
+    }
+    case 'clear-compaction': {
+      if (typeof raw.conversationId !== 'string' || raw.conversationId.length === 0) return null
+      if (typeof raw.leafId !== 'string' || raw.leafId.length === 0) return null
+      return { type: 'clear-compaction', conversationId: raw.conversationId, leafId: raw.leafId }
+    }
+    case 'regenerate': {
+      if (typeof raw.conversationId !== 'string' || raw.conversationId.length === 0) return null
+      if (typeof raw.messageId !== 'string' || raw.messageId.length === 0) return null
+      return {
+        type: 'regenerate',
+        conversationId: raw.conversationId,
+        messageId: raw.messageId
+      }
+    }
+    case 'edit': {
+      if (typeof raw.conversationId !== 'string' || raw.conversationId.length === 0) return null
+      if (typeof raw.messageId !== 'string' || raw.messageId.length === 0) return null
+      if (typeof raw.text !== 'string' || !raw.text.trim()) return null
+      return {
+        type: 'edit',
+        conversationId: raw.conversationId,
+        messageId: raw.messageId,
+        text: raw.text
+      }
+    }
+    case 'fork': {
+      if (typeof raw.conversationId !== 'string' || raw.conversationId.length === 0) return null
+      if (typeof raw.messageId !== 'string' || raw.messageId.length === 0) return null
+      return { type: 'fork', conversationId: raw.conversationId, messageId: raw.messageId }
+    }
+    case 'delete-message': {
+      if (typeof raw.conversationId !== 'string' || raw.conversationId.length === 0) return null
+      if (typeof raw.messageId !== 'string' || raw.messageId.length === 0) return null
+      return {
+        type: 'delete-message',
+        conversationId: raw.conversationId,
+        messageId: raw.messageId
+      }
+    }
+    case 'leaf': {
+      if (typeof raw.conversationId !== 'string' || raw.conversationId.length === 0) return null
+      if (typeof raw.messageId !== 'string' || raw.messageId.length === 0) return null
+      return {
+        type: 'leaf',
+        conversationId: raw.conversationId,
+        messageId: raw.messageId,
+        ...(raw.follow === true ? { follow: true } : {})
+      }
+    }
+    case 'duplicate': {
+      if (typeof raw.conversationId !== 'string' || raw.conversationId.length === 0) return null
+      return { type: 'duplicate', conversationId: raw.conversationId }
+    }
+    case 'continue': {
+      if (typeof raw.conversationId !== 'string' || raw.conversationId.length === 0) return null
+      if (typeof raw.messageId !== 'string' || raw.messageId.length === 0) return null
+      return {
+        type: 'continue',
+        conversationId: raw.conversationId,
+        messageId: raw.messageId
+      }
+    }
+    case 'goal': {
+      if (typeof raw.conversationId !== 'string' || raw.conversationId.length === 0) return null
+      if (
+        raw.action !== 'set' &&
+        raw.action !== 'pause' &&
+        raw.action !== 'resume' &&
+        raw.action !== 'clear'
+      ) {
+        return null
+      }
+      const objective =
+        typeof raw.objective === 'string' && raw.objective.trim() ? raw.objective : undefined
+      return {
+        type: 'goal',
+        conversationId: raw.conversationId,
+        action: raw.action,
+        ...(objective ? { objective } : {})
+      }
+    }
+    case 'locate': {
+      if (typeof raw.conversationId !== 'string' || raw.conversationId.length === 0) return null
+      if (typeof raw.destinationDir !== 'string' || raw.destinationDir.length === 0) return null
+      return {
+        type: 'locate',
+        conversationId: raw.conversationId,
+        destinationDir: raw.destinationDir
+      }
+    }
+    case 'review': {
+      if (typeof raw.conversationId !== 'string' || raw.conversationId.length === 0) return null
+      if (
+        raw.action !== 'active' &&
+        raw.action !== 'get' &&
+        raw.action !== 'accept-all' &&
+        raw.action !== 'reject-all'
+      ) {
+        return null
+      }
+      const setId = typeof raw.setId === 'string' && raw.setId ? raw.setId : undefined
+      return {
+        type: 'review',
+        conversationId: raw.conversationId,
+        action: raw.action,
+        ...(setId ? { setId } : {})
+      }
+    }
     case 'ping':
       return { type: 'ping' }
     default:
       return null
+  }
+}
+
+function parseRemoteReviewSet(value: unknown): RemoteReviewSet | null {
+  if (typeof value !== 'object' || value === null) return null
+  const raw = value as Record<string, unknown>
+  if (typeof raw.id !== 'string' || !raw.id) return null
+  const files: RemoteReviewFile[] = []
+  if (Array.isArray(raw.files)) {
+    for (const row of raw.files) {
+      if (typeof row !== 'object' || row === null) continue
+      const file = row as Record<string, unknown>
+      if (typeof file.name !== 'string' || !file.name) continue
+      files.push({
+        name: file.name,
+        status: typeof file.status === 'string' ? file.status : 'pending'
+      })
+    }
+  }
+  return {
+    id: raw.id,
+    status: typeof raw.status === 'string' ? raw.status : 'pending',
+    files
+  }
+}
+
+function parseRemoteCompaction(value: unknown): RemoteCompaction | null {
+  if (typeof value !== 'object' || value === null) return null
+  const raw = value as Record<string, unknown>
+  if (typeof raw.leafId !== 'string' || !raw.leafId) return null
+  if (typeof raw.keepAfterMessageId !== 'string' || !raw.keepAfterMessageId) return null
+  if (typeof raw.summary !== 'string') return null
+  if (typeof raw.createdAt !== 'number') return null
+  if (typeof raw.compactedCount !== 'number') return null
+  if (typeof raw.estimatedContextTokens !== 'number') return null
+  return {
+    leafId: raw.leafId,
+    keepAfterMessageId: raw.keepAfterMessageId,
+    summary: raw.summary,
+    createdAt: raw.createdAt,
+    compactedCount: raw.compactedCount,
+    estimatedContextTokens: raw.estimatedContextTokens
   }
 }
 
@@ -545,6 +918,7 @@ function parseRemoteSession(value: unknown): RemoteSession | null {
   const status =
     raw.status === 'running' || raw.status === 'done' || raw.status === 'idle' ? raw.status : 'idle'
   const surface = raw.surface === 'cli' ? 'cli' : 'vav'
+  const goal = parseRemoteSessionGoal(raw.goal)
   return {
     id: raw.id,
     title: raw.title,
@@ -554,8 +928,42 @@ function parseRemoteSession(value: unknown): RemoteSession | null {
     updatedAt: typeof raw.updatedAt === 'number' ? raw.updatedAt : 0,
     ...(typeof raw.preview === 'string' ? { preview: raw.preview } : {}),
     ...(typeof raw.workdir === 'string' ? { workdir: raw.workdir } : {}),
-    ...(typeof raw.temporary === 'boolean' ? { temporary: raw.temporary } : {})
+    ...(typeof raw.temporary === 'boolean' ? { temporary: raw.temporary } : {}),
+    ...(typeof raw.pinned === 'boolean' ? { pinned: raw.pinned } : {}),
+    ...(typeof raw.pinTime === 'number' ? { pinTime: raw.pinTime } : {}),
+    ...(typeof raw.favorite === 'boolean' ? { favorite: raw.favorite } : {}),
+    ...(goal ? { goal } : {})
   }
+}
+
+function parseRemoteSessionGoal(value: unknown): RemoteSessionGoal | undefined {
+  if (typeof value !== 'object' || value === null) return undefined
+  const raw = value as Record<string, unknown>
+  if (typeof raw.objective !== 'string' || !raw.objective.trim()) return undefined
+  const status =
+    raw.status === 'active' ||
+    raw.status === 'paused' ||
+    raw.status === 'blocked' ||
+    raw.status === 'limited' ||
+    raw.status === 'complete'
+      ? raw.status
+      : 'active'
+  return {
+    status,
+    objective: raw.objective,
+    ...(typeof raw.lastReason === 'string' && raw.lastReason.trim() ? { lastReason: raw.lastReason } : {})
+  }
+}
+
+function parseRemoteTurnRecovery(value: unknown): RemoteTurnRecovery | undefined {
+  if (typeof value !== 'object' || value === null) return undefined
+  const raw = value as Record<string, unknown>
+  if (raw.kind !== 'retrying' && raw.kind !== 'reconnecting' && raw.kind !== 'healing') {
+    return undefined
+  }
+  const attempt = typeof raw.attempt === 'number' && Number.isFinite(raw.attempt) ? raw.attempt : 1
+  const limit = typeof raw.limit === 'number' && Number.isFinite(raw.limit) ? raw.limit : 1
+  return { kind: raw.kind, attempt, limit }
 }
 
 function parseRemoteBlock(value: unknown): RemoteThreadBlock | null {
@@ -630,7 +1038,10 @@ function parseRemoteThreadMessage(value: unknown): RemoteThreadMessage | null {
     at: typeof raw.at === 'number' ? raw.at : 0,
     ...(blocks?.length ? { blocks } : {}),
     ...(raw.cancelled === true ? { cancelled: true } : {}),
-    ...(typeof raw.error === 'string' ? { error: raw.error } : {})
+    ...(typeof raw.error === 'string' ? { error: raw.error } : {}),
+    ...(typeof raw.changeSetId === 'string' && raw.changeSetId
+      ? { changeSetId: raw.changeSetId }
+      : {})
   }
 }
 
@@ -683,6 +1094,7 @@ export function parseServerMessage(value: unknown): RemoteServerMessage | null {
         ? raw.blocks.map(parseRemoteBlock).filter((block): block is RemoteThreadBlock => block !== null)
         : undefined
       const awaiting = raw.awaiting ? parseRemoteBlock(raw.awaiting) : null
+      const recovery = parseRemoteTurnRecovery(raw.recovery)
       return {
         type: 'turn',
         conversationId: raw.conversationId,
@@ -691,6 +1103,7 @@ export function parseServerMessage(value: unknown): RemoteServerMessage | null {
         ...(typeof raw.thinking === 'string' ? { thinking: raw.thinking } : {}),
         ...(blocks?.length ? { blocks } : {}),
         ...(awaiting?.kind === 'awaiting' ? { awaiting } : {}),
+        ...(recovery ? { recovery } : {}),
         ...(typeof raw.error === 'string' ? { error: raw.error } : {})
       }
     }
@@ -737,6 +1150,48 @@ export function parseServerMessage(value: unknown): RemoteServerMessage | null {
     }
     case 'pong':
       return { type: 'pong' }
+    case 'compacted': {
+      if (typeof raw.conversationId !== 'string' || raw.conversationId.length === 0) return null
+      const compaction = parseRemoteCompaction(raw.compaction)
+      return {
+        type: 'compacted',
+        conversationId: raw.conversationId,
+        ok: raw.ok === true,
+        ...(typeof raw.error === 'string' ? { error: raw.error } : {}),
+        ...(compaction ? { compaction } : {})
+      }
+    }
+    case 'goaled': {
+      if (typeof raw.conversationId !== 'string' || raw.conversationId.length === 0) return null
+      return {
+        type: 'goaled',
+        conversationId: raw.conversationId,
+        ok: raw.ok === true,
+        ...(raw.via === 'rpc' || raw.via === 'slash' ? { via: raw.via } : {}),
+        ...(typeof raw.text === 'string' ? { text: raw.text } : {}),
+        ...(typeof raw.error === 'string' ? { error: raw.error } : {})
+      }
+    }
+    case 'located': {
+      if (typeof raw.conversationId !== 'string' || raw.conversationId.length === 0) return null
+      return {
+        type: 'located',
+        conversationId: raw.conversationId,
+        ok: raw.ok === true,
+        ...(typeof raw.error === 'string' ? { error: raw.error } : {}),
+        ...(typeof raw.workdir === 'string' ? { workdir: raw.workdir } : {})
+      }
+    }
+    case 'reviewed': {
+      if (typeof raw.conversationId !== 'string' || raw.conversationId.length === 0) return null
+      return {
+        type: 'reviewed',
+        conversationId: raw.conversationId,
+        ok: raw.ok === true,
+        ...(typeof raw.error === 'string' ? { error: raw.error } : {}),
+        set: parseRemoteReviewSet(raw.set)
+      }
+    }
     default:
       return null
   }

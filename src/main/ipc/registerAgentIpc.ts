@@ -49,6 +49,17 @@ export type AgentIpcRuntimes = {
   ) => boolean
   tryRemoteCancel?: (id: string) => boolean
   tryRemoteAnswer?: (id: string, toolCallId: string, answer: string) => Promise<boolean>
+  tryRemoteRegenerate?: (id: string, messageId: string) => boolean | Promise<boolean>
+  tryRemoteEdit?: (id: string, messageId: string, text: string) => boolean | Promise<boolean>
+  tryRemoteFork?: (id: string, messageId: string) => Promise<unknown>
+  tryRemoteCompact?: (
+    id: string,
+    options?: { keepAfterMessageId?: string | null }
+  ) => Promise<{ ok: boolean; error?: string; compaction?: unknown } | null>
+  tryRemoteClearCompaction?: (
+    id: string,
+    leafId: string
+  ) => Promise<{ ok: boolean; error?: string } | null>
   controlPlaneOwns?: (id: string) => boolean
 }
 
@@ -113,30 +124,31 @@ export function registerAgentIpc(
   ipcMain.handle(IPC.agentStatus, (_event, id: string) =>
     runtimes.ownsCli(id) ? runtimes.statusCli(id) : runtimes.statusBuiltin(id)
   )
-  ipcMain.handle(IPC.agentRegenerate, (_event, id: string, messageId: string) => {
+  ipcMain.handle(IPC.agentRegenerate, async (_event, id: string, messageId: string) => {
     if (store.get(id)?.archived) return
     appLog().user(LOG_EVENT.userRegenerate, 'Regenerate', {
       conversationId: id,
       data: { messageId }
     })
-    if (runtimes.controlPlaneOwns?.(id)) return
+    if (await runtimes.tryRemoteRegenerate?.(id, messageId)) return
     if (runtimes.ownsCli(id)) void runtimes.regenerateCli(id, messageId)
     else void runtimes.regenerateBuiltin(id, messageId)
   })
-  ipcMain.handle(IPC.agentEditUser, (_event, id: string, messageId: string, text: string) => {
+  ipcMain.handle(IPC.agentEditUser, async (_event, id: string, messageId: string, text: string) => {
     if (store.get(id)?.archived) return
     appLog().user(LOG_EVENT.userEdit, 'Edit prompt', {
       conversationId: id,
       data: { messageId, chars: typeof text === 'string' ? text.length : 0 }
     })
-    if (runtimes.controlPlaneOwns?.(id)) return
+    if (await runtimes.tryRemoteEdit?.(id, messageId, text)) return
     if (runtimes.ownsCli(id)) void runtimes.editUserCli(id, messageId, text)
     else void runtimes.editUserBuiltin(id, messageId, text)
   })
-  ipcMain.handle(IPC.agentFork, (_event, id: string, messageId: string) => {
+  ipcMain.handle(IPC.agentFork, async (_event, id: string, messageId: string) => {
     if (store.get(id)?.archived) return null
     appLog().user(LOG_EVENT.userFork, 'Fork', { conversationId: id, data: { messageId } })
-    if (runtimes.controlPlaneOwns?.(id)) return null
+    const forwarded = await runtimes.tryRemoteFork?.(id, messageId)
+    if (forwarded !== undefined) return forwarded
     return runtimes.fork(id, messageId)
   })
   ipcMain.handle(
@@ -150,18 +162,25 @@ export function registerAgentIpc(
       if (conversation?.cliHost) {
         return { ok: false as const, error: copy.cliHost }
       }
-      if (runtimes.controlPlaneOwns?.(id)) {
-        return { ok: false as const, error: copy.cliHost }
+      const forwarded = await runtimes.tryRemoteCompact?.(id, options)
+      if (forwarded) {
+        if (forwarded.ok) afterCompact(id)
+        return forwarded
       }
       const result = await runtimes.compact(id, options)
       if (result.ok) afterCompact(id)
       return result
     }
   )
-  ipcMain.handle(IPC.agentClearCompaction, (_event, id: string, leafId: string) => {
+  ipcMain.handle(IPC.agentClearCompaction, async (_event, id: string, leafId: string) => {
     const conversation = store.get(id)
     if (conversation?.cliHost) {
       return { ok: false as const, error: errors().cliHost }
+    }
+    const forwarded = await runtimes.tryRemoteClearCompaction?.(id, leafId)
+    if (forwarded) {
+      if (forwarded.ok) afterCompact(id)
+      return forwarded
     }
     const result = runtimes.clearCompaction(id, leafId)
     if (result.ok) afterCompact(id)

@@ -182,6 +182,10 @@ export async function resolveCloudflareToken(stored: string | null): Promise<Res
   return value
 }
 
+export function clearCloudflareAuthCache(): void {
+  cache = null
+}
+
 /** Local-only: do not spawn wrangler or refresh OAuth. */
 export function peekCloudflareAuth(stored: string | null): {
   present: boolean

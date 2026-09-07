@@ -50,11 +50,18 @@ export type VavWebBridgeOpts = {
   listen: string
   port: number
   hub: RemoteControlHub
+  /**
+   * When set, `/vav` sockets enter the daemon multiplex so a second hello
+   * with `role: 'daemon'` can do fs / pty. Phone hellos still reach `hub`.
+   */
+  attachSocket?: (socket: NetSocket) => void
   secret: () => string
   name?: string
   version?: string
   /** Daemon / phone-protocol TCP port advertised on `/discover`. */
   daemonPort?: number
+  /** Loopback `/discover` reports whether this host can run a VAV turn. */
+  hasKey?: () => boolean
 }
 
 class WsSocket extends EventEmitter {
@@ -200,7 +207,8 @@ export function startVavWebBridge(
         socket.destroy()
         return
       }
-      opts.hub.attach(ws as unknown as NetSocket)
+      if (opts.attachSocket) opts.attachSocket(ws as unknown as NetSocket)
+      else opts.hub.attach(ws as unknown as NetSocket)
     })
     server.once('error', reject)
     server.listen(opts.port, opts.listen, () => {

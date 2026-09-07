@@ -1,0 +1,34 @@
+{
+  "name": "@21stware/vavc",
+  "version": "1.19.1",
+  "description": "Herdr-style control client for a running vavd. Sessions, workspaces, agents, files, and PTY panes.",
+  "license": "PolyForm-Noncommercial-1.0.0",
+  "author": "Oboo Cheng",
+  "type": "commonjs",
+  "bin": {
+    "vavc": "vavc.js"
+  },
+  "files": [
+    "vavc.js",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21stware/vav.git",
+    "directory": "packages/vavc"
+  },
+  "homepage": "https://github.com/21stware/vav/tree/main/packages/vavc",
+  "keywords": [
+    "vav",
+    "vavc",
+    "herdr",
+    "daemon"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}

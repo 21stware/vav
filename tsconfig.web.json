@@ -1,6 +1,11 @@
 {
-  "include": ["src/renderer/**/*", "src/shared/**/*", "src/phone-ui/**/*", "src/preload/index.ts"],
-  "exclude": ["src/**/*.test.ts"],
+  "include": [
+    "packages/vav-desktop/src/renderer/**/*",
+    "packages/vav-desktop/src/preload/index.ts",
+    "packages/vav-chrome-extension/phone-ui/**/*",
+    "src/shared/**/*"
+  ],
+  "exclude": ["src/**/*.test.ts", "packages/**/*.test.ts"],
   "compilerOptions": {
     "composite": true,
     "target": "ES2022",
@@ -20,7 +25,7 @@
     "baseUrl": ".",
     "paths": {
       "@shared/*": ["src/shared/*"],
-      "@/*": ["src/renderer/src/*"]
+      "@/*": ["packages/vav-desktop/src/renderer/src/*"]
     }
   }
 }

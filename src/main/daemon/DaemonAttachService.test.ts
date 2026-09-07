@@ -57,6 +57,46 @@ function attach(
 }
 
 describe('DaemonAttachService', () => {
+  it('does not persist the spawned local-shell vavd as a remote', async () => {
+    const disk = await mkdtemp(join(tmpdir(), 'vav-box-'))
+    const userData = await mkdtemp(join(tmpdir(), 'vav-attach-'))
+    const { server, port } = await listenLoopback(disk)
+    const { service, registry } = attach(userData)
+    try {
+      const result = await service.pair(
+        encodeDaemonPairing({
+          v: DAEMON_PROTO_VERSION,
+          secret: SECRET,
+          machineId: 'ignored',
+          name: 'VAV Daemon',
+          host: '127.0.0.1',
+          port
+        }),
+        undefined,
+        { localShell: true }
+      )
+      assert.equal(result.ok, true)
+      if (!result.ok) return
+      assert.equal(result.host.localShell, true)
+      assert.equal(registry.get('box-1')?.info.localShell, true)
+      let storedHosts: unknown[] = []
+      try {
+        const stored = JSON.parse(await readFile(join(userData, 'paired-hosts.json'), 'utf8')) as {
+          hosts?: unknown[]
+        }
+        storedHosts = stored.hosts ?? []
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err
+      }
+      assert.equal(storedHosts.length, 0)
+    } finally {
+      service.dispose()
+      server.close()
+      await rm(disk, { recursive: true, force: true })
+      await rm(userData, { recursive: true, force: true })
+    }
+  })
+
   it('pairs, persists, and can forget a remote host', async () => {
     const disk = await mkdtemp(join(tmpdir(), 'vav-box-'))
     const userData = await mkdtemp(join(tmpdir(), 'vav-attach-'))

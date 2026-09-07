@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test'
 import {
   chooseNativeMenu,
-  launchVav,
+  launchWorkbench,
   openFilesTray,
   peekNativeMenu,
   waitForNewWindow
@@ -11,7 +11,7 @@ import {
  * Open / preview: in-session drawer, keyboard, file switch, companion window.
  */
 test('selecting a file and pressing Space opens the session preview', async () => {
-  const harness = await launchVav()
+  const harness = await launchWorkbench()
   try {
     const { page } = harness
     await openFilesTray(page)
@@ -30,7 +30,7 @@ test('selecting a file and pressing Space opens the session preview', async () =
 })
 
 test('previewing a second file replaces the drawer contents', async () => {
-  const harness = await launchVav()
+  const harness = await launchWorkbench()
   try {
     const { page } = harness
     await openFilesTray(page)
@@ -48,7 +48,7 @@ test('previewing a second file replaces the drawer contents', async () => {
 })
 
 test('CSV preview renders the sheet and shares Edit/Read chrome', async () => {
-  const harness = await launchVav()
+  const harness = await launchWorkbench()
   try {
     const { page } = harness
     await openFilesTray(page)
@@ -65,7 +65,7 @@ test('CSV preview renders the sheet and shares Edit/Read chrome', async () => {
 })
 
 test('TypeScript preview renders source and stays pickable', async () => {
-  const harness = await launchVav()
+  const harness = await launchWorkbench()
   try {
     const { page } = harness
     await openFilesTray(page)
@@ -80,7 +80,7 @@ test('TypeScript preview renders source and stays pickable', async () => {
 })
 
 test('SVG image preview paints the media canvas with shared chrome', async () => {
-  const harness = await launchVav()
+  const harness = await launchWorkbench()
   try {
     const { page } = harness
     await openFilesTray(page)
@@ -96,7 +96,7 @@ test('SVG image preview paints the media canvas with shared chrome', async () =>
 })
 
 test('clicking a markdown heading picks it and Escape clears the selection', async () => {
-  const harness = await launchVav()
+  const harness = await launchWorkbench()
   try {
     const { page } = harness
     await openFilesTray(page)
@@ -116,7 +116,7 @@ test('clicking a markdown heading picks it and Escape clears the selection', asy
 })
 
 test('HTML preview renders the document canvas with Edit chrome', async () => {
-  const harness = await launchVav()
+  const harness = await launchWorkbench()
   try {
     const { page } = harness
     await openFilesTray(page)
@@ -138,7 +138,7 @@ test('HTML preview renders the document canvas with Edit chrome', async () => {
 })
 
 test('ZIP preview lists archive entries as read-only', async () => {
-  const harness = await launchVav()
+  const harness = await launchWorkbench()
   try {
     const { page } = harness
     await openFilesTray(page)
@@ -153,7 +153,7 @@ test('ZIP preview lists archive entries as read-only', async () => {
 })
 
 test('XLSX preview opens the sheet canvas', async () => {
-  const harness = await launchVav()
+  const harness = await launchWorkbench()
   try {
     const { page } = harness
     await openFilesTray(page)
@@ -169,7 +169,7 @@ test('XLSX preview opens the sheet canvas', async () => {
 })
 
 test('DOCX preview paints the letter canvas in Edit', async () => {
-  const harness = await launchVav()
+  const harness = await launchWorkbench()
   try {
     const { page } = harness
     await openFilesTray(page)
@@ -185,7 +185,7 @@ test('DOCX preview paints the letter canvas in Edit', async () => {
 })
 
 test('PPTX preview paints the slide canvas in Edit', async () => {
-  const harness = await launchVav()
+  const harness = await launchWorkbench()
   try {
     const { page } = harness
     await openFilesTray(page)
@@ -201,7 +201,7 @@ test('PPTX preview paints the slide canvas in Edit', async () => {
 })
 
 test('PDF preview is format-locked Read and paints text', async () => {
-  const harness = await launchVav()
+  const harness = await launchWorkbench()
   try {
     const { page } = harness
     await openFilesTray(page)
@@ -217,7 +217,7 @@ test('PDF preview is format-locked Read and paints text', async () => {
 })
 
 test('SQLite preview opens the sheet and stays pickable', async () => {
-  const harness = await launchVav()
+  const harness = await launchWorkbench()
   try {
     const { page } = harness
     await openFilesTray(page)
@@ -234,7 +234,7 @@ test('SQLite preview opens the sheet and stays pickable', async () => {
 })
 
 test('binary preview stays Read and shows the hex/info canvas', async () => {
-  const harness = await launchVav()
+  const harness = await launchWorkbench()
   try {
     const { page } = harness
     await openFilesTray(page)
@@ -250,7 +250,7 @@ test('binary preview stays Read and shows the hex/info canvas', async () => {
 })
 
 test('video preview paints the media canvas with shared chrome', async () => {
-  const harness = await launchVav()
+  const harness = await launchWorkbench()
   try {
     const { page } = harness
     await openFilesTray(page)
@@ -265,7 +265,7 @@ test('video preview paints the media canvas with shared chrome', async () => {
 })
 
 test('audio preview paints the media canvas with shared chrome', async () => {
-  const harness = await launchVav()
+  const harness = await launchWorkbench()
   try {
     const { page } = harness
     await openFilesTray(page)
@@ -280,7 +280,7 @@ test('audio preview paints the media canvas with shared chrome', async () => {
 })
 
 test('html-clip preview is forced Read and is not pickable', async () => {
-  const harness = await launchVav()
+  const harness = await launchWorkbench()
   try {
     const { page } = harness
     await openFilesTray(page)
@@ -297,7 +297,7 @@ test('html-clip preview is forced Read and is not pickable', async () => {
 })
 
 test('an external rewrite of the open markdown file arms Save then promotes', async () => {
-  const harness = await launchVav()
+  const harness = await launchWorkbench()
   try {
     const { page } = harness
     await openFilesTray(page)
@@ -327,7 +327,7 @@ test('an external rewrite of the open markdown file arms Save then promotes', as
 })
 
 test('picking a heading opens a comment card in the preview Agent panel', async () => {
-  const harness = await launchVav()
+  const harness = await launchWorkbench()
   try {
     const { page } = harness
     await openFilesTray(page)
@@ -354,7 +354,7 @@ test('picking a heading opens a comment card in the preview Agent panel', async 
 })
 
 test('Files Open menu item opens a companion preview window', async () => {
-  const harness = await launchVav()
+  const harness = await launchWorkbench()
   try {
     const { page } = harness
     await openFilesTray(page)

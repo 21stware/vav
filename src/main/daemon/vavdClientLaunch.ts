@@ -52,3 +52,19 @@ export function resolveVavdSpawn(
   if (env.VAV_SNAPSHOT === '1' || env.VAV_E2E === '1') return false
   return true
 }
+
+/**
+ * In-process bash restore only when this Electron is the host.
+ * Spawned / paired vavd owns PTY tabs — restoring here would mint a
+ * second local pane Chrome and a remote desktop cannot see.
+ */
+export function shouldRestoreInProcessPty(
+  env: NodeJS.ProcessEnv = process.env,
+  argv: string[] = process.argv,
+  opts: { packaged?: boolean } = {}
+): boolean {
+  if (env.VAV_SNAPSHOT === '1') return false
+  if (resolveVavdPairing(env, argv)) return false
+  if (resolveVavdSpawn(env, argv, opts)) return false
+  return true
+}

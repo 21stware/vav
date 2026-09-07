@@ -119,10 +119,10 @@ const CLI_HELP = [
   '',
   'This install also writes:',
   '  vavd     Headless daemon (same process the app can spawn)',
-  '  vavc     Control client — sessions, workspaces, agents (herdr-style)',
-  '  vavcli   Agent CLI — interactive / print / JSON / RPC (pi-style)',
+  '  vavc     Control client — sessions, files, panes (herdr-style)',
+  '  vavcli   Agent CLI — interactive / print / JSON / RPC (Claude Code-style)',
   '',
-  'Those three talk to vavd over the same phone protocol as the app.',
+  'Those three talk to vavd over the same protocols as the app.',
   'Run vavc -h or vavcli -h for usage.',
   ''
 ].join('\n')

@@ -1,5 +1,11 @@
 import { test, expect, type ElectronApplication, type Page } from '@playwright/test'
-import { launchVav } from '../launch'
+import { launchWorkbench, seedVavKeyAccount } from '../launch'
+
+async function readyWorkbench(page: Page): Promise<void> {
+  await seedVavKeyAccount(page)
+  await expect(page.locator('.empty-state-session')).toContainText('Harnessed by VAV')
+  await expect(page.locator('[data-testid="composer-screenshot"]')).toBeEnabled()
+}
 
 async function overlayPage(app: ElectronApplication, timeoutMs = 15_000): Promise<Page> {
   const deadline = Date.now() + timeoutMs
@@ -47,10 +53,10 @@ async function pointer(page: Page, type: 'pointerdown' | 'pointermove' | 'pointe
 }
 
 test('screenshot overlay crop can move and resize, then attach without crashing', async () => {
-  const harness = await launchVav()
+  const harness = await launchWorkbench()
   try {
     const { app, page } = harness
-    await expect(page.locator('[data-testid="composer-screenshot"]')).toBeVisible()
+    await readyWorkbench(page)
     await page.locator('[data-testid="composer-screenshot"]').click()
 
     const overlay = await overlayPage(app)
@@ -136,10 +142,10 @@ async function overlayOnScreen(app: ElectronApplication): Promise<boolean> {
 }
 
 test('screenshot Esc exits instead of clearing the crop', async () => {
-  const harness = await launchVav()
+  const harness = await launchWorkbench()
   try {
     const { app, page } = harness
-    await expect(page.locator('[data-testid="composer-screenshot"]')).toBeVisible()
+    await readyWorkbench(page)
     await page.locator('[data-testid="composer-screenshot"]').click()
 
     const overlay = await overlayPage(app)
@@ -160,10 +166,10 @@ test('screenshot Esc exits instead of clearing the crop', async () => {
 })
 
 test('screenshot marks can be selected and Esc only deselects first', async () => {
-  const harness = await launchVav()
+  const harness = await launchWorkbench()
   try {
     const { app, page } = harness
-    await expect(page.locator('[data-testid="composer-screenshot"]')).toBeVisible()
+    await readyWorkbench(page)
     await page.locator('[data-testid="composer-screenshot"]').click()
 
     const overlay = await overlayPage(app)
@@ -203,10 +209,10 @@ test('screenshot marks can be selected and Esc only deselects first', async () =
 })
 
 test('screenshot double-click confirms the crop', async () => {
-  const harness = await launchVav()
+  const harness = await launchWorkbench()
   try {
     const { app, page } = harness
-    await expect(page.locator('[data-testid="composer-screenshot"]')).toBeVisible()
+    await readyWorkbench(page)
     await page.locator('[data-testid="composer-screenshot"]').click()
 
     const overlay = await overlayPage(app)

@@ -127,6 +127,7 @@ export function applyRemoteServerMessage(
     case 'pong':
     case 'dirs':
     case 'notification':
+    case 'compacted':
       return state
     default:
       return state

@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { E2E_SESSION_ID, launchVav } from '../launch'
+import { E2E_SESSION_ID, launchWorkbench } from '../launch'
 
 /**
  * Provider usage integration: an ACP host reporting usage_update /
@@ -7,7 +7,7 @@ import { E2E_SESSION_ID, launchVav } from '../launch'
  * (ring on the composer model picker + persisted tokensUsed/tokenLimit).
  */
 test('live ACP usage reaches the composer context ring and persists', async () => {
-  const harness = await launchVav({ liveAcp: true, acpUsage: true })
+  const harness = await launchWorkbench({ liveAcp: true, acpUsage: true })
   try {
     const { page } = harness
     await page.locator('[data-testid="composer-input"]').fill('usage probe')
@@ -55,7 +55,7 @@ test('live ACP usage reaches the composer context ring and persists', async () =
  * the token limit parsed from the model id.
  */
 test('silent ACP host still shows estimated context fill and parsed window', async () => {
-  const harness = await launchVav({ liveAcp: true })
+  const harness = await launchWorkbench({ liveAcp: true })
   try {
     const { page } = harness
     await page.locator('[data-testid="composer-input"]').fill('estimate probe')

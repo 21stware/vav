@@ -4,7 +4,7 @@ import {
   dismissNativeMenu,
   E2E_SESSION_B_ID,
   E2E_SESSION_ID,
-  launchVav,
+  launchWorkbench,
   peekNativeMenu,
   sessionRow
 } from '../launch'
@@ -18,7 +18,7 @@ async function openSessionMenu(page: Parameters<typeof sessionRow>[0], id: strin
 }
 
 test('session menu lists pin, archive, rename, duplicate, and delete', async () => {
-  const harness = await launchVav()
+  const harness = await launchWorkbench()
   try {
     const { page } = harness
     await openSessionMenu(page, E2E_SESSION_ID)
@@ -34,7 +34,7 @@ test('session menu lists pin, archive, rename, duplicate, and delete', async () 
 })
 
 test('Archive stays in the session list and selects the adjacent row above', async () => {
-  const harness = await launchVav({ extraSession: true })
+  const harness = await launchWorkbench({ extraSession: true })
   try {
     const { page } = harness
     // Make the second row active, then archive it: selection moves up.
@@ -67,7 +67,7 @@ test('Archive stays in the session list and selects the adjacent row above', asy
 })
 
 test('Rename is an inline field and commits on Enter', async () => {
-  const harness = await launchVav()
+  const harness = await launchWorkbench()
   try {
     const { page } = harness
     const row = sessionRow(page, E2E_SESSION_ID)
@@ -86,7 +86,7 @@ test('Rename is an inline field and commits on Enter', async () => {
 })
 
 test('Pin creates a Pinned section and Unpin removes it', async () => {
-  const harness = await launchVav()
+  const harness = await launchWorkbench()
   try {
     const { page } = harness
     await openSessionMenu(page, E2E_SESSION_ID)
@@ -107,7 +107,7 @@ test('Pin creates a Pinned section and Unpin removes it', async () => {
 })
 
 test('Delete of an empty session selects the remaining row', async () => {
-  const harness = await launchVav({ extraSession: true })
+  const harness = await launchWorkbench({ extraSession: true })
   try {
     const { page } = harness
     await openSessionMenu(page, E2E_SESSION_ID)

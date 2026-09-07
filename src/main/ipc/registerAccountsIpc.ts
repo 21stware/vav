@@ -50,6 +50,10 @@ export type AccountsIpcHost = {
   finishOAuth: (host: string, status: 'ok' | 'error' | 'cancelled', message?: string) => void
   runLogout: (resolved: string, host: string) => Promise<void>
   refreshQuotaPanel: (host: string) => void
+  /** Spawned loopback vavd — Settings accounts share the store Chrome uses. */
+  remote?: () => { request: (method: string, params?: unknown) => Promise<unknown> } | null
+  /** After a remote account write, push merged host settings (apiKeyPresent). */
+  publishSettings?: () => Promise<void>
 }
 
 /** Provider account CRUD, verify/reveal, and host OAuth login. */
@@ -59,6 +63,14 @@ export function registerAccountsIpc(
   secrets: SecretStore,
   host: AccountsIpcHost
 ): void {
+  const remote = (): { request: (method: string, params?: unknown) => Promise<unknown> } | null =>
+    host.remote?.() ?? null
+
+  const afterRemote = async <T>(result: T): Promise<T> => {
+    if (host.publishSettings) await host.publishSettings()
+    return result
+  }
+
   ipcMain.handle(
     IPC.accountsGetPage,
     async (
@@ -66,6 +78,10 @@ export function registerAccountsIpc(
       workspaceKey?: string | null,
       options?: { refresh?: boolean; force?: boolean }
     ) => {
+      const client = remote()
+      if (client) {
+        return client.request('accounts.getPage', { workspaceKey })
+      }
       if (options?.refresh) return host.refreshPage(workspaceKey, options.force === true)
       return host.page(workspaceKey)
     }
@@ -82,6 +98,8 @@ export function registerAccountsIpc(
         provider?: 'vav' | 'custom'
       }
     ) => {
+      const client = remote()
+      if (client) return afterRemote(await client.request('accounts.createVav', input))
       const page = await host.page()
       const name = normalizeAccountName(input.name ?? '')
       const endpoint = (input.endpoint ?? '').trim()
@@ -119,6 +137,8 @@ export function registerAccountsIpc(
       _event,
       input: { agentId: string; kind?: 'vav_key' | 'oauth'; endpoint?: string }
     ) => {
+      const client = remote()
+      if (client) return afterRemote(await client.request('accounts.createDraft', input))
       const page = await host.page()
       const agentId = input.agentId?.trim() || 'vav'
       const kind = input.kind === 'oauth' ? 'oauth' : 'vav_key'
@@ -155,6 +175,8 @@ export function registerAccountsIpc(
       id: string,
       patch: { alias?: string | null; endpoint?: string; apiKey?: string }
     ) => {
+      const client = remote()
+      if (client) return afterRemote(await client.request('accounts.updateVav', { id, ...patch }))
       const account = accounts.get(id)
       if (!account) {
         return Promise.reject(new Error(t('accounts.error.missing')))
@@ -181,7 +203,9 @@ export function registerAccountsIpc(
       return host.page(account.workspaceKey)
     }
   )
-  ipcMain.handle(IPC.accountsSetCurrent, (_event, id: string) => {
+  ipcMain.handle(IPC.accountsSetCurrent, async (_event, id: string) => {
+    const client = remote()
+    if (client) return afterRemote(await client.request('accounts.setCurrent', { id }))
     const viewing = host.page().workspaceKey
     const account = accounts.setCurrent(id, viewing)
     if (account) host.retargetEmpty(account, viewing)
@@ -189,6 +213,8 @@ export function registerAccountsIpc(
     return host.page(viewing)
   })
   ipcMain.handle(IPC.accountsActivate, async (_event, id: string) => {
+    const client = remote()
+    if (client) return afterRemote(await client.request('accounts.activate', { id }))
     const viewing = host.page().workspaceKey
     const result: AccountActivateResult = await activateAccount({
       accountId: id,
@@ -209,7 +235,9 @@ export function registerAccountsIpc(
     host.broadcastSettings()
     return { page: host.page(viewing), result }
   })
-  ipcMain.handle(IPC.accountsRemove, (_event, id: string) => {
+  ipcMain.handle(IPC.accountsRemove, async (_event, id: string) => {
+    const client = remote()
+    if (client) return afterRemote(await client.request('accounts.remove', { id }))
     const result = accounts.remove(id)
     if (result) {
       secrets.clearAccountKey(id)
@@ -220,6 +248,8 @@ export function registerAccountsIpc(
     return host.page(result?.removed.workspaceKey)
   })
   ipcMain.handle(IPC.accountsVerify, async (_event, id: string, apiKey?: string) => {
+    const client = remote()
+    if (client) return client.request('accounts.verify', { id, apiKey })
     const account = accounts.get(id)
     if (!account || account.kind !== 'vav_key') {
       return { ok: false, message: t('accounts.error.missing') }
@@ -233,12 +263,19 @@ export function registerAccountsIpc(
   })
   ipcMain.handle(IPC.accountsRevealKey, async (event, id: string) => {
     if (!(await host.confirmRevealSecret(event))) return null
+    const client = remote()
+    if (client) {
+      const row = (await client.request('accounts.revealKey', { id })) as { key?: string | null }
+      return row?.key ?? null
+    }
     const account = accounts.get(id)
     if (!account || account.kind !== 'vav_key') return null
     if (account.usesLegacyApiKey) return secrets.get('api')
     return secrets.getAccountKey(id)
   })
   ipcMain.handle(IPC.accountsBeginOAuth, async (_event, agentId: string, accountId?: string) => {
+    const client = remote()
+    if (client) return client.request('accounts.beginOAuth', { agentId, accountId })
     const oauthHost = agentId.trim()
     const name = DEFAULT_CLI_AGENTS.find((agent) => agent.id === oauthHost)?.name ?? oauthHost
     if (
@@ -317,10 +354,14 @@ export function registerAccountsIpc(
     return host.page()
   })
   ipcMain.handle(IPC.accountsCancelOAuth, async (_event, agentId: string) => {
+    const client = remote()
+    if (client) return client.request('accounts.cancelOAuth', { agentId })
     host.cancelOAuth(String(agentId ?? '').trim())
     return host.page()
   })
   ipcMain.handle(IPC.accountsSignOut, async (_event, agentId: string) => {
+    const client = remote()
+    if (client) return client.request('accounts.signOut', { agentId })
     const oauthHost = agentId.trim()
     if (!isStructuredCliHost(oauthHost) || !isOAuthSyncAgent(oauthHost)) {
       return Promise.reject(new Error(t('accounts.error.missing')))
