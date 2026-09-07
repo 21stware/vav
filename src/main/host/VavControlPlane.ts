@@ -589,7 +589,7 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
   function cancel(conversationId: string) {
     const conversation = conversations.get(conversationId)
     const gate = remoteLiveConversation(conversation)
-    if (gate !== 'ok') return gate
+    if (gate !== 'ok' || !conversation) return gate
     pendingSends.clear(conversationId)
     if (isStructuredCliHost(conversation.cliHost)) cli?.cancel(conversationId)
     else agent.cancel(conversationId)
@@ -696,7 +696,7 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
   function setWorkspace(conversationId: string, path: string | null) {
     const conversation = conversations.get(conversationId)
     const gate = remoteLiveConversation(conversation)
-    if (gate !== 'ok') return gate
+    if (gate !== 'ok' || !conversation) return gate
     const next = path || mintTempWorkdir(tmp)
     if (path) {
       const roots = rootsFor(conversationId)
@@ -1016,7 +1016,7 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
         : null
       return { set: existing, user, assistant }
     }
-    let captured: { user: ChatMessage; assistant: ChatMessage } | null = null
+    const captured: { user?: ChatMessage; assistant?: ChatMessage } = {}
     const seeded = await seedChangeReviewTurn({
       conversationId,
       workdir: conversation.workingDirectory || tmp,
@@ -1026,15 +1026,16 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
         conversations.appendMessage(conversationId, user)
         conversations.appendMessage(conversationId, assistant)
         conversations.flush()
-        captured = { user, assistant }
+        captured.user = user
+        captured.assistant = assistant
       }
     })
     if (!seeded) return null
     hub.finishTurn(conversationId, 'done')
     return {
       set: changeSets.get(seeded.setId),
-      user: captured?.user ?? null,
-      assistant: captured?.assistant ?? null
+      user: captured.user ?? null,
+      assistant: captured.assistant ?? null
     }
   }
 

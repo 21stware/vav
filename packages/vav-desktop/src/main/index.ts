@@ -74,7 +74,8 @@ import {
   asThinkingLevel,
   chatMessagesFromRemoteThread,
   cliHostFromAgent,
-  conversationFromRemoteSession
+  conversationFromRemoteSession,
+  conversationFromRemoteThread
 } from '@shared/remoteDesktop'
 import {
   hasActiveAgentWork,
@@ -2187,10 +2188,7 @@ function applyDesktopControlEvent(machineId: string, message: RemoteServerMessag
     const host = hostRegistry.get(machineId)?.info
     if (host?.localShell) {
       const adopted = conversationStore.adoptHostConversation(
-        {
-          ...conversationFromRemoteSession(message.session),
-          messages: []
-        } as Conversation,
+        conversationFromRemoteThread(conversationFromRemoteSession(message.session), []),
         LOCAL_MACHINE_ID
       )
       if (adopted) {
@@ -7205,14 +7203,13 @@ return c as text`
     forwardDeleteMessage: async (id, messageId) => {
       const conversation = conversationStore.get(id)
       if (!controlPlaneOwns(conversation)) return undefined
-      let thread: Extract<import('@shared/remoteControl').RemoteServerMessage, { type: 'thread' }> | null =
-        null
+      let messages: ChatMessage[] | undefined
       const used = await dialControl(conversation, async (dial, hostId) => {
         dial.deleteMessage(hostId, messageId)
-        thread = await dial.waitThread(hostId)
+        const thread = await dial.waitThread(hostId)
+        if (thread) messages = chatMessagesFromRemoteThread(thread.messages)
       })
-      if (!used || !thread) return null
-      const messages = chatMessagesFromRemoteThread(thread.messages)
+      if (!used || !messages) return null
       return {
         conversations: conversationStore.listMeta(),
         messages,
@@ -7815,14 +7812,15 @@ async function seedSmokeChangeReview(): Promise<void> {
   }
   const remote = daemonAttach.localShellClient()
   if (remote) {
-    let result: {
+    type SeedReviewResult = {
       set?: { id?: string; files?: unknown[] } | null
       user?: ChatMessage | null
       assistant?: ChatMessage | null
-    } | null = null
+    }
+    let result: SeedReviewResult | undefined
     for (let i = 0; i < 8; i++) {
       try {
-        result = (await remote.request('changeSets.seedReview', { conversationId: meta.id })) as typeof result
+        result = (await remote.request('changeSets.seedReview', { conversationId: meta.id })) as SeedReviewResult
       } catch (err) {
         console.warn('[smoke] changeSets.seedReview', err)
       }
@@ -7830,11 +7828,11 @@ async function seedSmokeChangeReview(): Promise<void> {
       await new Promise((r) => setTimeout(r, 250))
     }
     const set = result?.set
-    if (!set?.id) {
+    if (!set?.id || !result) {
       console.error('[smoke] vavd change review missing')
       return
     }
-    projectSmokeChangeReview(meta.id, { id: set.id, files: set.files }, result?.user, result?.assistant)
+    projectSmokeChangeReview(meta.id, { id: set.id, files: set.files }, result.user, result.assistant)
     console.log('[smoke] projected vavd change review', set.id, 'conv', meta.id)
     return
   }

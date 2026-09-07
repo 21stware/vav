@@ -39,7 +39,7 @@ export function TimerJobsPanel(): React.JSX.Element {
   const favoriteSet = useMemo(() => new Set(favoriteIds ?? []), [favoriteIds])
   const [jobs, setJobs] = useState<TimerJob[]>([])
   const [runs, setRuns] = useState<TimerRun[]>([])
-  const [loading, setLoading] = useState(false)
+  const [, setLoading] = useState(false)
   const [busyId, setBusyId] = useState<string | null>(null)
   const [archivedOpen, setArchivedOpen] = useState<Set<string>>(() => new Set())
   const weekday = (day: number): string => t(`timer.weekday.${day}` as 'timer.weekday.0')

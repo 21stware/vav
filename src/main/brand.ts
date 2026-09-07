@@ -28,8 +28,8 @@ export const APP_ID = isDevRuntime() ? APP_ID_DEV : APP_ID_RELEASE
  */
 export const APP_USER_DATA_DIR = isDevRuntime() ? APP_USER_DATA_DEV : APP_USER_DATA_RELEASE
 
-/** CLI shim filename (`~/.local/bin/VAV`). Never follows the Dev display name. */
-export const APP_CLI_NAME = APP_NAME_RELEASE
+/** Desktop CLI shim (`~/.local/bin/vav`). Never follows the Dev display name. */
+export const APP_CLI_NAME = 'vav'
 
 /**
  * Resolve an app icon PNG (light or dark) regardless of dev vs packaged layout.

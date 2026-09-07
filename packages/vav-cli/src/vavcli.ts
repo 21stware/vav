@@ -187,10 +187,6 @@ function modeOf(argv: string[]): 'text' | 'json' | 'rpc' {
   throw new Error(' --mode must be text, json, or rpc')
 }
 
-function printPrompt(argv: string[]): string {
-  return vavcliArgvIntent(argv).prompt
-}
-
 const SLASH_COMMANDS = new Set([
   'help',
   'h',
@@ -1051,14 +1047,14 @@ async function handleSlash(
     }
     if (sub === 'add') {
       const patch = { ...parseTimerPatch(tokens), ...parseTimerPatch(argv) }
-      if (!patch.title || patch.prompt == null) {
+      const title = patch.title
+      const prompt = patch.prompt
+      if (!title || prompt == null) {
         process.stderr.write('vavcli /timers add --title TEXT --prompt TEXT [--cron EXPR|--every-ms N]\n')
         return session
       }
       printJsonish(
-        await withDaemon(target, (rpc) =>
-          createTimerJob(rpc, { ...patch, title: patch.title, prompt: patch.prompt })
-        )
+        await withDaemon(target, (rpc) => createTimerJob(rpc, { ...patch, title, prompt }))
       )
       return session
     }

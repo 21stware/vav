@@ -45,6 +45,7 @@ import {
   enabledCliAgents,
   isIgnoredName,
   type ConversationMeta,
+  type ConversationPtyLayouts,
   type FileEntry,
   type LeafCompaction,
   type FileSortKey,
@@ -385,11 +386,24 @@ export type PhoneVavHandle = {
   transport: PhoneTransport
 }
 
+type PhoneVavPartial<T> = {
+  [K in keyof T]?: T[K] extends (...args: infer A) => unknown
+    ? (...args: A) => unknown
+    : T[K] extends object
+      ? PhoneVavPartial<T[K]>
+      : T[K]
+}
+
+function definePhoneVavApi<T extends PhoneVavPartial<VavApi>>(api: T): T {
+  return api
+}
+
 export function installPhoneVav(transport: PhoneTransport): PhoneVavHandle {
   const sessions: RemoteSession[] = []
   const threads: Record<string, RemoteThreadMessage[]> = {}
   const controls: Record<string, RemoteControlsEvent> = {}
   let host: RemoteHostEvent | null = null
+  const currentHost = (): RemoteHostEvent | null => host
   let settings = {
     ...DEFAULT_SETTINGS,
     remoteControlEnabled: true,
@@ -775,7 +789,7 @@ export function installPhoneVav(transport: PhoneTransport): PhoneVavHandle {
     status: 'running' | 'idle' | 'exited'
   }
   const ptyTabs = new Map<string, LivePtyTab>()
-  const ptyLayouts: Record<string, { bash: null; agents: Record<string, never> }> = {}
+  const ptyLayouts: Record<string, ConversationPtyLayouts> = {}
   const ptyData = new Set<(event: { tabId: string; data: string }) => void>()
   const ptyChanged = new Set<(event: { conversationId: string }) => void>()
   const ptyStatus = new Set<
@@ -946,8 +960,8 @@ export function installPhoneVav(transport: PhoneTransport): PhoneVavHandle {
     return conversationsOf()
   }
 
-  const api = {
-    platform: resolvedHostPlatform(host?.platform),
+  const api = definePhoneVavApi({
+    platform: resolvedHostPlatform(currentHost()?.platform),
     async bootstrap(): Promise<Bootstrap> {
       await Promise.race([booted, new Promise((resolve) => setTimeout(resolve, 4_000))])
       const list = mappedList()
@@ -2929,7 +2943,7 @@ export function installPhoneVav(transport: PhoneTransport): PhoneVavHandle {
         }
       }
     }
-  } as unknown as VavApi
+  }) as unknown as VavApi
   syncPlatform = () => {
     api.platform = resolvedHostPlatform(host?.platform)
   }
