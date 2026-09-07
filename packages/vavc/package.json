@@ -1,6 +1,6 @@
 {
   "name": "@21stware/vavc",
-  "version": "1.19.1",
+  "version": "1.20.0",
   "description": "Herdr-style control client for a running vavd. Sessions, workspaces, agents, files, and PTY panes.",
   "license": "PolyForm-Noncommercial-1.0.0",
   "author": "Oboo Cheng",

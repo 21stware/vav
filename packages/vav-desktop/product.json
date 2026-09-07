@@ -1,6 +1,6 @@
 {
   "name": "@21stware/vav-desktop",
-  "version": "1.19.1",
+  "version": "1.20.0",
   "role": "vav-desktop",
   "kind": "electron",
   "sources": [

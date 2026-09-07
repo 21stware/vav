@@ -4,6 +4,10 @@ User-facing changes by release. Unreleased work lives at the top until the next 
 
 ## Unreleased
 
+## 1.20.0
+
+Settings follow the sidebar accordion: providers and host prefs belong to the active vavd; appearance is a local per-connection overlay that inherits that host's theme, tint, accent, and pattern without writing back. Pairing lives in Settings → Connect — the standalone Connect window is gone.
+
 Daemon pairing URIs are `vavrtp://`. The desktop no longer opens a second window for the spawned local vavd — that process is the default service. Connecting another machine switches the same sidebar (horizontal accordion of services) instead of opening a host window or minting a chat. Each connection can have its own theme. About shows both VAV and vavd versions.
 
 `@21stware/vavd` now ships `vavc` (herdr-style control client) and `vavcli` (pi-style agent CLI) beside `vavd`. Settings → Command Line installs all three plus the desktop `vav` opener. They share the same phone protocol and pairing as the app, web UI, and Chrome extension.

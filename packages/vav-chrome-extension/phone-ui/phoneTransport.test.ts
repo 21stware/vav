@@ -81,7 +81,7 @@ describe('extension MV3 port', () => {
       state: {
         status: 'connected',
         hostName: 'office',
-        version: '1.19.1',
+        version: '1.20.0',
         host: { type: 'host', name: 'office', hasKey: true, defaults: { model: 'deepseek-chat' } },
         sessions: [{ id: 's1', title: 'One' }],
         controls: {
