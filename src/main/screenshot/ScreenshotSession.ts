@@ -2,6 +2,7 @@ import {
   app,
   BrowserWindow,
   desktopCapturer,
+  globalShortcut,
   screen,
   systemPreferences,
   type IpcMainInvokeEvent
@@ -50,6 +51,13 @@ type Pending = {
   allowOverlayKey: boolean
   concealed: BrowserWindow[]
   detachEscape?: () => void
+  rebindGlobalEscape?: () => void
+}
+
+function isEscapeInput(input: Electron.Input): boolean {
+  if (input.type !== 'keyDown') return false
+  if (input.control || input.meta || input.alt) return false
+  return input.key === 'Escape' || input.key === 'Esc' || input.code === 'Escape'
 }
 
 const HIDE_SETTLE_MS = 80
@@ -186,6 +194,7 @@ export function createScreenshotController(host: ScreenshotHost): {
   setKey: (event: Electron.IpcMainEvent, on: boolean) => void
   isOverlay: (win: BrowserWindow) => boolean
   isActive: () => boolean
+  rebindEscape: () => void
 } {
   const pool = new Map<number, OverlayWin>()
   let pending: Pending | null = null
@@ -462,6 +471,9 @@ export function createScreenshotController(host: ScreenshotHost): {
   return {
     isOverlay: (win) => isPooled(win),
     isActive: () => pending != null,
+    rebindEscape() {
+      pending?.rebindGlobalEscape?.()
+    },
 
     ready(event) {
       const win = BrowserWindow.fromWebContents(event.sender) as OverlayWin | null
@@ -531,17 +543,58 @@ export function createScreenshotController(host: ScreenshotHost): {
 
       return await new Promise<ScreenshotResult>((resolve) => {
         void (async () => {
-          const onEscape = (inputEvent: Electron.Event, input: Electron.Input): void => {
-            if (!pending || input.type !== 'keyDown' || input.key !== 'Escape') return
-            inputEvent.preventDefault()
-            for (const overlay of pending.overlays) {
-              if (overlay.isDestroyed()) continue
-              overlay.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' })
+          const escapeUnbinders: Array<() => void> = []
+          let globalEscAccel: string | null = null
+
+          const dispatchEscape = (): void => {
+            const session = pending
+            if (!session || session.dismissed) return
+            if (!session.revealed || session.overlays.length === 0) {
+              settle({ ok: false, cancelled: true })
+              return
             }
+            let sent = false
+            for (const overlay of session.overlays) {
+              if (overlay.isDestroyed() || overlay.webContents.isDestroyed()) continue
+              overlay.webContents.send(IPC.screenshotEscape)
+              sent = true
+            }
+            // Overlay not up yet (or already gone) — Esc still has to abort.
+            if (!sent) settle({ ok: false, cancelled: true })
           }
+
+          const onEscapeInput = (inputEvent: Electron.Event, input: Electron.Input): void => {
+            if (!pending || !isEscapeInput(input)) return
+            inputEvent.preventDefault()
+            dispatchEscape()
+          }
+
+          const bindEscapeContents = (contents: Electron.WebContents): void => {
+            contents.on('before-input-event', onEscapeInput)
+            escapeUnbinders.push(() => {
+              if (!contents.isDestroyed()) contents.off('before-input-event', onEscapeInput)
+            })
+          }
+
+          const bindGlobalEsc = (): boolean => {
+            for (const accel of ['Esc', 'Escape']) {
+              try {
+                if (globalShortcut.register(accel, dispatchEscape)) {
+                  globalEscAccel = accel
+                  return true
+                }
+              } catch {
+                // try the next accelerator spelling
+              }
+            }
+            globalEscAccel = null
+            return false
+          }
+
           if (requester && !requester.isDestroyed()) {
-            requester.webContents.on('before-input-event', onEscape)
+            bindEscapeContents(requester.webContents)
           }
+          bindGlobalEsc()
 
           pending = {
             resolve,
@@ -553,9 +606,20 @@ export function createScreenshotController(host: ScreenshotHost): {
             allowOverlayKey: false,
             concealed: [],
             detachEscape: () => {
-              if (requester && !requester.isDestroyed()) {
-                requester.webContents.off('before-input-event', onEscape)
+              for (const off of escapeUnbinders) off()
+              escapeUnbinders.length = 0
+              if (globalEscAccel) {
+                try {
+                  globalShortcut.unregister(globalEscAccel)
+                } catch {
+                  // ignore
+                }
+                globalEscAccel = null
               }
+            },
+            rebindGlobalEscape: () => {
+              if (!pending) return
+              bindGlobalEsc()
             }
           }
 
@@ -600,6 +664,7 @@ export function createScreenshotController(host: ScreenshotHost): {
               }
               armOverlay(overlay)
               live.push(overlay)
+              bindEscapeContents(overlay.webContents)
               sendInit(overlay)
             }
             pending.overlays = live

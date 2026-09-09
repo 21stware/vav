@@ -139,6 +139,11 @@ test('screenshot overlay crop can move and resize, then attach without crashing'
     await expect
       .poll(async () => page.locator('.attachment-image-chip').count(), { timeout: 12_000 })
       .toBeGreaterThan(0)
+    await expect
+      .poll(async () => {
+        return app.evaluate(({ clipboard }) => !clipboard.readImage().isEmpty())
+      }, { timeout: 8_000 })
+      .toBe(true)
     await expect(page.locator('[data-testid="app-shell"]')).toBeVisible()
     await expect(page.locator('[data-testid="composer-screenshot"]')).toBeVisible()
     expect(
@@ -180,8 +185,8 @@ test('screenshot Esc exits instead of clearing the crop', async () => {
     await pointer(overlay, 'pointerup', 400, 320)
     await expect(overlay.locator('[data-testid="screenshot-crop"]')).toBeVisible()
 
-    // Esc lands on the overlay window (real input is forwarded there by the
-    // main process; CDP-synthesized keys never trigger before-input-event).
+    // CDP keys hit the overlay keydown; real Esc is delivered via IPC
+    // (global shortcut + requester/overlay before-input).
     await overlay.keyboard.press('Escape')
     await expect.poll(() => overlayOnScreen(app), { timeout: 8_000 }).toBe(false)
     await expect(page.locator('[data-testid="composer-screenshot"]')).toBeVisible()
@@ -234,6 +239,37 @@ test('screenshot marks can be selected and Esc only deselects first', async () =
   }
 })
 
+test('screenshot click inside crop does not start a move', async () => {
+  const harness = await launchWorkbench()
+  try {
+    const { app, page } = harness
+    await readyWorkbench(page)
+    await page.locator('[data-testid="composer-screenshot"]').click()
+
+    const overlay = await overlayPage(app)
+    await pointer(overlay, 'pointerdown', 180, 160)
+    await pointer(overlay, 'pointermove', 420, 340)
+    await pointer(overlay, 'pointerup', 420, 340)
+    await expect(overlay.locator('[data-testid="screenshot-crop"]')).toBeVisible()
+    await expect(overlay.locator('.screenshot-toolbar')).toBeVisible()
+
+    const before = await cropBox(overlay)
+    const cx = before.x + before.w / 2
+    const cy = before.y + before.h / 2
+    await pointer(overlay, 'pointerdown', cx, cy)
+    // Deadzone: a press without travel must keep the toolbar mounted.
+    await expect(overlay.locator('.screenshot-toolbar')).toBeVisible()
+    await pointer(overlay, 'pointerup', cx, cy)
+    const after = await cropBox(overlay)
+    expect(after.x).toBeCloseTo(before.x, 0)
+    expect(after.y).toBeCloseTo(before.y, 0)
+    expect(after.w).toBeCloseTo(before.w, 0)
+    expect(after.h).toBeCloseTo(before.h, 0)
+  } finally {
+    await harness.dispose()
+  }
+})
+
 test('screenshot double-click confirms the crop', async () => {
   const harness = await launchWorkbench()
   try {
@@ -276,6 +312,11 @@ test('screenshot double-click confirms the crop', async () => {
     await expect
       .poll(async () => page.locator('.attachment-image-chip').count(), { timeout: 12_000 })
       .toBeGreaterThan(0)
+    await expect
+      .poll(async () => {
+        return app.evaluate(({ clipboard }) => !clipboard.readImage().isEmpty())
+      }, { timeout: 8_000 })
+      .toBe(true)
   } finally {
     await harness.dispose()
   }

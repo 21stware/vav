@@ -405,14 +405,12 @@ export const zhCN = {
   'message.roleYou': '你',
   'message.roleAgent': 'Agent',
 
-  // —— conversation artifacts (session catalog under the transcript) ——
+  // —— conversation artifacts (Files tray catalog of marked deliverables) ——
   'artifacts.title': '产物',
   'artifacts.open': '打开',
   'artifacts.writing': '写入中',
-  'artifacts.more': '另外 {n} 个文件',
-  'artifacts.less': '收起文件',
   'artifacts.emptyTitle': '还没有产物',
-  'artifacts.emptyDesc': '对话里写入的文件会出现在这里。',
+  'artifacts.emptyDesc': '只有刻意产出、带标记的文档会出现在这里。',
 
   // —— diagram / mind map previews ——
   'diagram.mindMap': '思维导图',
@@ -2804,10 +2802,8 @@ export const en: Record<MessageKey, string> = {
   'artifacts.title': 'Artifacts',
   'artifacts.open': 'Open',
   'artifacts.writing': 'Writing',
-  'artifacts.more': '{n} more files',
-  'artifacts.less': 'Show fewer',
   'artifacts.emptyTitle': 'No artifacts yet',
-  'artifacts.emptyDesc': 'Files written in this conversation show up here.',
+  'artifacts.emptyDesc': 'Only documents marked as artifacts appear here.',
 
   'diagram.mindMap': 'Mind map',
   'diagram.mindAddChild': 'Add child',

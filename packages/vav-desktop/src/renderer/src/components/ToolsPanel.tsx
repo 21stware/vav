@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowLeftRight,
   Bot,
@@ -14,11 +14,13 @@ import {
 } from 'lucide-react'
 import {
   useSessionStore,
+  visibleMessages,
   DEFAULT_SESSION_TOOLS,
   PANEL_MAX_HEIGHT,
   PANEL_MIN_HEIGHT,
   PANEL_SNAP_RATIO
 } from '../state/sessionStore'
+import { useConversationArtifacts } from '../lib/useConversationArtifacts'
 import { useWorkspaceStore } from '../state/workspaceStore'
 import { isTemporaryWorkspace, truncatePathLabel, workspaceChromeLabel } from '../lib/format'
 import { useGitRepoSyncEpoch } from '../lib/gitRepoSync'
@@ -53,6 +55,14 @@ export function ToolsPanel({
   const t = useT()
   const activeId = useSessionStore((s) => s.activeId)
   const conversation = useSessionStore((s) => s.conversations.find((c) => c.id === s.activeId))
+  const nodes = useSessionStore((s) => (activeId ? s.messages[activeId] : undefined))
+  const leaf = useSessionStore((s) => (activeId ? (s.activeLeaf[activeId] ?? null) : null))
+  const messages = useMemo(
+    () => (activeId ? visibleMessages(useSessionStore.getState(), activeId) : []),
+    [activeId, nodes, leaf]
+  )
+  const artifactCount = useConversationArtifacts(activeId, messages).length
+  const [openArtifactsNonce, setOpenArtifactsNonce] = useState(0)
   const collapsed = useSessionStore((s) => s.toolsCollapsed)
   const segment = useSessionStore((s) => s.panelSegment)
   const panelHeight = useSessionStore((s) => s.panelHeight)
@@ -637,6 +647,21 @@ export function ToolsPanel({
               }
             />
           </div>
+          {artifactCount > 0 ? (
+            <button
+              type="button"
+              className="tools-artifact-count"
+              data-testid="tools-artifact-count"
+              title={t('files.tabArtifacts')}
+              aria-label={`${t('files.tabArtifacts')} ${artifactCount}`}
+              onClick={() => {
+                setPanelSegment('files')
+                setOpenArtifactsNonce((n) => n + 1)
+              }}
+            >
+              {artifactCount}
+            </button>
+          ) : null}
           {/* Divider only when tabs / installs exist — avoids a lone rule after the path chip. */}
           {hasTabs || hasInstalls ? (
             <span className="tools-header-divider" aria-hidden="true" />
@@ -825,7 +850,11 @@ export function ToolsPanel({
             }
           >
             <div className="tools-pane" data-hidden={collapsed || segment !== 'files'}>
-              <FilesPanel visible={!collapsed && segment === 'files'} />
+              <FilesPanel
+                visible={!collapsed && segment === 'files'}
+                openArtifactsNonce={openArtifactsNonce}
+                artifactCount={artifactCount}
+              />
             </div>
             <div className="tools-pane" data-hidden={collapsed || segment !== 'terminal'}>
               <TerminalPanel visible={!collapsed && segment === 'terminal'} />

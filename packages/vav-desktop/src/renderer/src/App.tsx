@@ -21,7 +21,6 @@ import { FileSessionView } from './components/FileSessionView'
 import { AppToast } from './components/AppToast'
 import { RemoteFolderPicker } from './components/RemoteFolderPicker'
 import { UpdateCorner } from './components/UpdateCorner'
-import { ActivityDot } from './components/ActivityDot'
 import { ShellLeadingControls } from './components/ShellLeadingControls'
 import { EmptyState } from './components/ui'
 import { KeychainOnboarding } from './components/KeychainOnboarding'
@@ -230,7 +229,6 @@ export default function App(): React.JSX.Element {
       </div>
       {/* When the sidebar is open it hosts the chip; otherwise pin bottom-left. */}
       {!sidebarVisible ? <UpdateCorner /> : null}
-      <ActivityDot conversationId={activeId} />
       <AppToast />
       <RemoteFolderPicker />
     </div>
@@ -387,11 +385,15 @@ function SidebarSlot({
   }, [visible, floating, floatLeaving, toggleSidebar])
 
   if (!floating) {
-    if (!visible) return null
-    // Always wrap in .sidebar-column (with or without flush chrome): one
-    // element owns the resizable width and hosts the edge handle.
+    // Keep the column mounted. Unmounting rebuilt the glass hole and the
+    // whole session list on every toggle.
     return (
-      <div className="sidebar-column" ref={columnRef} style={{ width: sidebarWidth }}>
+      <div
+        className="sidebar-column"
+        ref={columnRef}
+        style={{ width: sidebarWidth }}
+        hidden={!visible}
+      >
         {chrome}
         <Sidebar />
         <div

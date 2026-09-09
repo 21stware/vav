@@ -10,8 +10,10 @@ import {
   hitMark,
   hitTopMark,
   isDoubleClickPointerDown,
+  MOVE_DEADZONE,
   moveCrop,
   moveMark,
+  movePastDeadzone,
   normalizeRect,
   resizeCrop,
   resizeMark,
@@ -145,6 +147,15 @@ describe('screenshotDraw', () => {
     assert.ok(head.left.x < 100)
     assert.ok(head.right.x < 100)
     assert.ok(head.left.y * head.right.y < 0)
+  })
+
+  it('ignores pointer jitter inside the move-tool deadzone', () => {
+    assert.equal(movePastDeadzone(0, 0), false)
+    assert.equal(movePastDeadzone(MOVE_DEADZONE - 1, 0), false)
+    assert.equal(movePastDeadzone(MOVE_DEADZONE, 0), true)
+    assert.equal(movePastDeadzone(0, MOVE_DEADZONE), true)
+    assert.equal(movePastDeadzone(5, 5), false)
+    assert.equal(movePastDeadzone(6, 6), true)
   })
 
   it('reconstructs double-clicks from consecutive pointerdowns (detail is always 0)', () => {

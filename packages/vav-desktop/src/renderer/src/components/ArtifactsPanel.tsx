@@ -6,7 +6,7 @@ import { useConversationArtifacts } from '../lib/useConversationArtifacts'
 import { useSessionStore, visibleMessages } from '../state/sessionStore'
 import { useT } from '../i18n/useT'
 
-/** Files tray → Artifacts: session catalog of files the agent produced. */
+/** Files tray → Artifacts: documents the agent marked as deliverables. */
 export function ArtifactsPanel(): React.JSX.Element {
   const t = useT()
   const activeId = useSessionStore((s) => s.activeId)

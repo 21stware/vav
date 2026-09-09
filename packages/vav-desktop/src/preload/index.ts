@@ -530,6 +530,7 @@ const api: VavApi = {
       ipcRenderer.send(IPC.screenshotPainted)
     },
     onInit: (handler) => subscribe<ScreenshotInitPayload>(IPC.screenshotInit, handler),
+    onEscape: (handler) => subscribe(IPC.screenshotEscape, () => handler()),
     dismiss: () => {
       ipcRenderer.send(IPC.screenshotDismiss)
     },

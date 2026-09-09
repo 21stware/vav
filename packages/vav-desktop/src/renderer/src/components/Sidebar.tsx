@@ -1163,10 +1163,12 @@ export function Sidebar({
                 {awaiting && (
                   <span className="conv-badge awaiting" title={t('sidebar.awaitingAnswer')} />
                 )}
-                {running && !isActive && (
+                {running && (
                   <span
                     className="conv-badge running"
-                    title={t('sidebar.badge.backgroundRunning')}
+                    title={
+                      isActive ? t('activity.running') : t('sidebar.badge.backgroundRunning')
+                    }
                   />
                 )}
                 {doneUnseen && (
@@ -1442,6 +1444,11 @@ export function Sidebar({
               const pathLabel = basename(row.path) || row.path
               // Flatten auto-titles: strip markdown hashes / leading whitespace.
               const title = flattenSessionTitle(row.title)
+              const turn = turns[row.sessionId]
+              const awaiting = !!turn?.awaitingToolCallId
+              const running = !!turn?.isRunning && !awaiting
+              const doneUnseen =
+                !awaiting && !running && activityById[row.sessionId] === 'done'
               return (
                 <button
                   type="button"
@@ -1516,6 +1523,20 @@ export function Sidebar({
                       ? `${pathLabel} · ${statusLabel}`
                       : `${pathLabel} · ${relativeTime(row.updatedAt)}`}
                   </span>
+                  {awaiting && (
+                    <span className="conv-badge awaiting" title={t('sidebar.awaitingAnswer')} />
+                  )}
+                  {running && (
+                    <span
+                      className="conv-badge running"
+                      title={
+                        isActive ? t('activity.running') : t('sidebar.badge.backgroundRunning')
+                      }
+                    />
+                  )}
+                  {doneUnseen && (
+                    <span className="conv-badge done" title={t('sidebar.badge.done')} />
+                  )}
                 </button>
               )
             })}
@@ -1548,7 +1569,7 @@ export function Sidebar({
 
       <UpdateCorner variant="inline" />
 
-      {listMode === 'main' && (
+      {(listMode === 'main' || timersView) && (
         <div className="sidebar-foot">
           <SidebarServiceBar
             sessionMenuItems={[

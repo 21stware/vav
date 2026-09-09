@@ -80,7 +80,16 @@ function scrollFileRowIntoView(path: string): void {
   })
 }
 
-export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element {
+export function FilesPanel({
+  visible,
+  openArtifactsNonce = 0,
+  artifactCount = 0
+}: {
+  visible: boolean
+  /** Bumped by the tools-header count to switch this tray onto Artifacts. */
+  openArtifactsNonce?: number
+  artifactCount?: number
+}): React.JSX.Element {
   const t = useT()
   const activeId = useSessionStore((s) => s.activeId)
   const showDialog = useSessionStore((s) => s.showDialog)
@@ -285,6 +294,10 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
     setTrayViewState(view)
     if (view === 'files') setSessionPreview({ kind: 'file' })
   }
+
+  useEffect(() => {
+    if (openArtifactsNonce > 0) setTrayViewState('artifacts')
+  }, [openArtifactsNonce])
 
   // GitHub needs a repo; Git stays available so a plain folder can be inited.
   useEffect(() => {
@@ -752,7 +765,8 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
                 value: 'artifacts',
                 label: t('files.tabArtifacts'),
                 title: t('files.tabArtifacts'),
-                icon: <Package size={14} />
+                icon: <Package size={14} />,
+                badge: artifactCount > 0 ? artifactCount : undefined
               },
               {
                 value: 'plugins',
@@ -877,7 +891,9 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
           {trayView === 'plugins' && pluginsChrome && (
             <>
               {pluginsChrome.meta ? (
-                <span className="git-panel-meta">{pluginsChrome.meta}</span>
+                <span className="git-panel-meta" title={pluginsChrome.meta}>
+                  {pluginsChrome.meta}
+                </span>
               ) : null}
               <Button
                 icon={<RefreshCw size={14} />}
@@ -901,7 +917,11 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
           )}
           {trayView === 'git' && gitChrome && (
             <>
-              {gitChrome.meta ? <span className="git-panel-meta">{gitChrome.meta}</span> : null}
+              {gitChrome.meta ? (
+                <span className="git-panel-meta" title={gitChrome.meta}>
+                  {gitChrome.meta}
+                </span>
+              ) : null}
               <Button
                 icon={<RefreshCw size={14} />}
                 size="sm"
@@ -915,7 +935,9 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
           {trayView === 'github' && githubChrome && (
             <>
               {githubChrome.meta ? (
-                <span className="git-panel-meta">{githubChrome.meta}</span>
+                <span className="git-panel-meta" title={githubChrome.meta}>
+                  {githubChrome.meta}
+                </span>
               ) : null}
               <Button
                 icon={<RefreshCw size={14} />}
@@ -930,7 +952,9 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
           {trayView === 'supabase' && supabaseChrome && (
             <>
               {supabaseChrome.meta ? (
-                <span className="git-panel-meta">{supabaseChrome.meta}</span>
+                <span className="git-panel-meta" title={supabaseChrome.meta}>
+                  {supabaseChrome.meta}
+                </span>
               ) : null}
               <Button
                 icon={<RefreshCw size={14} />}
@@ -945,7 +969,9 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
           {trayView === 'cloudflare' && cloudflareChrome && (
             <>
               {cloudflareChrome.meta ? (
-                <span className="git-panel-meta">{cloudflareChrome.meta}</span>
+                <span className="git-panel-meta" title={cloudflareChrome.meta}>
+                  {cloudflareChrome.meta}
+                </span>
               ) : null}
               <Button
                 icon={<RefreshCw size={14} />}
@@ -960,7 +986,9 @@ export function FilesPanel({ visible }: { visible: boolean }): React.JSX.Element
           {trayView === 'vercel' && vercelChrome && (
             <>
               {vercelChrome.meta ? (
-                <span className="git-panel-meta">{vercelChrome.meta}</span>
+                <span className="git-panel-meta" title={vercelChrome.meta}>
+                  {vercelChrome.meta}
+                </span>
               ) : null}
               <Button
                 icon={<RefreshCw size={14} />}

@@ -265,39 +265,28 @@ export function AgentModelPicker({
 
   const modelOptions = useMemo((): HostOption[] => {
     const grouped = groupAccountsByVendor(vavAccountsOf(accountGroups))
-    if (grouped.length > 0) {
-      return grouped.flatMap((group) => {
-        if (group.accounts.length === 1) {
-          const current = group.accounts[0]!
-          return [
-            {
-              id: null,
-              name: group.vendor.name,
-              markId: group.vendor.id,
-              vendorId: group.vendor.id,
-              accountId: current.id
-            }
-          ]
-        }
-        return group.accounts.map((account) => ({
-          id: null,
-          name: `${group.vendor.name} (${account.alias || account.identityName || account.name})`,
-          markId: group.vendor.id,
-          vendorId: group.vendor.id,
-          accountId: account.id
-        }))
-      })
-    }
-    const vendorId = vendorIdFromEndpoint(settings.apiEndpoint)
-    return [
-      {
-        id: null,
-        name: vendorDisplayName(settings.apiEndpoint, t('agents.customModel')),
-        markId: vendorId,
-        vendorId
+    return grouped.flatMap((group) => {
+      if (group.accounts.length === 1) {
+        const current = group.accounts[0]!
+        return [
+          {
+            id: null,
+            name: group.vendor.name,
+            markId: group.vendor.id,
+            vendorId: group.vendor.id,
+            accountId: current.id
+          }
+        ]
       }
-    ]
-  }, [accountGroups, settings.apiEndpoint, t])
+      return group.accounts.map((account) => ({
+        id: null,
+        name: `${group.vendor.name} (${account.alias || account.identityName || account.name})`,
+        markId: group.vendor.id,
+        vendorId: group.vendor.id,
+        accountId: account.id
+      }))
+    })
+  }, [accountGroups])
 
   const hostOptions = useMemo(
     () => [...modelOptions, ...agentOptions],
@@ -355,9 +344,9 @@ export function AgentModelPicker({
       : modelOptions.find((h) => h.accountId === (conversation?.accountId || currentVav?.id))) ??
     modelOptions.find((h) => h.vendorId === activeVendorId) ??
     modelOptions[0] ??
-    agentOptions[0] ?? {
+    (cliHost ? agentOptions[0] : null) ?? {
       id: null,
-      name: vendorDisplayName(settings.apiEndpoint, t('agents.customModel')),
+      name: vendorDisplayName(settings.apiEndpoint, t('agents.plainShell')),
       markId: activeVendorId ?? 'custom',
       vendorId: activeVendorId ?? 'custom'
     }

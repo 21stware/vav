@@ -45,6 +45,24 @@ describe('AccountStore', () => {
     )
   })
 
+  it('would resurrect DeepSeek after delete if a leftover api key is still present', () => {
+    const first = store.seedIfNeeded({
+      workspaceKey: '/proj',
+      endpoint: 'https://api.deepseek.com',
+      hasApiKey: true
+    })
+    assert.ok(first)
+    store.remove(first.id)
+    assert.equal(store.listAll().length, 0)
+    const again = store.seedIfNeeded({
+      workspaceKey: '/proj',
+      endpoint: 'https://api.deepseek.com',
+      hasApiKey: true
+    })
+    assert.ok(again)
+    assert.equal(again?.endpoint, 'https://api.deepseek.com')
+  })
+
   it('isolates accounts by workspace and switches current', () => {
     const seed = store.seedIfNeeded({ workspaceKey: '/a', endpoint: null, hasApiKey: true })
     const extra = store.add({

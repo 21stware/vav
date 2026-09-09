@@ -227,8 +227,11 @@ export function AgentsSettings(): React.JSX.Element {
   const focusAgentId = useSessionStore((s) => s.settingsFocusAgentId)
   const focusAccountId = useSessionStore((s) => s.settingsFocusAccountId)
   const accountGroups = useAccountGroups()
-  const [accountGroupsLocal, setAccountGroupsLocal] = useState(accountGroups)
-  const groups = accountGroupsLocal.length > 0 ? accountGroupsLocal : accountGroups
+  const [accountGroupsLocal, setAccountGroupsLocal] = useState<typeof accountGroups | null>(null)
+  const groups = accountGroupsLocal ?? accountGroups
+  useEffect(() => {
+    setAccountGroupsLocal(null)
+  }, [accountGroups])
   const vavAccounts = vavAccountsOf(groups)
   const modelVendors = useMemo(() => groupAccountsByVendor(vavAccounts), [vavAccounts])
   const [listOrder, setListOrder] = useState<string[]>(() => settings.providerListOrder ?? [])

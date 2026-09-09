@@ -4,6 +4,10 @@ User-facing changes by release. Unreleased work lives at the top until the next 
 
 ## Unreleased
 
+## 1.22.0
+
+Artifacts are opt-in: only files the agent marks with `<!-- vav-artifact -->` or `artifact: true` on `fs_write` appear in the Files tray Artifacts tab (the tools panel shows a count). Ordinary source edits and Change Review files stay out. Screenshot Esc cancels even before the overlay is up. Sidebar hide keeps the column mounted, and macOS glass is re-asserted without tearing the native layer down. Removing the last VAV API key no longer resurrects a DeepSeek row from the leftover `api` slot.
+
 ## 1.21.0
 
 `vavd` / `vavc` / `vavcli` are now `vav-server` / `vav-board` / `vav-tui` (old names stay as aliases). `vav-server` has docker-style named profiles under `~/.vav/servers/<name>` (`ls` / `create` / `start` / `stop` / `rm`). Desktop LAN pair confirm, host unpair, and third-party session sync talk to the spawned vav-server. The sidebar instance chip owns the session menu — chevron on the right, no light/dark toggles, Settings opens for that instance. Missing Screen Recording permission shows a dialog that opens macOS System Settings. `bun run dev:vav-server` (and `dev:vav-board` / `dev:vav-tui`) runs the CLIs without Node 22.

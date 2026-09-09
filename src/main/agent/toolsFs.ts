@@ -1,4 +1,5 @@
 import { dirname } from 'node:path'
+import { ARTIFACT_MARKER } from '@shared/conversationArtifacts'
 import { TOOL_LABELS } from '@shared/types'
 import { cap } from './toolSummarize'
 import { Type, defineTool, failure, type ToolHost } from './toolHost'
@@ -50,10 +51,16 @@ export function createFsTools(host: ToolHost) {
     name: 'fs_write',
     label: TOOL_LABELS.fs_write,
     description:
-      'Create or overwrite a UTF-8 text file, creating parent directories as needed. Relative paths resolve against the conversation working directory. Do not use for .docx/.xlsx/.pptx/.pdf (would corrupt them) — use officecli or the pdf skill instead.',
+      `Create or overwrite a UTF-8 text file, creating parent directories as needed. Relative paths resolve against the conversation working directory. Do not use for .docx/.xlsx/.pptx/.pdf (would corrupt them) — use officecli or the pdf skill instead. For a user-facing deliverable (report, brief, HTML page, notes — not a source edit), put \`${ARTIFACT_MARKER}\` near the top and/or pass artifact: true.`,
     parameters: Type.Object({
       path: Type.String({ description: 'File path, absolute or relative to the workdir.' }),
-      content: Type.String({ description: 'Full file contents to write.' })
+      content: Type.String({ description: 'Full file contents to write.' }),
+      artifact: Type.Optional(
+        Type.Boolean({
+          description:
+            `Mark this write as a user-facing artifact (a deliberate document). Ordinary source edits must omit this. Prefer also putting ${ARTIFACT_MARKER} near the top of text documents.`
+        })
+      )
     }),
     async execute(_id, params) {
       const path = inWorkdir(params.path)

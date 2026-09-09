@@ -1643,6 +1643,8 @@ export interface VavApi {
     ready(): void
     painted(): void
     onInit(handler: (payload: ScreenshotInitPayload) => void): () => void
+    /** Main-process Esc (global shortcut / requester before-input). */
+    onEscape(handler: () => void): () => void
     dismiss(): void
     finish(payload: { ok: true; path: string } | { ok: false }): void
     /** Let the overlay take key focus only while editing text. */
@@ -1984,6 +1986,7 @@ export const IPC = {
   screenshotReady: 'vav:screenshot:ready',
   screenshotInit: 'vav:screenshot:init',
   screenshotPainted: 'vav:screenshot:painted',
+  screenshotEscape: 'vav:screenshot:escape',
   screenshotDismiss: 'vav:screenshot:dismiss',
   screenshotFinish: 'vav:screenshot:finish',
   screenshotSetKey: 'vav:screenshot:set-key',

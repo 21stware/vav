@@ -24,7 +24,7 @@ import type { SecretStore } from '../store/SecretStore.ts'
 import type { SettingsStore } from '../store/SettingsStore.ts'
 import type { DaemonAccountsCatalog } from '../daemon/DaemonServer.ts'
 import { resolveAgentExecutable } from '../terminal/loginPath.ts'
-import { accountSecret } from './vavCredentials.ts'
+import { accountSecret, clearLegacyApiSlotIfNoVavKeys } from './vavCredentials.ts'
 import { buildAccountsPage, cliCatalogOf, resolveWorkspaceContext } from './page.ts'
 import { captureAccountCredentials, captureLiveHost } from './activateAccount.ts'
 import { adapterFor } from './credentials/index.ts'
@@ -230,6 +230,7 @@ export function createAccountsCatalog(opts: {
       if (result) {
         opts.secrets.clearAccountKey(id)
         opts.secrets.clearOAuthSnapshot(id)
+        clearLegacyApiSlotIfNoVavKeys(opts.accounts, opts.secrets)
       }
       return pageOf(result?.removed.workspaceKey)
     },

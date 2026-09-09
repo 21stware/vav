@@ -20,6 +20,7 @@ import { useT } from '../i18n/useT'
 import { useSidebarFloatMode } from '../lib/sidebarLayout'
 import { relativeTime } from '../lib/format'
 import { ShellLeadingControls } from './ShellLeadingControls'
+import { Composer } from './Composer'
 import { Button, Toggle } from './ui'
 
 function onceInputValue(at: number): string {
@@ -71,9 +72,20 @@ export function ScheduleEditor({ conversationId }: { conversationId: string }): 
     const next = await window.vav.timers.getJobForConversation(conversationId)
     setJob(next)
     if (!next) return null
-    setTitle(next.title)
-    setPrompt(next.prompt)
-    setVisual(visualFromSchedule(next.schedule))
+    const active = document.activeElement
+    const titleFocused = active instanceof HTMLInputElement && active.dataset.testid === 'timer-title'
+    const promptFocused =
+      active instanceof HTMLTextAreaElement && active.dataset.testid === 'timer-prompt'
+    const scheduleFocused =
+      (active instanceof HTMLInputElement || active instanceof HTMLSelectElement) &&
+      (active.dataset.testid === 'timer-mode' ||
+        active.dataset.testid === 'timer-hourly' ||
+        active.dataset.testid === 'timer-time' ||
+        active.dataset.testid === 'timer-once' ||
+        active.dataset.testid === 'timer-month-day')
+    if (!titleFocused) setTitle(next.title)
+    if (!promptFocused) setPrompt(next.prompt)
+    if (!scheduleFocused) setVisual(visualFromSchedule(next.schedule))
     return next
   }, [conversationId])
 
@@ -85,9 +97,10 @@ export function ScheduleEditor({ conversationId }: { conversationId: string }): 
   }, [loadJob])
 
   useEffect(() => {
+    if (!job) return
     const field = document.querySelector<HTMLTextAreaElement>('[data-testid="timer-prompt"]')
     field?.focus()
-  }, [conversationId])
+  }, [conversationId, job?.id])
 
   const persist = async (patch: {
     title?: string
@@ -171,30 +184,16 @@ export function ScheduleEditor({ conversationId }: { conversationId: string }): 
 
   return (
     <div className="schedule-editor" data-testid="schedule-editor">
-      {showShellLeading ? (
-        <div className="schedule-editor-leading">
-          <ShellLeadingControls />
-        </div>
-      ) : null}
-      <header className="schedule-editor-head">
-        <input
-          className="schedule-editor-title"
-          data-testid="timer-title"
-          value={title}
-          placeholder={t('timer.titlePlaceholder')}
-          onChange={(event) => setTitle(event.currentTarget.value)}
-          onBlur={() => void commitTitle()}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter') {
-              event.preventDefault()
-              event.currentTarget.blur()
-            }
-          }}
-        />
+      <header
+        className={`schedule-editor-chrome${showShellLeading ? ' has-shell-leading' : ''}`}
+      >
+        {showShellLeading ? <ShellLeadingControls /> : null}
+        <span className="spacer" />
         <div className="schedule-editor-actions">
           <Toggle
             checked={job.enabled}
             title={t('timer.enabled')}
+            testId="timer-enabled"
             onChange={(enabled) => void persist({ enabled, prompt })}
           />
           <span className="schedule-editor-enable-label">{t('timer.enabled')}</span>
@@ -210,150 +209,169 @@ export function ScheduleEditor({ conversationId }: { conversationId: string }): 
         </div>
       </header>
 
-      <section className="schedule-editor-when">
-        <div className="schedule-editor-modes" role="tablist" aria-label={t('timer.scheduleTitle')}>
-          {modes.map((item) => (
-            <button
-              key={item.mode}
-              type="button"
-              role="tab"
-              aria-selected={visual.mode === item.mode}
-              className={`schedule-editor-mode${visual.mode === item.mode ? ' is-active' : ''}`}
-              data-testid={`timer-mode-${item.mode}`}
-              onClick={() => setMode(item.mode)}
-            >
-              {item.label}
-            </button>
-          ))}
-        </div>
+      <div className="schedule-editor-body">
+        <input
+          className="schedule-editor-title"
+          data-testid="timer-title"
+          value={title}
+          placeholder={t('timer.titlePlaceholder')}
+          onChange={(event) => setTitle(event.currentTarget.value)}
+          onBlur={() => void commitTitle()}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') {
+              event.preventDefault()
+              event.currentTarget.blur()
+            }
+          }}
+        />
 
-        {visual.mode === 'once' ? (
-          <input
-            className="text-field schedule-editor-once"
-            data-testid="timer-once"
-            type="datetime-local"
-            value={onceInputValue(visual.at)}
-            onChange={(event) => {
-              const at = Date.parse(event.currentTarget.value)
-              if (!Number.isFinite(at)) return
-              const next: VisualSchedule = { mode: 'once', at }
-              setVisual(next)
-              void persist({ visual: next })
-            }}
-          />
-        ) : null}
+        <section className="schedule-editor-when">
+          <div className="schedule-editor-when-row">
+            <label className="schedule-editor-field">
+              <span>{t('timer.scheduleTitle')}</span>
+              <select
+                className="text-field schedule-editor-mode-select"
+                data-testid="timer-mode"
+                aria-label={t('timer.scheduleTitle')}
+                value={visual.mode}
+                onChange={(event) => setMode(event.currentTarget.value as VisualSchedule['mode'])}
+              >
+                {modes.map((item) => (
+                  <option key={item.mode} value={item.mode} data-testid={`timer-mode-${item.mode}`}>
+                    {item.label}
+                  </option>
+                ))}
+              </select>
+            </label>
 
-        {visual.mode === 'hourly' ? (
-          <label className="schedule-editor-field">
-            <span>{t('timer.everyHours')}</span>
-            <input
-              className="text-field"
-              data-testid="timer-hourly"
-              type="number"
-              min={1}
-              max={12}
-              value={visual.everyHours}
-              onChange={(event) => {
-                const next: VisualSchedule = {
-                  mode: 'hourly',
-                  everyHours: clampEveryHours(Number(event.currentTarget.value) || 1)
-                }
-                setVisual(next)
-                void persist({ visual: next })
-              }}
-            />
-          </label>
-        ) : null}
+            {visual.mode === 'once' ? (
+              <input
+                className="text-field schedule-editor-once"
+                data-testid="timer-once"
+                type="datetime-local"
+                value={onceInputValue(visual.at)}
+                onChange={(event) => {
+                  const at = Date.parse(event.currentTarget.value)
+                  if (!Number.isFinite(at)) return
+                  const next: VisualSchedule = { mode: 'once', at }
+                  setVisual(next)
+                  void persist({ visual: next })
+                }}
+              />
+            ) : null}
 
-        {visual.mode === 'daily' || visual.mode === 'weekly' || visual.mode === 'monthly' ? (
-          <label className="schedule-editor-field">
-            <span>{t('timer.atTime')}</span>
-            <input
-              className="text-field"
-              data-testid="timer-time"
-              type="time"
-              value={`${String(visual.hour).padStart(2, '0')}:${String(visual.minute).padStart(2, '0')}`}
-              onChange={(event) => {
-                const [hourRaw, minuteRaw] = event.currentTarget.value.split(':')
-                const hour = clampHour(Number(hourRaw))
-                const minute = clampMinute(Number(minuteRaw))
-                const next: VisualSchedule =
-                  visual.mode === 'weekly'
-                    ? { ...visual, hour, minute }
-                    : visual.mode === 'monthly'
-                      ? { ...visual, hour, minute }
-                      : { mode: 'daily', hour, minute }
-                setVisual(next)
-                void persist({ visual: next })
-              }}
-            />
-          </label>
-        ) : null}
-
-        {visual.mode === 'weekly' ? (
-          <div className="schedule-editor-weekdays" role="group" aria-label={t('timer.repeatWeekly')}>
-            {visualWeekdays().map((day) => {
-              const on = visual.weekdays.includes(day)
-              return (
-                <button
-                  key={day}
-                  type="button"
-                  className={`schedule-editor-weekday${on ? ' is-on' : ''}`}
-                  aria-pressed={on}
-                  data-testid={`timer-weekday-${day}`}
-                  onClick={() => {
+            {visual.mode === 'hourly' ? (
+              <label className="schedule-editor-field">
+                <span>{t('timer.everyHours')}</span>
+                <input
+                  className="text-field"
+                  data-testid="timer-hourly"
+                  type="number"
+                  min={1}
+                  max={12}
+                  value={visual.everyHours}
+                  onChange={(event) => {
                     const next: VisualSchedule = {
-                      ...visual,
-                      weekdays: toggleWeekday(visual.weekdays, day)
+                      mode: 'hourly',
+                      everyHours: clampEveryHours(Number(event.currentTarget.value) || 1)
                     }
                     setVisual(next)
                     void persist({ visual: next })
                   }}
-                >
-                  {t(`timer.weekday.${day}` as 'timer.weekday.0')}
-                </button>
-              )
-            })}
+                />
+              </label>
+            ) : null}
+
+            {visual.mode === 'daily' || visual.mode === 'weekly' || visual.mode === 'monthly' ? (
+              <label className="schedule-editor-field">
+                <span>{t('timer.atTime')}</span>
+                <input
+                  className="text-field"
+                  data-testid="timer-time"
+                  type="time"
+                  value={`${String(visual.hour).padStart(2, '0')}:${String(visual.minute).padStart(2, '0')}`}
+                  onChange={(event) => {
+                    const [hourRaw, minuteRaw] = event.currentTarget.value.split(':')
+                    const hour = clampHour(Number(hourRaw))
+                    const minute = clampMinute(Number(minuteRaw))
+                    const next: VisualSchedule =
+                      visual.mode === 'weekly'
+                        ? { ...visual, hour, minute }
+                        : visual.mode === 'monthly'
+                          ? { ...visual, hour, minute }
+                          : { mode: 'daily', hour, minute }
+                    setVisual(next)
+                    void persist({ visual: next })
+                  }}
+                />
+              </label>
+            ) : null}
+
+            {visual.mode === 'monthly' ? (
+              <label className="schedule-editor-field">
+                <span>{t('timer.monthDay')}</span>
+                <input
+                  className="text-field"
+                  data-testid="timer-month-day"
+                  type="number"
+                  min={1}
+                  max={31}
+                  value={visual.day}
+                  onChange={(event) => {
+                    const next: VisualSchedule = {
+                      ...visual,
+                      day: clampMonthDay(Number(event.currentTarget.value) || 1)
+                    }
+                    setVisual(next)
+                    void persist({ visual: next })
+                  }}
+                />
+              </label>
+            ) : null}
           </div>
-        ) : null}
 
-        {visual.mode === 'monthly' ? (
-          <label className="schedule-editor-field">
-            <span>{t('timer.monthDay')}</span>
-            <input
-              className="text-field"
-              data-testid="timer-month-day"
-              type="number"
-              min={1}
-              max={31}
-              value={visual.day}
-              onChange={(event) => {
-                const next: VisualSchedule = {
-                  ...visual,
-                  day: clampMonthDay(Number(event.currentTarget.value) || 1)
-                }
-                setVisual(next)
-                void persist({ visual: next })
-              }}
-            />
-          </label>
-        ) : null}
+          {visual.mode === 'weekly' ? (
+            <div className="schedule-editor-weekdays" role="group" aria-label={t('timer.repeatWeekly')}>
+              {visualWeekdays().map((day) => {
+                const on = visual.weekdays.includes(day)
+                return (
+                  <button
+                    key={day}
+                    type="button"
+                    className={`schedule-editor-weekday${on ? ' is-on' : ''}`}
+                    aria-pressed={on}
+                    data-testid={`timer-weekday-${day}`}
+                    onClick={() => {
+                      const next: VisualSchedule = {
+                        ...visual,
+                        weekdays: toggleWeekday(visual.weekdays, day)
+                      }
+                      setVisual(next)
+                      void persist({ visual: next })
+                    }}
+                  >
+                    {t(`timer.weekday.${day}` as 'timer.weekday.0')}
+                  </button>
+                )
+              })}
+            </div>
+          ) : null}
 
-        {job.nextRunAt ? (
-          <div className="schedule-editor-next">
-            {t('timer.nextRun', { when: relativeTime(job.nextRunAt) })}
-          </div>
-        ) : null}
-      </section>
+          {job.nextRunAt ? (
+            <div className="schedule-editor-next">
+              {t('timer.nextRun', { when: relativeTime(job.nextRunAt) })}
+            </div>
+          ) : null}
+        </section>
 
-      <textarea
-        className="schedule-editor-prompt"
-        data-testid="timer-prompt"
-        value={prompt}
-        placeholder={t('timer.promptPlaceholder')}
-        onChange={(event) => setPrompt(event.currentTarget.value)}
-        onBlur={() => void persist({ prompt })}
-      />
+        <Composer
+          conversationId={conversationId}
+          variant="schedule"
+          value={prompt}
+          onChange={setPrompt}
+          onCommit={(next) => void persist({ prompt: next })}
+        />
+      </div>
     </div>
   )
 }

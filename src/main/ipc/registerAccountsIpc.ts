@@ -16,6 +16,7 @@ import {
 } from '@shared/accounts'
 import { isStructuredCliHost } from '@shared/cliHost'
 import { accountSecret } from '../accounts/service'
+import { clearLegacyApiSlotIfNoVavKeys } from '../accounts/vavCredentials'
 import { activateAccount, captureAccountCredentials, captureLiveHost } from '../accounts/activateAccount'
 import { loginArgv } from '../accounts/hostLoginArgv'
 import { t } from '../i18n'
@@ -54,6 +55,8 @@ export type AccountsIpcHost = {
   remote?: () => { request: (method: string, params?: unknown) => Promise<unknown> } | null
   /** After a remote account write, push merged host settings (apiKeyPresent). */
   publishSettings?: () => Promise<void>
+  /** Fan the accounts page to every window (picker + Settings). */
+  broadcastAccounts?: (page: AccountsPagePayload) => void
 }
 
 /** Provider account CRUD, verify/reveal, and host OAuth login. */
@@ -237,15 +240,27 @@ export function registerAccountsIpc(
   })
   ipcMain.handle(IPC.accountsRemove, async (_event, id: string) => {
     const client = remote()
-    if (client) return afterRemote(await client.request('accounts.remove', { id }))
+    if (client) {
+      const page = (await afterRemote(
+        await client.request('accounts.remove', { id })
+      )) as AccountsPagePayload
+      if (Array.isArray(page.accounts) && !page.accounts.some((row) => row.kind === 'vav_key')) {
+        secrets.clear('api')
+      }
+      host.broadcastAccounts?.(page)
+      return page
+    }
     const result = accounts.remove(id)
     if (result) {
       secrets.clearAccountKey(id)
       secrets.clearOAuthSnapshot(id)
       host.clearApiBalance(id)
+      clearLegacyApiSlotIfNoVavKeys(accounts, secrets)
     }
     host.broadcastSettings()
-    return host.page(result?.removed.workspaceKey)
+    const page = host.page(result?.removed.workspaceKey)
+    host.broadcastAccounts?.(page)
+    return page
   })
   ipcMain.handle(IPC.accountsVerify, async (_event, id: string, apiKey?: string) => {
     const client = remote()

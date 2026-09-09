@@ -2,9 +2,9 @@ import { useSessionStore } from '../state/sessionStore'
 import { useT } from '../i18n/useT'
 
 /**
- * Bottom-right LED for this window's conversation:
+ * Window-corner LED for detached session windows (no sidebar list).
+ * The main shell keeps the same LED on the session row (`.conv-badge`).
  * blinking green = running, solid green = done (unseen), hidden = idle.
- * Status comes from the same snapshot as the tray.
  */
 export function ActivityDot({ conversationId }: { conversationId: string | null }): React.JSX.Element | null {
   const t = useT()

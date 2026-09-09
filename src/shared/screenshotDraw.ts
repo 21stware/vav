@@ -61,6 +61,17 @@ export const DOUBLE_CLICK_MS = 500
 export const DOUBLE_CLICK_RADIUS = 8
 
 /**
+ * Move-tool deadzone. A press that never leaves this radius is a click
+ * (or the first half of a double-click), not a drag — otherwise the
+ * toolbar unmounts for one frame and the crop “blinks”.
+ */
+export const MOVE_DEADZONE = 8
+
+export function movePastDeadzone(dx: number, dy: number, deadzone = MOVE_DEADZONE): boolean {
+  return dx * dx + dy * dy >= deadzone * deadzone
+}
+
+/**
  * The Pointer Events spec fixes `pointerdown.detail` at 0, so a real
  * double-click never arrives with `detail >= 2` — it must be reconstructed
  * from consecutive pointerdowns (same spot, within the OS interval).

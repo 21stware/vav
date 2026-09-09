@@ -1101,12 +1101,28 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   async createScheduledConversation() {
     if (!window.vav?.timers?.createScheduled) return
     try {
+      const untitled = tt('timer.untitled')
+      const jobs = window.vav.timers.listJobs ? await window.vav.timers.listJobs() : []
+      const draft = jobs.find(
+        (job) =>
+          !job.enabled &&
+          !job.prompt.trim() &&
+          (!job.title.trim() || job.title.trim() === untitled) &&
+          !!job.conversationId
+      )
+      if (draft?.conversationId) {
+        set({ sidebarListMode: 'timers' })
+        await get().selectConversation(draft.conversationId)
+        get().focusComposer()
+        return
+      }
       const result = await window.vav.timers.createScheduled()
       set((state) => ({
         ...seedEmptyConversationPatch(state, result.conversation),
         sidebarListMode: 'timers'
       }))
       await get().selectConversation(result.conversation.id)
+      get().focusComposer()
     } catch (err) {
       get().showToast({
         kind: 'error',

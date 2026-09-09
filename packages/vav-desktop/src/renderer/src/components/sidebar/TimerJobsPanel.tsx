@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { ChevronDown, ChevronRight, Pin, Plus, Star, Trash2 } from 'lucide-react'
+import { ChevronDown, ChevronRight, Pin, Star, Trash2 } from 'lucide-react'
 import type { ConversationMeta } from '@shared/types'
 import type { TimerJob, TimerRun } from '@shared/timer'
 import { useSessionStore } from '../../state/sessionStore'
@@ -98,6 +98,8 @@ export function TimerJobsPanel(): React.JSX.Element {
     try {
       await window.vav.timers.removeJob(job.id)
       await refresh()
+      const remaining = window.vav.timers.listJobs ? await window.vav.timers.listJobs() : []
+      if (remaining.length === 0) void createScheduledConversation()
     } finally {
       setBusyId(null)
     }
@@ -276,17 +278,6 @@ export function TimerJobsPanel(): React.JSX.Element {
 
   return (
     <div className="timer-jobs" data-testid="timer-jobs">
-      <div className="timer-jobs-toolbar">
-        <Button
-          icon={<Plus size={14} />}
-          label={t('timer.new')}
-          size="sm"
-          variant="secondary"
-          testId="timer-new"
-          onClick={() => void createScheduledConversation()}
-        />
-      </div>
-
       {jobs.map((job) => {
         const { live, archived } = timerSessionsForJob(conversations, job.id)
         const jobRuns = runs.filter((run) => run.jobId === job.id)

@@ -1,6 +1,7 @@
 import { useMemo, useSyncExternalStore } from 'react'
 import {
   collectConversationArtifacts,
+  isArtifactWrite,
   writeToolPath,
   type ConversationArtifact
 } from '@shared/conversationArtifacts'
@@ -25,7 +26,8 @@ function liveWriteBlocks(conversationId: string): MessageBlock[] {
     const path = writeToolPath(block.block.tool, block.block.input)
     if (!path) continue
     blocks.push(block.block)
-    parts.push(`${block.block.id}:${block.block.status}:${path}`)
+    const marked = isArtifactWrite(block.block.tool, block.block.input) ? '1' : '0'
+    parts.push(`${block.block.id}:${block.block.status}:${path}:${marked}`)
   }
   const sig = parts.join('|')
   const prev = liveCache.get(conversationId)
@@ -42,7 +44,6 @@ export function useConversationArtifacts(
   const workdir = useSessionStore(
     (s) => s.conversations.find((c) => c.id === conversationId)?.workingDirectory ?? null
   )
-  const changeSetsById = useSessionStore((s) => s.changeSetsById)
   const projection = getProjection(conversationId || '__none__')
   const liveBlocks = useSyncExternalStore(projection.subscribe, () =>
     conversationId ? liveWriteBlocks(conversationId) : EMPTY_LIVE
@@ -53,10 +54,9 @@ export function useConversationArtifacts(
         ? collectConversationArtifacts({
             messages,
             workdir,
-            changeSetsById,
             liveBlocks
           })
         : [],
-    [conversationId, messages, workdir, changeSetsById, liveBlocks]
+    [conversationId, messages, workdir, liveBlocks]
   )
 }

@@ -29,6 +29,7 @@ import {
   isDoubleClickPointerDown,
   markCursor,
   moveCrop,
+  movePastDeadzone,
   moveMark,
   normalizeRect,
   resizeCrop,
@@ -47,6 +48,7 @@ const TEXT_SIZE = 16
 
 type Gesture =
   | { kind: 'create'; x: number; y: number }
+  | { kind: 'pending-move'; origin: CropRect; startX: number; startY: number }
   | { kind: 'move'; origin: CropRect; startX: number; startY: number }
   | { kind: 'resize'; handle: CropHandle; origin: CropRect }
   | { kind: 'mark-move'; id: string; origin: ScreenshotMark; startX: number; startY: number }
@@ -65,6 +67,20 @@ async function copyPngViaClipboardItem(base64: string): Promise<boolean> {
     if (typeof ClipboardItem === 'undefined' || !navigator.clipboard?.write) return false
     await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])
     return true
+  } catch {
+    return false
+  }
+}
+
+async function copyPngToClipboard(base64: string, clipPath?: string): Promise<boolean> {
+  try {
+    if (clipPath) {
+      const fromFile = await window.vav.files.copyImage(clipPath)
+      if (fromFile.ok) return true
+    }
+    const fromIpc = await window.vav.conversations.copyImageToClipboard(base64)
+    if (fromIpc.ok) return true
+    return await copyPngViaClipboardItem(base64)
   } catch {
     return false
   }
@@ -97,6 +113,8 @@ export default function ScreenshotWindow(): React.JSX.Element {
   const selectedIdRef = useRef<string | null>(null)
   /** Previous pointerdown — real dblclicks arrive with detail 0 (PE spec). */
   const lastPointerDownRef = useRef<PointerDownSample | null>(null)
+  /** Collapse global-Esc IPC + window keydown for the same physical key. */
+  const lastEscapeAt = useRef(0)
   const paintRaf = useRef(0)
   const paintedNonce = useRef<number | null>(null)
   const marksRef = useRef(marks)
@@ -127,6 +145,7 @@ export default function ScreenshotWindow(): React.JSX.Element {
       setImageUrl(null)
       paintedNonce.current = null
       lastPointerDownRef.current = null
+      lastEscapeAt.current = 0
     })
     window.vav.screenshot.ready()
     return off
@@ -372,10 +391,15 @@ export default function ScreenshotWindow(): React.JSX.Element {
     setBusy(true)
     void window.vav.files
       .writeClip({ filename: 'screenshot.png', base64 })
-      .then((written) => {
+      .then(async (written) => {
         if (!written.ok) {
           window.vav.screenshot.finish({ ok: false, error: 'failed' } as any)
           return
+        }
+        try {
+          await copyPngToClipboard(base64, written.path)
+        } catch (err) {
+          console.error('[screenshot] copy failed', err)
         }
         window.vav.screenshot.finish({ ok: true, path: written.path })
       })
@@ -390,24 +414,10 @@ export default function ScreenshotWindow(): React.JSX.Element {
     if (!base64) return
     try {
       const written = await window.vav.files.writeClip({ filename: 'screenshot.png', base64 })
-      if (written.ok) {
-        const fromFile = await window.vav.files.copyImage(written.path)
-        if (fromFile.ok) {
-          setCopied(true)
-          window.vav.screenshot.finish({ ok: false })
-          return
-        }
-      }
-      const fromIpc = await window.vav.conversations.copyImageToClipboard(base64)
-      if (fromIpc.ok) {
+      const clipPath = written.ok ? written.path : undefined
+      if (await copyPngToClipboard(base64, clipPath)) {
         setCopied(true)
         window.vav.screenshot.finish({ ok: false })
-        return
-      }
-      if (await copyPngViaClipboardItem(base64)) {
-        setCopied(true)
-        window.vav.screenshot.finish({ ok: false })
-        return
       }
     } catch (err) {
       console.error('[screenshot] copy failed', err)
@@ -423,6 +433,27 @@ export default function ScreenshotWindow(): React.JSX.Element {
     await window.vav.files.writeBinary(dest.path, base64)
   }, [busy, crop, encodedPng])
 
+  const handleEscape = useCallback(() => {
+    if (busy) return
+    const now = performance.now()
+    if (now - lastEscapeAt.current < 40) return
+    lastEscapeAt.current = now
+    if (textDraft) {
+      setTextDraft(null)
+      return
+    }
+    if (selectedIdRef.current) {
+      selectMark(null)
+      return
+    }
+    cancel()
+  }, [busy, cancel, selectMark, textDraft])
+
+  useEffect(() => {
+    const off = window.vav.screenshot.onEscape(() => handleEscape())
+    return off
+  }, [handleEscape])
+
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
       if (event.target instanceof HTMLTextAreaElement || event.target instanceof HTMLInputElement) {
@@ -430,15 +461,7 @@ export default function ScreenshotWindow(): React.JSX.Element {
       }
       if (event.key === 'Escape') {
         event.preventDefault()
-        if (textDraft) {
-          setTextDraft(null)
-          return
-        }
-        if (selectedIdRef.current) {
-          selectMark(null)
-          return
-        }
-        cancel()
+        handleEscape()
         return
       }
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'z') {
@@ -471,7 +494,7 @@ export default function ScreenshotWindow(): React.JSX.Element {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [cancel, confirm, copyImage, crop, selectMark, textDraft])
+  }, [confirm, copyImage, crop, handleEscape, textDraft])
 
   const pointInCrop = (clientX: number, clientY: number): { x: number; y: number } | null => {
     const box = cropRef.current
@@ -507,6 +530,20 @@ export default function ScreenshotWindow(): React.JSX.Element {
     applyCropBox(next)
     setCrop(next)
     setRootCursor('crosshair')
+  }
+
+  const beginCropMove = (event: React.PointerEvent<HTMLDivElement>, box: CropRect): void => {
+    commitText()
+    if (selectedIdRef.current) selectMark(null)
+    event.currentTarget.setPointerCapture(event.pointerId)
+    // Hold the toolbar until the pointer leaves the deadzone — a click (or
+    // the first half of a double-click) must not look like a drag.
+    gestureRef.current = {
+      kind: 'pending-move',
+      origin: box,
+      startX: event.clientX,
+      startY: event.clientY
+    }
   }
 
   const onPointerDown = (event: React.PointerEvent<HTMLDivElement>): void => {
@@ -608,18 +645,7 @@ export default function ScreenshotWindow(): React.JSX.Element {
         event.preventDefault()
         return
       }
-      if (textDraft) commitText()
-      if (selectedIdRef.current) selectMark(null)
-      event.currentTarget.setPointerCapture(event.pointerId)
-      const start = {
-        kind: 'move' as const,
-        origin: box,
-        startX: event.clientX,
-        startY: event.clientY
-      }
-      gestureRef.current = start
-      setGesture(start)
-      setRootCursor('move')
+      beginCropMove(event, box)
       return
     }
     if (!local) {
@@ -635,18 +661,7 @@ export default function ScreenshotWindow(): React.JSX.Element {
         event.preventDefault()
         return
       }
-      if (textDraft) commitText()
-      if (selectedIdRef.current) selectMark(null)
-      event.currentTarget.setPointerCapture(event.pointerId)
-      const start = {
-        kind: 'move' as const,
-        origin: box,
-        startX: event.clientX,
-        startY: event.clientY
-      }
-      gestureRef.current = start
-      setGesture(start)
-      setRootCursor('move')
+      beginCropMove(event, box)
       return
     }
     if (tool === 'text') {
@@ -714,7 +729,23 @@ export default function ScreenshotWindow(): React.JSX.Element {
       )
       return
     }
-    if (liveGesture?.kind === 'move') {
+    if (liveGesture?.kind === 'pending-move' || liveGesture?.kind === 'move') {
+      if (liveGesture.kind === 'pending-move') {
+        if (
+          !movePastDeadzone(event.clientX - liveGesture.startX, event.clientY - liveGesture.startY)
+        ) {
+          return
+        }
+        const armed = {
+          kind: 'move' as const,
+          origin: liveGesture.origin,
+          startX: liveGesture.startX,
+          startY: liveGesture.startY
+        }
+        gestureRef.current = armed
+        setGesture(armed)
+        setRootCursor('move')
+      }
       applyCropBox(
         moveCrop(
           liveGesture.origin,
@@ -793,6 +824,11 @@ export default function ScreenshotWindow(): React.JSX.Element {
         setMarks((cur) => cur.map((mark) => (mark.id === next.id ? next : mark)))
         selectMark(next.id)
       }
+      return
+    }
+    if (liveGesture?.kind === 'pending-move') {
+      gestureRef.current = null
+      setGesture(null)
       return
     }
     if (liveGesture) {

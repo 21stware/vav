@@ -3,7 +3,9 @@ import { describe, it } from 'node:test'
 import {
   composerWheelStaysOnField,
   COMPOSER_MAX_ROWS,
-  fitComposerTextarea
+  fitComposerTextarea,
+  SCHEDULE_MAX_ROWS,
+  SCHEDULE_MIN_ROWS
 } from './composerTextarea.ts'
 
 describe('composerWheelStaysOnField', () => {
@@ -67,6 +69,23 @@ describe('fitComposerTextarea', () => {
     } as HTMLTextAreaElement
     fitComposerTextarea(el, { focused: false, disabled: false, lineHeight: 20 })
     assert.equal(style.height, '40px')
+    assert.equal(style.overflowY, 'hidden')
+  })
+
+  it('uses schedule floors when minRows / maxRows are passed', () => {
+    const style: { height?: string; overflowY?: string } = {}
+    const el = {
+      style,
+      scrollHeight: 80
+    } as HTMLTextAreaElement
+    fitComposerTextarea(el, {
+      focused: false,
+      disabled: false,
+      lineHeight: 20,
+      minRows: SCHEDULE_MIN_ROWS,
+      maxRows: SCHEDULE_MAX_ROWS
+    })
+    assert.equal(style.height, `${SCHEDULE_MIN_ROWS * 20}px`)
     assert.equal(style.overflowY, 'hidden')
   })
 })

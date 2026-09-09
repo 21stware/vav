@@ -2090,15 +2090,35 @@ function controlPlaneOwns(conversation: Conversation | undefined | null): boolea
   return Boolean(conversation && localShellMachineId())
 }
 
+function configureLocalShellSession(
+  dial: import('@main/remote/RemoteControlDial').RemoteControlDial,
+  hostId: string,
+  conversation: Conversation
+): void {
+  dial.configure(hostId, {
+    agent: conversation.cliHost ?? 'vav',
+    approvalMode: conversation.approvalMode,
+    thinkingLevel: conversation.thinkingLevel,
+    model: conversation.model,
+    fast: conversation.fast === true
+  })
+}
+
 async function ensureLocalShellSession(conversation: Conversation): Promise<string | null> {
   const shellId = localShellMachineId()
   if (!shellId) return null
   await daemonAttach.waitForControlPlane(shellId)
   const dial = daemonAttach.controlOf(shellId)
   if (!dial?.ready) return null
-  if (dial.snapshot().sessions.some((row) => row.id === conversation.id)) return conversation.id
+  if (dial.snapshot().sessions.some((row) => row.id === conversation.id)) {
+    configureLocalShellSession(dial, conversation.id, conversation)
+    return conversation.id
+  }
   const mapped = (conversation.duplicateSourceId ?? '').trim()
-  if (mapped && dial.snapshot().sessions.some((row) => row.id === mapped)) return mapped
+  if (mapped && dial.snapshot().sessions.some((row) => row.id === mapped)) {
+    configureLocalShellSession(dial, mapped, conversation)
+    return mapped
+  }
   const created = await dial.createSession(15_000, conversation.id)
   if (conversation.workingDirectory) {
     try {
@@ -2107,12 +2127,7 @@ async function ensureLocalShellSession(conversation: Conversation): Promise<stri
       /* host may reject a path outside its bind roots */
     }
   }
-  dial.configure(created, {
-    approvalMode: conversation.approvalMode,
-    thinkingLevel: conversation.thinkingLevel,
-    model: conversation.model,
-    fast: conversation.fast === true
-  })
+  configureLocalShellSession(dial, created, conversation)
   if (created !== conversation.id) conversationStore.bindHostSession(conversation.id, created)
   return created
 }
@@ -2438,10 +2453,19 @@ let lastMenuCommand: MenuCommand | null = null
 /** Accelerators act on the window the user is actually looking at. */
 function sendMenuCommand(command: MenuCommand): void {
   const now = Date.now()
+  if (command === 'screenshot' && screenshotController?.isActive()) return
   if (shouldSkipDuplicateMenuCommand(command, lastMenuCommand, now, lastMenuCommandAt)) return
   lastMenuCommand = command
   lastMenuCommandAt = now
-  const target = BrowserWindow.getFocusedWindow() ?? mainWindow
+  let target = BrowserWindow.getFocusedWindow()
+  if (!target || target.isDestroyed() || screenshotController?.isOverlay(target)) {
+    target =
+      lastFocusedWindow &&
+      !lastFocusedWindow.isDestroyed() &&
+      !screenshotController?.isOverlay(lastFocusedWindow)
+        ? lastFocusedWindow
+        : mainWindow
+  }
   if (!target || target.isDestroyed()) return
   if (target === settingsWindow) {
     // Settings runs a light renderer with no menu-command router; ⌘W still closes it.
@@ -2633,9 +2657,10 @@ const vibrancyRefreshTimers = new WeakMap<BrowserWindow, ReturnType<typeof setTi
 const vibrancyNeedsRefresh = new WeakSet<BrowserWindow>()
 
 /**
- * After minimize/hide, NSVisualEffectView often stops compositing. Sidebar
- * CSS is intentionally clear so the glass shows through — without the native
- * layer the column is a hole. Tear the effect down and re-attach on-screen.
+ * Re-assert system glass after hide/minimize. Do not `setVibrancy(null)` and
+ * do not mutate `<html>` attributes: tearing the NSVisualEffectView down
+ * leaves a hole, and flipping `data-*` on the root restyles the whole tree
+ * (`!important` sidebar fills included) — that is the flicker.
  */
 function refreshWindowVibrancy(win: BrowserWindow): void {
   if (!IS_MAC || win.isDestroyed() || !isVibrancyShellWindow(win)) return
@@ -2644,37 +2669,8 @@ function refreshWindowVibrancy(win: BrowserWindow): void {
     applyTrafficLights(win)
     return
   }
-  if (!win.webContents.isDestroyed()) {
-    void win.webContents
-      .executeJavaScript(
-        `try { document.documentElement.dataset.vibrancyRefresh = '1' } catch (e) {}`,
-        true
-      )
-      .catch(() => undefined)
-  }
-  try {
-    win.setVibrancy(null)
-  } catch {
-    // ignore
-  }
-  setTimeout(() => {
-    if (win.isDestroyed() || win.isMinimized()) return
-    applyWindowVibrancy(win)
-    applyTrafficLights(win)
-    if (win.isDestroyed() || win.webContents.isDestroyed()) return
-    void win.webContents
-      .executeJavaScript(
-        `(function(){
-          requestAnimationFrame(function(){
-            requestAnimationFrame(function(){
-              try { delete document.documentElement.dataset.vibrancyRefresh } catch (e) {}
-            });
-          });
-        })()`,
-        true
-      )
-      .catch(() => undefined)
-  }, 16)
+  applyWindowVibrancy(win)
+  applyTrafficLights(win)
 }
 
 function scheduleVibrancyRefresh(win: BrowserWindow): void {
@@ -2692,7 +2688,7 @@ function scheduleVibrancyRefresh(win: BrowserWindow): void {
   )
 }
 
-/** Dock restore / hide→show: NSVisualEffectView must be recreated, not just set. */
+/** Dock restore / hide→show: re-assert glass without tearing it down. */
 function wireVibrancyRefresh(win: BrowserWindow): void {
   if (!IS_MAC) return
   win.on('minimize', () => {
@@ -2981,8 +2977,8 @@ async function revealBrowserWindow(win: BrowserWindow): Promise<void> {
   const wasMinimized = win.isMinimized()
   try {
     if (!isVibrancyShellWindow(win)) win.setBackgroundColor(windowBackground())
-    // Minimized: `restore` recreates NSVisualEffectView. Re-applying glass
-    // while still miniaturized is what leaves the sidebar as a hole.
+    // Minimized: `restore` re-asserts glass. Do not apply while miniaturized
+    // (that is what used to leave the sidebar as a hole).
     else if (!wasMinimized && vibrancyNeedsRefresh.has(win)) {
       vibrancyNeedsRefresh.delete(win)
       scheduleVibrancyRefresh(win)
@@ -5881,14 +5877,10 @@ function registerGlobalHotkey(accelerator: string): boolean {
   try {
     const ok = globalShortcut.register(screenshotAccel, () => {
       console.log(`[hotkey] screenshot fired: ${screenshotAccel}`)
-      if (screenshotController) {
-        // Find the sender window. If we have a focused window, use it;
-        // otherwise we might not have a requester but start() handles null.
-        const win = BrowserWindow.getFocusedWindow() || mainWindow
-        if (win) {
-          void screenshotController.start({ sender: win.webContents } as any)
-        }
-      }
+      // Route through the renderer menu command so confirm can attach to the
+      // focused conversation. Calling start() here used to swallow the result.
+      if (screenshotController?.isActive()) return
+      sendMenuCommand('screenshot')
     })
     if (!ok) {
       console.warn(`[hotkey] failed to register global screenshot: ${screenshotAccel}`)
@@ -5898,6 +5890,8 @@ function registerGlobalHotkey(accelerator: string): boolean {
   } catch (err) {
     console.warn('[hotkey] screenshot register threw', err)
   }
+  // `unregisterAll` above drops the in-session Esc binding; put it back.
+  screenshotController?.rebindEscape()
   return toggleOk
 }
 
@@ -6230,6 +6224,17 @@ function accountIdForSession(
 
 function pushAccountsIfSettingsOpen(): void {
   if (!settingsWindow || settingsWindow.isDestroyed()) return
+  const client = daemonAttach.localShellClient()
+  if (client) {
+    void client
+      .request('accounts.getPage', {})
+      .then((page) => {
+        if (!settingsWindow || settingsWindow.isDestroyed()) return
+        safeSend(settingsWindow.webContents, IPC.accountsUpdated, page)
+      })
+      .catch(() => undefined)
+    return
+  }
   safeSend(settingsWindow.webContents, IPC.accountsUpdated, accountsPage())
 }
 
@@ -7009,6 +7014,7 @@ return c as text`
     retargetEmpty: retargetEmptyConversations,
     broadcastSettings: () => broadcast(IPC.settingsChanged, currentSettings()),
     publishSettings: () => publishMergedSettings(),
+    broadcastAccounts: (page) => broadcast(IPC.accountsUpdated, page),
     rememberLiveOAuth: (host, name) => {
       lastLiveOAuth.set(host, name)
     },

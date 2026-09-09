@@ -52,7 +52,14 @@ export type ConversationMetaIpcHost = {
   /** Host-driven configure; true means the local store was already pulled. */
   forwardConfigure?: (
     id: string,
-    patch: { approvalMode?: string; thinkingLevel?: string; fast?: boolean; mode?: string }
+    patch: {
+      approvalMode?: string
+      thinkingLevel?: string
+      fast?: boolean
+      mode?: string
+      agent?: string
+      model?: string
+    }
   ) => Promise<boolean>
   /** Host-driven leaf; true means the host already moved it. */
   forwardSetLeaf?: (id: string, leafId: string) => Promise<boolean>

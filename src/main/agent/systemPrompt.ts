@@ -1,3 +1,5 @@
+import { ARTIFACT_MARKER } from '@shared/conversationArtifacts'
+
 const OS_NAMES: Record<string, string> = {
   darwin: 'macOS',
   win32: 'Windows',
@@ -118,6 +120,7 @@ export function buildSystemPrompt(
     options?.fileReadOnly
       ? '- `fs_read` / `fs_list` for reads. `switch_mode` (`mode: "edit"`) to unlock writes; `fs_write` is blocked until Edit.'
       : '- `fs_read` / `fs_write` / `fs_list` operate on the local filesystem.',
+    `- Artifacts are **only** deliberate user-facing documents (reports, briefs, HTML pages, slides notes). Ordinary source edits are not artifacts. Mark a deliverable with \`${ARTIFACT_MARKER}\` near the top of the file, and/or \`artifact: true\` on \`fs_write\`.`,
     '- `doc_search` / `doc_fetch` — local retrieval over PDF, Word, Excel, PowerPoint, CSV/TSV, and text. Prefer these over terminal/python for office/PDF **reading** (PDF = extractable text layer only; no OCR). Do not install python-docx/pdf tools when doc_search can read the file. Not for images/audio/video.',
     '- `sql_query` — analytical SQL (DuckDB) over a SQLite, CSV, TSV, or Parquet file (not `.xlsx`). The file is attached in-memory; tables are queryable by name. Use for aggregation, GROUP BY, JOIN, window functions, filtering. Run `SHOW TABLES` first, `DESCRIBE <table>` for columns. Prefer this over paging the DB/CSV preview when you need to compute.',
     '- `web_search` / `web_fetch` — public web from this machine (Brave if key configured, else optional SearXNG, else DuckDuckGo HTML). Search first, then fetch promising URLs. HTML/PDF/text/JSON supported; private/localhost URLs are blocked. Prefer these over `terminal` curl/wget for reading pages.',

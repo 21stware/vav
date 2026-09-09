@@ -101,7 +101,10 @@ export type ConversationMutateIpcHost = {
     swarmParentId?: string | null
     machineId?: string | null
   }) => Promise<ConversationMeta | null>
-  forwardConfigure?: (id: string, patch: { model?: string }) => Promise<boolean>
+  forwardConfigure?: (
+    id: string,
+    patch: { model?: string; agent?: string }
+  ) => Promise<boolean>
   forwardSetWorkspace?: (id: string, path: string | null) => Promise<boolean>
   forwardDeleteMessage?: (
     id: string,
@@ -192,7 +195,7 @@ export function registerConversationMutateIpc(
 
   ipcMain.handle(
     IPC.convSetCliHost,
-    (_event, id: string, next: string | null, accountId?: string | null) => {
+    async (_event, id: string, next: string | null, accountId?: string | null) => {
       const prev = store.get(id)
       const prevHost = prev?.cliHost ?? null
       const nextHost = isStructuredCliHost(next) ? next : null
@@ -205,6 +208,11 @@ export function registerConversationMutateIpc(
           transcript: null
         }
       }
+
+      // Spawned vavd owns local turns — tell it before the desktop store switches.
+      // For local chats this returns false (no remote machine id) after the
+      // configure is already on the wire; fall through to the in-process patch.
+      await host.forwardConfigure?.(id, { agent: nextHost ?? 'vav' })
 
       if (hostChanged) {
         host.disposeAgent(id)

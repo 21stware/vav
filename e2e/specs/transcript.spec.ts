@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { launchWorkbench, openFilesTray } from '../launch'
+import { launchWorkbench } from '../launch'
 
 /**
  * Sealed agent output: thinking process, tool cards, plan overlay, plan doc,
@@ -36,12 +36,10 @@ test('seeded assistant turn paints tools, plan, error, and ask', async () => {
       'wrote note.md'
     )
 
-    const artifacts = page.locator('[data-testid="transcript-artifacts"]')
-    await expect(artifacts).toBeVisible()
-    await expect(artifacts.locator('[data-testid="transcript-artifact"]')).toContainText('note.md')
-
-    await openFilesTray(page)
-    await page.locator('[data-testid="segment-artifacts"]').click()
+    await expect(page.locator('[data-testid="transcript-artifacts"]')).toHaveCount(0)
+    await expect(page.locator('[data-testid="tools-artifact-count"]')).toHaveText('1')
+    await page.locator('[data-testid="tools-artifact-count"]').click()
+    await expect(page.locator('[data-testid="segment-artifacts"]')).toContainText('1')
     await expect(page.locator('[data-testid="artifacts-panel-row"]')).toContainText('note.md')
 
     await expect(page.locator('.message.system.is-error')).toHaveText('e2e turn failed')

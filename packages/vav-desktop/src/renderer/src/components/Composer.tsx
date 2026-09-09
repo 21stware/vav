@@ -43,7 +43,12 @@ import { vendorIdFromEndpoint } from '@shared/llmVendors'
 import { useAccountGroups, vavAccountsOf } from '../lib/accountGroups'
 import { useT } from '../i18n/useT'
 import { attachPickedFiles, attachScreenshot } from '../lib/composerAttach'
-import { composerWheelStaysOnField, fitComposerTextarea } from '../lib/composerTextarea'
+import {
+  composerWheelStaysOnField,
+  fitComposerTextarea,
+  SCHEDULE_MAX_ROWS,
+  SCHEDULE_MIN_ROWS
+} from '../lib/composerTextarea'
 import { collectClipboardImages, writeClipboardImage } from '../lib/pasteImages'
 import { menuAnchor, showMenu } from '../lib/nativeMenu'
 import { prettyAccelerator, resolveKeyBindings } from '@shared/keyBindings'
@@ -166,6 +171,8 @@ export function ComposerContext({
   )
 }
 
+export type ComposerVariant = 'chat' | 'schedule'
+
 /**
  * Single shared composer for main session, workspace agent column, and
  * file-preview drawer. Pass {@link conversationId} when the surface owns a
@@ -173,19 +180,32 @@ export function ComposerContext({
  *
  * Context chips live in {@link ComposerContext} (Agent log column) so the dock
  * height stays stable while browsing Files.
+ *
+ * `schedule` reuses the same prompt card without send / screenshot — the
+ * scheduled-task editor owns enable / run instead.
  */
 export function Composer({
-  conversationId: pinnedConversationId
+  conversationId: pinnedConversationId,
+  variant = 'chat',
+  value,
+  onChange,
+  onCommit
 }: {
   conversationId?: string | null
+  variant?: ComposerVariant
+  value?: string
+  onChange?: (value: string) => void
+  onCommit?: (value: string) => void
 } = {}): React.JSX.Element {
   const t = useT()
+  const isSchedule = variant === 'schedule'
   const storeActiveId = useSessionStore((s) => s.activeId)
   const conversationId = (pinnedConversationId?.trim() || storeActiveId) || ''
   const conversation = useSessionStore((s) =>
     s.conversations.find((c) => c.id === conversationId)
   )
   const storeDraft = useSessionStore((s) => s.drafts[conversationId] ?? '')
+  const boundDraft = value !== undefined ? value : storeDraft
   const attachments = useSessionStore((s) => s.attachments[conversationId] ?? NO_ATTACHMENTS)
   const previewRefs = useSessionStore((s) => s.previewRefs[conversationId] ?? NO_REFS)
   const commentCards = useSessionStore((s) => s.commentCards[conversationId] ?? NO_CARDS)
@@ -255,7 +275,7 @@ export function Composer({
   )
   // Local draft mirrors the store but keeps keystrokes off the React commit path
   // of every other subscriber for one frame when the store write coalesces.
-  const [draft, setLocalDraft] = useState(storeDraft)
+  const [draft, setLocalDraft] = useState(boundDraft)
   const draftFlushTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const acpCommands = conversation?.acpSession?.commands ?? NO_COMMANDS
   const slashMatches = useMemo(
@@ -272,8 +292,8 @@ export function Composer({
   }, [draft])
 
   useEffect(() => {
-    setLocalDraft(storeDraft)
-  }, [conversationId, storeDraft])
+    setLocalDraft(boundDraft)
+  }, [conversationId, boundDraft])
 
   useEffect(() => {
     return () => {
@@ -312,13 +332,15 @@ export function Composer({
     send: sendShortcut,
     focus: keys('⌘I')
   })
-  const placeholder = awaiting
-    ? t('composer.placeholderAwaiting')
-    : isRunning
-      ? queueFull
-        ? t('composer.placeholderQueueFull', { n: MESSAGE_QUEUE_MAX })
-        : t('composer.placeholderQueue')
-      : `${idlePlaceholder}  ${shortcutHints}`
+  const placeholder = isSchedule
+    ? t('timer.promptPlaceholder')
+    : awaiting
+      ? t('composer.placeholderAwaiting')
+      : isRunning
+        ? queueFull
+          ? t('composer.placeholderQueueFull', { n: MESSAGE_QUEUE_MAX })
+          : t('composer.placeholderQueue')
+        : `${idlePlaceholder}  ${shortcutHints}`
 
   useEffect(() => {
     if (focusTick === 0) return
@@ -331,8 +353,13 @@ export function Composer({
     if (!element) return
     // Avoid reflowing height mid-composition — can cancel IME on macOS.
     if (composingRef.current) return
-    fitComposerTextarea(element, { focused, disabled: inputDisabled })
-  }, [draft, focused, inputDisabled])
+    fitComposerTextarea(element, {
+      focused,
+      disabled: inputDisabled,
+      minRows: isSchedule ? SCHEDULE_MIN_ROWS : undefined,
+      maxRows: isSchedule ? SCHEDULE_MAX_ROWS : undefined
+    })
+  }, [draft, focused, inputDisabled, isSchedule])
 
   const runScreenshot = (hideWindow?: boolean): void => {
     void (async () => {
@@ -416,6 +443,7 @@ export function Composer({
     if (!el) {
       const next = `${draft}${draft && !draft.endsWith('\n') ? '\n' : ''}${clipped}`
       setLocalDraft(next)
+      onChange?.(next)
       flushDraft(next)
       return
     }
@@ -423,6 +451,7 @@ export function Composer({
     const end = el.selectionEnd
     const next = `${el.value.slice(0, start)}${clipped}${el.value.slice(end)}`
     setLocalDraft(next)
+    onChange?.(next)
     flushDraft(next)
     requestAnimationFrame(() => {
       const pos = start + clipped.length
@@ -432,7 +461,7 @@ export function Composer({
 
   return (
     <div
-      className={`composer${hasCommentCards ? ' has-comment-cards' : ''}`}
+      className={`composer${hasCommentCards ? ' has-comment-cards' : ''}${isSchedule ? ' is-schedule' : ''}`}
       data-testid="composer"
       onMouseDown={retainComposerFocus}
     >
@@ -468,7 +497,7 @@ export function Composer({
             ))}
           </div>
         )}
-        {conversationId && slashOpen && slashMatches ? (
+        {conversationId && !isSchedule && slashOpen && slashMatches ? (
           <AcpSlashMenu
             matches={slashMatches}
             selectedIndex={slashIndex}
@@ -497,8 +526,8 @@ export function Composer({
         <textarea
           id="text"
           ref={textareaRef}
-          data-testid="composer-input"
-          rows={1}
+          data-testid={isSchedule ? 'timer-prompt' : 'composer-input'}
+          rows={isSchedule ? SCHEDULE_MIN_ROWS : 1}
           placeholder={placeholder}
           value={draft}
           disabled={inputDisabled}
@@ -514,6 +543,7 @@ export function Composer({
             // even when other panels subscribe to session churn.
             const value = event.target.value
             setLocalDraft(value)
+            onChange?.(value)
             if (!conversationId) return
             if (draftFlushTimer.current) clearTimeout(draftFlushTimer.current)
             draftFlushTimer.current = setTimeout(() => {
@@ -525,7 +555,9 @@ export function Composer({
             setFocused(false)
             // Composition can be aborted without compositionend (focus loss).
             composingRef.current = false
-            if (conversationId) flushDraft(textareaRef.current?.value ?? draft)
+            const next = textareaRef.current?.value ?? draft
+            if (conversationId) flushDraft(next)
+            onCommit?.(next)
           }}
           onPaste={(event) => {
             void handlePaste(event)
@@ -564,6 +596,7 @@ export function Composer({
                 return
               }
             }
+            if (isSchedule) return
             if (!shouldSendOnKeyDown(event, sendKey)) return
             event.preventDefault()
             submit()
@@ -593,50 +626,52 @@ export function Composer({
             >
               <Plus size={12} strokeWidth={2} />
             </button>
-            <span className="composer-shot-group">
-              <button
-                type="button"
-                className="model-picker session-run-btn is-icon"
-                data-testid="composer-screenshot"
-                title={`${t('composer.screenshotTitle')} ${screenshotChord}`}
-                aria-label={t('composer.screenshot')}
-                disabled={inputDisabled || attachBusy}
-                onClick={() => runScreenshot()}
-              >
-                <Scissors size={12} strokeWidth={2} style={{ transform: 'rotate(-90deg)' }} />
-              </button>
-              <button
-                type="button"
-                className="model-picker session-run-btn is-icon is-shot-caret"
-                data-testid="composer-screenshot-menu"
-                title={t('composer.screenshotMenu')}
-                aria-label={t('composer.screenshotMenu')}
-                aria-haspopup="menu"
-                disabled={inputDisabled || attachBusy}
-                onClick={(event) => {
-                  event.preventDefault()
-                  event.stopPropagation()
-                  void showMenu(
-                    [
-                      {
-                        label: t('composer.screenshotHideWindow'),
-                        icon: { kind: 'lucide', key: 'app-window' },
-                        onSelect: () => runScreenshot(true)
-                      },
-                      { label: '', divider: true },
-                      {
-                        label: t('composer.screenshotSettings'),
-                        icon: { kind: 'lucide', key: 'settings' },
-                        onSelect: () => openSettings('appearance', 'screenshot')
-                      }
-                    ],
-                    menuAnchor(event.currentTarget)
-                  )
-                }}
-              >
-                <ChevronDown size={9} className="session-run-caret" aria-hidden />
-              </button>
-            </span>
+            {isSchedule ? null : (
+              <span className="composer-shot-group">
+                <button
+                  type="button"
+                  className="model-picker session-run-btn is-icon"
+                  data-testid="composer-screenshot"
+                  title={`${t('composer.screenshotTitle')} ${screenshotChord}`}
+                  aria-label={t('composer.screenshot')}
+                  disabled={inputDisabled || attachBusy}
+                  onClick={() => runScreenshot()}
+                >
+                  <Scissors size={12} strokeWidth={2} style={{ transform: 'rotate(-90deg)' }} />
+                </button>
+                <button
+                  type="button"
+                  className="model-picker session-run-btn is-icon is-shot-caret"
+                  data-testid="composer-screenshot-menu"
+                  title={t('composer.screenshotMenu')}
+                  aria-label={t('composer.screenshotMenu')}
+                  aria-haspopup="menu"
+                  disabled={inputDisabled || attachBusy}
+                  onClick={(event) => {
+                    event.preventDefault()
+                    event.stopPropagation()
+                    void showMenu(
+                      [
+                        {
+                          label: t('composer.screenshotHideWindow'),
+                          icon: { kind: 'lucide', key: 'app-window' },
+                          onSelect: () => runScreenshot(true)
+                        },
+                        { label: '', divider: true },
+                        {
+                          label: t('composer.screenshotSettings'),
+                          icon: { kind: 'lucide', key: 'settings' },
+                          onSelect: () => openSettings('appearance', 'screenshot')
+                        }
+                      ],
+                      menuAnchor(event.currentTarget)
+                    )
+                  }}
+                >
+                  <ChevronDown size={9} className="session-run-caret" aria-hidden />
+                </button>
+              </span>
+            )}
           </span>
 
           <span className="spacer" />
@@ -649,7 +684,7 @@ export function Composer({
             ) : null}
           </span>
 
-          {isRunning && (
+          {!isSchedule && isRunning && (
             <Button
               label={t('composer.stop')}
               icon={<Square size={11} />}
@@ -659,20 +694,22 @@ export function Composer({
               onClick={() => conversationId && void cancel(conversationId)}
             />
           )}
-          <button
-            type="button"
-            className="send-button"
-            data-testid="composer-send"
-            disabled={!canSend}
-            onClick={submit}
-            title={
-              isRunning
-                ? `${t('queue.enqueue')} ${sendShortcut}`
-                : `${t('composer.send')} ${sendShortcut}`
-            }
-          >
-            <ArrowUp size={14} />
-          </button>
+          {isSchedule ? null : (
+            <button
+              type="button"
+              className="send-button"
+              data-testid="composer-send"
+              disabled={!canSend}
+              onClick={submit}
+              title={
+                isRunning
+                  ? `${t('queue.enqueue')} ${sendShortcut}`
+                  : `${t('composer.send')} ${sendShortcut}`
+              }
+            >
+              <ArrowUp size={14} />
+            </button>
+          )}
         </div>
       </div>
     </div>

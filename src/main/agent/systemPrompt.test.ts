@@ -17,6 +17,7 @@ describe('buildSystemPrompt', () => {
     assert.match(prompt, /macOS machine/)
     assert.match(prompt, /working directory for this conversation is: \/tmp\/proj/)
     assert.match(prompt, /user's shell is zsh/)
+    assert.match(prompt, /<!-- vav-artifact -->/)
     assert.doesNotMatch(prompt, /READ-ONLY SESSION/)
   })
 

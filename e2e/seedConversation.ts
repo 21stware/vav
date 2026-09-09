@@ -107,7 +107,10 @@ export function buildAgentConversation(workspace: string, now = Date.now()) {
           id: 'e2e-write',
           tool: 'fs_write',
           summary: note,
-          input: JSON.stringify({ path: note, contents: 'draft\n' }),
+          input: JSON.stringify({
+            path: note,
+            contents: '<!-- vav-artifact -->\ndraft\n'
+          }),
           output: 'wrote note.md',
           status: 'completed'
         },

@@ -17,6 +17,18 @@ export function accountHasKey(account: ProviderAccount, secrets: SecretStore): b
   return !!key && key.length > 0
 }
 
+/**
+ * Last VAV key gone: drop the legacy `api` slot so `seedIfNeeded` cannot
+ * resurrect a DeepSeek row on the next page load / send.
+ */
+export function clearLegacyApiSlotIfNoVavKeys(
+  accounts: { listAll(): Array<{ kind: string }> },
+  secrets: { clear(name: 'api'): void }
+): void {
+  if (accounts.listAll().some((row) => row.kind === 'vav_key')) return
+  secrets.clear('api')
+}
+
 export function resolveVavCredentials(
   input: {
     conversation?: { workingDirectory?: string | null; accountId?: string | null } | null

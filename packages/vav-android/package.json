@@ -1,6 +1,6 @@
 {
   "name": "@21stware/vav-android",
-  "version": "1.21.0",
+  "version": "1.22.0",
   "private": true,
   "description": "VAV Android Remote. Same phone-plane client as iOS; hello omits role.",
   "license": "PolyForm-Noncommercial-1.0.0",

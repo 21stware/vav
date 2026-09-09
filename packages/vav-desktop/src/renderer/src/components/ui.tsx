@@ -388,7 +388,13 @@ export function Segmented<T extends string>({
   value,
   onChange
 }: {
-  options: { value: T; label: string; title?: string; icon?: ReactNode }[]
+  options: {
+    value: T
+    label: string
+    title?: string
+    icon?: ReactNode
+    badge?: ReactNode
+  }[]
   value: T
   onChange: (value: T) => void
 }): React.JSX.Element {
@@ -401,11 +407,18 @@ export function Segmented<T extends string>({
           data-testid={`segment-${option.value}`}
           className={option.value === value ? 'active' : ''}
           title={option.title ?? option.label}
-          aria-label={option.title ?? option.label}
+          aria-label={
+            option.badge != null && option.badge !== false
+              ? `${option.title ?? option.label} ${String(option.badge)}`
+              : (option.title ?? option.label)
+          }
           onClick={() => onChange(option.value)}
         >
           {option.icon ? <span className="segmented-icon">{option.icon}</span> : null}
           <span className="segmented-label">{option.label}</span>
+          {option.badge != null && option.badge !== false ? (
+            <span className="segmented-badge">{option.badge}</span>
+          ) : null}
         </button>
       ))}
     </div>

@@ -53,6 +53,9 @@ import {
   buildRemoteControls
 } from '@shared/remoteSessionControls.ts'
 import { parseThinkingLevel } from '@shared/thinkingLevel.ts'
+import { defaultModelForChatHost, resolveModelForChatHost } from '../../shared/agentModels.ts'
+import { vendorIdFromEndpoint } from '../../shared/llmVendors.ts'
+import { resolveDefaultChatHost } from '../../shared/cliHost.ts'
 import {
   isStructuredCliHost,
   VAV_DEFAULT_MODEL_ID,
@@ -339,9 +342,18 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
     const configured = snap.defaultWorkingDirectory?.trim()
     const workdir = configured || mintTempWorkdir(tmp)
     if (workdir) settings.rememberWorkspaceDirectory(workdir, tmp)
-    const conversation = conversations.create(workdir, snap.defaultModel || VAV_DEFAULT_MODEL_ID, {
+    const defaultHost = resolveDefaultChatHost(snap.defaultAgentId)
+    const hostDefault = defaultModelForChatHost(defaultHost, snap)
+    const model = resolveModelForChatHost(defaultHost, hostDefault ?? snap.defaultModel, {
+      customModels: snap.customModels,
+      vavDefaultModel: snap.defaultModel,
+      hostDefaultModel: hostDefault,
+      vendorId: defaultHost == null ? vendorIdFromEndpoint(snap.apiEndpoint) : null
+    })
+    const conversation = conversations.create(workdir, model || snap.defaultModel || VAV_DEFAULT_MODEL_ID, {
       approvalMode: snap.defaultApprovalMode ?? 'auto',
       thinkingLevel: parseThinkingLevel(snap.defaultThinkingLevel),
+      cliHost: defaultHost,
       machineId: LOCAL_MACHINE_ID,
       ...(requested ? { id: requested } : {})
     })
@@ -349,14 +361,14 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
     hub.schedulePushSessions()
     logger.user(LOG_EVENT.userSessionCreate, 'New session', {
       conversationId: conversation.id,
-      data: { host: 'vav' }
+      data: { host: defaultHost ?? 'vav' }
     })
     return (
       listSessions().find((session) => session.id === conversation.id) ??
       fallbackRemoteSession(conversation, {
         fallbackTitle: t('window.sessionFallback'),
         dirLabel: dirLabel(conversation.workingDirectory),
-        surface: 'vav'
+        surface: defaultHost ? 'cli' : 'vav'
       })
     )
   }
@@ -442,6 +454,17 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
         cli?.dispose(id)
         changeSets.clearConversation(id)
         conversations.switchHostTranscript(id, nextHost)
+        const snap = settings.get()
+        const latest = conversations.get(id)
+        const resolved = resolveModelForChatHost(nextHost, latest?.model, {
+          customModels: snap.customModels,
+          vavDefaultModel: snap.defaultModel,
+          hostDefaultModel: defaultModelForChatHost(nextHost, snap),
+          vendorId: nextHost == null ? vendorIdFromEndpoint(snap.apiEndpoint) : null
+        })
+        if (resolved && resolved !== latest?.model) {
+          conversations.updateMeta(id, { model: resolved })
+        }
       }
     }
     if (message.model !== undefined) {

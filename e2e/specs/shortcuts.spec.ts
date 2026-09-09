@@ -33,7 +33,7 @@ test('session and chrome accelerators drive find, tools, sidebar, composer, and 
     await expect(term).toHaveAttribute('data-empty', 'false')
 
     await pressAccelerator(harness, 'Meta+Shift+h')
-    await expect(page.locator('[data-testid="sidebar"]')).toHaveCount(0)
+    await expect(page.locator('[data-testid="sidebar"]')).toBeHidden()
     await pressAccelerator(harness, 'Meta+Shift+h')
     await expect(page.locator('[data-testid="sidebar"]')).toBeVisible()
 
