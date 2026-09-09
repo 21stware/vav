@@ -64,7 +64,7 @@ function renderChrome() {
     searching: 'Looking for this machine…',
     reconnecting: 'Reconnecting…',
     connected: state.version ? `Connected · ${state.version}` : 'Connected',
-    error: state.error || 'Can’t reach vavd'
+    error: state.error || 'Can’t reach vav-server'
   }
   $('status').textContent = labels[state.status] || state.status
   const row = session()

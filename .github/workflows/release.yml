@@ -83,7 +83,7 @@ jobs:
         if: runner.os == 'Windows'
         run: node scripts/build-tailcat-sidecar.mjs --target win32-x64
 
-      - run: npm run pack:vavd
+      - run: npm run pack:vav-server
 
       - run: npm run build
 
@@ -159,7 +159,7 @@ jobs:
           if-no-files-found: error
 
   sidecars:
-    name: vavd + Chrome extension
+    name: vav-server + Chrome extension
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -173,7 +173,7 @@ jobs:
 
       - run: npm ci
 
-      - name: Pack vavd tarball and Chrome extension zip
+      - name: Pack vav-server tarball and Chrome extension zip
         run: node scripts/pack-release-sidecars.mjs --out release-sidecars
 
       - uses: actions/upload-artifact@v4
@@ -216,7 +216,7 @@ jobs:
           In-app updates use the NSIS installer + `latest.yml` feed.
 
           ## Headless daemon
-          `npx @21stware/vavd` or the `21stware-vavd-*.tgz` asset on this release. Pair from VAV → Connect, VAV Remote, the web UI, or the Chrome extension.
+          `npx @21stware/vav-server` or the `21stware-vav-server-*.tgz` asset on this release. Pair from VAV → Connect, VAV Remote, the web UI, or the Chrome extension.
 
           ## Chrome extension
           Download `vav-chrome-extension-*.zip`, unzip, and load the folder as an unpacked extension (`chrome://extensions` → Developer mode).
@@ -264,7 +264,7 @@ jobs:
 
       - run: npm ci
 
-      - name: Pack and publish @21stware/vavd
+      - name: Pack and publish @21stware/vav-server
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
@@ -273,9 +273,9 @@ jobs:
             echo "NPM_TOKEN is not set; skip npm publish" >&2
             exit 0
           fi
-          VERSION=$(node -p "require('./packages/vavd/package.json').version")
-          if npm view "@21stware/vavd@${VERSION}" version >/dev/null 2>&1; then
-            echo "@21stware/vavd@${VERSION} already on npm"
+          VERSION=$(node -p "require('./packages/vav-server/package.json').version")
+          if npm view "@21stware/vav-server@${VERSION}" version >/dev/null 2>&1; then
+            echo "@21stware/vav-server@${VERSION} already on npm"
             exit 0
           fi
-          node scripts/publish-vavd.mjs
+          node scripts/publish-vav-server.mjs

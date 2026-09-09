@@ -29,14 +29,14 @@ import {
   setWorkspace
 } from '../../src/main/cli/vavControl.ts'
 import { DaemonClient } from '../../src/main/daemon/DaemonClient.ts'
-import { startVavd } from '../startVavd'
+import { startVavServer } from '../startVavServer'
 
 /**
  * iOS / Android hello omits `role`. This is that handshake against a live
- * vavd, then every phone-plane verb those remotes send.
+ * vav-server, then every phone-plane verb those remotes send.
  */
 test('phone hello without role covers every iOS/Android session verb', async () => {
-  const daemon = await startVavd({ stubTurn: true })
+  const daemon = await startVavServer({ stubTurn: true })
   try {
     const parsed = parseDaemonPairing(daemon.pairing)
     expect(parsed?.secret).toBeTruthy()
@@ -163,7 +163,7 @@ async function waitForAwaiting(phone: { frames: Array<{ type?: string; phase?: s
 }
 
 test('phone hello without role parks Approve and accepts reply / cancel', async () => {
-  const daemon = await startVavd({ stubTurn: true, stubApprove: true })
+  const daemon = await startVavServer({ stubTurn: true, stubApprove: true })
   try {
     const parsed = parseDaemonPairing(daemon.pairing)
     const phone = await connectPhone({

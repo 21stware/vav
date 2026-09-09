@@ -1,0 +1,3 @@
+# Run the VAV CLIs under bun: `bun run dev:vav-server` (and dev:vav-board / dev:vav-tui).
+# preload injects a node:sqlite -> bun:sqlite shim (Node's node:sqlite has no bun builtin).
+preload = ["./scripts/bun/preload.ts"]

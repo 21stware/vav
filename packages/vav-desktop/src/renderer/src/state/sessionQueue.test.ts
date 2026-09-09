@@ -324,8 +324,8 @@ describe('hostHoldsControlPlaneKeys', () => {
     assert.equal(hostHoldsControlPlaneKeys(hosts, null), false)
   })
 
-  it('treats a spawned local-shell vavd as the local key holder', () => {
-    const hosts = [{ id: 'vavd-1', localShell: true, controlPlane: true }]
+  it('treats a spawned local-shell vav-server as the local key holder', () => {
+    const hosts = [{ id: 'vav-server-1', localShell: true, controlPlane: true }]
     assert.equal(hostHoldsControlPlaneKeys(hosts, 'local'), true)
     assert.equal(hostHoldsControlPlaneKeys(hosts, null), true)
     assert.equal(hostHoldsControlPlaneKeys(hosts, 'other'), false)
@@ -333,8 +333,8 @@ describe('hostHoldsControlPlaneKeys', () => {
 })
 
 describe('hostHoldsRemoteKeys', () => {
-  it('ignores the spawned local vavd so first-run can still show the no-key hero', () => {
-    const hosts = [{ id: 'vavd-1', localShell: true, controlPlane: true }]
+  it('ignores the spawned local vav-server so first-run can still show the no-key hero', () => {
+    const hosts = [{ id: 'vav-server-1', localShell: true, controlPlane: true }]
     assert.equal(hostHoldsRemoteKeys(hosts, 'local'), false)
     assert.equal(hostHoldsRemoteKeys(hosts, null), false)
   })
@@ -342,7 +342,7 @@ describe('hostHoldsRemoteKeys', () => {
   it('treats a paired remote control plane as the key holder', () => {
     const hosts = [
       { id: 'build-server', controlPlane: true },
-      { id: 'vavd-1', localShell: true, controlPlane: true }
+      { id: 'vav-server-1', localShell: true, controlPlane: true }
     ]
     assert.equal(hostHoldsRemoteKeys(hosts, 'build-server'), true)
     assert.equal(hostHoldsRemoteKeys(hosts, 'local'), false)

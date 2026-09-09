@@ -62,7 +62,7 @@ export function hostHoldsControlPlaneKeys(
 ): boolean {
   const id = machineId?.trim() || 'local'
   if (hosts.some((host) => host.id === id && host.controlPlane === true)) return true
-  // Spawned loopback vavd is the local service — keys / stub live there.
+  // Spawned loopback vav-server is the local service — keys / stub live there.
   if (id === 'local') {
     return hosts.some((host) => host.localShell === true && host.controlPlane === true)
   }
@@ -70,9 +70,9 @@ export function hostHoldsControlPlaneKeys(
 }
 
 /**
- * Paired remote (not the spawned local vavd) — keys live on that machine.
+ * Paired remote (not the spawned local vav-server) — keys live on that machine.
  * The no-key hero uses this; localShell keys are `settings.apiKeyPresent`
- * from the vavd catalog so first-run still shows Configure an API Key.
+ * from the vav-server catalog so first-run still shows Configure an API Key.
  */
 export function hostHoldsRemoteKeys(
   hosts: Array<{ id: string; controlPlane?: boolean; localShell?: boolean }>,

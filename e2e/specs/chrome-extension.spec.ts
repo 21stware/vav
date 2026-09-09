@@ -19,7 +19,7 @@ import {
   seedChangeReview,
   usesPlaywrightChromium
 } from '../chromeUi'
-import { startVavd } from '../startVavd'
+import { startVavServer } from '../startVavServer'
 
 const EXT = join(__dirname, '../../packages/vav-chrome-extension/extension')
 
@@ -57,7 +57,7 @@ test('Chrome side panel matches the desktop session shell', async () => {
   test.setTimeout(180_000)
   await ensurePhoneUiBundle()
   const exe = chromePath()
-  const daemon = await startVavd({
+  const daemon = await startVavServer({
     stubTurn: true,
     web: true,
     extraEnv: { VAV_API_KEY: 'sk-e2e-chrome-ext' }
@@ -65,7 +65,7 @@ test('Chrome side panel matches the desktop session shell', async () => {
   const origin = daemon.webOrigin
   if (!origin) {
     daemon.stop()
-    throw new Error('vavd did not print a web origin')
+    throw new Error('vav-server did not print a web origin')
   }
   const webPort = Number(new URL(origin).port)
   const parsed = parseDaemonPairing(daemon.pairing)

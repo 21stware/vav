@@ -27,7 +27,7 @@ describe('remoteEndpointConfig', () => {
     assert.equal(host.holdsSecrets, true)
   })
 
-  it('treats vavd as the headless host — control plane, agent, and keys', () => {
+  it('treats vav-server as the headless host — control plane, agent, and keys', () => {
     const daemon = remoteEndpointConfig('headless-daemon')
     assert.equal(daemon.controlPlane, true)
     assert.equal(daemon.localAgent, true)
@@ -47,7 +47,7 @@ describe('desktopClientAgainst', () => {
     assert.equal(hostOwnsTurns(true, false), true)
   })
 
-  it('uses the vavd control plane so the desktop is only a shell', () => {
+  it('uses the vav-server control plane so the desktop is only a shell', () => {
     const client = desktopClientAgainst('headless')
     assert.equal(client.controlPlane, true)
     assert.equal(client.localAgent, false)

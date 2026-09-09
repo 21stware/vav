@@ -3,7 +3,6 @@ import {
   ArrowLeft,
   ChevronDown,
   ChevronRight,
-  MoreVertical,
   Pin,
   Plus,
   Search,
@@ -1551,65 +1550,45 @@ export function Sidebar({
 
       {listMode === 'main' && (
         <div className="sidebar-foot">
-          <SidebarServiceBar />
-          <button
-            type="button"
-            className="btn icon-only sm sidebar-foot-more"
-            data-testid="sidebar-more"
-            title={t('sidebar.moreActions')}
-            aria-label={t('sidebar.moreActions')}
-            onClick={(event) => {
-              event.preventDefault()
-              const rect = (event.currentTarget as HTMLElement).getBoundingClientRect()
-              void showMenu(
-                [
-                  {
-                    label: t('sidebar.showFileSessions'),
-                    icon: lucideMenuIcon('file-sessions'),
-                    onSelect: () => {
-                      setSidebarQuery('')
-                      void selectWorkspaceGroup(null)
-                      setListMode('fileSessions')
-                    }
-                  },
-                  {
-                    label: t('sidebar.showTimers'),
-                    icon: lucideMenuIcon('sessions'),
-                    onSelect: () => {
-                      setSidebarQuery('')
-                      void selectWorkspaceGroup(null)
-                      setListMode('timers')
-                    }
-                  },
-                  {
-                    label:
-                      archivedCount > 0
-                        ? t('sidebar.archivedCount', { count: archivedCount })
-                        : t('sidebar.archived'),
-                    icon: lucideMenuIcon('archive'),
-                    onSelect: () => {
-                      setSidebarQuery('')
-                      setListMode('archive')
-                    }
-                  },
-                  { label: '', divider: true },
-                  {
-                    label: t('sidebar.menu.import'),
-                    icon: lucideMenuIcon('import'),
-                    onSelect: () => void importSessions()
-                  },
-                  {
-                    label: t('common.settingsEllipsis'),
-                    icon: lucideMenuIcon('settings'),
-                    onSelect: () => useSessionStore.getState().openSettings()
-                  }
-                ],
-                { x: Math.round(rect.right), y: Math.round(rect.top) }
-              )
-            }}
-          >
-            <MoreVertical size={14} />
-          </button>
+          <SidebarServiceBar
+            sessionMenuItems={[
+              {
+                label: t('sidebar.showFileSessions'),
+                icon: lucideMenuIcon('file-sessions'),
+                onSelect: () => {
+                  setSidebarQuery('')
+                  void selectWorkspaceGroup(null)
+                  setListMode('fileSessions')
+                }
+              },
+              {
+                label: t('sidebar.showTimers'),
+                icon: lucideMenuIcon('sessions'),
+                onSelect: () => {
+                  setSidebarQuery('')
+                  void selectWorkspaceGroup(null)
+                  setListMode('timers')
+                }
+              },
+              {
+                label:
+                  archivedCount > 0
+                    ? t('sidebar.archivedCount', { count: archivedCount })
+                    : t('sidebar.archived'),
+                icon: lucideMenuIcon('archive'),
+                onSelect: () => {
+                  setSidebarQuery('')
+                  setListMode('archive')
+                }
+              },
+              { label: '', divider: true },
+              {
+                label: t('sidebar.menu.import'),
+                icon: lucideMenuIcon('import'),
+                onSelect: () => void importSessions()
+              }
+            ]}
+          />
         </div>
       )}
     </aside>

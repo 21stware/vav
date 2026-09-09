@@ -95,12 +95,17 @@ const CATEGORY_KEYS: { id: SettingsView; labelKey: MessageKey; icon: React.JSX.E
   { id: 'about', labelKey: 'settings.nav.about', icon: <Info size={NAV_ICON} strokeWidth={1.75} /> }
 ]
 
-function applySettingsView(view?: SettingsView | null, agentId?: string | null): void {
-  const resolved = resolveSettingsView(view, agentId)
+function applySettingsView(
+  view?: SettingsView | null,
+  agentId?: string | null,
+  machineId?: string | null
+): void {
+  const resolved = resolveSettingsView(view, agentId, machineId)
   const next = CATEGORY_KEYS.some((c) => c.id === resolved.view) ? resolved.view : 'appearance'
   useSessionStore.setState({
     settingsCategory: next,
-    settingsFocusAgentId: resolved.agentId ?? null
+    settingsFocusAgentId: resolved.agentId ?? null,
+    settingsFocusMachineId: resolved.machineId ?? null
   })
 }
 
@@ -127,10 +132,10 @@ export default function SettingsWindow(): React.JSX.Element {
 
   useEffect(() => {
     const offView = window.vav.onSettingsView((payload) => {
-      applySettingsView(payload.view, payload.agentId)
+      applySettingsView(payload.view, payload.agentId, payload.machineId)
     })
     void window.vav.window.desiredSettingsView?.().then((payload) => {
-      applySettingsView(payload?.view, payload?.agentId)
+      applySettingsView(payload?.view, payload?.agentId, payload?.machineId)
     })
     // Desktop Settings is its own window (ready starts false). Chrome / web
     // mount this as an overlay on the shared store — a light bootstrap would

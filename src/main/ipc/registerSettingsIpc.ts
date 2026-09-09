@@ -65,7 +65,7 @@ export type SettingsIpcHost = {
   setFileAssociation: (formatId: string) => unknown
   unsetFileAssociation: (formatId: string) => unknown
   registerAllFileAssociations: () => unknown
-  /** Current accordion target — host prefs / secrets write this vavd. */
+  /** Current accordion target — host prefs / secrets write this vav-server. */
   remote?: () => { request: (method: string, params?: unknown) => Promise<unknown> } | null
   activeMachineId?: () => string
   rememberHostAppearance?: (machineId: string, appearance: MachineAppearance) => void

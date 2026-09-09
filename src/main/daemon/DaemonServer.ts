@@ -1,7 +1,7 @@
 /**
  * Serves a WorkspaceHost over the daemon JSON-line protocol.
  *
- * Used by headless `vavd` and by desktop VAV when other machines attach.
+ * Used by headless `vav-server` and by desktop VAV when other machines attach.
  * Electron-free — only Node + the Host* interfaces.
  */
 
@@ -76,7 +76,7 @@ type ServerOpts = {
   pairing?: (secret?: string) => string | null
   /**
    * Mint a new offer secret and return the current `vavrtp://` line.
-   * Existing grants stay valid. Chrome / desktop / `vavc host rotate` share this.
+   * Existing grants stay valid. Chrome / desktop / `vav-board host rotate` share this.
    */
   rotateOffer?: () => string | null | Promise<string | null>
   /** Desktop confirm for LAN Pair. Headless daemons omit this and refuse. */
@@ -92,17 +92,17 @@ type ServerOpts = {
   onIncomingChanged?: () => void
   /**
    * Local sessions + folder recents on this computer. Optional for a
-   * workspace-only listen; `vavd` supplies the control-plane catalog.
+   * workspace-only listen; `vav-server` supplies the control-plane catalog.
    */
   catalog?: DaemonWorkspaceCatalog
   /**
-   * Control-plane diagnostic logs. `vavd` supplies the plane's LogStore;
+   * Control-plane diagnostic logs. `vav-server` supplies the plane's LogStore;
    * a workspace-only listen omits this and the RPCs return empty.
    */
   logs?: DaemonLogCatalog
   /** Host plugin catalog (skills / MCP / hooks). Chrome Git already uses git.*. */
   plugins?: DaemonPluginCatalog
-  /** Scheduled jobs on this control plane. Chrome / vavc list the same rows as desktop. */
+  /** Scheduled jobs on this control plane. Chrome / vav-board list the same rows as desktop. */
   timers?: DaemonTimerCatalog
   /** Connector catalog + vendor status (GitHub / CF / Supabase / Vercel). */
   connectors?: DaemonConnectorCatalog
@@ -116,7 +116,7 @@ type ServerOpts = {
   settings?: DaemonSettingsCatalog
   /**
    * Phone-role hello on this listen port — hand the socket to the session
-   * plane. Omit only for a workspace-only listen (tests). `vavd` always
+   * plane. Omit only for a workspace-only listen (tests). `vav-server` always
    * supplies this so phone / web / extension / desktop-connect share one port.
    */
   onControlHello?: (socket: Socket, leftover: string, hello: RemoteHello) => void
@@ -142,7 +142,7 @@ export type DaemonPluginCatalog = {
   writeConfig: (path: string, content: string) => unknown
 }
 
-/** Scheduled jobs the Chrome / web sidebar and `vavc timers` read. */
+/** Scheduled jobs the Chrome / web sidebar and `vav-board timers` read. */
 export type DaemonTimerCatalog = {
   listJobs: () => unknown
   createScheduled: () => unknown
@@ -169,7 +169,7 @@ export type DaemonFileSessionCatalog = {
   setReadOnly: (sessionId: string, readOnly: boolean) => void
 }
 
-/** Host settings Chrome / desktop IPC / `vavc settings` share when the workbench is a shell. */
+/** Host settings Chrome / desktop IPC / `vav-board settings` share when the workbench is a shell. */
 export type DaemonSettingsCatalog = {
   get: () => unknown
   update: (patch: Record<string, unknown>) => unknown
@@ -179,7 +179,7 @@ export type DaemonSettingsCatalog = {
   revealSecret: (slot: string) => string | null
 }
 
-/** Provider accounts the Chrome / web Settings window and `vavc account` read. */
+/** Provider accounts the Chrome / web Settings window and `vav-board account` read. */
 export type DaemonAccountsCatalog = {
   getPage: (workspaceKey?: string) => unknown
   createVav: (input: {
@@ -235,7 +235,7 @@ export type DaemonConnectorCatalog = {
   vercelStatus: (cwd: string, query?: unknown) => Promise<unknown>
 }
 
-/** vavd LogStore surface — Settings → Logs is a client of this sink. */
+/** vav-server LogStore surface — Settings → Logs is a client of this sink. */
 export type DaemonLogCatalog = {
   query: (query?: AppLogQuery) => AppLogRecord[]
   stats: () => AppLogStats
@@ -642,7 +642,7 @@ export class DaemonServer {
       writeLine(socket, {
         type: 'welcome',
         proto: DAEMON_PROTO_VERSION,
-        app: 'vavd',
+        app: 'vav-server',
         version: this.opts.appVersion,
         host: {
           id: this.opts.identity.machineId,

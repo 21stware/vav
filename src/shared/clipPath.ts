@@ -1,7 +1,7 @@
 /** Temp writes for conversation overlays — never a real file to bind a session to. */
 export function isClipPath(path: string): boolean {
   if (!path) return false
-  return path.replace(/\\/g, '/').includes('/vav-clips/')
+  return path.replace(/\\/g, '/').includes('/vav-tuips/')
 }
 
 /** File Sessions are for chatting about a real file, not an ephemeral preview. */

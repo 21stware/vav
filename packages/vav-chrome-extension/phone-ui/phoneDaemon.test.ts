@@ -15,7 +15,7 @@ describe('phone daemon rpc', () => {
     })
     const hello = rpc.hello('secret', 'web')
     assert.equal(sent[0]?.role, 'daemon')
-    for (const handler of handlers) handler({ type: 'welcome', proto: 1, app: 'vavd', version: '1' })
+    for (const handler of handlers) handler({ type: 'welcome', proto: 1, app: 'vav-server', version: '1' })
     assert.equal(await hello, true)
 
     const pending = rpc.request('fs.readdir', { path: '/tmp/ws' })
@@ -35,7 +35,7 @@ describe('phone daemon rpc', () => {
   })
 
   it('decodes daemon file bodies', () => {
-    const encoded = Buffer.from('planted by vavd e2e', 'utf8').toString('base64')
-    assert.equal(decodeBase64Utf8(encoded), 'planted by vavd e2e')
+    const encoded = Buffer.from('planted by vav-server e2e', 'utf8').toString('base64')
+    assert.equal(decodeBase64Utf8(encoded), 'planted by vav-server e2e')
   })
 })

@@ -1,9 +1,9 @@
 {
   "name": "@21stware/vav-desktop",
-  "version": "1.20.0",
+  "version": "1.21.0",
   "private": true,
   "type": "module",
-  "description": "VAV desktop workbench. Same sidebar for a local vavd and a paired remote. Electron source is packages/vav-desktop/src.",
+  "description": "VAV desktop workbench. Same sidebar for a local vav-server and a paired remote. Electron source is packages/vav-desktop/src.",
   "license": "PolyForm-Noncommercial-1.0.0",
   "author": "Oboo Cheng",
   "scripts": {

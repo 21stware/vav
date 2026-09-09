@@ -1,6 +1,6 @@
 /**
  * Resolve `@shared/*` and `@main/*` for Node `--experimental-strip-types`
- * (vavd + CLI + unit tests). electron-vite aliases the same for the app.
+ * (vav-server + CLI + unit tests). electron-vite aliases the same for the app.
  */
 import { existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'

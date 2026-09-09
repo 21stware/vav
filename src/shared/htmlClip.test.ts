@@ -20,14 +20,14 @@ describe('html-clip', () => {
     const doc = prepareHtmlClipSrcDoc('<button>Go</button>')
     assert.match(doc, /<!DOCTYPE html>/i)
     assert.match(doc, /Content-Security-Policy/)
-    assert.match(doc, /data-vav-clip-chrome/)
+    assert.match(doc, /data-vav-tuip-chrome/)
     assert.match(doc, /<button>Go<\/button>/)
     assert.match(doc, /vav-html-clip/)
     assert.match(doc, /body \{ padding: 0; \}/)
     assert.match(doc, /animation: none/)
-    assert.match(doc, /data-vav-clip-fit/)
+    assert.match(doc, /data-vav-tuip-fit/)
     assert.match(doc, /data-theme="light"/)
-    assert.match(doc, /vav-clip-theme/)
+    assert.match(doc, /vav-tuip-theme/)
     assert.match(doc, /--vav-scheme/)
   })
 
@@ -94,9 +94,9 @@ describe('html-clip', () => {
     const doc = prepareHtmlClipSrcDoc(
       '<!DOCTYPE html><html><body style="min-height:100vh"><svg viewBox="0 0 1000 400" style="min-width:900px"></svg></body></html>'
     )
-    assert.match(doc, /data-vav-clip-fit/)
+    assert.match(doc, /data-vav-tuip-fit/)
     assert.match(doc, /max-width: 100%/)
-    assert.doesNotMatch(doc, /data-vav-clip-chrome/)
+    assert.doesNotMatch(doc, /data-vav-tuip-chrome/)
   })
 
   it('detects a full document', () => {

@@ -1,0 +1,11 @@
+{
+  "name": "@21stware/vav-server",
+  "version": "1.21.0",
+  "role": "vav-server",
+  "kind": "service",
+  "sources": [
+    "packages/vav-server/src/vav-server.ts"
+  ],
+  "talksTo": [],
+  "hello": []
+}

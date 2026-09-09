@@ -9,6 +9,7 @@ import { encodePairing } from '../../shared/remoteControl.ts'
 import { HostRegistry, createLocalWorkspaceHost } from '../host/WorkspaceHost.ts'
 import { DaemonServer } from './DaemonServer.ts'
 import { DaemonAttachService } from './DaemonAttachService.ts'
+import { createFileGrantStore } from './grants.ts'
 import { RemoteControlHub } from '../remote/RemoteControlHub.ts'
 import { REMOTE_PHONE_CAPABILITIES } from '../../shared/remoteControl.ts'
 
@@ -57,7 +58,7 @@ function attach(
 }
 
 describe('DaemonAttachService', () => {
-  it('does not persist the spawned local-shell vavd as a remote', async () => {
+  it('does not persist the spawned local-shell vav-server as a remote', async () => {
     const disk = await mkdtemp(join(tmpdir(), 'vav-box-'))
     const userData = await mkdtemp(join(tmpdir(), 'vav-attach-'))
     const { server, port } = await listenLoopback(disk)
@@ -821,26 +822,102 @@ describe('DaemonAttachService', () => {
     }
   })
 
-  it('advertises a loopback vavd pairing even when this listen is off', async () => {
+  it('advertises a loopback vav-server pairing even when this listen is off', async () => {
     const userData = await mkdtemp(join(tmpdir(), 'vav-advertise-'))
     const { service } = attach(userData, false)
-    const vavdPairing = encodeDaemonPairing({
+    const vavServerPairing = encodeDaemonPairing({
       v: DAEMON_PROTO_VERSION,
-      secret: 'vavd-secret-0123456789ab',
-      machineId: 'vavd-1',
+      secret: 'vav-server-secret-0123456789ab',
+      machineId: 'vav-server-1',
       name: 'VAV Daemon',
       host: '127.0.0.1',
       port: 4759
     })
     try {
       assert.equal(service.pairing(), null)
-      service.setAdvertisedPairing(vavdPairing)
-      assert.equal(service.pairing(), vavdPairing)
+      service.setAdvertisedPairing(vavServerPairing)
+      assert.equal(service.pairing(), vavServerPairing)
       service.setAdvertisedPairing(null)
       assert.equal(service.pairing(), null)
     } finally {
       service.dispose()
       await rm(userData, { recursive: true, force: true })
+    }
+  })
+
+  it('offers a reachable LAN pairing on confirm even when a loopback vav-server is advertised', async () => {
+    const userA = await mkdtemp(join(tmpdir(), 'vav-a-'))
+    const userB = await mkdtemp(join(tmpdir(), 'vav-b-'))
+    const a = new DaemonAttachService({
+      userData: userA,
+      registry: new HostRegistry(),
+      identityName: 'Alpha',
+      secret: () => SECRET,
+      appVersion: 'test',
+      enabled: () => true,
+      tailcatToken: () => null,
+      onHostsChanged: () => undefined,
+      confirmLanPair: async () => true
+    })
+    // A is a shell over a loopback vav-server that is NOT actually listening. The
+    // confirm must still hand out A's own LAN pairing, not the dead loopback URI.
+    a.setAdvertisedPairing(
+      encodeDaemonPairing({
+        v: DAEMON_PROTO_VERSION,
+        secret: 'vav-server-secret-0123456789ab',
+        machineId: 'vav-server-1',
+        name: 'VAV Daemon',
+        host: '127.0.0.1',
+        port: 59999
+      })
+    )
+    const { service: b } = attach(userB)
+    try {
+      a.applySettings()
+      const start = Date.now()
+      while (!a.listenPortOf() && Date.now() - start < 2000) {
+        await new Promise((resolve) => setTimeout(resolve, 40))
+      }
+      const result = await b.pairLan({
+        address: '127.0.0.1',
+        port: a.listenPortOf(),
+        name: 'client',
+        machineId: 'client-1'
+      })
+      assert.equal(result.ok, true)
+      if (result.ok) assert.equal(result.host.name, 'Alpha')
+    } finally {
+      a.dispose()
+      b.dispose()
+      await rm(userA, { recursive: true, force: true })
+      await rm(userB, { recursive: true, force: true })
+    }
+  })
+
+  it('unpairs against the vav-server state dir when the local shell is offline', async () => {
+    const userData = await mkdtemp(join(tmpdir(), 'vav-attach-'))
+    const stateDir = await mkdtemp(join(tmpdir(), 'vav-server-'))
+    const grant = createFileGrantStore(stateDir).issue({ clientId: 'ctrl-1', name: 'Phone' })
+    const service = new DaemonAttachService({
+      userData,
+      registry: new HostRegistry(),
+      identityName: 'client',
+      secret: () => SECRET,
+      appVersion: 'test',
+      enabled: () => false,
+      tailcatToken: () => null,
+      onHostsChanged: () => undefined,
+      localShellStateDir: () => stateDir
+    })
+    try {
+      assert.equal(createFileGrantStore(stateDir).list().length, 1)
+      await service.unpairIncomingNow(grant.id)
+      assert.equal(createFileGrantStore(stateDir).list().length, 0)
+      assert.equal(service.incoming().length, 0)
+    } finally {
+      service.dispose()
+      await rm(userData, { recursive: true, force: true })
+      await rm(stateDir, { recursive: true, force: true })
     }
   })
 })

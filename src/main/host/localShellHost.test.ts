@@ -10,29 +10,29 @@ import {
 } from './localShellHost.ts'
 
 function localShellHost() {
-  const base = createLocalWorkspaceHost({ name: 'loopback-vavd' })
+  const base = createLocalWorkspaceHost({ name: 'loopback-vav-server' })
   return {
     ...base,
-    id: 'vavd-loop',
-    info: { ...base.info, id: 'vavd-loop', kind: 'remote' as const, localShell: true }
+    id: 'vav-server-loop',
+    info: { ...base.info, id: 'vav-server-loop', kind: 'remote' as const, localShell: true }
   }
 }
 
 describe('localShellHost', () => {
-  it('falls back to this process when no spawned vavd is mounted', () => {
+  it('falls back to this process when no spawned vav-server is mounted', () => {
     const registry = new HostRegistry()
     assert.equal(localShellHostOf(registry), null)
     assert.equal(workspaceHostForConversation(registry, LOCAL_MACHINE_ID).id, LOCAL_MACHINE_ID)
     assert.equal(conversationUsesLocalNode(registry, LOCAL_MACHINE_ID), true)
   })
 
-  it('routes local conversations through the spawned vavd host', () => {
+  it('routes local conversations through the spawned vav-server host', () => {
     const registry = new HostRegistry()
     const shell = localShellHost()
     registry.register(shell)
-    assert.equal(localShellHostOf(registry)?.id, 'vavd-loop')
-    assert.equal(workspaceHostForConversation(registry, null).id, 'vavd-loop')
-    assert.equal(workspaceHostForConversation(registry, LOCAL_MACHINE_ID).id, 'vavd-loop')
+    assert.equal(localShellHostOf(registry)?.id, 'vav-server-loop')
+    assert.equal(workspaceHostForConversation(registry, null).id, 'vav-server-loop')
+    assert.equal(workspaceHostForConversation(registry, LOCAL_MACHINE_ID).id, 'vav-server-loop')
     assert.equal(conversationUsesLocalNode(registry, LOCAL_MACHINE_ID), false)
   })
 
@@ -49,7 +49,7 @@ describe('localShellHost', () => {
     assert.equal(conversationUsesLocalNode(registry, 'build-server'), false)
   })
 
-  it('returns null when no spawned vavd is mounted', async () => {
+  it('returns null when no spawned vav-server is mounted', async () => {
     const registry = new HostRegistry()
     assert.equal(await waitForMountedLocalShell(registry, async () => true), null)
   })
@@ -67,7 +67,7 @@ describe('localShellHost', () => {
       },
       pairing
     )
-    assert.equal(id, 'vavd-loop')
-    assert.equal(waited, 'vavd-loop')
+    assert.equal(id, 'vav-server-loop')
+    assert.equal(waited, 'vav-server-loop')
   })
 })

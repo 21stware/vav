@@ -1,25 +1,22 @@
 import { ChevronDown, House, Monitor } from 'lucide-react'
 import { isLocalMachine, listedServices, normalizeMachineId } from '@shared/workspaceHost'
-import {
-  appearanceBaseForMachine,
-  appearanceForMachine,
-  patchMachineAppearance
-} from '@shared/machineAppearance'
-import type { ThemeMode } from '@shared/types'
 import { useSessionStore } from '../../state/sessionStore'
 import { useT } from '../../i18n/useT'
 import { menuAnchor, showMenu, type MenuItem } from '../../lib/nativeMenu'
 import { lucideMenuIcon } from '../../lib/menuIcons'
 
-export function SidebarServiceBar(): React.JSX.Element {
+export function SidebarServiceBar({
+  sessionMenuItems = []
+}: {
+  /** Session-management actions folded into the active service's menu. */
+  sessionMenuItems?: MenuItem[]
+} = {}): React.JSX.Element {
   const t = useT()
   const hosts = useSessionStore((s) => s.hosts)
   const services = listedServices(hosts)
   const windowMachineId = normalizeMachineId(useSessionStore((s) => s.windowMachineId))
   const defaultMachineId = normalizeMachineId(useSessionStore((s) => s.settings.defaultMachineId))
-  const settings = useSessionStore((s) => s.settings)
   const setDefaultMachine = useSessionStore((s) => s.setDefaultMachine)
-  const updateSettings = useSessionStore((s) => s.updateSettings)
   const incomingControllers = useSessionStore((s) => s.incomingControllers)
   const remoteControlStatus = useSessionStore((s) => s.remoteControlStatus)
   const incoming =
@@ -33,35 +30,7 @@ export function SidebarServiceBar(): React.JSX.Element {
   }
 
   const openMore = (machineId: string, anchor: HTMLElement): void => {
-    const current = appearanceForMachine(
-      settings,
-      machineId,
-      appearanceBaseForMachine(settings, machineId, hosts)
-    ).theme
-    const applyTheme = (theme: ThemeMode): void => {
-      void updateSettings({
-        machineAppearances: patchMachineAppearance(settings.machineAppearances, machineId, {
-          theme
-        })
-      })
-    }
     const items: MenuItem[] = [
-      {
-        label: t('appearance.theme.light'),
-        checked: current === 'light',
-        onSelect: () => applyTheme('light')
-      },
-      {
-        label: t('appearance.theme.dark'),
-        checked: current === 'dark',
-        onSelect: () => applyTheme('dark')
-      },
-      {
-        label: t('appearance.theme.system'),
-        checked: current === 'system',
-        onSelect: () => applyTheme('system')
-      },
-      { label: '', divider: true },
       {
         label: t('sidebar.setDefaultService'),
         checked: defaultMachineId === machineId,
@@ -69,16 +38,12 @@ export function SidebarServiceBar(): React.JSX.Element {
       },
       {
         label: t('sidebar.pairDevice'),
-        onSelect: () => useSessionStore.getState().openSettings('connect')
+        onSelect: () => useSessionStore.getState().openSettings('connect', undefined, machineId)
       },
       {
         label: t('sidebar.configureService'),
         icon: lucideMenuIcon('settings'),
-        onSelect: () => useSessionStore.getState().openSettings('agents')
-      },
-      {
-        label: t('sidebar.serviceThemeSettings'),
-        onSelect: () => useSessionStore.getState().openSettings('appearance')
+        onSelect: () => useSessionStore.getState().openSettings('agents', undefined, machineId)
       }
     ]
     if (!isLocalMachine(machineId)) {
@@ -87,6 +52,19 @@ export function SidebarServiceBar(): React.JSX.Element {
         onSelect: () => void window.vav.hosts.forget(machineId)
       })
     }
+    // Session-management actions (file sessions / timers / archived / import)
+    // belong to the active service, not a separate fixed button.
+    if (sessionMenuItems.length) {
+      items.push({ label: '', divider: true }, ...sessionMenuItems)
+    }
+    items.push(
+      { label: '', divider: true },
+      {
+        label: t('common.settingsEllipsis'),
+        icon: lucideMenuIcon('settings'),
+        onSelect: () => useSessionStore.getState().openSettings('appearance', undefined, machineId)
+      }
+    )
     void showMenu(items, menuAnchor(anchor))
   }
 

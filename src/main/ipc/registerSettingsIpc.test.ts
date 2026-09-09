@@ -5,7 +5,7 @@ import { DEFAULT_SETTINGS } from '../../shared/types.ts'
 import { registerSettingsIpc } from './registerSettingsIpc.ts'
 
 describe('registerSettingsIpc', () => {
-  it('merges host prefs from spawned vavd and keeps theme local', async () => {
+  it('merges host prefs from spawned vav-server and keeps theme local', async () => {
     const calls: string[] = []
     const handlers = new Map<string, (...args: unknown[]) => unknown>()
     const ipcMain = {

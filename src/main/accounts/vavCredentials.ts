@@ -1,6 +1,6 @@
 /**
  * VAV API key + endpoint resolution without pulling CLI OAuth / Electron `net`.
- * Headless `vavd` only needs this path.
+ * Headless `vav-server` only needs this path.
  */
 import { currentVisibleVav, workspaceKeyOf, type ProviderAccount } from '@shared/accounts'
 import type { AccountStore } from '../store/AccountStore'

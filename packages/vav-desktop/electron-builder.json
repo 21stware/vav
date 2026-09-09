@@ -40,20 +40,16 @@
       ]
     },
     {
-      "from": "packages/vavd/vavd.js",
-      "to": "vavd/vavd.js"
+      "from": "packages/vav-server/vav-server.js",
+      "to": "vav-server/vav-server.js"
     },
     {
-      "from": "packages/vavd/vav.js",
-      "to": "vavd/vav.js"
+      "from": "packages/vav-server/vav-board.js",
+      "to": "vav-server/vav-board.js"
     },
     {
-      "from": "packages/vavd/vavc.js",
-      "to": "vavd/vavc.js"
-    },
-    {
-      "from": "packages/vavd/vavcli.js",
-      "to": "vavd/vavcli.js"
+      "from": "packages/vav-server/vav-tui.js",
+      "to": "vav-server/vav-tui.js"
     }
   ],
   "asarUnpack": [

@@ -95,15 +95,15 @@ export type LaunchVavOptions = {
    */
   reduceMotion?: boolean
   /**
-   * Pair the desktop app with a running vavd at launch (`VAVD_URI`).
+   * Pair the desktop app with a running vav-server at launch (`VAV_SERVER_URI`).
    * No Connect paste — the host window opens as a control-plane client.
    */
-  vavdUri?: string
+  vavServerUri?: string
   /**
-   * Spawn a local vavd from the repo and auto-pair (`VAVD_SPAWN`).
+   * Spawn a local vav-server from the repo and auto-pair (`VAV_SERVER_SPAWN`).
    * Electron stays a shell — the child process hosts turns.
    */
-  spawnVavd?: boolean
+  spawnVavServer?: boolean
   /** Settings → Connect: listen so another VAV can pair with this instance. */
   remoteControlEnabled?: boolean
   /** Seed `userData/daemon/identity.json` name (pairing / remote-window label). */
@@ -253,16 +253,16 @@ function seedUserData(
     ids.push(extra.id)
   }
   writeFileSync(join(conversationsDir, 'index.json'), JSON.stringify({ version: 2, ids }))
-  if (options.spawnVavd) {
-    const vavdRoot = join(userData, 'vavd')
-    const vavdDir = join(vavdRoot, 'conversations')
-    mkdirSync(vavdDir, { recursive: true })
+  if (options.spawnVavServer) {
+    const vavServerRoot = join(userData, 'vav-server')
+    const vavServerDir = join(vavServerRoot, 'conversations')
+    mkdirSync(vavServerDir, { recursive: true })
     for (const id of ids) {
-      copyFileSync(join(conversationsDir, `${id}.json`), join(vavdDir, `${id}.json`))
+      copyFileSync(join(conversationsDir, `${id}.json`), join(vavServerDir, `${id}.json`))
     }
-    copyFileSync(join(conversationsDir, 'index.json'), join(vavdDir, 'index.json'))
+    copyFileSync(join(conversationsDir, 'index.json'), join(vavServerDir, 'index.json'))
     writeFileSync(
-      join(vavdRoot, 'settings.json'),
+      join(vavServerRoot, 'settings.json'),
       JSON.stringify(
         {
           defaultWorkingDirectory: workspace,
@@ -332,7 +332,7 @@ function writeTinyMp4(path: string): void {
     )
   } catch {
     // GHA macOS (and any box without ffmpeg) still needs a file on disk.
-    // files-preview only asserts the name; vavd specs never open this clip.
+    // files-preview only asserts the name; vav-server specs never open this clip.
     writeFileSync(path, Buffer.from('ftypisom', 'ascii'))
   }
 }
@@ -465,12 +465,12 @@ export async function launchVav(options: LaunchVavOptions = {}): Promise<VavHarn
     ...(options.acpLeakPrompts ? { E2E_ACP_LEAK_PROMPTS: String(options.acpLeakPrompts) } : {}),
     ...(options.acpLeakTail ? { E2E_ACP_LEAK_TAIL: '1' } : {}),
     ...(options.acpLeakPartialTransport ? { E2E_ACP_LEAK_PARTIAL_TRANSPORT: '1' } : {}),
-    ...(options.vavdUri ? { VAVD_URI: options.vavdUri } : {}),
-    ...(options.spawnVavd
-      ? { VAVD_SPAWN: '1', NODE_BINARY: process.execPath }
-      : options.vavdUri
+    ...(options.vavServerUri ? { VAV_SERVER_URI: options.vavServerUri } : {}),
+    ...(options.spawnVavServer
+      ? { VAV_SERVER_SPAWN: '1', NODE_BINARY: process.execPath }
+      : options.vavServerUri
         ? {}
-        : { VAVD_SPAWN: '0' })
+        : { VAV_SERVER_SPAWN: '0' })
   }
   // Hosts that run Electron-as-Node (this agent, some CI images) leak
   // ELECTRON_RUN_AS_NODE into the child. Playwright then passes
@@ -486,7 +486,7 @@ export async function launchVav(options: LaunchVavOptions = {}): Promise<VavHarn
 
   const page = await app.firstWindow()
   await page.locator('[data-testid="app-shell"]').waitFor({ state: 'visible', timeout: 25_000 })
-  if (options.spawnVavd) await waitForLocalShell(page)
+  if (options.spawnVavServer) await waitForLocalShell(page)
 
   const dispose = async (): Promise<void> => {
     try {
@@ -509,7 +509,7 @@ export async function launchVav(options: LaunchVavOptions = {}): Promise<VavHarn
   return { app, page, userData, workspace, extraWorkspace, acpModelLog, dispose }
 }
 
-/** Spawned loopback vavd is the default local service (`localShell`). */
+/** Spawned loopback vav-server is the default local service (`localShell`). */
 export async function waitForLocalShell(page: Page): Promise<void> {
   await expect
     .poll(async () => {
@@ -520,11 +520,11 @@ export async function waitForLocalShell(page: Page): Promise<void> {
 }
 
 /**
- * Desktop workbench over spawned vavd — the production local = remote path.
+ * Desktop workbench over spawned vav-server — the production local = remote path.
  * Two-app pairing / listen-host specs should keep calling `launchVav` directly.
  */
 export async function launchWorkbench(options: LaunchVavOptions = {}): Promise<VavHarness> {
-  return launchVav({ ...options, spawnVavd: options.spawnVavd ?? true })
+  return launchVav({ ...options, spawnVavServer: options.spawnVavServer ?? true })
 }
 
 export async function waitForDaemonPairing(page: Page): Promise<string> {
@@ -606,9 +606,9 @@ export function readUserSetting(userData: string, key: string): unknown {
   }
 }
 
-/** Conversation shard on the spawned local vavd (`userData/vavd/conversations`). */
-export function readVavdConversation(userData: string, id: string): string | null {
-  const shard = join(userData, 'vavd', 'conversations', `${id}.json`)
+/** Conversation shard on the spawned local vav-server (`userData/vav-server/conversations`). */
+export function readVavServerConversation(userData: string, id: string): string | null {
+  const shard = join(userData, 'vav-server', 'conversations', `${id}.json`)
   try {
     return readFileSync(shard, 'utf8')
   } catch {
@@ -625,10 +625,10 @@ export function readElectronConversation(userData: string, id: string): string |
   }
 }
 
-/** Host prefs on the spawned local vavd (`userData/vavd/settings.json`). */
-export function readVavdSetting(userData: string, key: string): unknown {
+/** Host prefs on the spawned local vav-server (`userData/vav-server/settings.json`). */
+export function readVavServerSetting(userData: string, key: string): unknown {
   try {
-    const raw = JSON.parse(readFileSync(join(userData, 'vavd', 'settings.json'), 'utf8')) as Record<
+    const raw = JSON.parse(readFileSync(join(userData, 'vav-server', 'settings.json'), 'utf8')) as Record<
       string,
       unknown
     >

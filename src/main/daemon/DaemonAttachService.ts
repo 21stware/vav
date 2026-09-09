@@ -35,7 +35,7 @@ import {
   type DaemonWorkspaceCatalog
 } from './DaemonServer.ts'
 import { DaemonClient, createRemoteWorkspaceHost, requestLanPairOffer, PAIRING_CANCELLED } from './DaemonClient.ts'
-import { isLoopbackPairedHost } from './vavdShellPairing.ts'
+import { isLoopbackPairedHost } from './vavServerShellPairing.ts'
 import { RemoteControlDial } from '../remote/RemoteControlDial.ts'
 import type { RemoteHello, RemoteServerMessage } from '../../shared/remoteControl.ts'
 import { loadOrCreateIdentity, writePrivateJson, type DaemonIdentity } from './identity.ts'
@@ -99,8 +99,14 @@ type AttachOpts = {
   reconnectDelayMs?: (attempt: number) => number
   onHostsChanged: (hosts: WorkspaceHostInfo[]) => void
   onDiscovered?: (peers: DiscoveredPeer[]) => void
-  /** Desktop: confirm a LAN Pair from another VAV. vavd omits this. */
+  /** Desktop: confirm a LAN Pair from another VAV. vav-server omits this. */
   confirmLanPair?: (from: { name: string; machineId: string }) => Promise<boolean>
+  /**
+   * State dir of the spawned loopback vav-server, when this app owns one.
+   * Lets host-side unpair/disconnect edit the authoritative grants file when
+   * that daemon is down (RPC is used whenever it is reachable).
+   */
+  localShellStateDir?: () => string | null
   /** This computer's sessions + folder recents, served to a paired client. */
   catalog?: DaemonWorkspaceCatalog
   plugins?: DaemonPluginCatalog
@@ -121,7 +127,7 @@ type AttachOpts = {
   onControlEvent?: (machineId: string, message: RemoteServerMessage) => void
   onIncomingChanged?: (controllers: IncomingController[]) => void
   /**
-   * After `host.rotateOffer` on the advertised local vavd — update the
+   * After `host.rotateOffer` on the advertised local vav-server — update the
    * phone tunnel secret so QR and the copy line stay the same URI.
    */
   onAdvertisedPairingRotated?: (pairing: string) => void
@@ -153,11 +159,17 @@ export class DaemonAttachService {
   private readonly opts: AttachOpts
   private pairAbort: AbortController | null = null
   private disposed = false
-  /** Loopback vavd pairing shown as this computer when the app is a shell. */
+  /** Loopback vav-server pairing shown as this computer when the app is a shell. */
   private advertisedPairing: string | null = null
-  /** Grant list from that same vavd — Connect "authorized computers". */
+  /** Grant list from that same vav-server — Connect "authorized computers". */
   private advertisedIncoming: IncomingController[] | null = null
-  /** Last welcome.version per host — About reads the local-shell vavd. */
+  /** Raw pairing text of the spawned loopback vav-server, for reconnect. */
+  private localShellPairingText: string | null = null
+  /** Host ids mounted as the local-shell vav-server (reconnect on drop). */
+  private readonly localShellHostIds = new Set<string>()
+  /** In-flight local-shell reconnect, so callers coalesce. */
+  private localShellReconnect: Promise<unknown> | null = null
+  /** Last welcome.version per host — About reads the local-shell vav-server. */
   private readonly versions = new Map<string, string>()
 
   constructor(opts: AttachOpts) {
@@ -176,15 +188,29 @@ export class DaemonAttachService {
   }
 
   /**
-   * When the desktop is a UI for a local vavd, Connect copies that daemon's
+   * When the desktop is a UI for a local vav-server, Connect copies that daemon's
    * URI so phones / another VAV / `vav` pair with the process that owns turns.
    */
   setAdvertisedPairing(pairing: string | null): void {
     this.advertisedPairing = pairing
   }
 
+  /**
+   * Raw pairing line for the spawned loopback vav-server. Enables reconnecting
+   * the local-shell daemon client if it drops, so host-side unpair keeps
+   * reaching the process that actually owns the grants.
+   */
+  setLocalShellPairing(pairing: string | null): void {
+    this.localShellPairingText = pairing
+  }
+
   pairing(secret?: string): string | null {
-    if (this.advertisedPairing) return this.advertisedPairing
+    // No secret → the "copy pairing line" case: hand out the loopback vav-server
+    // URI so phones / other clients pair with the process that owns turns.
+    // A secret is passed only when minting a grant for a confirmed LAN pair-ask;
+    // that controller is remote, so it needs THIS computer's LAN-reachable line
+    // (the desktop listen forwards control to the vav-server), not loopback.
+    if (!secret && this.advertisedPairing) return this.advertisedPairing
     if (!this.opts.enabled() && !this.server) return null
     const advertised = advertisedPairingAddresses({ identityName: this.identity.name })
     const payload: DaemonPairing = {
@@ -201,8 +227,16 @@ export class DaemonAttachService {
   }
 
   incoming(): IncomingController[] {
-    if (this.advertisedIncoming) return this.advertisedIncoming
-    return this.server?.incoming() ?? incomingFromGrants(this.grants.list(), new Set())
+    // Grants can live in two stores in shell mode: the spawned vav-server
+    // (advertisedIncoming) and this desktop's own listen (LAN pair-ask grants).
+    // Merge both so every paired controller is visible and removable.
+    const local = this.server?.incoming() ?? []
+    if (this.advertisedIncoming) {
+      const seen = new Set(this.advertisedIncoming.map((row) => row.id))
+      return [...this.advertisedIncoming, ...local.filter((row) => !seen.has(row.id))]
+    }
+    if (local.length || this.server) return local
+    return incomingFromGrants(this.grants.list(), new Set())
   }
 
   disconnectIncoming(grantId: string): void {
@@ -216,23 +250,84 @@ export class DaemonAttachService {
   }
 
   async disconnectIncomingNow(grantId: string): Promise<void> {
-    const remote = this.localShellClient()
+    // A LAN pair-ask grant lives in this desktop's own listen; try it first.
+    const localHit = this.server?.disconnectGrant(grantId) ?? false
+    const remote = await this.ensureLocalShellClient()
     if (remote) {
-      await remote.request('host.disconnectIncoming', { grantId })
+      await remote.request('host.disconnectIncoming', { grantId }).catch(() => undefined)
       await this.pullIncoming()
       return
     }
-    this.disconnectIncoming(grantId)
+    if (localHit) {
+      this.advertisedIncoming = null
+      this.emitIncoming()
+      return
+    }
+    this.mutateIncomingOffline(grantId, 'disconnect')
   }
 
   async unpairIncomingNow(grantId: string): Promise<void> {
-    const remote = this.localShellClient()
+    const localHit = this.server?.unpairGrant(grantId) ?? false
+    const remote = await this.ensureLocalShellClient()
     if (remote) {
-      await remote.request('host.unpairIncoming', { grantId })
+      await remote.request('host.unpairIncoming', { grantId }).catch(() => undefined)
       await this.pullIncoming()
       return
     }
-    this.unpairIncoming(grantId)
+    if (localHit) {
+      this.advertisedIncoming = null
+      this.emitIncoming()
+      return
+    }
+    this.mutateIncomingOffline(grantId, 'unpair')
+  }
+
+  /**
+   * The spawned loopback vav-server owns the real grants, but its daemon client
+   * can momentarily drop (it is memory-only and not persisted for reconnect).
+   * Re-pair it on demand so host-side unpair/disconnect keep working; returns
+   * undefined when this app has no local-shell vav-server (pure desktop mode).
+   */
+  private async ensureLocalShellClient(): Promise<DaemonClient | undefined> {
+    const live = this.localShellClient()
+    if (live) return live
+    const text = this.localShellPairingText
+    if (!text) return undefined
+    if (!this.localShellReconnect) {
+      // Dedicated signal so this never aborts an in-flight user pair.
+      const signal = new AbortController().signal
+      this.localShellReconnect = this.pair(text, signal, { localShell: true })
+        .catch(() => undefined)
+        .finally(() => {
+          this.localShellReconnect = null
+        })
+    }
+    await this.localShellReconnect
+    return this.localShellClient()
+  }
+
+  /**
+   * Fallback when no local-shell client is reachable. ensureLocalShellClient
+   * only returns undefined when the vav-server is truly down, so editing its
+   * grants file on disk is safe (it re-reads on next start).
+   */
+  private mutateIncomingOffline(grantId: string, action: 'unpair' | 'disconnect'): void {
+    const dir = this.opts.localShellStateDir?.() ?? null
+    if (dir) {
+      const store = createFileGrantStore(dir)
+      if (action === 'unpair') store.remove(grantId)
+      else store.markKicked(grantId)
+      this.advertisedIncoming = incomingFromGrants(store.list(), new Set())
+      this.emitIncoming()
+      return
+    }
+    if (action === 'unpair') {
+      if (!this.server?.unpairGrant(grantId)) this.grants.remove(grantId)
+    } else {
+      this.server?.disconnectGrant(grantId)
+    }
+    this.advertisedIncoming = null
+    this.emitIncoming()
   }
 
   async pullIncoming(): Promise<IncomingController[]> {
@@ -262,7 +357,7 @@ export class DaemonAttachService {
 
   /**
    * Rotate the pairing line Connect copies. When this workbench is a shell
-   * over spawned vavd, mint that daemon's offer so Chrome / `vavc host rotate`
+   * over spawned vav-server, mint that daemon's offer so Chrome / `vav-board host rotate`
    * and the desktop QR share one secret.
    */
   async rotateHostOffer(): Promise<string | null> {
@@ -355,8 +450,8 @@ export class DaemonAttachService {
     return this.providers.get(machineId) ?? []
   }
 
-  /** Running vavd version from the last local-shell welcome, if any. */
-  vavdVersion(): string | null {
+  /** Running vav-server version from the last local-shell welcome, if any. */
+  vavServerVersion(): string | null {
     for (const host of this.opts.registry.list()) {
       if (!host.localShell) continue
       const version = this.versions.get(host.id)?.trim()
@@ -380,7 +475,7 @@ export class DaemonAttachService {
     return this.appearances.get(machineId)
   }
 
-  /** Spawned loopback vavd — the Settings → Logs sink. */
+  /** Spawned loopback vav-server — the Settings → Logs sink. */
   localShellClient(): DaemonClient | undefined {
     for (const host of this.opts.registry.list()) {
       if (!host.localShell) continue
@@ -392,7 +487,7 @@ export class DaemonAttachService {
 
   /**
    * Import the other computer's sidebar sessions and folder recents.
-   * Missing RPCs (headless / older vavd) resolve to empty lists.
+   * Missing RPCs (headless / older vav-server) resolve to empty lists.
    */
   async pullHostCatalog(machineId: string): Promise<{ sessions: unknown[]; recents: string[] }> {
     const client = this.clients.get(machineId)
@@ -565,7 +660,7 @@ export class DaemonAttachService {
     return this.control.get(machineId)?.ready === true
   }
 
-  /** Wait until the phone-role probe for this host finishes (desktop or vavd). */
+  /** Wait until the phone-role probe for this host finishes (desktop or vav-server). */
   async waitForControlPlane(machineId: string): Promise<boolean> {
     const probe = this.controlProbes.get(machineId)
     if (probe) return probe
@@ -618,7 +713,7 @@ export class DaemonAttachService {
   restore(): void {
     for (const row of this.loadStore()) {
       if (row.localShell) continue
-      // Pre-vavrtp leftover: spawned default vavd used to be persisted as a remote.
+      // Pre-vavrtp leftover: spawned default vav-server used to be persisted as a remote.
       if (isLoopbackPairedHost(row) && (row.name === 'VAV Daemon' || !row.name?.trim())) continue
       void this.reconnect(row)
     }
@@ -915,6 +1010,7 @@ export class DaemonAttachService {
     this.opts.registry.register(host)
     this.opts.onHostsChanged(this.opts.registry.list())
     if (extra?.localShell) {
+      this.localShellHostIds.add(welcome.host.id)
       client.onStream('incoming', (_event, data) => {
         const controllers = incomingControllersFromRpc(data)
         if (!controllers) return
@@ -927,6 +1023,18 @@ export class DaemonAttachService {
       if (this.clients.get(welcome.host.id) !== client) return
       if (isPairAuthMessage(reason)) {
         this.detachLocal(welcome.host.id)
+        return
+      }
+      // Local-shell vav-server dropped: its grant list is now unknown and it is
+      // not persisted for the normal reconnect path, so refresh + re-pair it.
+      if (this.localShellHostIds.has(welcome.host.id)) {
+        this.advertisedIncoming = null
+        this.emitIncoming()
+        if (!this.disposed && this.localShellPairingText) {
+          setTimeout(() => {
+            void this.ensureLocalShellClient()
+          }, 500)
+        }
         return
       }
       const row = this.loadStore().find((entry) => entry.machineId === welcome.host.id)
@@ -956,7 +1064,7 @@ export class DaemonAttachService {
 
   /**
    * Second connection, `hello.role=phone`, same secret as the daemon.
-   * Headless vavd hosts the control plane; this dial drives turns there.
+   * Headless vav-server hosts the control plane; this dial drives turns there.
    */
   private async attachControlPlane(
     machineId: string,

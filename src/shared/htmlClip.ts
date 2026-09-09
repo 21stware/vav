@@ -264,7 +264,7 @@ const RESIZE_SCRIPT = `(function(){
   }
   function walk(el, acc){
     if (!el || el.nodeType !== 1) return acc;
-    if (el.getAttribute && el.getAttribute('data-vav-clip-resize')) return acc;
+    if (el.getAttribute && el.getAttribute('data-vav-tuip-resize')) return acc;
     if (el === document.body || el === document.documentElement || isViewportFill(el)) {
       var kids = el.children;
       for (var i = 0; i < kids.length; i++) acc = walk(kids[i], acc);
@@ -312,7 +312,7 @@ const RESIZE_SCRIPT = `(function(){
     var nodes = document.body ? document.body.getElementsByTagName('*') : [];
     for (var i = 0; i < nodes.length; i++) {
       var el = nodes[i];
-      if (el.getAttribute && el.getAttribute('data-vav-clip-resize')) continue;
+      if (el.getAttribute && el.getAttribute('data-vav-tuip-resize')) continue;
       var cs = getComputedStyle(el);
       var tag = el.tagName;
       if (tag === 'TEXT' || tag === 'TSPAN') {
@@ -364,7 +364,7 @@ const RESIZE_SCRIPT = `(function(){
   }
   window.addEventListener('message', function(ev){
     var d = ev.data;
-    if (!d || d.type !== 'vav-clip-theme' || !d.vars) return;
+    if (!d || d.type !== 'vav-tuip-theme' || !d.vars) return;
     applyTheme(d.vars);
   });
   window.addEventListener('load', function(){ fixSurfaces(); fixInk(); });
@@ -474,9 +474,9 @@ function headExtras(vars: HtmlClipThemeVars, chrome: boolean, fit: boolean): str
     `<meta name="viewport" content="width=device-width, initial-scale=1" />` +
     `<meta http-equiv="Content-Security-Policy" content="${CSP}" />` +
     `<script type="importmap">${IMPORT_MAP}</script>` +
-    `<style data-vav-clip-theme="1">${themeStyle(vars)}</style>` +
-    (chrome ? `<style data-vav-clip-chrome="1">${HTML_CLIP_CHROME_CSS}</style>` : '') +
-    (fit ? `<style data-vav-clip-fit="1">${HTML_CLIP_FIT_CSS}</style>` : '')
+    `<style data-vav-tuip-theme="1">${themeStyle(vars)}</style>` +
+    (chrome ? `<style data-vav-tuip-chrome="1">${HTML_CLIP_CHROME_CSS}</style>` : '') +
+    (fit ? `<style data-vav-tuip-fit="1">${HTML_CLIP_FIT_CSS}</style>` : '')
   )
 }
 
@@ -491,7 +491,7 @@ function injectBeforeHeadClose(html: string, extras: string, script: string): st
 }
 
 function injectBeforeBodyClose(html: string, script: string): string {
-  const tag = `<script data-vav-clip-resize="1">${script}</script>`
+  const tag = `<script data-vav-tuip-resize="1">${script}</script>`
   if (/<\/body>/i.test(html)) return html.replace(/<\/body>/i, `${tag}</body>`)
   return `${html}${tag}`
 }
@@ -515,7 +515,7 @@ export function prepareHtmlClipSrcDoc(
   }
   return stampHtmlTheme(
     `<!DOCTYPE html><html><head>${extras}</head>` +
-      `<body>${cleaned}<script data-vav-clip-resize="1">${RESIZE_SCRIPT}</script></body></html>`,
+      `<body>${cleaned}<script data-vav-tuip-resize="1">${RESIZE_SCRIPT}</script></body></html>`,
     vars
   )
 }

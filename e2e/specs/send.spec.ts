@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test'
 import { launchWorkbench, seedVavKeyAccount } from '../launch'
 
 /**
- * Composer → transcript on the spawned local vavd (production local = remote).
+ * Composer → transcript on the spawned local vav-server (production local = remote).
  * First-run no-key empty state stays on empty.spec (in-process Electron).
  * Provider HTTP is stubbed (VAV_E2E_STUB_TURN).
  */

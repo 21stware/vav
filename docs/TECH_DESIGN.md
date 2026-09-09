@@ -240,14 +240,14 @@ VAV_SNAPSHOT=/tmp/x.png VAV_SNAPSHOT_JS="<expr>" npm start
 
 ## 15. 产品矩阵与 Remote
 
-七个产品共用 vavd。回合、密钥、文件、PTY 只在 daemon 里发生；其余都是壳。见 [PRODUCT_MATRIX.md](PRODUCT_MATRIX.md)。
+七个产品共用 vav-server。回合、密钥、文件、PTY 只在 daemon 里发生；其余都是壳。见 [PRODUCT_MATRIX.md](PRODUCT_MATRIX.md)。
 
 | 产品 | 定义 |
 | --- | --- |
-| vavd | 核心服务（入口 `packages/vavd/src/vavd.ts`，内核 `src/main/daemon/`） |
+| vav-server | 核心服务（入口 `packages/vav-server/src/vav-server.ts`，内核 `src/main/daemon/`） |
 | vav-desktop | 本机工作台（`packages/vav-desktop/src/{main,preload,renderer}`）；本机与配对远程是同一套 sidebar |
-| vav-cli | Claude Code 式 agent CLI（`packages/vav-cli/src/vavcli.ts`） |
-| vavc | Herdr 式控制客户端（`packages/vavc/src/vavc.ts`） |
+| vav-tui | Claude Code 式 agent CLI（`packages/vav-tui/src/vav-tui.ts`） |
+| vav-board | Herdr 式控制客户端（`packages/vav-board/src/vav-board.ts`） |
 | vav-iOS | 原生 Remote（`packages/vav-ios/VAVRemote/`） |
 | vav-android | 与 iOS 同构的 Remote（`packages/vav-android/VAVRemote/`） |
 | vav-chrome-extension | 侧栏（`packages/vav-chrome-extension/extension/` + `phone-ui/`）；与桌面同一套 session shell；第二条 `/vav` hello 为 `role: daemon`，走 fs / pty |
@@ -260,7 +260,7 @@ Remote 不是「把会话拷到另一台电脑再跑一遍 agent」。那会让�
 
 ```
 phone / desktop control UI ── hello.role=phone ──► RemoteControlHub  会话、回合、配置
-desktop / vavd             ── hello.role=daemon ─► DaemonServer      fs / spawn / pty / git / plugins / github / timers / connectors / accounts / settings / logs / fileSessions / changeSets / fs.reveal|openPath|getInfo
+desktop / vav-server             ── hello.role=daemon ─► DaemonServer      fs / spawn / pty / git / plugins / github / timers / connectors / accounts / settings / logs / fileSessions / changeSets / fs.reveal|openPath|getInfo
 ```
 
 LAN 监听端口和 tailcat 本地回环都接到同一个 Hub。Hub 是 Electron-free 的；sidecar、配对文件、已知设备名单留在 `RemoteControlService`。
@@ -271,13 +271,13 @@ LAN 监听端口和 tailcat 本地回环都接到同一个 Hub。Hub 是 Electro
 | --- | --- | --- | --- | --- |
 | iOS | 是 | 否 | 否 | 在电脑上 |
 | 桌面控制端 → 另一台桌面 | 是 | 是 | 否 | 在受控端 |
-| 桌面控制端 → vavd | 是 | 是 | 否 | 在 vavd |
+| 桌面控制端 → vav-server | 是 | 是 | 否 | 在 vav-server |
 | 桌面受控端 | 是 | 是 | 是 | 是 |
-| vavd | 是 | 是 | 是 | 是 |
+| vav-server | 是 | 是 | 是 | 是 |
 
-桌面 remote 窗口和 iOS `RemoteClient` 是同构的会话客户端：同一套帧、同一套 `applyRemoteServerMessage` 规则（Swift 镜像这份 TypeScript）。桌面多出来的只是 daemon 上的文件树和 PTY。本机会话在 spawned loopback vavd 挂上之后，Files / git / PTY 走那个 host（`workspaceHostForConversation`），不再用 Electron 进程里的 Node fs / node-pty。Chrome 在该 vavd 上新建的会话 `adoptHostConversation(..., local)`，桌面 New Session 先 `createSession` 再拉目录，侧栏不另开一份。spawned vavd 挂上之后，本机会话不再写入 Electron `userData/conversations`（`setShouldPersist`），磁盘权威只在 vavd state dir。Chrome Settings → Connect 的 incoming URI 来自 `host.pairing`（同一条 `vavrtp://`）。更换配对串走 `host.rotateOffer`，已授权电脑走 `host.incoming`；桌面 Connect 与 `vavc host rotate|incoming` 共用这份 grant 表。
+桌面 remote 窗口和 iOS `RemoteClient` 是同构的会话客户端：同一套帧、同一套 `applyRemoteServerMessage` 规则（Swift 镜像这份 TypeScript）。桌面多出来的只是 daemon 上的文件树和 PTY。本机会话在 spawned loopback vav-server 挂上之后，Files / git / PTY 走那个 host（`workspaceHostForConversation`），不再用 Electron 进程里的 Node fs / node-pty。Chrome 在该 vav-server 上新建的会话 `adoptHostConversation(..., local)`，桌面 New Session 先 `createSession` 再拉目录，侧栏不另开一份。spawned vav-server 挂上之后，本机会话不再写入 Electron `userData/conversations`（`setShouldPersist`），磁盘权威只在 vav-server state dir。Chrome Settings → Connect 的 incoming URI 来自 `host.pairing`（同一条 `vavrtp://`）。更换配对串走 `host.rotateOffer`，已授权电脑走 `host.incoming`；桌面 Connect 与 `vav-board host rotate|incoming` 共用这份 grant 表。
 
-控制端的 send / cancel / reply / create / configure（模型、审批、thinking、Fast、ACP mode）/ workspace / rename / archive / compact / regenerate / edit / fork / delete-message / leaf / duplicate / continue / goal / locate 都走这套帧。Adopt 后本地 id 若发生碰撞，`hostSessionId` 用 `duplicateSourceId` 对回受控端。`vavd` 接 phone-role hello：回合在 daemon 里跑，桌面 / 手机 / 网页 / 扩展都是壳。
+控制端的 send / cancel / reply / create / configure（模型、审批、thinking、Fast、ACP mode）/ workspace / rename / archive / compact / regenerate / edit / fork / delete-message / leaf / duplicate / continue / goal / locate 都走这套帧。Adopt 后本地 id 若发生碰撞，`hostSessionId` 用 `duplicateSourceId` 对回受控端。`vav-server` 接 phone-role hello：回合在 daemon 里跑，桌面 / 手机 / 网页 / 扩展都是壳。
 
 回合只在持有会话的那台机器上跑。`handleAgentEvent` 同时 `fanRemoteTurn`（控制平面）和 `sendToWorkspaceWindows`（本机 UI）。所以手机或另一台桌面发一句话，受控端 transcript 会自己动。
 
@@ -297,5 +297,5 @@ Transcript 是给人看的工作记录，不是给排障用的。设置 → 日�
 | 会话 `session` | 24 小时 | `userData/logs/session.jsonl` | 过期、删会话时级联、清除全部 |
 | 留存 `durable` | 设置里的 1/3/7/14/30 天（默认 7） | `durable.jsonl` | 过期、计数淘汰（20000）、清除全部。删会话不删它 |
 
-排障时你要的是「刚才那一轮工具为什么失败」，不是永远留着每一次设置导航。会话删了，跟它绑定的工具时间线一起走；错误和发送记录留下来，因为事后才知道要看。写入时按 key 名和 `sk-` 形态抹掉密钥，字符串截断。`vavd` 与桌面共用同一套 store。
+排障时你要的是「刚才那一轮工具为什么失败」，不是永远留着每一次设置导航。会话删了，跟它绑定的工具时间线一起走；错误和发送记录留下来，因为事后才知道要看。写入时按 key 名和 `sk-` 形态抹掉密钥，字符串截断。`vav-server` 与桌面共用同一套 store。
 

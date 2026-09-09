@@ -8,7 +8,7 @@ import { isLocalMachine } from '../../shared/workspaceHost.ts'
 import { ConversationStore } from './ConversationStore.ts'
 
 describe('ConversationStore host bind', () => {
-  it('keeps the local workbench row when the same id arrives from spawned vavd', () => {
+  it('keeps the local workbench row when the same id arrives from spawned vav-server', () => {
     const dir = mkdtempSync(join(tmpdir(), 'vav-host-bind-'))
     try {
       const store = new ConversationStore(dir)
@@ -16,10 +16,10 @@ describe('ConversationStore host bind', () => {
       const local = store.create(join(dir, 'ws'), 'm', { id: 'e2e-session' })
       const adopted = store.adoptHostConversation(
         { ...local, title: 'Host copy' } as Conversation,
-        'vavd-1'
+        'vav-server-1'
       )
       assert.equal(adopted, null)
-      assert.equal(store.findOnHost('vavd-1', 'e2e-session')?.id, 'e2e-session')
+      assert.equal(store.findOnHost('vav-server-1', 'e2e-session')?.id, 'e2e-session')
       assert.equal(store.get('e2e-session')?.machineId, 'local')
     } finally {
       rmSync(dir, { recursive: true, force: true })
@@ -65,7 +65,7 @@ describe('ConversationStore host bind', () => {
     }
   })
 
-  it('refreshes local-shell usage and resume cursor from a later vavd pull', () => {
+  it('refreshes local-shell usage and resume cursor from a later vav-server pull', () => {
     const dir = mkdtempSync(join(tmpdir(), 'vav-host-usage-'))
     try {
       const store = new ConversationStore(dir)
@@ -107,7 +107,7 @@ describe('ConversationStore host bind', () => {
     }
   })
 
-  it('adopts a Chrome-created vavd session as a local workbench row', () => {
+  it('adopts a Chrome-created vav-server session as a local workbench row', () => {
     const dir = mkdtempSync(join(tmpdir(), 'vav-host-local-'))
     try {
       const store = new ConversationStore(dir)
@@ -150,10 +150,10 @@ describe('ConversationStore host bind', () => {
           model: 'm',
           messages: []
         } as Conversation,
-        'vavd-1'
+        'vav-server-1'
       )
       assert.ok(adopted)
-      assert.equal(store.findOnHost('vavd-1', 'host-row')?.id, 'local-row')
+      assert.equal(store.findOnHost('vav-server-1', 'host-row')?.id, 'local-row')
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
@@ -180,7 +180,7 @@ describe('ConversationStore host bind', () => {
     }
   })
 
-  it('drops a previously written local shard once vavd owns local chats', () => {
+  it('drops a previously written local shard once vav-server owns local chats', () => {
     const dir = mkdtempSync(join(tmpdir(), 'vav-host-drop-'))
     try {
       const store = new ConversationStore(dir)

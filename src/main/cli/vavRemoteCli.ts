@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 /**
  * Compatibility entry for the `vav` npm bin.
- * Control-plane commands now live on `vavc` (herdr-style). This file stays so
- * `vav send` / `npm run vav` keep working against the same vavd.
+ * Control-plane commands now live on `vav-board` (herdr-style). This file stays so
+ * `vav send` / `npm run vav` keep working against the same vav-server.
  */
-import { runVavc } from '../../../packages/vavc/src/vavc.ts'
+import { runVavBoard } from '../../../packages/vav-board/src/vav-board.ts'
 
-void runVavc().then(
+void runVavBoard().then(
   (code) => {
     if (code) process.exit(code)
   },

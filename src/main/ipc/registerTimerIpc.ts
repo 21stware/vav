@@ -14,7 +14,7 @@ export type TimerIpcRemote = {
 export type TimerIpcHost = {
   createDefinitionConversation: () => Conversation
   publishConversations: () => void
-  /** Spawned loopback vavd — sidebar timers share the store Chrome / vavc use. */
+  /** Spawned loopback vav-server — sidebar timers share the store Chrome / vav-board use. */
   remote?: () => TimerIpcRemote | null
 }
 

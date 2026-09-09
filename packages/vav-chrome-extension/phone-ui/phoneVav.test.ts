@@ -135,7 +135,7 @@ describe('phone files listing', () => {
     assert.equal(pairingPasteIsLocalHost(`vavrtp://${secret}@8.8.8.8:18746`), false)
     assert.equal(discoverPeerFromInfo({
       proto: 1,
-      app: 'vavd',
+      app: 'vav-server',
       name: 'Build box',
       version: '0.0.0',
       wsPath: '/vav',
@@ -255,7 +255,7 @@ describe('phone files listing', () => {
           return { size: 19, mtimeMs: 1, isDirectory: false, isFile: true }
         }
         if (method === 'fs.readFile') {
-          return { base64: Buffer.from('planted by vavd e2e', 'utf8').toString('base64') }
+          return { base64: Buffer.from('planted by vav-server e2e', 'utf8').toString('base64') }
         }
         return {}
       },
@@ -266,11 +266,11 @@ describe('phone files listing', () => {
     assert.ok(listing.entries.some((entry) => entry.name === 'remote-only.md' && !entry.isDirectory))
     const read = await api.files.read('/tmp/workspace/remote-only.md')
     assert.equal(read.error, undefined)
-    assert.match(read.content, /planted by vavd e2e/)
+    assert.match(read.content, /planted by vav-server e2e/)
     const inspected = await api.files.inspect('/tmp/workspace/remote-only.md')
     assert.equal(inspected.kind, 'text')
     assert.equal(inspected.name, 'remote-only.md')
-    assert.match(inspected.text ?? '', /planted by vavd e2e/)
+    assert.match(inspected.text ?? '', /planted by vav-server e2e/)
     assert.ok(calls.some((call) => call.method === 'fs.readdir'))
     assert.ok(calls.some((call) => call.method === 'fs.readFile'))
     assert.ok(calls.some((call) => call.method === 'fs.stat'))
@@ -372,7 +372,7 @@ describe('phone files listing', () => {
     off()
   })
 
-  it('writes clips to the same content-addressed vav-clips path as desktop', async () => {
+  it('writes clips to the same content-addressed vav-tuips path as desktop', async () => {
     installWindow()
     const transport = mockTransport()
     const calls: Array<{ method: string; params?: unknown }> = []
@@ -399,7 +399,7 @@ describe('phone files listing', () => {
     const written = await api.files.writeClip({ filename: 'hello.png', text: 'same-bytes' })
     assert.equal(written.ok, true)
     if (!written.ok) return
-    assert.match(written.path, /\/tmp\/vav-clips\/[0-9a-f]{16}\/hello\.png/)
+    assert.match(written.path, /\/tmp\/vav-tuips\/[0-9a-f]{16}\/hello\.png/)
     assert.equal(written.displayName, 'hello.png')
     assert.ok(calls.some((call) => call.method === 'fs.mkdir'))
     assert.ok(calls.some((call) => call.method === 'fs.writeFile'))

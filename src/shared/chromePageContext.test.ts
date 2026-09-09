@@ -10,13 +10,13 @@ describe('chromePageContext', () => {
       siteName: 'Example',
       description: 'How to install',
       headings: ['Prereqs', 'Install'],
-      selection: 'npm i -g @21stware/vavd',
+      selection: 'npm i -g @21stware/vav-server',
       excerpt: 'Longer page body that is not the selection.'
     })
     assert.match(text, /\[Current page\]/)
     assert.match(text, /Title: Install guide/)
     assert.match(text, /URL: https:\/\/example.com\/docs/)
-    assert.match(text, /Selected text:\nnpm i -g @21stware\/vavd/)
+    assert.match(text, /Selected text:\nnpm i -g @21stware\/vav-server/)
     assert.match(text, /Page text:\nLonger page body/)
   })
 

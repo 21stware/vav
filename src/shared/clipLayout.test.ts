@@ -9,7 +9,7 @@ describe('clipLayout', () => {
     const hash = await clipHash16(bytes)
     assert.equal(hash, createHash('sha256').update(bytes).digest('hex').slice(0, 16))
     const { dest } = clipDest(clipRootOf('/tmp'), hash, clipDisplayName('hello.png'))
-    assert.equal(dest, `/tmp/vav-clips/${hash}/hello.png`)
+    assert.equal(dest, `/tmp/vav-tuips/${hash}/hello.png`)
   })
 
   it('sanitizes display names', () => {

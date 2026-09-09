@@ -503,7 +503,7 @@ struct Pairing: Codable, Equatable, Identifiable, Hashable {
         return pairing
     }
 
-    /// Same URI `vav`, Connect, and `npx vavd` print.
+    /// Same URI `vav`, Connect, and `npx vav-server` print.
     private static func parseDaemon(_ text: String) -> Pairing? {
         guard let comps = URLComponents(string: text),
               comps.scheme == "vavrtp" || comps.scheme == "vav-daemon"

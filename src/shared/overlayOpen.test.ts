@@ -19,8 +19,8 @@ describe('overlayOpen', () => {
 
   it('prefers a real path over hashed content', () => {
     assert.equal(
-      overlayIdentity({ path: '/tmp/vav-clips/a/photo.png', mediaSrc: 'data:image/png;base64,xx' }),
-      '/tmp/vav-clips/a/photo.png'
+      overlayIdentity({ path: '/tmp/vav-tuips/a/photo.png', mediaSrc: 'data:image/png;base64,xx' }),
+      '/tmp/vav-tuips/a/photo.png'
     )
   })
 

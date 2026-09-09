@@ -14,7 +14,7 @@ const require = createRequire(import.meta.url)
 test('pack-release-sidecars accepts a relative --out (CI cwd)', async () => {
   const rel = `release-sidecars-rel-${process.pid}`
   const out = join(root, rel)
-  const dir = mkdtempSync(join(tmpdir(), 'vavd-sidecar-pkg-'))
+  const dir = mkdtempSync(join(tmpdir(), 'vav-server-sidecar-pkg-'))
   try {
     const packed = spawnSync(
       process.execPath,
@@ -23,7 +23,7 @@ test('pack-release-sidecars accepts a relative --out (CI cwd)', async () => {
     )
     assert.equal(packed.status, 0, packed.stderr || packed.stdout)
     const version = packageVersion()
-    assert.ok(existsSync(join(out, `21stware-vavd-${version}.tgz`)))
+    assert.ok(existsSync(join(out, `21stware-vav-server-${version}.tgz`)))
     assert.ok(existsSync(join(out, `vav-chrome-extension-${version}.zip`)))
   } finally {
     rmSync(out, { recursive: true, force: true })
@@ -33,7 +33,7 @@ test('pack-release-sidecars accepts a relative --out (CI cwd)', async () => {
 
 test('pack-release-sidecars writes the npm tarball and Chrome extension zip', async () => {
   const out = mkdtempSync(join(tmpdir(), 'vav-sidecars-'))
-  const dir = mkdtempSync(join(tmpdir(), 'vavd-sidecar-pkg-'))
+  const dir = mkdtempSync(join(tmpdir(), 'vav-server-sidecar-pkg-'))
   try {
     const packed = spawnSync(
       process.execPath,
@@ -43,7 +43,7 @@ test('pack-release-sidecars writes the npm tarball and Chrome extension zip', as
     assert.equal(packed.status, 0, packed.stderr || packed.stdout)
 
     const version = packageVersion()
-    const tgz = join(out, `21stware-vavd-${version}.tgz`)
+    const tgz = join(out, `21stware-vav-server-${version}.tgz`)
     const zipPath = join(out, `vav-chrome-extension-${version}.zip`)
     assert.ok(existsSync(tgz), `missing ${tgz}`)
     assert.ok(existsSync(zipPath), `missing ${zipPath}`)

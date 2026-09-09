@@ -4,7 +4,7 @@ import { defineConfig } from '@playwright/test'
  * Electron e2e. Does not install browsers.
  *
  *   npm run test:e2e
- *   npm run test:e2e:vavd   # remote + phone-remote + vavc + product-matrix + desktop-over-vavd + first-run empty + phone-ui + chrome-extension (CI on macos)
+ *   npm run test:e2e:vav-server   # remote + phone-remote + vav-board + product-matrix + desktop-over-vav-server + first-run empty + phone-ui + chrome-extension (CI on macos)
  */
 export default defineConfig({
   testDir: './specs',

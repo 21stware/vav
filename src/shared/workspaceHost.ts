@@ -7,7 +7,7 @@
  * process (the built-in daemon the UI already talks to).
  *
  * This module is pure (no Node imports) so the renderer and a future
- * headless `vavd` can share the same types.
+ * headless `vav-server` can share the same types.
  */
 
 import type { MachineAppearance } from './types.ts'
@@ -36,11 +36,11 @@ export type WorkspaceHostInfo = {
   providers?: HostProviderInfo[]
   /**
    * Host accepted a phone-role hello — session send/thread/live live there.
-   * Headless `vavd` is true once the daemon hosts AgentRuntime.
+   * Headless `vav-server` is true once the daemon hosts AgentRuntime.
    */
   controlPlane?: boolean
   /**
-   * This process’s spawned loopback vavd — the default local service, not a
+   * This process’s spawned loopback vav-server — the default local service, not a
    * user-facing remote in the switcher / tray.
    */
   localShell?: boolean
@@ -70,7 +70,7 @@ export function isLocalMachine(machineId: string | null | undefined): boolean {
   return normalizeMachineId(machineId) === LOCAL_MACHINE_ID
 }
 
-/** Remotes the user paired — hides the spawned loopback vavd. */
+/** Remotes the user paired — hides the spawned loopback vav-server. */
 export function userFacingRemotes<T extends { id: string; localShell?: boolean }>(
   hosts: readonly T[]
 ): T[] {

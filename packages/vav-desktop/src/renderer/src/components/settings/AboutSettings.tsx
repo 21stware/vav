@@ -101,9 +101,9 @@ export function AboutSettings(): React.JSX.Element {
           </span>
         </div>
         <div className="kv-row">
-          <span className="kv-label">{t('about.vavdVersion')}</span>
-          <span className="kv-value" data-testid="settings-about-vavd-version">
-            {about?.vavdVersion ?? '—'}
+          <span className="kv-label">{t('about.vavServerVersion')}</span>
+          <span className="kv-value" data-testid="settings-about-vav-server-version">
+            {about?.vavServerVersion ?? '—'}
           </span>
         </div>
         <div className="kv-row">

@@ -269,7 +269,10 @@ const api: VavApi = {
         { ok: true } | { ok: false; error: string }
       >,
     pickAttachments: () => ipcRenderer.invoke(IPC.filesPickAttachments),
-    captureScreenshot: () => ipcRenderer.invoke(IPC.filesCaptureScreenshot),
+    captureScreenshot: (options) => ipcRenderer.invoke(IPC.filesCaptureScreenshot, options),
+    screenshotPermission: () => ipcRenderer.invoke(IPC.filesScreenshotPermission),
+    openScreenshotPermissionSettings: () =>
+      ipcRenderer.invoke(IPC.filesOpenScreenshotPermissionSettings),
     saveAs: (defaultName: string, content: string) =>
       ipcRenderer.invoke(IPC.filesSaveAs, defaultName, content),
     rename: (path: string, newName: string, conversationId?: string) =>
@@ -450,8 +453,8 @@ const api: VavApi = {
     getAccentColor: () => ipcRenderer.invoke(IPC.windowGetAccentColor) as Promise<string>,
     onAccentColorChanged: (handler) => subscribe<string>(IPC.accentColorChanged, handler),
     shellPath: (kind: ShellKind) => ipcRenderer.invoke(IPC.windowShellPath, kind),
-    openSettings: (view?: SettingsView, agentId?: string) =>
-      ipcRenderer.invoke(IPC.windowOpenSettings, view, agentId),
+    openSettings: (view?: SettingsView, agentId?: string, machineId?: string) =>
+      ipcRenderer.invoke(IPC.windowOpenSettings, view, agentId, machineId),
     closeSettings: () => ipcRenderer.invoke(IPC.windowCloseSettings),
     desiredSettingsView: () =>
       ipcRenderer.invoke(IPC.settingsDesiredView) as Promise<SettingsViewPayload>,

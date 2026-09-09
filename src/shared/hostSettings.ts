@@ -10,7 +10,7 @@ import {
 } from './workspaceHost.ts'
 
 /**
- * Settings that live on vavd (turns, new sessions, trays). Appearance, fonts,
+ * Settings that live on vav-server (turns, new sessions, trays). Appearance, fonts,
  * hotkeys, and window chrome stay on the client.
  */
 export const HOST_SETTINGS_KEYS = [
@@ -86,7 +86,7 @@ export function mergeHostSettings(local: AppSettings, host: HostSettingsPatch): 
 }
 
 /**
- * Remote vavd stores recents as `local`. On this desktop they belong to the
+ * Remote vav-server stores recents as `local`. On this desktop they belong to the
  * paired machine id (the same remap `pullHostCatalog` applies).
  */
 export function remapHostWorkspaceSettings(
@@ -139,7 +139,7 @@ export function composeHostSettings(
   return retainAdoptedHostRecents(mergeHostSettings(local, remapped), local, machineId)
 }
 
-/** Derived secret flags from vavd — not persisted host prefs. */
+/** Derived secret flags from vav-server — not persisted host prefs. */
 export const SECRET_PRESENT_KEYS = [
   'apiKeyPresent',
   'braveSearchKeyPresent',

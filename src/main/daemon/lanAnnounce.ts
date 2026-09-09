@@ -1,5 +1,5 @@
 /**
- * LAN discovery for vavd — UDP multicast, no extra dependency.
+ * LAN discovery for vav-server — UDP multicast, no extra dependency.
  * Announce does not carry the pairing secret.
  */
 

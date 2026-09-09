@@ -7,7 +7,7 @@ declare global {
         settings?: { apiKeyPresent?: boolean }
       }>
       window: {
-        openSettings(view?: string, agentId?: string): Promise<void>
+        openSettings(view?: string, agentId?: string, machineId?: string): Promise<void>
         closeSettings(): Promise<void>
         openTokenUsage(conversationId: string): Promise<void>
         peekPopupMenu(): Promise<{ id?: string; label?: string; checked?: boolean }[] | null>

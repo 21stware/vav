@@ -134,7 +134,7 @@ describe('VavControlPlane', { concurrency: false }, () => {
         (msg) => msg.type === 'turn' && (msg.phase === 'done' || msg.phase === 'error')
       )
       const done = turns.find((m) => m.type === 'turn' && m.phase === 'done')
-      assert.ok(done, 'agent turn must finish inside vavd')
+      assert.ok(done, 'agent turn must finish inside vav-server')
       const stored = plane.conversations.get(conversationId)
       assert.ok(stored)
       assert.ok(stored.messages.some((m) => m.role === 'user'))
@@ -543,7 +543,7 @@ describe('VavControlPlane', { concurrency: false }, () => {
     try {
       const health = await fetch(`http://127.0.0.1:${web.port}/health`)
       assert.equal(health.ok, true)
-      assert.equal(((await health.json()) as { app: string }).app, 'vavd')
+      assert.equal(((await health.json()) as { app: string }).app, 'vav-server')
 
       const ws = new WebSocket(`ws://127.0.0.1:${web.port}/vav`)
       await new Promise<void>((resolve, reject) => {

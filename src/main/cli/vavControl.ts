@@ -1,6 +1,6 @@
 /**
- * Session-plane operations shared by vavc (herdr-style control) and vavcli
- * (pi-style agent). All traffic is the phone protocol against a running vavd.
+ * Session-plane operations shared by vav-board (herdr-style control) and vav-tui
+ * (pi-style agent). All traffic is the phone protocol against a running vav-server.
  */
 import type { RemoteSession, RemoteServerMessage, RemoteTurnEvent } from '../../shared/remoteControl.ts'
 import type { PhoneClient } from './vavPhoneClient.ts'
@@ -139,7 +139,7 @@ export async function replySession(
   toolCallId: string,
   answer: string
 ): Promise<void> {
-  if (!toolCallId.trim() || !answer.trim()) throw new Error('vavc session reply <id> <toolCallId> <answer>')
+  if (!toolCallId.trim() || !answer.trim()) throw new Error('vav-board session reply <id> <toolCallId> <answer>')
   phone.send({ type: 'reply', conversationId, toolCallId, answer })
   await phone.waitNew(
     (msg) =>
@@ -203,7 +203,7 @@ export async function continueSession(
   conversationId: string,
   messageId: string
 ): Promise<RemoteSession> {
-  if (!messageId) throw new Error('vavc session continue <id> <messageId>')
+  if (!messageId) throw new Error('vav-board session continue <id> <messageId>')
   phone.send({ type: 'continue', conversationId, messageId })
   const frames = await phone.waitNew(
     (msg) =>
@@ -244,7 +244,7 @@ export async function editSession(
   text: string,
   timeoutMs = 120_000
 ): Promise<RemoteTurnEvent> {
-  if (!messageId || !text.trim()) throw new Error('vavc session edit <id> <messageId> <text>')
+  if (!messageId || !text.trim()) throw new Error('vav-board session edit <id> <messageId> <text>')
   phone.send({ type: 'edit', conversationId, messageId, text })
   const frames = await phone.waitNew(
     (msg) =>
@@ -304,7 +304,7 @@ export async function locateWorkspace(
   conversationId: string,
   destinationDir: string
 ): Promise<Extract<RemoteServerMessage, { type: 'located' }>> {
-  if (!destinationDir.trim()) throw new Error('vavc session locate <id> <dir>')
+  if (!destinationDir.trim()) throw new Error('vav-board session locate <id> <dir>')
   phone.send({ type: 'locate', conversationId, destinationDir })
   const frames = await phone.waitNew(
     (msg) =>

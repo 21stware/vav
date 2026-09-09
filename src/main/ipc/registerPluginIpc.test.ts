@@ -4,7 +4,7 @@ import { IPC } from '../../shared/ipc.ts'
 import { registerPluginIpc } from './registerPluginIpc.ts'
 
 describe('registerPluginIpc', () => {
-  it('proxies list / setEnabled to spawned vavd and unwraps mutations', async () => {
+  it('proxies list / setEnabled to spawned vav-server and unwraps mutations', async () => {
     const calls: string[] = []
     const handlers = new Map<string, (...args: unknown[]) => unknown>()
     const ipcMain = {

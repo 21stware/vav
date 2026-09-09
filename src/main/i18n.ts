@@ -19,7 +19,7 @@ function systemLocale(): string {
     const locale = electron.app?.getLocale()
     if (locale) return locale
   } catch {
-    /* headless vavd — no Electron */
+    /* headless vav-server — no Electron */
   }
   const lang = process.env.LANG || process.env.LC_ALL || ''
   return lang.replace(/[._].*$/, '') || 'en'

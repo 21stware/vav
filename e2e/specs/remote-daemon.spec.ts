@@ -11,20 +11,20 @@ import {
   openFilesTray,
   openSettingsWindow,
   readElectronConversation,
-  readVavdConversation,
+  readVavServerConversation,
   waitForDaemonPairing,
   waitForHostWindow,
   pairRemoteDaemon,
   ensureSelectedSession
 } from '../launch'
-import { startVavd } from '../startVavd'
+import { startVavServer } from '../startVavServer'
 
 /**
- * Desktop VAV pairs with a real headless vavd, then a session's files list
+ * Desktop VAV pairs with a real headless vav-server, then a session's files list
  * must come from the daemon disk — not this machine's workspace.
  */
-test('pair vavd, open its folder, list a file that only exists there', async () => {
-  const daemon = await startVavd()
+test('pair vav-server, open its folder, list a file that only exists there', async () => {
+  const daemon = await startVavServer()
   const harness = await launchVav()
   try {
     const { page } = harness
@@ -172,7 +172,7 @@ test('pair vavd, open its folder, list a file that only exists there', async () 
       { path: join(daemon.workspace, 'remote-only.md'), id: created.id }
     )
     expect(text.error).toBeUndefined()
-    expect(text.content).toContain('planted by vavd e2e')
+    expect(text.content).toContain('planted by vav-server e2e')
 
     await page.evaluate((id) => window.vav.hosts.forget(id), paired.host.id)
     const after = await page.evaluate(() => window.vav.hosts.list())
@@ -187,8 +187,8 @@ test('pair vavd, open its folder, list a file that only exists there', async () 
   }
 })
 
-test('Settings → Machines rejects garbage, then pairs and forgets a vavd', async () => {
-  const daemon = await startVavd()
+test('Settings → Machines rejects garbage, then pairs and forgets a vav-server', async () => {
+  const daemon = await startVavServer()
   const harness = await launchVav()
   try {
     const settings = await openSettingsWindow(harness, 'connect')
@@ -224,7 +224,7 @@ test('Settings → Machines rejects garbage, then pairs and forgets a vavd', asy
 })
 
 test('workdir menu opens the remote folder picker and binds the session', async () => {
-  const daemon = await startVavd()
+  const daemon = await startVavServer()
   const harness = await launchVav()
   try {
     const { page } = harness
@@ -281,11 +281,11 @@ test('workdir menu opens the remote folder picker and binds the session', async 
 
 /**
  * Desktop Connect is a shell. Electron is launched without VAV_E2E_STUB_TURN
- * so a local agent cannot mint "e2e stub reply" — the turn must run in vavd.
+ * so a local agent cannot mint "e2e stub reply" — the turn must run in vav-server.
  */
-test('desktop Connect send streams a vavd stub turn, not an Electron one', async () => {
+test('desktop Connect send streams a vav-server stub turn, not an Electron one', async () => {
   test.setTimeout(90_000)
-  const daemon = await startVavd({ stubStream: true })
+  const daemon = await startVavServer({ stubStream: true })
   const harness = await launchVav()
   try {
     const { page } = harness
@@ -343,7 +343,7 @@ test('desktop Connect send streams a vavd stub turn, not an Electron one', async
       )
       .toBe(true)
 
-    await remote.screenshot({ path: 'test-results/e2e/vavd-desktop-connect-turn.png' })
+    await remote.screenshot({ path: 'test-results/e2e/vav-server-desktop-connect-turn.png' })
   } finally {
     await harness.dispose()
     daemon.stop()
@@ -351,14 +351,14 @@ test('desktop Connect send streams a vavd stub turn, not an Electron one', async
 })
 
 /**
- * Desktop app launched with VAVD_URI is a vavd UI — no Connect paste.
+ * Desktop app launched with VAV_SERVER_URI is a vav-server UI — no Connect paste.
  * Electron is launched without VAV_E2E_STUB_TURN so the reply must come
  * from the daemon, not an in-process agent.
  */
-test('desktop launches as a vavd client via VAVD_URI', async () => {
+test('desktop launches as a vav-server client via VAV_SERVER_URI', async () => {
   test.setTimeout(90_000)
-  const daemon = await startVavd({ stubStream: true })
-  const harness = await launchVav({ vavdUri: daemon.pairing })
+  const daemon = await startVavServer({ stubStream: true })
+  const harness = await launchVav({ vavServerUri: daemon.pairing })
   try {
     const { page } = harness
     const remote = await waitForHostWindow(harness, 'E2E Daemon')
@@ -415,7 +415,7 @@ test('desktop launches as a vavd client via VAVD_URI', async () => {
       'e2e stub reply'
     )
 
-    await remote.screenshot({ path: 'test-results/e2e/vavd-desktop-autopair-turn.png' })
+    await remote.screenshot({ path: 'test-results/e2e/vav-server-desktop-autopair-turn.png' })
   } finally {
     await harness.dispose()
     daemon.stop()
@@ -423,12 +423,12 @@ test('desktop launches as a vavd client via VAVD_URI', async () => {
 })
 
 /**
- * Desktop `--with-vavd` / `VAVD_SPAWN` starts the daemon itself.
- * Electron has no stub turn; the reply must come from the child vavd.
+ * Desktop `--with-vav-server` / `VAV_SERVER_SPAWN` starts the daemon itself.
+ * Electron has no stub turn; the reply must come from the child vav-server.
  */
-test('desktop spawns vavd and sends through the child process', async () => {
+test('desktop spawns vav-server and sends through the child process', async () => {
   test.setTimeout(90_000)
-  const harness = await launchVav({ spawnVavd: true })
+  const harness = await launchVav({ spawnVavServer: true })
   try {
     const { page } = harness
     const remote = page
@@ -455,7 +455,7 @@ test('desktop spawns vavd and sends through the child process', async () => {
       (id) => window.vav.conversations.setApprovalMode(id, 'bypass'),
       sessionId
     )
-    await remote.locator('[data-testid="composer-input"]').fill('ping from spawned vavd')
+    await remote.locator('[data-testid="composer-input"]').fill('ping from spawned vav-server')
     await remote.locator('[data-testid="composer-send"]').click()
 
     await expect(remote.locator('[data-testid="tool-card"][data-tool="fs_read"]')).toBeVisible({
@@ -466,14 +466,14 @@ test('desktop spawns vavd and sends through the child process', async () => {
     )
     await expect
       .poll(
-        () => readVavdConversation(harness.userData, sessionId!)?.includes('e2e stub reply') ?? false
+        () => readVavServerConversation(harness.userData, sessionId!)?.includes('e2e stub reply') ?? false
       )
       .toBe(true)
     expect(readElectronConversation(harness.userData, sessionId!) ?? '').not.toContain(
       'e2e stub reply'
     )
 
-    await remote.screenshot({ path: 'test-results/e2e/vavd-desktop-spawn-turn.png' })
+    await remote.screenshot({ path: 'test-results/e2e/vav-server-desktop-spawn-turn.png' })
   } finally {
     await harness.dispose()
   }
@@ -487,7 +487,7 @@ async function findDesktopDiscover(): Promise<string | null> {
       })
       if (!res.ok) continue
       const info = (await res.json()) as { app?: string; secret?: string }
-      if (info.app === 'vavd' && info.secret) return `http://127.0.0.1:${port}`
+      if (info.app === 'vav-server' && info.secret) return `http://127.0.0.1:${port}`
     } catch {
       /* next port */
     }
@@ -496,12 +496,12 @@ async function findDesktopDiscover(): Promise<string | null> {
 }
 
 /**
- * Packaged desktop used to spawn vavd with --no-web, so the Chrome extension
+ * Packaged desktop used to spawn vav-server with --no-web, so the Chrome extension
  * never found this machine. The child must serve /discover on the web range.
  */
-test('spawned desktop vavd is discoverable on the Chrome extension web bridge', async () => {
+test('spawned desktop vav-server is discoverable on the Chrome extension web bridge', async () => {
   test.setTimeout(90_000)
-  const harness = await launchVav({ spawnVavd: true, stubTurn: true })
+  const harness = await launchVav({ spawnVavServer: true, stubTurn: true })
   try {
     await harness.page.locator('[data-testid="app-shell"]').waitFor({ state: 'visible', timeout: 25_000 })
     let origin = ''
@@ -518,7 +518,7 @@ test('spawned desktop vavd is discoverable on the Chrome extension web bridge', 
       name?: string
       wsPath?: string
     }
-    expect(info.app).toBe('vavd')
+    expect(info.app).toBe('vav-server')
     expect(info.secret).toBeTruthy()
     expect(info.wsPath).toBe('/vav')
 
@@ -563,12 +563,12 @@ test('spawned desktop vavd is discoverable on the Chrome extension web bridge', 
 })
 
 /**
- * Connect's pairing line on a spawned-vavd desktop is the child daemon.
- * A phone-protocol client that pastes that URI must turn on vavd, not Electron.
+ * Connect's pairing line on a spawned-vav-server desktop is the child daemon.
+ * A phone-protocol client that pastes that URI must turn on vav-server, not Electron.
  */
-test('spawned desktop advertises vavd pairing for an incoming phone client', async () => {
+test('spawned desktop advertises vav-server pairing for an incoming phone client', async () => {
   test.setTimeout(90_000)
-  const harness = await launchVav({ spawnVavd: true })
+  const harness = await launchVav({ spawnVavServer: true })
   try {
     const { page } = harness
     const remote = page
@@ -612,18 +612,18 @@ test('spawned desktop advertises vavd pairing for an incoming phone client', asy
       phone.close()
     }
 
-    await remote.screenshot({ path: 'test-results/e2e/vavd-advertised-pairing-phone.png' })
+    await remote.screenshot({ path: 'test-results/e2e/vav-server-advertised-pairing-phone.png' })
   } finally {
     await harness.dispose()
   }
 })
 
 /**
- * Approve a write on the remote window; the file must land on the vavd disk.
+ * Approve a write on the remote window; the file must land on the vav-server disk.
  */
-test('desktop Connect approve writes a file on the vavd disk', async () => {
+test('desktop Connect approve writes a file on the vav-server disk', async () => {
   test.setTimeout(90_000)
-  const daemon = await startVavd({ stubApprove: true })
+  const daemon = await startVavServer({ stubApprove: true })
   const harness = await launchVav()
   try {
     const { page } = harness
@@ -808,12 +808,12 @@ test('pair another VAV, pull its sessions and folder recents', async () => {
 })
 
 /**
- * Same sidebar on a paired vavd: configure (settings surface) and New bash
+ * Same sidebar on a paired vav-server: configure (settings surface) and New bash
  * (terminal) must hit the daemon host, not a second local chat.
  */
-test('paired vavd configure and New bash match the local workbench', async () => {
+test('paired vav-server configure and New bash match the local workbench', async () => {
   test.setTimeout(90_000)
-  const daemon = await startVavd()
+  const daemon = await startVavServer()
   const harness = await launchVav()
   try {
     const { page } = harness
@@ -863,5 +863,71 @@ test('paired vavd configure and New bash match the local workbench', async () =>
   } finally {
     await harness.dispose()
     daemon.stop()
+  }
+})
+
+/**
+ * Bug 3 (conversation sync): a third-party controller creates and drives a
+ * session on the spawned vav-server. The origin desktop is only another
+ * control-plane client, so it never receives the creator-only `created`
+ * unicast — it must learn about the new session via the debounced `sessions`
+ * broadcast and show it in the sidebar with the live transcript.
+ */
+test('third-party controller session on the vav-server syncs to the origin desktop', async () => {
+  test.setTimeout(90_000)
+  const harness = await launchVav({ spawnVavServer: true })
+  try {
+    const { page } = harness
+    await page.locator('[data-testid="app-shell"]').waitFor({ state: 'visible', timeout: 25_000 })
+
+    const pairing = await waitForDaemonPairing(page)
+    const parsed = parseDaemonPairing(pairing)
+    expect(parsed?.secret).toBeTruthy()
+    expect(parsed?.port).toBeGreaterThan(0)
+
+    const phone = await connectPhone({
+      host: '127.0.0.1',
+      port: parsed!.port!,
+      secret: parsed!.secret,
+      device: 'E2E Third Party',
+      omitRole: true
+    })
+    let conversationId = ''
+    try {
+      phone.send({ type: 'create' })
+      const createdFrames = await phone.waitNew((msg) => msg.type === 'created')
+      const created = createdFrames.findLast((msg) => msg.type === 'created')
+      expect(created?.type).toBe('created')
+      if (!created || created.type !== 'created') return
+      conversationId = created.session.id
+
+      phone.send({ type: 'configure', conversationId, approvalMode: 'bypass' })
+      await phone.waitNew((msg) => msg.type === 'controls')
+      phone.send({ type: 'send', conversationId, text: 'ping from third party' })
+      const turns = await phone.waitNew(
+        (msg) => msg.type === 'turn' && (msg.phase === 'done' || msg.phase === 'error')
+      )
+      expect(turns.some((msg) => msg.type === 'turn' && msg.phase === 'done')).toBe(true)
+    } finally {
+      phone.close()
+    }
+
+    // Origin desktop learns about the third-party session via the `sessions`
+    // broadcast (applyDesktopControlEvent) and shows it without a manual pull.
+    const row = page.locator(
+      `[data-testid="session-row"][data-conversation-id="${conversationId}"]`
+    )
+    await expect(row).toBeVisible({ timeout: 25_000 })
+    await row.click()
+    await expect(page.locator('[data-testid="message-user"]').last()).toContainText(
+      'ping from third party'
+    )
+    await expect(page.locator('[data-testid="message-assistant"]').last()).toContainText(
+      'e2e stub reply'
+    )
+
+    await page.screenshot({ path: 'test-results/e2e/third-party-session-sync.png' })
+  } finally {
+    await harness.dispose()
   }
 })

@@ -26,7 +26,7 @@ const BRAND_ICON_FILES: Record<string, string> = {
 }
 
 /**
- * Packed `vavd.js` is CJS — `import.meta.dirname` is undefined there.
+ * Packed `vav-server.js` is CJS — `import.meta.dirname` is undefined there.
  * Never resolve paths at module load from it, or the binary dies on boot.
  */
 function brandIconPath(file: string): string | null {
@@ -271,8 +271,8 @@ function handleHttp(req: IncomingMessage, res: ServerResponse, opts: VavWebBridg
   if (path === '/health') {
     json(res, 200, {
       ok: true,
-      app: 'vavd',
-      name: opts.name || 'vavd',
+      app: 'vav-server',
+      name: opts.name || 'vav-server',
       version: opts.version || '0.0.0'
     })
     return

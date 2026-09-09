@@ -1,5 +1,5 @@
 /**
- * Format the current browser tab so a vavd turn can see it.
+ * Format the current browser tab so a vav-server turn can see it.
  * Shared by the Chrome extension (copied into extension/lib) and tests.
  */
 

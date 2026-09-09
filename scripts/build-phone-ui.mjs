@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Bundle the desktop session UI for vavd's web page and the Chrome side panel.
+ * Bundle the desktop session UI for vav-server's web page and the Chrome side panel.
  */
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'

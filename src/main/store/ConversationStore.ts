@@ -74,9 +74,9 @@ type ConversationIndex = { version: number; ids: string[] }
  * (tmp + rename). Callers persist at tool boundaries and turn end, never per token.
  * Quit / turn-end use sync {@link flush}; the debounce path uses async I/O.
  *
- * When the workbench is a shell over spawned vavd, {@link setShouldPersist}
+ * When the workbench is a shell over spawned vav-server, {@link setShouldPersist}
  * skips local rows so `userData/conversations` is not a second copy of
- * `userData/vavd/conversations`. The sidebar still holds those rows in memory.
+ * `userData/vav-server/conversations`. The sidebar still holds those rows in memory.
  */
 export class ConversationStore {
   /** Directory holding `index.json` and per-conversation shards. */
@@ -111,7 +111,7 @@ export class ConversationStore {
   private loaded = false
   /**
    * Return false to keep a row in memory only. Null = persist everything.
-   * Desktop sets this when the spawned local vavd owns local chats.
+   * Desktop sets this when the spawned local vav-server owns local chats.
    */
   private persistGate: ((conversation: Conversation) => boolean) | null = null
 
@@ -122,7 +122,7 @@ export class ConversationStore {
 
   /**
    * Host-owned rows stay in the sidebar cache but leave this directory.
-   * Passing `null` restores persist-all (no spawned vavd).
+   * Passing `null` restores persist-all (no spawned vav-server).
    */
   setShouldPersist(gate: ((conversation: Conversation) => boolean) | null): void {
     this.persistGate = gate
@@ -271,7 +271,7 @@ export class ConversationStore {
     return matches.find((c) => isLocalMachine(c.machineId)) ?? matches[0]
   }
 
-  /** Map a local chat onto a spawned-vavd session (same sidebar, turns on the daemon). */
+  /** Map a local chat onto a spawned-vav-server session (same sidebar, turns on the daemon). */
   bindHostSession(id: string, hostConversationId: string): Conversation | undefined {
     const conversation = this.get(id)
     const hostId = hostConversationId.trim()
@@ -302,7 +302,7 @@ export class ConversationStore {
       accountId?: string | null
       swarmParentId?: string | null
       machineId?: string | null
-      /** Reuse a workbench id so spawned vavd turns project onto the same row. */
+      /** Reuse a workbench id so spawned vav-server turns project onto the same row. */
       id?: string
     }
   ): Conversation {
@@ -454,7 +454,7 @@ export class ConversationStore {
       (c) => isLocalMachine(c.machineId) && c.id === source.id
     )
     if (existingLocal) {
-      // Spawned vavd echoing the workbench id — do not mint a remote duplicate.
+      // Spawned vav-server echoing the workbench id — do not mint a remote duplicate.
       if (!isLocalMachine(hostId)) return null
       // Catalog refresh of a Chrome-created / local-shell row already adopted.
       let changed = false

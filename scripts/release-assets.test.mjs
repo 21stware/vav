@@ -17,10 +17,10 @@ test('extension and every product package version match the app', () => {
   const extension = JSON.parse(readFileSync(join(root, 'packages/vav-chrome-extension/extension/manifest.json'), 'utf8'))
   assert.equal(extension.version, version)
   for (const dir of [
-    'vavd',
+    'vav-server',
     'vav-desktop',
-    'vav-cli',
-    'vavc',
+    'vav-tui',
+    'vav-board',
     'vav-chrome-extension',
     'vav-ios',
     'vav-android'
@@ -32,7 +32,7 @@ test('extension and every product package version match the app', () => {
   }
 })
 
-test('every release lists desktop installers, updater feeds, vavd, and the Chrome extension', () => {
+test('every release lists desktop installers, updater feeds, vav-server, and the Chrome extension', () => {
   const version = '1.2.3'
   const names = requiredReleaseAssets(version)
   assert.deepEqual(names, [
@@ -43,7 +43,7 @@ test('every release lists desktop installers, updater feeds, vavd, and the Chrom
     'VAV-1.2.3-windows-x64-setup.exe',
     'VAV-1.2.3-windows-x64-setup.exe.blockmap',
     'latest.yml',
-    '21stware-vavd-1.2.3.tgz',
+    '21stware-vav-server-1.2.3.tgz',
     'vav-chrome-extension-1.2.3.zip'
   ])
   assert.equal(packageVersion().split('.').length, 3)
@@ -56,7 +56,7 @@ test('missingReleaseAssets reports only the absent files', () => {
     writeFileSync(join(dir, 'latest.yml'), 'x\n')
     const missing = missingReleaseAssets(dir, '9.9.9')
     assert.ok(missing.includes('VAV-9.9.9-macos-arm64.dmg'))
-    assert.ok(missing.includes('21stware-vavd-9.9.9.tgz'))
+    assert.ok(missing.includes('21stware-vav-server-9.9.9.tgz'))
     assert.ok(missing.includes('vav-chrome-extension-9.9.9.zip'))
     assert.ok(!missing.includes('latest.yml'))
   } finally {

@@ -75,7 +75,7 @@ async function readHostAuthIdentitySafe(kind: CliHostKind): Promise<string | nul
     const { readHostAuthIdentity } = await import('./hostAuth.ts')
     return await readHostAuthIdentity(kind)
   } catch {
-    // vavd is plain Node — quota readers import `electron`. Skip identity.
+    // vav-server is plain Node — quota readers import `electron`. Skip identity.
     return null
   }
 }

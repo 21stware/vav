@@ -1,6 +1,6 @@
 /**
  * Build the GitHub Release sidecars that are not electron-builder artifacts:
- * the @21stware/vavd npm tarball and the unpacked Chrome extension zip.
+ * the @21stware/vav-server npm tarball and the unpacked Chrome extension zip.
  *
  *   node scripts/pack-release-sidecars.mjs --out /tmp/sidecars
  */
@@ -22,11 +22,11 @@ function argValue(flag, fallback) {
 
 const outDir = resolve(argValue('--out', join(root, 'release')))
 mkdirSync(outDir, { recursive: true })
-const pkgDir = resolve(argValue('--dir') || join(root, 'packages', 'vavd'))
+const pkgDir = resolve(argValue('--dir') || join(root, 'packages', 'vav-server'))
 
 const pack = spawnSync(
   process.execPath,
-  [join(root, 'scripts/pack-vavd.mjs'), '--dir', pkgDir],
+  [join(root, 'scripts/pack-vav-server.mjs'), '--dir', pkgDir],
   {
     cwd: root,
     stdio: 'inherit',
@@ -59,5 +59,5 @@ function addExtensionTree(abs, rel = '') {
 addExtensionTree(extDir)
 const zipName = `vav-chrome-extension-${version}.zip`
 writeFileSync(join(outDir, zipName), await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' }))
-console.log(`[pack-release-sidecars] ${outDir}/21stware-vavd-${version}.tgz`)
+console.log(`[pack-release-sidecars] ${outDir}/21stware-vav-server-${version}.tgz`)
 console.log(`[pack-release-sidecars] ${outDir}/${zipName}`)

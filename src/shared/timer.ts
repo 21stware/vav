@@ -2,7 +2,7 @@
  * Scheduled tasks. The user writes the prompt in the definition conversation
  * (right panel) and sets the period there. Each fire mints a timestamped
  * workspace and a run conversation under that schedule — never in the main
- * project list. Jobs live in ~/.vavd so a running vavd can fire them.
+ * project list. Jobs live in ~/.vav-server so a running vav-server can fire them.
  */
 import type { ConnectorId } from './connector.ts'
 

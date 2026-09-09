@@ -1,12 +1,12 @@
 /**
- * Workspace-host daemon protocol (VAV ⇄ vavd / another desktop).
+ * Workspace-host daemon protocol (VAV ⇄ vav-server / another desktop).
  *
  * Transport: JSON lines over TCP. Same framing as iOS remote control
  * (`drainJsonLines`), different message set — fs / spawn / pty live here,
  * not on remoteControl v1. Host file-manager actions (`fs.reveal` /
  * `fs.openPath` / `fs.preview` / `fs.getInfo` / `fs.copyAsFile`) open Finder
  * / Explorer / the default app on the machine that holds the files so Chrome,
- * desktop-remote, and `vavc file reveal` match the workbench.
+ * desktop-remote, and `vav-board file reveal` match the workbench.
  *
  * Handshake: first line is `hello` with `role: 'daemon'` and either the
  * ephemeral offer secret or a previously issued grant secret. Offer hellos
@@ -23,12 +23,12 @@
  * `vercel.status`) run on the host
  * so Chrome / web match the desktop workspace tabs.
  *
- * Optional catalog RPCs (desktop hosts only; headless `vavd` returns empty):
+ * Optional catalog RPCs (desktop hosts only; headless `vav-server` returns empty):
  * `sessions.list`, `sessions.get`, `workspace.recents` — so a paired client
  * can import that machine's sidebar sessions and folder recents.
  *
  * Diagnostic log RPCs (`logs.query` / `stats` / `clear` / `export` / `record`
- * / `subscribe`) live on the control-plane host — `vavd`. The desktop Settings
+ * / `subscribe`) live on the control-plane host — `vav-server`. The desktop Settings
  * → Logs pane is a client of that sink, not a second store.
  *
  * Provider-account RPCs (`accounts.getPage`, `accounts.createVav`,
@@ -36,7 +36,7 @@
  * `accounts.activate`, `accounts.remove`, `accounts.verify`,
  * `accounts.revealKey` / `accounts.beginOAuth` / `accounts.cancelOAuth` /
  * `accounts.signOut`) share the same AccountStore Chrome Settings and
- * desktop IPC read when the workbench is a shell over spawned vavd.
+ * desktop IPC read when the workbench is a shell over spawned vav-server.
  *
  * Host-preference RPCs (`settings.get` / `settings.update` / `settings.reset`)
  * sync model, agents, trays, and workdir defaults. Theme / fonts stay client-side.
@@ -46,12 +46,12 @@
  * is the same in-memory store desktop, Chrome, and web Accept against.
  *
  * Incoming pairing (`host.pairing` / `host.rotateOffer`) is the same `vavrtp://`
- * offer Chrome Settings, desktop Connect, and `vavc host` copy. Rotate mints a
+ * offer Chrome Settings, desktop Connect, and `vav-board host` copy. Rotate mints a
  * new offer secret; issued grants stay valid. Authorized controllers
  * (`host.incoming` / `host.disconnectIncoming` / `host.unpairIncoming`) are
  * that same grant list.
  *
- * This module is pure (no Node imports) so tests and a headless `vavd` share it.
+ * This module is pure (no Node imports) so tests and a headless `vav-server` share it.
  */
 
 import { parsePairing } from './remoteControl.ts'
@@ -76,7 +76,7 @@ export function isDaemonPairingUri(text: string): boolean {
   )
 }
 
-/** First line vavd prints after listen — current or legacy scheme. */
+/** First line vav-server prints after listen — current or legacy scheme. */
 export function isDaemonPairingLine(line: string): boolean {
   const trimmed = line.trim()
   return (
@@ -299,7 +299,7 @@ export function parseDaemonServerFrame(value: unknown): DaemonServerMessage | nu
 // --- pairing ---
 
 /**
- * Payload a desktop / vavd prints or encodes in Settings.
+ * Payload a desktop / vav-server prints or encodes in Settings.
  * `vavrtp://secret@host:port?name=&token=&addresses=` — distinct from the
  * phone QR (`vav-remote:`). Legacy `vav-daemon://` still parses.
  */
@@ -426,7 +426,7 @@ export function parseMachinePairing(text: string): DaemonPairing | null {
 /** Live pairing relationship as the host shows it. */
 export type IncomingControllerState = 'pending' | 'online' | 'offline' | 'kicked' | 'revoked'
 
-/** A controller this host has issued a grant to (desktop Incoming / vavd clients). */
+/** A controller this host has issued a grant to (desktop Incoming / vav-server clients). */
 export type IncomingController = {
   id: string
   name: string

@@ -234,6 +234,10 @@ describe('daemon loopback', () => {
       const written = await next.request('pty.write', { stream: spawned.stream, data: 'x' })
       assert.deepEqual(written, { ok: true })
       await next.request('pty.kill', { stream: spawned.stream })
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, 150)
+        timer.unref?.()
+      })
       next.close()
     } finally {
       server.close()
@@ -500,7 +504,7 @@ describe('daemon loopback', () => {
     store.append({
       channel: 'system',
       event: LOG_EVENT.systemBoot,
-      message: 'vavd ready'
+      message: 'vav-server ready'
     })
     store.append({
       channel: 'agent',
@@ -514,7 +518,7 @@ describe('daemon loopback', () => {
         records: Array<{ event: string; message: string }>
       }
       assert.equal(system.records[0]?.event, LOG_EVENT.systemBoot)
-      assert.equal(system.records[0]?.message, 'vavd ready')
+      assert.equal(system.records[0]?.message, 'vav-server ready')
       const agent = (await client.request('logs.query', { channel: 'agent' })) as {
         records: Array<{ message: string }>
       }

@@ -490,7 +490,7 @@ export function AgentModelPicker({
 
       if (items.length > 0) items.push({ label: '', divider: true })
 
-      // Phone / Chrome side panel: vavd only hosts VAV. Flatten the vendor so
+      // Phone / Chrome side panel: vav-server only hosts VAV. Flatten the vendor so
       // a tap picks a model instead of a parent row with no onSelect.
       if (
         isPhoneShell() &&

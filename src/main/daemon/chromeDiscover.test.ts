@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { describe, it } from 'node:test'
 import {
   discoverOrigins,
-  findLocalVavd,
+  findLocalVavServer,
   loopbackWebOrigin,
   loopbackWsUrl,
   probeDiscover,
@@ -49,7 +49,7 @@ describe('Chrome extension discover', () => {
     assert.equal(loopbackWsUrl('ws://1.1.1.1:4752/vav'), 'ws://127.0.0.1:4752/vav')
   })
 
-  it('probes a live vavd and prefers a secret-bearing host', async () => {
+  it('probes a live vav-server and prefers a secret-bearing host', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'vav-discover-'))
     const host = createLocalWorkspaceHost({ name: 'discover' })
     const plane = createVavControlPlane({
@@ -76,13 +76,13 @@ describe('Chrome extension discover', () => {
     try {
       const hit = await probeDiscover(`http://127.0.0.1:${web.port}`)
       assert.ok(hit)
-      assert.equal(hit.app, 'vavd')
+      assert.equal(hit.app, 'vav-server')
       assert.equal(hit.secret, SECRET)
       assert.equal(hit.wsUrl, `ws://127.0.0.1:${web.port}/vav`)
       assert.equal(await probeDiscover(`http://127.0.0.1:${decoyPort}`), null)
       assert.equal(await probeDiscover('http://127.0.0.1:1'), null)
 
-      const found = await findLocalVavd({
+      const found = await findLocalVavServer({
         ports: [web.port],
         hosts: ['127.0.0.1']
       })
@@ -90,7 +90,7 @@ describe('Chrome extension discover', () => {
       assert.equal(found.secret, SECRET)
       assert.equal(found.name, 'discover-host')
 
-      const fromLanHint = await findLocalVavd({
+      const fromLanHint = await findLocalVavServer({
         origin: `http://192.168.1.5:${web.port}`,
         hosts: ['192.168.1.5'],
         ports: [web.port]
@@ -109,12 +109,12 @@ describe('Chrome extension discover', () => {
   it('prefers a discover host that already has a provider key', async () => {
     const empty = createServer((_req, res) => {
       res.writeHead(200, { 'content-type': 'application/json' })
-      res.end(JSON.stringify({ app: 'vavd', proto: 1, secret: 'aaaaaaaaaaaaaaaa', hasKey: false }))
+      res.end(JSON.stringify({ app: 'vav-server', proto: 1, secret: 'aaaaaaaaaaaaaaaa', hasKey: false }))
     })
     const ready = createServer((_req, res) => {
       res.writeHead(200, { 'content-type': 'application/json' })
       res.end(
-        JSON.stringify({ app: 'vavd', proto: 1, secret: 'bbbbbbbbbbbbbbbb', hasKey: true, name: 'ready' })
+        JSON.stringify({ app: 'vav-server', proto: 1, secret: 'bbbbbbbbbbbbbbbb', hasKey: true, name: 'ready' })
       )
     })
     await Promise.all([
@@ -124,7 +124,7 @@ describe('Chrome extension discover', () => {
     const emptyPort = (empty.address() as { port: number }).port
     const readyPort = (ready.address() as { port: number }).port
     try {
-      const found = await findLocalVavd({
+      const found = await findLocalVavServer({
         ports: [emptyPort, readyPort],
         hosts: ['127.0.0.1']
       })

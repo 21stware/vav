@@ -50,7 +50,7 @@ export default defineConfig({
       rollupOptions: {
         input: {
           index: resolve('packages/vav-desktop/src/main/index.ts'),
-          vavd: resolve('packages/vavd/src/vavd.ts')
+          'vav-server': resolve('packages/vav-server/src/vav-server.ts')
         },
         external: OPTIONAL_WS_NATIVE
       }

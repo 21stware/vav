@@ -68,7 +68,7 @@ export async function ensurePhoneUiBundle(): Promise<void> {
   }
 }
 
-/** Plant the same 2-file review desktop e2e seeds, on the live vavd store. */
+/** Plant the same 2-file review desktop e2e seeds, on the live vav-server store. */
 export async function seedChangeReview(pairing: string, conversationId: string): Promise<string> {
   const parsed = parseDaemonPairing(pairing)
   if (!parsed?.secret) throw new Error('pairing missing secret')
@@ -199,7 +199,7 @@ export async function sessionWorkdir(pairing: string, conversationId: string): P
   }
 }
 
-/** Git / Plugins tray on the same daemon plane as desktop-vavd-matrix. */
+/** Git / Plugins tray on the same daemon plane as desktop-vav-server-matrix. */
 export async function assertGitAndPluginsTray(
   page: Page,
   pairing: string,
@@ -232,7 +232,7 @@ export async function assertGitAndPluginsTray(
   await expect(files).toBeVisible()
 }
 
-/** Same Files drawer preview desktop-vavd-matrix asserts after a dblclick. */
+/** Same Files drawer preview desktop-vav-server-matrix asserts after a dblclick. */
 export async function assertFilePreview(page: Page, fileName: string): Promise<void> {
   const row = page.locator(`[data-file-path$="${fileName}"]`)
   const path = await row.getAttribute('data-file-path')
@@ -343,7 +343,7 @@ export async function assertSessionListActions(page: Page, conversationId: strin
   await expect(row).toContainText('Chrome renamed')
 }
 
-/** List / resource: New Session mint another row on the same vavd catalog. */
+/** List / resource: New Session mint another row on the same vav-server catalog. */
 export async function assertNewSessionRow(page: Page): Promise<void> {
   const before = await page.locator('[data-testid="session-row"]').count()
   await page.locator('[data-testid="new-session"]').click()

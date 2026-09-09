@@ -74,7 +74,7 @@ struct PairingView: View {
     private var hint: String {
         switch mode {
         case .firstRun:
-            return "在电脑上打开 VAV → 设置 → 连接，扫描二维码，或粘贴 vavd 打印的配对 URI。"
+            return "在电脑上打开 VAV → 设置 → 连接，扫描二维码，或粘贴 vav-server 打印的配对 URI。"
         case .add:
             return "扫描另一台电脑上的配对二维码。已保存的电脑不会被覆盖。"
         }

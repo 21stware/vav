@@ -1,5 +1,5 @@
 /**
- * Bundled control UI served by `vavd` at `/`.
+ * Bundled control UI served by `vav-server` at `/`.
  * Built from `packages/vav-chrome-extension/phone-ui` — the same React session shell as desktop.
  */
 import { existsSync, readFileSync } from 'node:fs'
@@ -9,7 +9,7 @@ export function phoneUiDir(
   from = typeof import.meta.dirname === 'string' ? import.meta.dirname : '',
   cwd = process.cwd()
 ): string | null {
-  const roots = [from, cwd, join(cwd, 'packages', 'vavd')].filter(Boolean)
+  const roots = [from, cwd, join(cwd, 'packages', 'vav-server')].filter(Boolean)
   const rels = [
     '../../../out/phone-ui',
     '../../out/phone-ui',

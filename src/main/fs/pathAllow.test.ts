@@ -30,7 +30,7 @@ describe('isPathInside', () => {
 describe('isPathAllowed', () => {
   it('matches watched roots and granted files', () => {
     const root = join('/tmp', 'ws')
-    const extra = join('/tmp', 'vav-clips')
+    const extra = join('/tmp', 'vav-tuips')
     const granted = join('/Users', 'ada', 'Downloads', 'note.txt')
     assert.equal(isPathAllowed(join(root, 'a.ts'), [root, extra], [granted]), true)
     assert.equal(isPathAllowed(join(extra, 'x.png'), [root, extra], [granted]), true)

@@ -1,9 +1,9 @@
 /**
- * Daemon-role RPC used by vavc for files, PTY panes, host info, and logs.
+ * Daemon-role RPC used by vav-board for files, PTY panes, host info, and logs.
  * Same pairing secret as the phone plane; different hello.role.
  */
 import { DaemonClient } from '../daemon/DaemonClient.ts'
-import type { VavdTarget } from './vavdTarget.ts'
+import type { VavServerTarget } from './vavServerTarget.ts'
 import { printJson, printLine } from './vavControl.ts'
 
 export type DaemonRpc = {
@@ -17,9 +17,9 @@ export function defaultShell(): string {
   return process.env.SHELL || '/bin/zsh'
 }
 
-export async function connectDaemonTarget(target: VavdTarget, device = 'vavc'): Promise<DaemonRpc> {
+export async function connectDaemonTarget(target: VavServerTarget, device = 'vav-board'): Promise<DaemonRpc> {
   if (target.kind !== 'tcp') {
-    throw new Error('file / pane / host commands need a TCP vavd (pass --uri or --state)')
+    throw new Error('file / pane / host commands need a TCP vav-server (pass --uri or --state)')
   }
   const client = new DaemonClient()
   await client.connect({
@@ -32,7 +32,7 @@ export async function connectDaemonTarget(target: VavdTarget, device = 'vavc'): 
 }
 
 export async function withDaemon<T>(
-  target: VavdTarget,
+  target: VavServerTarget,
   fn: (rpc: DaemonRpc) => Promise<T>
 ): Promise<T> {
   const rpc = await connectDaemonTarget(target)
@@ -60,69 +60,69 @@ export async function hostIncoming(rpc: DaemonRpc): Promise<unknown> {
 }
 
 export async function hostDisconnectIncoming(rpc: DaemonRpc, grantId: string): Promise<unknown> {
-  if (!grantId) throw new Error('vavc host disconnect <grantId>')
+  if (!grantId) throw new Error('vav-board host disconnect <grantId>')
   return rpc.request('host.disconnectIncoming', { grantId })
 }
 
 export async function hostUnpairIncoming(rpc: DaemonRpc, grantId: string): Promise<unknown> {
-  if (!grantId) throw new Error('vavc host unpair <grantId>')
+  if (!grantId) throw new Error('vav-board host unpair <grantId>')
   return rpc.request('host.unpairIncoming', { grantId })
 }
 
 export async function listFiles(rpc: DaemonRpc, path: string): Promise<unknown> {
-  if (!path) throw new Error('vavc file list <path>')
+  if (!path) throw new Error('vav-board file list <path>')
   return rpc.request('fs.readdir', { path })
 }
 
 export async function statFile(rpc: DaemonRpc, path: string): Promise<unknown> {
-  if (!path) throw new Error('vavc file stat <path>')
+  if (!path) throw new Error('vav-board file stat <path>')
   return rpc.request('fs.stat', { path })
 }
 
 export async function readFileText(rpc: DaemonRpc, path: string): Promise<{ path: string; text: string; bytes: number }> {
-  if (!path) throw new Error('vavc file read <path>')
+  if (!path) throw new Error('vav-board file read <path>')
   const result = (await rpc.request('fs.readFile', { path }, 120_000)) as { base64?: string }
   const buf = Buffer.from(result.base64 ?? '', 'base64')
   return { path, text: buf.toString('utf8'), bytes: buf.length }
 }
 
 export async function writeFileText(rpc: DaemonRpc, path: string, text: string): Promise<unknown> {
-  if (!path) throw new Error('vavc file write <path> --text <body>')
+  if (!path) throw new Error('vav-board file write <path> --text <body>')
   return rpc.request('fs.writeFile', { path, text, encoding: 'utf8' })
 }
 
 export async function revealFile(rpc: DaemonRpc, path: string): Promise<unknown> {
-  if (!path) throw new Error('vavc file reveal <path>')
+  if (!path) throw new Error('vav-board file reveal <path>')
   return rpc.request('fs.reveal', { path })
 }
 
 export async function openFile(rpc: DaemonRpc, path: string): Promise<unknown> {
-  if (!path) throw new Error('vavc file open <path>')
+  if (!path) throw new Error('vav-board file open <path>')
   return rpc.request('fs.openPath', { path })
 }
 
 export async function getInfoFile(rpc: DaemonRpc, path: string): Promise<unknown> {
-  if (!path) throw new Error('vavc file info <path>')
+  if (!path) throw new Error('vav-board file info <path>')
   return rpc.request('fs.getInfo', { path })
 }
 
 export async function mkdirFile(rpc: DaemonRpc, path: string, recursive = true): Promise<unknown> {
-  if (!path) throw new Error('vavc file mkdir <path>')
+  if (!path) throw new Error('vav-board file mkdir <path>')
   return rpc.request('fs.mkdir', { path, recursive })
 }
 
 export async function renameFile(rpc: DaemonRpc, from: string, to: string): Promise<unknown> {
-  if (!from || !to) throw new Error('vavc file rename <from> <to>')
+  if (!from || !to) throw new Error('vav-board file rename <from> <to>')
   return rpc.request('fs.rename', { from, to })
 }
 
 export async function unlinkFile(rpc: DaemonRpc, path: string): Promise<unknown> {
-  if (!path) throw new Error('vavc file rm <path>')
+  if (!path) throw new Error('vav-board file rm <path>')
   return rpc.request('fs.unlink', { path })
 }
 
 export async function existsFile(rpc: DaemonRpc, path: string): Promise<unknown> {
-  if (!path) throw new Error('vavc file exists <path>')
+  if (!path) throw new Error('vav-board file exists <path>')
   return rpc.request('fs.exists', { path })
 }
 
@@ -145,12 +145,12 @@ export async function spawnPane(
 }
 
 export async function writePane(rpc: DaemonRpc, stream: string, data: string): Promise<unknown> {
-  if (!stream) throw new Error('vavc pane write <stream> <text>')
+  if (!stream) throw new Error('vav-board pane write <stream> <text>')
   return rpc.request('pty.write', { stream, data })
 }
 
 export async function killPane(rpc: DaemonRpc, stream: string, signal?: string): Promise<unknown> {
-  if (!stream) throw new Error('vavc pane kill <stream>')
+  if (!stream) throw new Error('vav-board pane kill <stream>')
   return rpc.request('pty.kill', { stream, ...(signal ? { signal } : {}) })
 }
 
@@ -219,7 +219,7 @@ export async function recordLog(
   input: { event: string; message: string; conversationId?: string }
 ): Promise<unknown> {
   if (!input.event || !input.message) {
-    throw new Error('vavc logs record --event NAME --message TEXT')
+    throw new Error('vav-board logs record --event NAME --message TEXT')
   }
   return rpc.request('logs.record', {
     channel: 'user',
@@ -264,7 +264,7 @@ export async function tailLogs(
 }
 
 export async function gitStatus(rpc: DaemonRpc, cwd: string): Promise<unknown> {
-  if (!cwd) throw new Error('vavc git status [cwd]')
+  if (!cwd) throw new Error('vav-board git status [cwd]')
   return rpc.request('git.status', { cwd })
 }
 
@@ -274,12 +274,12 @@ export async function gitDiff(
   path: string,
   staged = false
 ): Promise<unknown> {
-  if (!cwd || !path) throw new Error('vavc git diff <path> [--cwd PATH]')
+  if (!cwd || !path) throw new Error('vav-board git diff <path> [--cwd PATH]')
   return rpc.request('git.diff', { cwd, path, staged })
 }
 
 export async function gitInit(rpc: DaemonRpc, cwd: string): Promise<unknown> {
-  if (!cwd) throw new Error('vavc git init [cwd]')
+  if (!cwd) throw new Error('vav-board git init [cwd]')
   return rpc.request('git.init', { cwd })
 }
 
@@ -289,12 +289,12 @@ export async function gitCreateBranch(
   name: string,
   checkout = false
 ): Promise<unknown> {
-  if (!cwd || !name) throw new Error('vavc git branch <name> [--cwd PATH] [--checkout]')
+  if (!cwd || !name) throw new Error('vav-board git branch <name> [--cwd PATH] [--checkout]')
   return rpc.request('git.createBranch', { cwd, name, checkout })
 }
 
 export async function gitCheckoutBranch(rpc: DaemonRpc, cwd: string, name: string): Promise<unknown> {
-  if (!cwd || !name) throw new Error('vavc git checkout <name> [--cwd PATH]')
+  if (!cwd || !name) throw new Error('vav-board git checkout <name> [--cwd PATH]')
   return rpc.request('git.checkoutBranch', { cwd, name })
 }
 
@@ -304,7 +304,7 @@ export async function gitCreateWorktree(
   path: string,
   opts?: { newBranch?: string; branch?: string }
 ): Promise<unknown> {
-  if (!cwd || !path) throw new Error('vavc git worktree <path> [--new-branch NAME|--branch NAME] [--cwd PATH]')
+  if (!cwd || !path) throw new Error('vav-board git worktree <path> [--new-branch NAME|--branch NAME] [--cwd PATH]')
   return rpc.request('git.createWorktree', {
     cwd,
     path,
@@ -319,7 +319,7 @@ export async function gitShowBase64(
   path: string,
   ref = 'HEAD'
 ): Promise<unknown> {
-  if (!cwd || !path) throw new Error('vavc git show <path> [--ref REF] [--cwd PATH]')
+  if (!cwd || !path) throw new Error('vav-board git show <path> [--ref REF] [--cwd PATH]')
   return rpc.request('git.showBase64', { cwd, path, ref })
 }
 
@@ -328,7 +328,7 @@ export async function listPlugins(rpc: DaemonRpc, host = 'vav'): Promise<unknown
 }
 
 export async function createPlugin(rpc: DaemonRpc, kind: string, name: string): Promise<unknown> {
-  if (!kind || !name) throw new Error('vavc plugins create <skill|mcp|hook|plugin> <name>')
+  if (!kind || !name) throw new Error('vav-board plugins create <skill|mcp|hook|plugin> <name>')
   return rpc.request('plugins.create', { kind, name })
 }
 
@@ -338,12 +338,12 @@ export async function setPluginEnabled(
   pluginId: string,
   enabled: boolean
 ): Promise<unknown> {
-  if (!pluginId) throw new Error('vavc plugins enable|disable <id>')
+  if (!pluginId) throw new Error('vav-board plugins enable|disable <id>')
   return rpc.request('plugins.setEnabled', { host: host || 'vav', pluginId, enabled })
 }
 
 export async function writePluginConfig(rpc: DaemonRpc, path: string, content: string): Promise<unknown> {
-  if (!path) throw new Error('vavc plugins write <path> --text BODY')
+  if (!path) throw new Error('vav-board plugins write <path> --text BODY')
   return rpc.request('plugins.write', { path, content })
 }
 
@@ -352,13 +352,13 @@ export async function listGithubPulls(
   cwd: string,
   state?: string
 ): Promise<unknown> {
-  if (!cwd) throw new Error('vavc github pulls [cwd]')
+  if (!cwd) throw new Error('vav-board github pulls [cwd]')
   return rpc.request('github.listPulls', { cwd, state })
 }
 
 export async function getGithubPullCli(rpc: DaemonRpc, cwd: string, number: string): Promise<unknown> {
   const n = Number(number)
-  if (!cwd || !Number.isInteger(n) || n <= 0) throw new Error('vavc github pull <number> [--cwd PATH]')
+  if (!cwd || !Number.isInteger(n) || n <= 0) throw new Error('vav-board github pull <number> [--cwd PATH]')
   return rpc.request('github.getPull', { cwd, number: n })
 }
 
@@ -367,7 +367,7 @@ export async function listGithubActionsCli(
   cwd: string,
   scope?: string
 ): Promise<unknown> {
-  if (!cwd) throw new Error('vavc github actions [cwd]')
+  if (!cwd) throw new Error('vav-board github actions [cwd]')
   return rpc.request('github.listActions', { cwd, scope })
 }
 
@@ -377,17 +377,17 @@ export async function getGithubActionRunCli(
   runId: string
 ): Promise<unknown> {
   const n = Number(runId)
-  if (!cwd || !Number.isInteger(n) || n <= 0) throw new Error('vavc github run <id> [--cwd PATH]')
+  if (!cwd || !Number.isInteger(n) || n <= 0) throw new Error('vav-board github run <id> [--cwd PATH]')
   return rpc.request('github.getActionRun', { cwd, runId: n })
 }
 
 export async function listGithubReleasesCli(rpc: DaemonRpc, cwd: string): Promise<unknown> {
-  if (!cwd) throw new Error('vavc github releases [cwd]')
+  if (!cwd) throw new Error('vav-board github releases [cwd]')
   return rpc.request('github.listReleases', { cwd })
 }
 
 export async function getGithubSiteCli(rpc: DaemonRpc, cwd: string): Promise<unknown> {
-  if (!cwd) throw new Error('vavc github pages [cwd]')
+  if (!cwd) throw new Error('vav-board github pages [cwd]')
   return rpc.request('github.getSite', { cwd })
 }
 
@@ -400,12 +400,12 @@ export async function createTimer(rpc: DaemonRpc): Promise<unknown> {
 }
 
 export async function runTimer(rpc: DaemonRpc, id: string): Promise<unknown> {
-  if (!id) throw new Error('vavc timers run <id>')
+  if (!id) throw new Error('vav-board timers run <id>')
   return rpc.request('timers.runNow', { id })
 }
 
 export async function removeTimer(rpc: DaemonRpc, id: string): Promise<unknown> {
-  if (!id) throw new Error('vavc timers remove <id>')
+  if (!id) throw new Error('vav-board timers remove <id>')
   return rpc.request('timers.removeJob', { id })
 }
 
@@ -455,15 +455,15 @@ export async function updateTimer(
   id: string,
   patch: TimerCliPatch
 ): Promise<unknown> {
-  if (!id) throw new Error('vavc timers update <id> [--title TEXT] [--prompt TEXT] [--enabled on|off]')
+  if (!id) throw new Error('vav-board timers update <id> [--title TEXT] [--prompt TEXT] [--enabled on|off]')
   if (!Object.keys(patch).length) {
-    throw new Error('vavc timers update <id> [--title TEXT] [--prompt TEXT] [--enabled on|off]')
+    throw new Error('vav-board timers update <id> [--title TEXT] [--prompt TEXT] [--enabled on|off]')
   }
   return rpc.request('timers.updateJob', { id, patch })
 }
 
 export async function getTimerForConversation(rpc: DaemonRpc, conversationId: string): Promise<unknown> {
-  if (!conversationId) throw new Error('vavc timers get <conversationId>')
+  if (!conversationId) throw new Error('vav-board timers get <conversationId>')
   return rpc.request('timers.getJobForConversation', { conversationId })
 }
 
@@ -492,7 +492,7 @@ export async function connectorAct(
   conversationId?: string
 ): Promise<unknown> {
   if (!connector || !action || !cwd) {
-    throw new Error('vavc connectors act <id> <action> [--cwd PATH]')
+    throw new Error('vav-board connectors act <id> <action> [--cwd PATH]')
   }
   return rpc.request('connectors.act', {
     request: { connector, action, cwd, conversationId }
@@ -500,7 +500,7 @@ export async function connectorAct(
 }
 
 export async function openFileSession(rpc: DaemonRpc, path: string): Promise<unknown> {
-  if (!path) throw new Error('vavc file-session open <path>')
+  if (!path) throw new Error('vav-board file-session open <path>')
   return rpc.request('fileSessions.open', { path })
 }
 
@@ -510,7 +510,7 @@ export async function listFileSessions(rpc: DaemonRpc, fileId?: string): Promise
 }
 
 export async function createFileSession(rpc: DaemonRpc, path: string): Promise<unknown> {
-  if (!path) throw new Error('vavc file-session create <path>')
+  if (!path) throw new Error('vav-board file-session create <path>')
   return rpc.request('fileSessions.create', { path })
 }
 
@@ -521,7 +521,7 @@ export async function renameFileSession(
   title: string
 ): Promise<unknown> {
   if (!fileId || !sessionId || !title) {
-    throw new Error('vavc file-session rename <fileId> <sessionId> <title>')
+    throw new Error('vav-board file-session rename <fileId> <sessionId> <title>')
   }
   return rpc.request('fileSessions.rename', { fileId, sessionId, title })
 }
@@ -532,7 +532,7 @@ export async function deleteFileSessions(
   sessionIds: string[]
 ): Promise<unknown> {
   if (!fileId || sessionIds.length === 0) {
-    throw new Error('vavc file-session delete <fileId> <sessionId…>')
+    throw new Error('vav-board file-session delete <fileId> <sessionId…>')
   }
   return rpc.request('fileSessions.delete', { fileId, sessionIds })
 }
@@ -543,7 +543,7 @@ export async function activateFileSession(
   sessionId: string
 ): Promise<unknown> {
   if (!fileId || !sessionId) {
-    throw new Error('vavc file-session activate <fileId> <sessionId>')
+    throw new Error('vav-board file-session activate <fileId> <sessionId>')
   }
   return rpc.request('fileSessions.setActive', { fileId, sessionId })
 }
@@ -554,7 +554,7 @@ export async function forceDeleteFileSessions(
   sessionIds: string[]
 ): Promise<unknown> {
   if (!fileId || sessionIds.length === 0) {
-    throw new Error('vavc file-session force-delete <fileId> <sessionId…>')
+    throw new Error('vav-board file-session force-delete <fileId> <sessionId…>')
   }
   return rpc.request('fileSessions.forceDelete', { fileId, sessionIds })
 }
@@ -564,7 +564,7 @@ export async function setFileSessionReadOnly(
   sessionId: string,
   readOnly: boolean
 ): Promise<unknown> {
-  if (!sessionId) throw new Error('vavc file-session readonly <sessionId> [on|off]')
+  if (!sessionId) throw new Error('vav-board file-session readonly <sessionId> [on|off]')
   return rpc.request('fileSessions.setReadOnly', { sessionId, readOnly })
 }
 
@@ -577,7 +577,7 @@ export async function createAccount(
   input: { name: string; endpoint: string; apiKey: string; agentId?: string }
 ): Promise<unknown> {
   if (!input.name || !input.endpoint || !input.apiKey) {
-    throw new Error('vavc account add --name TEXT --endpoint URL --key TOKEN')
+    throw new Error('vav-board account add --name TEXT --endpoint URL --key TOKEN')
   }
   return rpc.request('accounts.createVav', input)
 }
@@ -609,13 +609,13 @@ const SETTINGS_SECRET_SLOTS = new Set([
 function asSettingsSlot(slot: string): string {
   const name = slot.trim()
   if (!SETTINGS_SECRET_SLOTS.has(name)) {
-    throw new Error('vavc settings secret <api|braveSearch|tinyfish|cloudflare|supabase|vercel>')
+    throw new Error('vav-board settings secret <api|braveSearch|tinyfish|cloudflare|supabase|vercel>')
   }
   return name
 }
 
 export async function setHostSecret(rpc: DaemonRpc, slot: string, value: string): Promise<unknown> {
-  if (!value) throw new Error('vavc settings secret <slot> --set TOKEN')
+  if (!value) throw new Error('vav-board settings secret <slot> --set TOKEN')
   return rpc.request('settings.setSecret', { slot: asSettingsSlot(slot), value })
 }
 
@@ -628,7 +628,7 @@ export async function revealHostSecret(rpc: DaemonRpc, slot: string): Promise<un
 }
 
 export async function removeAccount(rpc: DaemonRpc, id: string): Promise<unknown> {
-  if (!id) throw new Error('vavc account remove <id>')
+  if (!id) throw new Error('vav-board account remove <id>')
   return rpc.request('accounts.remove', { id })
 }
 
@@ -638,28 +638,28 @@ export async function updateAccount(
   patch: { alias?: string; endpoint?: string; apiKey?: string }
 ): Promise<unknown> {
   if (!id || (!patch.alias && !patch.endpoint && !patch.apiKey)) {
-    throw new Error('vavc account update <id> [--alias TEXT] [--endpoint URL] [--key TOKEN]')
+    throw new Error('vav-board account update <id> [--alias TEXT] [--endpoint URL] [--key TOKEN]')
   }
   return rpc.request('accounts.updateVav', { id, ...patch })
 }
 
 export async function setCurrentAccount(rpc: DaemonRpc, id: string): Promise<unknown> {
-  if (!id) throw new Error('vavc account current <id>')
+  if (!id) throw new Error('vav-board account current <id>')
   return rpc.request('accounts.setCurrent', { id })
 }
 
 export async function activateAccount(rpc: DaemonRpc, id: string): Promise<unknown> {
-  if (!id) throw new Error('vavc account activate <id>')
+  if (!id) throw new Error('vav-board account activate <id>')
   return rpc.request('accounts.activate', { id })
 }
 
 export async function verifyAccount(rpc: DaemonRpc, id: string, apiKey?: string): Promise<unknown> {
-  if (!id) throw new Error('vavc account verify <id>')
+  if (!id) throw new Error('vav-board account verify <id>')
   return rpc.request('accounts.verify', { id, apiKey })
 }
 
 export async function revealAccountKey(rpc: DaemonRpc, id: string): Promise<unknown> {
-  if (!id) throw new Error('vavc account reveal <id>')
+  if (!id) throw new Error('vav-board account reveal <id>')
   return rpc.request('accounts.revealKey', { id })
 }
 
@@ -668,22 +668,22 @@ export async function beginAccountOAuth(
   agentId: string,
   accountId?: string
 ): Promise<unknown> {
-  if (!agentId) throw new Error('vavc account oauth --agent ID')
+  if (!agentId) throw new Error('vav-board account oauth --agent ID')
   return rpc.request('accounts.beginOAuth', { agentId, accountId })
 }
 
 export async function cancelAccountOAuth(rpc: DaemonRpc, agentId: string): Promise<unknown> {
-  if (!agentId) throw new Error('vavc account cancel --agent ID')
+  if (!agentId) throw new Error('vav-board account cancel --agent ID')
   return rpc.request('accounts.cancelOAuth', { agentId })
 }
 
 export async function signOutAccount(rpc: DaemonRpc, agentId: string): Promise<unknown> {
-  if (!agentId) throw new Error('vavc account signout --agent ID')
+  if (!agentId) throw new Error('vav-board account signout --agent ID')
   return rpc.request('accounts.signOut', { agentId })
 }
 
 export async function beginConnectorLogin(rpc: DaemonRpc, id: string): Promise<unknown> {
-  if (!id) throw new Error('vavc connectors login <github|cloudflare|supabase|vercel>')
+  if (!id) throw new Error('vav-board connectors login <github|cloudflare|supabase|vercel>')
   return rpc.request('connectors.beginLogin', { id })
 }
 
@@ -706,48 +706,48 @@ export async function connectorVendorStatus(
 ): Promise<unknown> {
   const id = vendor.trim().toLowerCase()
   if (id !== 'cloudflare' && id !== 'supabase' && id !== 'vercel') {
-    throw new Error('vavc connectors status <cloudflare|supabase|vercel> [--cwd PATH]')
+    throw new Error('vav-board connectors status <cloudflare|supabase|vercel> [--cwd PATH]')
   }
   return rpc.request(`${id}.status`, { cwd: cwd || process.cwd() })
 }
 
 export async function seedReview(rpc: DaemonRpc, conversationId: string): Promise<unknown> {
-  if (!conversationId) throw new Error('vavc review seed <sessionId>')
+  if (!conversationId) throw new Error('vav-board review seed <sessionId>')
   return rpc.request('changeSets.seedReview', { conversationId })
 }
 
 export async function activeReview(rpc: DaemonRpc, conversationId: string): Promise<unknown> {
-  if (!conversationId) throw new Error('vavc review active <sessionId>')
+  if (!conversationId) throw new Error('vav-board review active <sessionId>')
   return rpc.request('changeSets.active', { conversationId })
 }
 
 export async function getReview(rpc: DaemonRpc, id: string): Promise<unknown> {
-  if (!id) throw new Error('vavc review get <setId>')
+  if (!id) throw new Error('vav-board review get <setId>')
   return rpc.request('changeSets.get', { id })
 }
 
 export async function acceptReview(rpc: DaemonRpc, setId: string, filePaths: string[]): Promise<unknown> {
-  if (!setId) throw new Error('vavc review accept <setId> [path…]')
+  if (!setId) throw new Error('vav-board review accept <setId> [path…]')
   return rpc.request('changeSets.accept', { setId, filePaths })
 }
 
 export async function rejectReview(rpc: DaemonRpc, setId: string, filePaths: string[]): Promise<unknown> {
-  if (!setId) throw new Error('vavc review reject <setId> [path…]')
+  if (!setId) throw new Error('vav-board review reject <setId> [path…]')
   return rpc.request('changeSets.reject', { setId, filePaths })
 }
 
 export async function acceptAllReview(rpc: DaemonRpc, setId: string): Promise<unknown> {
-  if (!setId) throw new Error('vavc review accept-all <setId>')
+  if (!setId) throw new Error('vav-board review accept-all <setId>')
   return rpc.request('changeSets.acceptAll', { setId })
 }
 
 export async function rejectAllReview(rpc: DaemonRpc, setId: string): Promise<unknown> {
-  if (!setId) throw new Error('vavc review reject-all <setId>')
+  if (!setId) throw new Error('vav-board review reject-all <setId>')
   return rpc.request('changeSets.rejectAll', { setId })
 }
 
 export async function undoReview(rpc: DaemonRpc, setId: string, filePath: string): Promise<unknown> {
-  if (!setId || !filePath) throw new Error('vavc review undo <setId> <path>')
+  if (!setId || !filePath) throw new Error('vav-board review undo <setId> <path>')
   return rpc.request('changeSets.undo', { setId, filePath })
 }
 

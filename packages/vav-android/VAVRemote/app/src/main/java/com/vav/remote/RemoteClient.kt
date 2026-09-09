@@ -14,7 +14,7 @@ import org.json.JSONObject
 
 /**
  * Same phone-protocol client as iOS `RemoteClient`. Hello omits `role`;
- * vavd treats a non-daemon hello as the control plane.
+ * vav-server treats a non-daemon hello as the control plane.
  */
 class RemoteClient(
     private val scope: CoroutineScope,

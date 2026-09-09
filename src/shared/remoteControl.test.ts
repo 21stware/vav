@@ -46,14 +46,14 @@ describe('parseClientMessage', () => {
       type: 'hello',
       proto: 1,
       auth: 's',
-      device: 'vavd',
+      device: 'vav-server',
       role: 'daemon'
     })
     assert.deepEqual(msg, {
       type: 'hello',
       proto: 1,
       auth: 's',
-      device: 'vavd',
+      device: 'vav-server',
       role: 'daemon'
     })
   })

@@ -48,7 +48,7 @@ export function clipThemeVars(): HtmlClipThemeVars {
 }
 
 export function pushClipTheme(iframe: HTMLIFrameElement): void {
-  iframe.contentWindow?.postMessage({ type: 'vav-clip-theme', vars: clipThemeVars() }, '*')
+  iframe.contentWindow?.postMessage({ type: 'vav-tuip-theme', vars: clipThemeVars() }, '*')
 }
 
 type LiveClip = {

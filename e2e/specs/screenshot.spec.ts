@@ -1,5 +1,11 @@
 import { test, expect, type ElectronApplication, type Page } from '@playwright/test'
-import { launchWorkbench, seedVavKeyAccount } from '../launch'
+import {
+  chooseNativeMenu,
+  launchWorkbench,
+  peekNativeMenu,
+  seedVavKeyAccount,
+  waitForNewWindow
+} from '../launch'
 
 async function readyWorkbench(page: Page): Promise<void> {
   await seedVavKeyAccount(page)
@@ -51,6 +57,26 @@ async function pointer(page: Page, type: 'pointerdown' | 'pointermove' | 'pointe
     { type, x, y }
   )
 }
+
+test('screenshot menu offers hide-window capture and settings', async () => {
+  const harness = await launchWorkbench()
+  try {
+    const { page } = harness
+    await readyWorkbench(page)
+    await page.locator('[data-testid="composer-screenshot-menu"]').click()
+    await expect
+      .poll(async () => (await peekNativeMenu(page))?.map((item) => item.label) ?? [])
+      .toEqual(expect.arrayContaining(['Hide window, then capture', 'Settings…']))
+    const settings = await waitForNewWindow(harness, () => chooseNativeMenu(page, 'Settings…'))
+    await expect(settings.locator('[data-testid="settings-screenshot-keep-front"]')).toBeVisible()
+    await expect(settings.locator('[data-testid="settings-screenshot-keep-front"]')).toHaveAttribute(
+      'aria-checked',
+      'true'
+    )
+  } finally {
+    await harness.dispose()
+  }
+})
 
 test('screenshot overlay crop can move and resize, then attach without crashing', async () => {
   const harness = await launchWorkbench()

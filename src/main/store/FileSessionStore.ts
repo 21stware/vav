@@ -50,7 +50,7 @@ function pathHash(path: string): string {
  * agent loop stays unchanged; this store owns the fileId → sessions index and
  * keeps them out of the main sidebar via ConversationStore.listMeta filtering.
  *
- * Ephemeral conversation overlays (temp clips under /vav-clips/) are not files
+ * Ephemeral conversation overlays (temp clips under /vav-tuips/) are not files
  * to chat about — they never enter this index.
  */
 export class FileSessionStore {
@@ -574,7 +574,7 @@ export class FileSessionStore {
   }
 
   /**
-   * Conversation overlays write temp clips under /vav-clips/. Those are
+   * Conversation overlays write temp clips under /vav-tuips/. Those are
    * preview windows, not files to chat about — drop leftover bundles.
    */
   private purgePreviewOnly(): void {

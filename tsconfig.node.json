@@ -5,9 +5,9 @@
     "src/shared/**/*",
     "packages/vav-desktop/src/main/**/*",
     "packages/vav-desktop/src/preload/**/*",
-    "packages/vavd/src/**/*",
-    "packages/vavc/src/**/*",
-    "packages/vav-cli/src/**/*"
+    "packages/vav-server/src/**/*",
+    "packages/vav-board/src/**/*",
+    "packages/vav-tui/src/**/*"
   ],
   "exclude": ["src/**/*.test.ts", "packages/**/*.test.ts"],
   "compilerOptions": {

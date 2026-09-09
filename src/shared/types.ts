@@ -1068,6 +1068,11 @@ export interface AppSettings {
    */
   windowVibrancyEnabled: boolean
   /**
+   * Default screenshot: keep VAV windows visible (direct capture).
+   * Off hides app windows first so they are not in the shot.
+   */
+  screenshotKeepWindowFront: boolean
+  /**
    * How the main composer submits a message.
    * - `enter` (default): Enter sends; Shift+Enter inserts a newline.
    * - `mod-enter`: ⌘↵ / Ctrl+Enter sends; Enter inserts a newline.
@@ -1210,7 +1215,7 @@ export interface AppSettings {
    */
   logRetentionDays: 1 | 3 | 7 | 14 | 30
   /**
-   * Read-only appearance snapshot from each paired vavd (theme / tint / accent /
+   * Read-only appearance snapshot from each paired vav-server (theme / tint / accent /
    * preset pattern). Never persisted. Used as the inherit base for overlays.
    */
   hostAppearanceBases?: Record<string, MachineAppearance>
@@ -1263,6 +1268,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   fontSize: 12,
   reduceMotion: false,
   windowVibrancyEnabled: true,
+  screenshotKeepWindowFront: true,
   sendKey: 'enter',
   globalHotkey: 'Control+Command+Space',
   keyBindings: {},
@@ -1643,8 +1649,8 @@ export interface ValidateKeyResult {
 
 export interface AboutInfo {
   version: string
-  /** Running or bundled `@21stware/vavd` version. */
-  vavdVersion: string
+  /** Running or bundled `@21stware/vav-server` version. */
+  vavServerVersion: string
   /** CFBundleVersion when available; falls back to the short version. */
   buildNumber: string
   electron: string

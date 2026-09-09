@@ -14,7 +14,7 @@ import {
   ensurePhoneUiBundle,
   seedChangeReview
 } from '../chromeUi'
-import { startVavd } from '../startVavd'
+import { startVavServer } from '../startVavServer'
 
 /**
  * Loopback web UI — same React App as desktop / Chrome side panel.
@@ -22,11 +22,11 @@ import { startVavd } from '../startVavd'
  * open Chrome, paint the desktop Settings overlay, send a stub turn, create a
  * file, open Git / Plugins, and open New bash on the daemon PTY plane.
  */
-test('vavd web UI matches the desktop session shell', async () => {
+test('vav-server web UI matches the desktop session shell', async () => {
   test.setTimeout(180_000)
   await ensurePhoneUiBundle()
   const exe = chromePath()
-  const daemon = await startVavd({
+  const daemon = await startVavServer({
     stubTurn: true,
     web: true,
     extraEnv: { VAV_API_KEY: 'sk-e2e-phone-ui' }
@@ -34,7 +34,7 @@ test('vavd web UI matches the desktop session shell', async () => {
   const origin = daemon.webOrigin
   if (!origin) {
     daemon.stop()
-    throw new Error('vavd did not print a web origin')
+    throw new Error('vav-server did not print a web origin')
   }
 
   const probe = await fetch(origin)

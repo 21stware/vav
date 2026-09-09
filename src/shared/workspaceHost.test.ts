@@ -30,7 +30,7 @@ describe('normalizeMachineId', () => {
 })
 
 describe('userFacingRemotes', () => {
-  it('hides local and the spawned loopback vavd', () => {
+  it('hides local and the spawned loopback vav-server', () => {
     assert.deepEqual(
       userFacingRemotes([
         { id: LOCAL_MACHINE_ID, name: 'This Mac', kind: 'local', online: true },

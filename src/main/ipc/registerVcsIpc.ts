@@ -27,7 +27,7 @@ export type VcsIpcRemote = {
 export type VcsIpcCreds = {
   cloudflare: () => { token: string | null; accountId: string | null }
   supabase: () => { token: string | null; projectRef: string | null }
-  /** Spawned loopback vavd — Git / vendor trays share the daemon plane Chrome uses. */
+  /** Spawned loopback vav-server — Git / vendor trays share the daemon plane Chrome uses. */
   remote?: () => VcsIpcRemote | null
 }
 

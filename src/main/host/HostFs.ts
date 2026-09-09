@@ -4,7 +4,7 @@
  * FileService, ACP `fs/*`, and the built-in agent's fs_* tools all go through
  * this surface so a later remote implementation can sit behind the same
  * interface. Reveal / Quick Look / Open With / Get Info on a remote host
- * spawn the equivalent on that machine (see `hostShell`). Chrome and `vavc`
+ * spawn the equivalent on that machine (see `hostShell`). Chrome and `vav-board`
  * call the same commands over `fs.reveal` / `fs.openPath` / `fs.getInfo`.
  */
 

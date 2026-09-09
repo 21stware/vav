@@ -476,6 +476,7 @@ export class SettingsStore {
     if (!sortKeys.has(s.fileSortKey)) s.fileSortKey = 'name'
     if (typeof s.fileSortAscending !== 'boolean') s.fileSortAscending = true
     if (typeof s.firstRunChecklistDismissed !== 'boolean') s.firstRunChecklistDismissed = false
+    if (typeof s.screenshotKeepWindowFront !== 'boolean') s.screenshotKeepWindowFront = true
     s.logRetentionDays = clampLogRetentionDays(s.logRetentionDays)
     if (!DISPLAY_CURRENCIES.includes(s.displayCurrency as DisplayCurrency)) {
       s.displayCurrency = DEFAULT_SETTINGS.displayCurrency

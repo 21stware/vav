@@ -40,7 +40,7 @@ describe('VavWebBridge discover', () => {
         loopback: boolean
         secret?: string
       }
-      assert.equal(info.app, 'vavd')
+      assert.equal(info.app, 'vav-server')
       assert.equal(info.proto, 1)
       assert.equal(info.name, 'office-mac')
       assert.equal(info.version, '1.19.0')

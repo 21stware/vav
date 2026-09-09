@@ -9,7 +9,7 @@ import {
   launchWorkbench,
   openSettingsWindow,
   readUserSetting,
-  readVavdSetting,
+  readVavServerSetting,
   seedVavKeyAccount,
   waitForDaemonPairing
 } from '../launch'
@@ -18,10 +18,10 @@ const execFileAsync = promisify(execFile)
 const root = join(__dirname, '../..')
 const aliasHook = pathToFileURL(join(root, 'scripts/register-shared-alias.mjs')).href
 
-function vavc(args: string[]): Promise<{ stdout: string; stderr: string }> {
+function vav-board(args: string[]): Promise<{ stdout: string; stderr: string }> {
   return execFileAsync(
     process.execPath,
-    ['--import', aliasHook, '--experimental-strip-types', join(root, 'packages/vavc/src/vavc.ts'), ...args],
+    ['--import', aliasHook, '--experimental-strip-types', join(root, 'packages/vav-board/src/vav-board.ts'), ...args],
     { cwd: root, timeout: 20_000 }
   )
 }
@@ -57,6 +57,22 @@ test('settings is a separate window with category nav and no Done footer', async
       await settings.locator(`[data-testid="settings-nav-${id}"]`).click()
       await expect(settings.locator('.settings-head')).toHaveText(title)
     }
+  } finally {
+    await harness.dispose()
+  }
+})
+
+test('screenshot keep-front toggle persists on change', async () => {
+  const harness = await launchWorkbench()
+  try {
+    const settings = await openSettingsWindow(harness, 'appearance')
+    const toggle = settings.locator('[data-testid="settings-screenshot-keep-front"]')
+    await expect(toggle).toHaveAttribute('aria-checked', 'true')
+    await toggle.click()
+    await expect(toggle).toHaveAttribute('aria-checked', 'false')
+    await expect
+      .poll(() => readUserSetting(harness.userData, 'screenshotKeepWindowFront'))
+      .toBe(false)
   } finally {
     await harness.dispose()
   }
@@ -177,7 +193,7 @@ test('Workspace, Notifications, About, Usage, Command Line, and File Association
       'false'
     )
     await settings.locator('[data-testid="settings-github-tray"]').click()
-    await expect.poll(() => readVavdSetting(harness.userData, 'githubTrayEnabled')).toBe(false)
+    await expect.poll(() => readVavServerSetting(harness.userData, 'githubTrayEnabled')).toBe(false)
     expect(readUserSetting(harness.userData, 'githubTrayEnabled')).not.toBe(false)
     await settings.locator('[data-testid="settings-nav-workspace"]').click()
 
@@ -234,14 +250,14 @@ test('Logs shows retention policy and empty-or-boot records', async () => {
     await expect(settings.locator('[data-testid="settings-log-retention"]')).toHaveValue('7')
     await expect(settings.locator('[data-testid="settings-log-list"]')).toBeVisible()
     await settings.locator('[data-testid="settings-log-retention"]').selectOption('3')
-    await expect.poll(() => readVavdSetting(harness.userData, 'logRetentionDays')).toBe(3)
+    await expect.poll(() => readVavServerSetting(harness.userData, 'logRetentionDays')).toBe(3)
     expect(readUserSetting(harness.userData, 'logRetentionDays')).not.toBe(3)
   } finally {
     await harness.dispose()
   }
 })
 
-test('spawned vavd host settings match desktop Settings and vavc', async () => {
+test('spawned vav-server host settings match desktop Settings and vav-board', async () => {
   test.setTimeout(90_000)
   const harness = await launchWorkbench()
   try {
@@ -260,14 +276,14 @@ test('spawned vavd host settings match desktop Settings and vavc', async () => {
         return page.githubTrayEnabled
       })
       .toBe(false)
-    await expect.poll(() => readVavdSetting(harness.userData, 'githubTrayEnabled')).toBe(false)
+    await expect.poll(() => readVavServerSetting(harness.userData, 'githubTrayEnabled')).toBe(false)
     expect(readUserSetting(harness.userData, 'githubTrayEnabled')).not.toBe(false)
 
     const pairing = parseDaemonPairing(await waitForDaemonPairing(harness.page))
     expect(pairing?.secret).toBeTruthy()
     const auth = ['--host', '127.0.0.1', '--port', String(pairing!.port), '--secret', pairing!.secret]
     const updated = JSON.parse(
-      (await vavc(['settings', 'set', '--approval', 'edit', ...auth])).stdout
+      (await vav-board(['settings', 'set', '--approval', 'edit', ...auth])).stdout
     ) as { defaultApprovalMode?: string }
     expect(updated.defaultApprovalMode).toBe('edit')
     await expect
@@ -276,19 +292,19 @@ test('spawned vavd host settings match desktop Settings and vavc', async () => {
         return page.defaultApprovalMode
       })
       .toBe('edit')
-    await expect.poll(() => readVavdSetting(harness.userData, 'defaultApprovalMode')).toBe('edit')
+    await expect.poll(() => readVavServerSetting(harness.userData, 'defaultApprovalMode')).toBe('edit')
     expect(readUserSetting(harness.userData, 'defaultApprovalMode')).not.toBe('edit')
 
-    await harness.page.evaluate(() => window.vav.settings.setApiKey('sk-e2e-vavd-key'))
+    await harness.page.evaluate(() => window.vav.settings.setApiKey('sk-e2e-vav-server-key'))
     await expect
       .poll(() => {
         try {
-          return readFileSync(join(harness.userData, 'vavd', 'apikey'), 'utf8').trim()
+          return readFileSync(join(harness.userData, 'vav-server', 'apikey'), 'utf8').trim()
         } catch {
           return ''
         }
       })
-      .toBe('sk-e2e-vavd-key')
+      .toBe('sk-e2e-vav-server-key')
   } finally {
     await harness.dispose()
   }

@@ -58,7 +58,7 @@ import {
   isLocalPairingHost,
   isLoopbackAddress,
   isPrivateLanAddress,
-  VAVD_WEB_DEFAULT_PORT,
+  VAV_SERVER_WEB_DEFAULT_PORT,
   VAV_DISCOVER_APP,
   type VavDiscoverInfo
 } from '@shared/vavDiscover'
@@ -218,8 +218,8 @@ export function resolvedHostPlatform(hostPlatform?: string | null): Platform {
 export function discoverPeerFromInfo(info: VavDiscoverInfo): HostDiscoveryPeer {
   return {
     machineId: LOCAL_MACHINE_ID,
-    name: info.name || 'vavd',
-    port: info.port || VAVD_WEB_DEFAULT_PORT,
+    name: info.name || 'vav-server',
+    port: info.port || VAV_SERVER_WEB_DEFAULT_PORT,
     address: '127.0.0.1',
     platform: undefined
   }
@@ -242,7 +242,7 @@ export async function fetchDiscoverAt(
 export async function fetchLoopbackDiscover(
   fetchImpl: typeof fetch = fetch
 ): Promise<VavDiscoverInfo | null> {
-  const urls = ['/discover', `http://127.0.0.1:${VAVD_WEB_DEFAULT_PORT}/discover`]
+  const urls = ['/discover', `http://127.0.0.1:${VAV_SERVER_WEB_DEFAULT_PORT}/discover`]
   for (const url of urls) {
     try {
       const res = await fetchImpl(url)
@@ -980,7 +980,7 @@ export function installPhoneVav(transport: PhoneTransport): PhoneVavHandle {
         tmp: host?.tmp || '',
         about: {
           version: '1.19.0',
-          vavdVersion: '1.19.0',
+          vavServerVersion: '1.19.0',
           buildNumber: '1.19.0',
           electron: '',
           userDataPath: '',
@@ -1769,8 +1769,12 @@ export function installPhoneVav(transport: PhoneTransport): PhoneVavHandle {
       getAccentColor: async () => '#007aff',
       onAccentColorChanged: () => () => undefined,
       shellPath: async () => '',
-      openSettings: async (view?: SettingsView, agentId?: string) => {
-        desiredSettings = { view: view ?? 'appearance', ...(agentId ? { agentId } : {}) }
+      openSettings: async (view?: SettingsView, agentId?: string, machineId?: string) => {
+        desiredSettings = {
+          view: view ?? 'appearance',
+          ...(agentId ? { agentId } : {}),
+          ...(machineId ? { machineId } : {})
+        }
         for (const handler of settingsViewHandlers) handler(desiredSettings)
         window.dispatchEvent(new CustomEvent('vav:phone-open-settings', { detail: desiredSettings }))
       },
@@ -2724,9 +2728,9 @@ export function installPhoneVav(transport: PhoneTransport): PhoneVavHandle {
             peer.address.includes(':') && !peer.address.startsWith('[')
               ? `[${peer.address}]`
               : peer.address
-          const info = await fetchDiscoverAt(`http://${authority}:${VAVD_WEB_DEFAULT_PORT}`)
+          const info = await fetchDiscoverAt(`http://${authority}:${VAV_SERVER_WEB_DEFAULT_PORT}`)
           const stored =
-            typeof localStorage !== 'undefined' ? localStorage.getItem('vavd-secret') || '' : ''
+            typeof localStorage !== 'undefined' ? localStorage.getItem('vav-server-secret') || '' : ''
           const secret = info?.secret || pairingSecretFromPaste(stored)
           if (!secret) {
             return {
@@ -2734,7 +2738,7 @@ export function installPhoneVav(transport: PhoneTransport): PhoneVavHandle {
               error: 'Paste that computer’s vavrtp:// pairing line. LAN /discover does not include the secret.'
             }
           }
-          transport.connect(`vavrtp://${secret}@${peer.address}:${peer.port || VAVD_WEB_DEFAULT_PORT}`)
+          transport.connect(`vavrtp://${secret}@${peer.address}:${peer.port || VAV_SERVER_WEB_DEFAULT_PORT}`)
         } else {
           const info = await fetchLoopbackDiscover()
           if (info?.secret) {

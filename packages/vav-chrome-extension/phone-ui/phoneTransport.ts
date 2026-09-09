@@ -1,5 +1,5 @@
 import { parseMachinePairing } from '@shared/daemonProtocol'
-import { isPrivateLanAddress, VAVD_WEB_DEFAULT_PORT, VAV_WEB_SOCKET_PATH } from '@shared/vavDiscover'
+import { isPrivateLanAddress, VAV_SERVER_WEB_DEFAULT_PORT, VAV_WEB_SOCKET_PATH } from '@shared/vavDiscover'
 import { createDaemonRpc, type PhoneDaemonPlane } from './phoneDaemon'
 
 function webBridgeTarget(text: string): { secret: string; host?: string } | null {
@@ -21,7 +21,7 @@ function webBridgeTarget(text: string): { secret: string; host?: string } | null
 function webSocketUrlForHost(host: string): string {
   const proto = typeof location !== 'undefined' && location.protocol === 'https:' ? 'wss' : 'ws'
   const authority = host.includes(':') && !host.startsWith('[') ? `[${host}]` : host
-  return `${proto}://${authority}:${VAVD_WEB_DEFAULT_PORT}${VAV_WEB_SOCKET_PATH}`
+  return `${proto}://${authority}:${VAV_SERVER_WEB_DEFAULT_PORT}${VAV_WEB_SOCKET_PATH}`
 }
 
 export type PhoneVariant = 'web' | 'extension'
@@ -158,10 +158,10 @@ export function createWebTransport(): PhoneTransport {
   }
 
   const connect = (secret?: string): void => {
-    const raw = (secret || localStorage.getItem('vavd-secret') || '').trim()
+    const raw = (secret || localStorage.getItem('vav-server-secret') || '').trim()
     const target = webBridgeTarget(raw)
     const next = target?.secret || raw
-    if (next) localStorage.setItem('vavd-secret', next)
+    if (next) localStorage.setItem('vav-server-secret', next)
     if (!next) {
       setStatus({ status: 'error', error: 'Paste the pairing secret' })
       return
@@ -175,14 +175,14 @@ export function createWebTransport(): PhoneTransport {
       if (res.ok) {
         const info = (await res.json()) as { secret?: string; name?: string }
         if (info.secret) {
-          localStorage.setItem('vavd-secret', info.secret)
+          localStorage.setItem('vav-server-secret', info.secret)
           if (info.name) setStatus({ hostName: info.name })
         }
       }
     } catch {
       /* offline */
     }
-    const secret = localStorage.getItem('vavd-secret') || ''
+    const secret = localStorage.getItem('vav-server-secret') || ''
     if (secret) connect(secret)
     else setStatus({ status: 'error', error: 'Paste the pairing secret' })
   }

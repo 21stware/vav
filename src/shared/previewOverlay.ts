@@ -29,7 +29,7 @@ function fileExt(path: string): string {
 export function looksLikeAppClip(filePath: string): boolean {
   const base = fileBase(filePath)
   if (base === 'app.html' || base === 'xstate.html' || base.endsWith('.app.html')) return true
-  const clip = filePath.replace(/\\/g, '/').includes('/vav-clips/')
+  const clip = filePath.replace(/\\/g, '/').includes('/vav-tuips/')
   return clip && (base.endsWith('.html') || base.endsWith('.htm'))
 }
 
@@ -66,6 +66,6 @@ export function shouldOpenAsOverlay(
   if (surface === 'file') return false
   if (surface === 'app') return true
   if (looksLikeAppClip(path)) return true
-  const clip = path.replace(/\\/g, '/').includes('/vav-clips/')
+  const clip = path.replace(/\\/g, '/').includes('/vav-tuips/')
   return clip && looksLikeVisualOverlay(path)
 }

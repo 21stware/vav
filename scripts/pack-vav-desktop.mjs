@@ -16,7 +16,7 @@ const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'))
 
 pkg.version = rootPkg.version
 pkg.description =
-  'VAV desktop workbench. Same sidebar for a local vavd and a paired remote. Electron source is packages/vav-desktop/src.'
+  'VAV desktop workbench. Same sidebar for a local vav-server and a paired remote. Electron source is packages/vav-desktop/src.'
 pkg.scripts = {
   ...pkg.scripts,
   pack: 'node ../../scripts/pack-vav-desktop.mjs',
@@ -36,7 +36,7 @@ const product = {
     'packages/vav-desktop/src/renderer/src/App.tsx',
     'packages/vav-desktop/electron-builder.json'
   ],
-  talksTo: ['vavd'],
+  talksTo: ['vav-server'],
   hello: ['phone', 'daemon']
 }
 writeFileSync(join(root, 'packages/vav-desktop/product.json'), `${JSON.stringify(product, null, 2)}\n`)

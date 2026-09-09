@@ -4,7 +4,7 @@ import { IPC } from '../../shared/ipc.ts'
 import { registerTimerIpc } from './registerTimerIpc.ts'
 
 describe('registerTimerIpc', () => {
-  it('proxies list / create / remove to the spawned vavd catalog', async () => {
+  it('proxies list / create / remove to the spawned vav-server catalog', async () => {
     const calls: Array<{ method: string; params?: unknown }> = []
     const handlers = new Map<string, (...args: unknown[]) => unknown>()
     const ipcMain = {

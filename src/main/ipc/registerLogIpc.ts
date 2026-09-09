@@ -24,7 +24,7 @@ export type LogIpcRemote = {
 export type LogIpcHost = {
   saveExportPath: () => Promise<string | null>
   broadcast: (record: AppLogRecord) => void
-  /** Local-shell vavd. Settings → Logs reads this sink when present. */
+  /** Local-shell vav-server. Settings → Logs reads this sink when present. */
   remote?: () => LogIpcRemote | null
 }
 

@@ -2,7 +2,7 @@ import Darwin
 import Foundation
 import Tcmobile
 
-/// JSON-lines socket to a loopback / LAN vavd. Same frames as the tailcat
+/// JSON-lines socket to a loopback / LAN vav-server. Same frames as the tailcat
 /// path — iOS is a phone-protocol client, not a second host.
 final class TcpLineSession {
     private let fd: Int32

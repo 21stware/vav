@@ -1,5 +1,5 @@
 /**
- * Electron-free accounts page builder. vavd and Chrome Settings share this.
+ * Electron-free accounts page builder. vav-server and Chrome Settings share this.
  */
 import type { ConversationMeta } from '@shared/types'
 import { DEFAULT_CLI_AGENTS } from '@shared/types'

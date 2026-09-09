@@ -13,7 +13,7 @@ import {
 
 describe('listenState', () => {
   it('round-trips host/port and probes a live socket', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'vavd-listen-'))
+    const dir = await mkdtemp(join(tmpdir(), 'vav-server-listen-'))
     const server = createServer()
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
     const address = server.address()

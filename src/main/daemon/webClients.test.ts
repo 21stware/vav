@@ -47,7 +47,7 @@ const web = [
 
 /**
  * Chrome side panel and the bundled web page must stay the same phone-protocol
- * client. They are shells — turns stay in vavd.
+ * client. They are shells — turns stay in vav-server.
  */
 describe('web and Chrome clients', () => {
   it('speak the same phone-protocol verbs over WebSocket', () => {
@@ -99,7 +99,7 @@ describe('web and Chrome clients', () => {
 })
 
 /**
- * iOS VAV Remote is the same client. It omits hello.role; vavd treats
+ * iOS VAV Remote is the same client. It omits hello.role; vav-server treats
  * non-daemon hello as the control plane (DaemonServer).
  */
 describe('iOS VAV Remote', () => {

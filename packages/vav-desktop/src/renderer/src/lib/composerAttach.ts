@@ -10,23 +10,39 @@ async function ensureActiveConversation(): Promise<string | null> {
   return useSessionStore.getState().activeId || null
 }
 
-/** Drag-select the screen (app stays visible), annotate, then pin the PNG. */
-export async function attachScreenshot(): Promise<void> {
+/**
+ * Drag-select the screen, annotate, then pin the PNG.
+ * `hideWindow` overrides the default (`screenshotKeepWindowFront`).
+ */
+export async function attachScreenshot(opts?: { hideWindow?: boolean }): Promise<void> {
   document.documentElement.classList.add('is-screenshotting')
   try {
     const id = await ensureActiveConversation()
     if (!id) return
-    const result = await window.vav.files.captureScreenshot()
+    const hideWindow =
+      opts?.hideWindow ??
+      useSessionStore.getState().settings.screenshotKeepWindowFront === false
+    const result = await window.vav.files.captureScreenshot(
+      hideWindow ? { hideWindows: true } : undefined
+    )
     if (result.ok) {
       useSessionStore.getState().addAttachments(id, [result.path])
       return
     }
     if (result.cancelled) return
-    useSessionStore.getState().showToast({
-      kind: 'info',
-      title:
-        result.error === 'denied' ? tt('composer.screenshotDenied') : tt('composer.screenshotFailed')
-    })
+    const store = useSessionStore.getState()
+    if (result.error === 'denied') {
+      // Missing Screen Recording permission — authorization only happens in the
+      // macOS System Settings pane, so confirm opens it directly.
+      store.showDialog({
+        title: tt('composer.screenshotDeniedTitle'),
+        body: tt('composer.screenshotDeniedBody'),
+        confirmLabel: tt('composer.screenshotOpenSystemSettings'),
+        onConfirm: () => void window.vav.files.openScreenshotPermissionSettings()
+      })
+      return
+    }
+    store.showToast({ kind: 'info', title: tt('composer.screenshotFailed') })
   } finally {
     document.documentElement.classList.remove('is-screenshotting')
   }

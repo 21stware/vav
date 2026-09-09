@@ -10,7 +10,7 @@ const REQUIRED = {
   '列表与资源管理': [
     'e2e/specs/sessions.spec.ts',
     'e2e/specs/sidebar-menu.spec.ts',
-    'e2e/specs/desktop-vavd-matrix.spec.ts',
+    'e2e/specs/desktop-vav-server-matrix.spec.ts',
     'e2e/specs/phone-ui.spec.ts',
     'e2e/specs/chrome-extension.spec.ts'
   ],
@@ -20,25 +20,25 @@ const REQUIRED = {
     'e2e/specs/transcript.spec.ts',
     'e2e/specs/empty.spec.ts',
     'e2e/specs/change-review.spec.ts',
-    'e2e/specs/desktop-vavd-matrix.spec.ts'
+    'e2e/specs/desktop-vav-server-matrix.spec.ts'
   ],
   '工作区功能': [
     'e2e/specs/workspace.spec.ts',
     'e2e/specs/workdir.spec.ts',
-    'e2e/specs/desktop-vavd-matrix.spec.ts',
+    'e2e/specs/desktop-vav-server-matrix.spec.ts',
     'e2e/specs/phone-ui.spec.ts',
     'e2e/specs/chrome-extension.spec.ts'
   ],
   '文件查看与选择对话': [
     'e2e/specs/files-preview.spec.ts',
-    'e2e/specs/desktop-vavd-matrix.spec.ts',
+    'e2e/specs/desktop-vav-server-matrix.spec.ts',
     'e2e/specs/phone-ui.spec.ts',
     'e2e/specs/chrome-extension.spec.ts',
     'packages/vav-chrome-extension/phone-ui/phoneVav.test.ts',
     'packages/vav-chrome-extension/phone-ui/phoneDaemon.test.ts',
     'src/main/remote/dirBrowse.test.ts',
     'src/main/daemon/DaemonServer.test.ts',
-    'src/main/daemon/vavdProcess.test.ts',
+    'src/main/daemon/vavServerProcess.test.ts',
     'src/main/host/localShellHost.test.ts',
     'src/shared/clipLayout.test.ts',
     'src/main/store/conversationHostBind.test.ts'
@@ -51,13 +51,13 @@ const REQUIRED = {
   'terminal 服务': [
     'e2e/specs/chrome.spec.ts',
     'e2e/specs/remote-daemon.spec.ts',
-    'e2e/specs/desktop-vavd-matrix.spec.ts',
+    'e2e/specs/desktop-vav-server-matrix.spec.ts',
     'e2e/specs/phone-ui.spec.ts',
-    'src/main/daemon/vavdWebUi.browser.test.ts'
+    'src/main/daemon/vavServerWebUi.browser.test.ts'
   ],
   '配置': [
     'e2e/specs/settings.spec.ts',
-    'e2e/specs/desktop-vavd-matrix.spec.ts',
+    'e2e/specs/desktop-vav-server-matrix.spec.ts',
     'e2e/specs/phone-ui.spec.ts',
     'e2e/specs/chrome-extension.spec.ts',
     'e2e/chromeUi.ts'
@@ -70,14 +70,14 @@ const REQUIRED = {
   '七产品工作区': [
     'src/shared/productCatalog.ts',
     'src/shared/productSplit.test.ts',
-    'packages/vavd/package.json',
-    'packages/vavd/product.json',
+    'packages/vav-server/package.json',
+    'packages/vav-server/product.json',
     'packages/vav-desktop/package.json',
     'packages/vav-desktop/product.json',
-    'packages/vav-cli/package.json',
-    'packages/vav-cli/product.json',
-    'packages/vavc/package.json',
-    'packages/vavc/product.json',
+    'packages/vav-tui/package.json',
+    'packages/vav-tui/product.json',
+    'packages/vav-board/package.json',
+    'packages/vav-board/product.json',
     'packages/vav-chrome-extension/package.json',
     'packages/vav-chrome-extension/product.json',
     'packages/vav-ios/package.json',
@@ -93,7 +93,7 @@ const REQUIRED = {
     'scripts/pack-vav-desktop.mjs'
   ],
   '桌面本机=远程': [
-    'e2e/specs/desktop-vavd-matrix.spec.ts',
+    'e2e/specs/desktop-vav-server-matrix.spec.ts',
     'e2e/specs/empty.spec.ts',
     'e2e/specs/settings.spec.ts',
     'e2e/specs/change-review.spec.ts',
@@ -117,13 +117,13 @@ const REQUIRED = {
     'e2e/specs/screenshot.spec.ts',
     'e2e/launch.ts'
   ],
-  'vavc / vav-cli': ['e2e/specs/vavc-cli.spec.ts', 'packages/vav-cli/src/vavcliSession.ts', 'src/main/cli/vavcliSession.test.ts'],
+  'vav-board / vav-tui': ['e2e/specs/vav-board-cli.spec.ts', 'packages/vav-tui/src/vavTuiSession.ts', 'src/main/cli/vavTuiSession.test.ts'],
   'Chrome extension': [
     'e2e/specs/phone-ui.spec.ts',
     'e2e/specs/chrome-extension.spec.ts',
     'e2e/chromeUi.ts',
-    'src/main/daemon/vavdExtension.browser.test.ts',
-    'src/main/daemon/vavdWebUi.browser.test.ts',
+    'src/main/daemon/vavServerExtension.browser.test.ts',
+    'src/main/daemon/vavServerWebUi.browser.test.ts',
     'src/main/daemon/webClients.test.ts',
     'packages/vav-chrome-extension/phone-ui/phoneVav.test.ts',
     'src/main/daemon/DaemonServer.test.ts',
@@ -228,15 +228,15 @@ const BEHAVIOR = {
     ]
   },
   'Chrome terminal': {
-    file: 'src/main/daemon/vavdWebUi.browser.test.ts',
+    file: 'src/main/daemon/vavServerWebUi.browser.test.ts',
     needles: ['new-bash', 'terminal-panel', 'pty.list']
   },
-  'vavc / vav-cli': {
-    file: 'e2e/specs/vavc-cli.spec.ts',
+  'vav-board / vav-tui': {
+    file: 'e2e/specs/vav-board-cli.spec.ts',
     needles: [
-      'runVavcliRpc',
+      'runVavTuiRpc',
       'hello from rpc',
-      'runVavcliLines',
+      'runVavTuiLines',
       'hello from repl',
       '--mode text\\|json\\|rpc',
       'stubApprove',
@@ -252,7 +252,7 @@ const BEHAVIOR = {
       'file open',
       'file info',
       'hello from tty',
-      'vav-cli>',
+      'vav-tui>',
       'git init',
       '/git',
       'git branch',
@@ -322,7 +322,14 @@ const BEHAVIOR = {
   },
   '桌面截图本机=远程': {
     file: 'e2e/specs/screenshot.spec.ts',
-    needles: ['launchWorkbench', 'seedVavKeyAccount', 'composer-screenshot', 'screenshot-crop']
+    needles: [
+      'launchWorkbench',
+      'seedVavKeyAccount',
+      'composer-screenshot',
+      'composer-screenshot-menu',
+      'screenshot-crop',
+      'Hide window, then capture'
+    ]
   },
   '配置': {
     file: 'e2e/specs/settings.spec.ts',
@@ -331,14 +338,16 @@ const BEHAVIOR = {
       'Providers',
       'accounts catalog',
       'createDraft',
-      'spawned vavd host settings',
+      'spawned vav-server host settings',
       'githubTrayEnabled',
       'defaultApprovalMode',
       'setApiKey',
-      'sk-e2e-vavd-key',
+      'sk-e2e-vav-server-key',
       'logRetentionDays',
       'launchWorkbench',
       'settings-reduce-motion',
+      'settings-screenshot-keep-front',
+      'screenshotKeepWindowFront',
       'segment-mod-enter',
       'settings-auto-update-policy',
       'settings-about-update-checking'
@@ -398,9 +407,9 @@ const BEHAVIOR = {
     ]
   },
   '桌面本机=远程': {
-    file: 'e2e/specs/desktop-vavd-matrix.spec.ts',
+    file: 'e2e/specs/desktop-vav-server-matrix.spec.ts',
     needles: [
-      'spawnVavd: true',
+      'spawnVavServer: true',
       'session-row',
       'setApprovalMode',
       'composer-send',
@@ -412,7 +421,7 @@ const BEHAVIOR = {
       'note.md',
       'segment-git',
       'plugins-tray',
-      'readVavdConversation',
+      'readVavServerConversation',
       'new-bash',
       'terminal-panel',
       'pty.list'
@@ -539,8 +548,8 @@ describe('e2e feature coverage', () => {
     }
   })
 
-  it('keeps Chrome Settings accounts on the same daemon catalog as vavc', () => {
-    const web = readFileSync(join(root, 'src/main/daemon/vavdWebUi.browser.test.ts'), 'utf8')
+  it('keeps Chrome Settings accounts on the same daemon catalog as vavBoard', () => {
+    const web = readFileSync(join(root, 'src/main/daemon/vavServerWebUi.browser.test.ts'), 'utf8')
     const phone = readFileSync(join(root, 'packages/vav-chrome-extension/phone-ui/phoneVav.ts'), 'utf8')
     assert.match(web, /openSettings\('agents'\)/)
     assert.match(web, /accounts\.createDraft/)
@@ -755,85 +764,85 @@ describe('e2e feature coverage', () => {
     assert.match(proto, /type: 'locate'/)
   })
 
-  it('keeps vavc file-session and compact on the live CLI surface', () => {
-    const vavc = readFileSync(join(root, 'packages/vavc/src/vavc.ts'), 'utf8')
-    const vavcli = readFileSync(join(root, 'packages/vav-cli/src/vavcli.ts'), 'utf8')
-    const e2e = readFileSync(join(root, 'e2e/specs/vavc-cli.spec.ts'), 'utf8')
-    assert.match(vavc, /file-session/)
-    assert.match(vavc, /file reveal/)
-    assert.match(vavc, /session compact/)
-    assert.match(vavc, /session regenerate/)
-    assert.match(vavc, /session goal/)
-    assert.match(vavc, /session locate/)
-    assert.match(vavc, /session delete-message/)
-    assert.match(vavc, /session leaf/)
-    assert.match(vavc, /account list/)
-    assert.match(vavc, /account draft/)
-    assert.match(vavc, /account oauth/)
-    assert.match(vavc, /account verify/)
-    assert.match(vavc, /account reveal/)
-    assert.match(vavc, /account current/)
-    assert.match(vavc, /updateAccount/)
-    assert.match(vavc, /revealAccountKey/)
-    assert.match(vavc, /setCurrentAccount/)
-    assert.match(vavc, /recordLog/)
-    assert.match(vavc, /logs record/)
-    assert.match(vavc, /logs tail/)
-    assert.match(vavc, /tailLogs/)
-    assert.match(vavc, /logs.subscribe/)
-    assert.match(vavc, /settings secret/)
-    assert.match(vavc, /setHostSecret/)
-    assert.match(vavc, /hintHostSecret/)
-    assert.match(vavc, /revealHostSecret/)
-    assert.match(vavc, /account cancel/)
-    assert.match(vavc, /account signout/)
-    assert.match(vavc, /beginAccountOAuth/)
-    assert.match(vavc, /connectors \[login/)
-    assert.match(vavc, /connectorAuthStatus/)
-    assert.match(vavc, /connectorVendorStatus/)
-    assert.match(vavc, /github actions/)
-    assert.match(vavc, /listGithubActionsCli/)
-    assert.match(vavc, /listGithubReleasesCli/)
-    assert.match(vavc, /getGithubSiteCli/)
-    assert.match(vavc, /github pull/)
-    assert.match(vavc, /getGithubPullCli/)
-    assert.match(vavc, /getGithubActionRunCli/)
-    assert.match(vavc, /removeTimer/)
-    assert.match(vavc, /listTimerRuns/)
-    assert.match(vavc, /listTimerSessions/)
-    assert.match(vavc, /updateTimer/)
-    assert.match(vavc, /getTimerForConversation/)
-    assert.match(vavc, /connectorAct/)
-    assert.match(vavc, /timers update/)
-    assert.match(vavc, /timers remove/)
-    assert.match(vavc, /connectors act/)
-    assert.match(vavc, /logs stats/)
-    assert.match(vavc, /clearLogs/)
-    assert.match(vavc, /exportLogs/)
-    assert.match(vavc, /gitCreateBranch/)
-    assert.match(vavc, /gitCheckoutBranch/)
-    assert.match(vavc, /gitCreateWorktree/)
-    assert.match(vavc, /git branch/)
-    assert.match(vavc, /file mkdir/)
-    assert.match(vavc, /mkdirFile/)
-    assert.match(vavc, /renameFile/)
-    assert.match(vavc, /unlinkFile/)
-    assert.match(vavc, /file-session create/)
-    assert.match(vavc, /file-session activate/)
-    assert.match(vavc, /createFileSession/)
-    assert.match(vavc, /activateFileSession/)
-    assert.match(vavc, /deleteFileSessions/)
-    assert.match(vavcli, /oauth <agent>/)
-    assert.match(vavcli, /\/connectors \[list\|auth/)
-    assert.match(vavc, /vavc settings/)
-    assert.match(vavc, /vavc review seed/)
-    assert.match(vavc, /host \[info\|pairing\|rotate\|incoming\]/)
-    assert.match(vavc, /host disconnect/)
-    assert.match(vavc, /host unpair/)
-    assert.match(vavcli, /\/account/)
-    assert.match(vavcli, /\/settings/)
-    assert.match(vavcli, /draftAccount/)
-    assert.match(vavcli, /updateHostSettings/)
+  it('keeps vavBoard file-session and compact on the live CLI surface', () => {
+    const vavBoard = readFileSync(join(root, 'packages/vav-board/src/vav-board.ts'), 'utf8')
+    const vavTui = readFileSync(join(root, 'packages/vav-tui/src/vav-tui.ts'), 'utf8')
+    const e2e = readFileSync(join(root, 'e2e/specs/vav-board-cli.spec.ts'), 'utf8')
+    assert.match(vavBoard, /file-session/)
+    assert.match(vavBoard, /file reveal/)
+    assert.match(vavBoard, /session compact/)
+    assert.match(vavBoard, /session regenerate/)
+    assert.match(vavBoard, /session goal/)
+    assert.match(vavBoard, /session locate/)
+    assert.match(vavBoard, /session delete-message/)
+    assert.match(vavBoard, /session leaf/)
+    assert.match(vavBoard, /account list/)
+    assert.match(vavBoard, /account draft/)
+    assert.match(vavBoard, /account oauth/)
+    assert.match(vavBoard, /account verify/)
+    assert.match(vavBoard, /account reveal/)
+    assert.match(vavBoard, /account current/)
+    assert.match(vavBoard, /updateAccount/)
+    assert.match(vavBoard, /revealAccountKey/)
+    assert.match(vavBoard, /setCurrentAccount/)
+    assert.match(vavBoard, /recordLog/)
+    assert.match(vavBoard, /logs record/)
+    assert.match(vavBoard, /logs tail/)
+    assert.match(vavBoard, /tailLogs/)
+    assert.match(vavBoard, /logs.subscribe/)
+    assert.match(vavBoard, /settings secret/)
+    assert.match(vavBoard, /setHostSecret/)
+    assert.match(vavBoard, /hintHostSecret/)
+    assert.match(vavBoard, /revealHostSecret/)
+    assert.match(vavBoard, /account cancel/)
+    assert.match(vavBoard, /account signout/)
+    assert.match(vavBoard, /beginAccountOAuth/)
+    assert.match(vavBoard, /connectors \[login/)
+    assert.match(vavBoard, /connectorAuthStatus/)
+    assert.match(vavBoard, /connectorVendorStatus/)
+    assert.match(vavBoard, /github actions/)
+    assert.match(vavBoard, /listGithubActionsCli/)
+    assert.match(vavBoard, /listGithubReleasesCli/)
+    assert.match(vavBoard, /getGithubSiteCli/)
+    assert.match(vavBoard, /github pull/)
+    assert.match(vavBoard, /getGithubPullCli/)
+    assert.match(vavBoard, /getGithubActionRunCli/)
+    assert.match(vavBoard, /removeTimer/)
+    assert.match(vavBoard, /listTimerRuns/)
+    assert.match(vavBoard, /listTimerSessions/)
+    assert.match(vavBoard, /updateTimer/)
+    assert.match(vavBoard, /getTimerForConversation/)
+    assert.match(vavBoard, /connectorAct/)
+    assert.match(vavBoard, /timers update/)
+    assert.match(vavBoard, /timers remove/)
+    assert.match(vavBoard, /connectors act/)
+    assert.match(vavBoard, /logs stats/)
+    assert.match(vavBoard, /clearLogs/)
+    assert.match(vavBoard, /exportLogs/)
+    assert.match(vavBoard, /gitCreateBranch/)
+    assert.match(vavBoard, /gitCheckoutBranch/)
+    assert.match(vavBoard, /gitCreateWorktree/)
+    assert.match(vavBoard, /git branch/)
+    assert.match(vavBoard, /file mkdir/)
+    assert.match(vavBoard, /mkdirFile/)
+    assert.match(vavBoard, /renameFile/)
+    assert.match(vavBoard, /unlinkFile/)
+    assert.match(vavBoard, /file-session create/)
+    assert.match(vavBoard, /file-session activate/)
+    assert.match(vavBoard, /createFileSession/)
+    assert.match(vavBoard, /activateFileSession/)
+    assert.match(vavBoard, /deleteFileSessions/)
+    assert.match(vavTui, /oauth <agent>/)
+    assert.match(vavTui, /\/connectors \[list\|auth/)
+    assert.match(vavBoard, /vav-board settings/)
+    assert.match(vavBoard, /vav-board review seed/)
+    assert.match(vavBoard, /host \[info\|pairing\|rotate\|incoming\]/)
+    assert.match(vavBoard, /host disconnect/)
+    assert.match(vavBoard, /host unpair/)
+    assert.match(vavTui, /\/account/)
+    assert.match(vavTui, /\/settings/)
+    assert.match(vavTui, /draftAccount/)
+    assert.match(vavTui, /updateHostSettings/)
     assert.match(e2e, /file-session/)
     assert.match(e2e, /file', 'stat/)
     assert.match(e2e, /session', 'compact/)
@@ -862,22 +871,22 @@ describe('e2e feature coverage', () => {
     assert.match(e2e, /--mode', 'plan/)
     assert.match(e2e, /\/run-mode/)
     assert.match(e2e, /--mode text\\\|json\\\|rpc/)
-    assert.match(e2e, /runVavcliRpc/)
+    assert.match(e2e, /runVavTuiRpc/)
     assert.match(e2e, /hello from rpc/)
-    assert.match(e2e, /runVavcliLines/)
+    assert.match(e2e, /runVavTuiLines/)
     assert.match(e2e, /hello from repl/)
     assert.match(e2e, /stubApprove/)
     assert.match(e2e, /\/edit/)
     assert.match(e2e, /\/continue/)
-    assert.match(vavc, /--mode/)
-    assert.match(vavcli, /\/run-mode/)
-    assert.match(vavcli, /\/reply/)
-    assert.match(vavcli, /\/edit/)
-    assert.match(vavcli, /\/continue/)
-    assert.match(vavcli, /\/review/)
-    assert.match(vavcli, /export \{ runVavcliLines, runVavcliRpc, streamTurn \}/)
-    const session = readFileSync(join(root, 'packages/vav-cli/src/vavcliSession.ts'), 'utf8')
-    assert.match(session, /export async function runVavcliRpc/)
-    assert.match(session, /export async function runVavcliLines/)
+    assert.match(vavBoard, /--mode/)
+    assert.match(vavTui, /\/run-mode/)
+    assert.match(vavTui, /\/reply/)
+    assert.match(vavTui, /\/edit/)
+    assert.match(vavTui, /\/continue/)
+    assert.match(vavTui, /\/review/)
+    assert.match(vavTui, /export \{ runVavTuiLines, runVavTuiRpc, streamTurn \}/)
+    const session = readFileSync(join(root, 'packages/vav-tui/src/vavTuiSession.ts'), 'utf8')
+    assert.match(session, /export async function runVavTuiRpc/)
+    assert.match(session, /export async function runVavTuiLines/)
   })
 })

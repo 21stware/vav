@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import {
-  VAVD_WEB_DEFAULT_PORT,
-  VAVD_WEB_SCAN_LAST,
+  VAV_SERVER_WEB_DEFAULT_PORT,
+  VAV_SERVER_WEB_SCAN_LAST,
   buildDiscoverPayload,
   isLocalPairingHost,
   isLoopbackAddress,
@@ -41,7 +41,7 @@ describe('vavDiscover', () => {
   it('includes the pairing secret only for loopback clients', () => {
     const secret = () => '0123456789abcdef01234567'
     const local = buildDiscoverPayload({ name: 'office', version: '1.19.0', secret, port: 4750 }, true)
-    assert.equal(local.app, 'vavd')
+    assert.equal(local.app, 'vav-server')
     assert.equal(local.proto, 1)
     assert.equal(local.loopback, true)
     assert.equal(local.secret, '0123456789abcdef01234567')
@@ -65,8 +65,8 @@ describe('vavDiscover', () => {
 
   it('scans the well-known web range plus hints', () => {
     const ports = webScanPorts([4800, 4752, -1])
-    assert.ok(ports.includes(VAVD_WEB_DEFAULT_PORT))
-    assert.ok(ports.includes(VAVD_WEB_SCAN_LAST))
+    assert.ok(ports.includes(VAV_SERVER_WEB_DEFAULT_PORT))
+    assert.ok(ports.includes(VAV_SERVER_WEB_SCAN_LAST))
     assert.ok(ports.includes(4800))
     assert.ok(!ports.includes(-1))
     assert.equal(ports[0], 4800)

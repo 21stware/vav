@@ -1,7 +1,7 @@
 /**
  * Headless VAV host: stores + AgentRuntime + RemoteControlHub.
  *
- * Desktop already wires this graph inside Electron. `vavd` uses the same
+ * Desktop already wires this graph inside Electron. `vav-server` uses the same
  * objects so phone / web / extension / desktop-connect are isomorphic
  * control clients — turns run here, not in the shell.
  */
@@ -286,7 +286,7 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
           return cli
         })
         .catch((err) => {
-          console.warn('[vavd] CliAgentHost unavailable', err)
+          console.warn('[vav-server] CliAgentHost unavailable', err)
           return null
         })
     }
@@ -516,13 +516,13 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
               id: `cli-missing-${conversationId}`,
               parentId: null,
               role: 'assistant',
-              content: 'CLI agent host is unavailable in this vavd.',
-              blocks: [{ kind: 'text', text: 'CLI agent host is unavailable in this vavd.' }],
+              content: 'CLI agent host is unavailable in this vav-server.',
+              blocks: [{ kind: 'text', text: 'CLI agent host is unavailable in this vav-server.' }],
               createdAt: Date.now(),
-              errorText: 'CLI agent host is unavailable in this vavd.'
+              errorText: 'CLI agent host is unavailable in this vav-server.'
             },
             tokensUsed: 0,
-            error: 'CLI agent host is unavailable in this vavd.',
+            error: 'CLI agent host is unavailable in this vav-server.',
             errorKind: 'generic'
           })
           return
@@ -1088,7 +1088,7 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
       timerScheduler?.start()
       logStore.load()
       setAppLogger(logger)
-      logger.system(LOG_EVENT.systemBoot, 'vavd ready', { data: { version: opts.appVersion } })
+      logger.system(LOG_EVENT.systemBoot, 'vav-server ready', { data: { version: opts.appVersion } })
       const envKey = process.env.VAV_API_KEY?.trim()
       if (envKey) secrets.set(envKey, 'api')
       const envEndpoint = process.env.VAV_API_ENDPOINT?.trim()

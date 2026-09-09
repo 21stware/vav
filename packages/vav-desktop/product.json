@@ -1,6 +1,6 @@
 {
   "name": "@21stware/vav-desktop",
-  "version": "1.20.0",
+  "version": "1.21.0",
   "role": "vav-desktop",
   "kind": "electron",
   "sources": [
@@ -9,7 +9,7 @@
     "packages/vav-desktop/electron-builder.json"
   ],
   "talksTo": [
-    "vavd"
+    "vav-server"
   ],
   "hello": [
     "phone",

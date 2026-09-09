@@ -1,7 +1,7 @@
 import { isLocalMachine } from '../../shared/workspaceHost.ts'
 import type { HostRegistry, WorkspaceHost } from './WorkspaceHost.ts'
 
-/** Spawned loopback vavd — default local service, hidden from the switcher. */
+/** Spawned loopback vav-server — default local service, hidden from the switcher. */
 export function localShellHostOf(registry: HostRegistry): WorkspaceHost | null {
   for (const info of registry.list()) {
     if (!info.localShell) continue
@@ -12,7 +12,7 @@ export function localShellHostOf(registry: HostRegistry): WorkspaceHost | null {
 }
 
 /**
- * Files / PTY / git for a conversation. Local chats use the spawned vavd
+ * Files / PTY / git for a conversation. Local chats use the spawned vav-server
  * host when it is mounted so desktop and Chrome share one grant plane.
  */
 export function workspaceHostForConversation(
@@ -25,7 +25,7 @@ export function workspaceHostForConversation(
   return registry.hostFor(machineId)
 }
 
-/** Native node-pty / existsSync — false once local I/O goes through vavd. */
+/** Native node-pty / existsSync — false once local I/O goes through vav-server. */
 export function conversationUsesLocalNode(
   registry: HostRegistry,
   machineId: string | null | undefined
@@ -34,7 +34,7 @@ export function conversationUsesLocalNode(
 }
 
 /**
- * Wait until the spawned loopback vavd is paired and its phone-role
+ * Wait until the spawned loopback vav-server is paired and its phone-role
  * control plane is ready. New Session / agent probes call this so they
  * do not mint an in-process row while pair() is still in flight.
  */

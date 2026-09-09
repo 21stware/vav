@@ -31,7 +31,7 @@ export interface CliStatus {
   error?: string
   /** Soft note after e.g. falling back from /usr/local/bin → ~/.local/bin. */
   notice?: string
-  /** All shims this install writes (`vav` plus vavd / vavc / vavcli). */
+  /** All shims this install writes (`vav` plus vav-server / vav-board / vav-tui). */
   commands: string[]
 }
 
@@ -55,9 +55,9 @@ function binaryPath(location: CliInstallLocation, name = APP_CLI_NAME): string {
 
 function daemonStateDir(): string {
   try {
-    return join(app.getPath('userData'), 'vavd')
+    return join(app.getPath('userData'), 'vav-server')
   } catch {
-    return join(homedir(), '.vavd')
+    return join(homedir(), '.vav-server')
   }
 }
 
@@ -118,12 +118,12 @@ const CLI_HELP = [
   'The command returns immediately — VAV opens in the background.',
   '',
   'This install also writes:',
-  '  vavd     Headless daemon (same process the app can spawn)',
-  '  vavc     Control client — sessions, files, panes (herdr-style)',
-  '  vavcli   Agent CLI — interactive / print / JSON / RPC (Claude Code-style)',
+  '  vav-server     Headless daemon (same process the app can spawn)',
+  '  vav-board     Control client — sessions, files, panes (herdr-style)',
+  '  vav-tui   Agent CLI — interactive / print / JSON / RPC (Claude Code-style)',
   '',
-  'Those three talk to vavd over the same protocols as the app.',
-  'Run vavc -h or vavcli -h for usage.',
+  'Those three talk to vav-server over the same protocols as the app.',
+  'Run vav-board -h or vav-tui -h for usage.',
   ''
 ].join('\n')
 
@@ -332,7 +332,7 @@ function writeDaemonBins(dir: string): string[] {
       stateDir
     })
     if (!spec) {
-      throw new Error(`missing ${name} binary — pack vavd or run from the VAV repo`)
+      throw new Error(`missing ${name} binary — pack vav-server or run from the VAV repo`)
     }
     const target = join(dir, name)
     writeFileSync(target, nodeBinLauncherScript(spec), { encoding: 'utf8', mode: 0o755 })

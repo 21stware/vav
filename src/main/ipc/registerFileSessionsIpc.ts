@@ -49,7 +49,7 @@ export type FileSessionsIpcHost = {
   defaultThinkingLevel: () => string | undefined
   setReadOnly: (sessionId: string, readOnly: boolean) => void
   onSessionsDeleted: (ids: string[]) => void
-  /** Spawned loopback vavd — File Preview talks to the same index Chrome uses. */
+  /** Spawned loopback vav-server — File Preview talks to the same index Chrome uses. */
   remote?: () => FileSessionsIpcRemote | null
 }
 

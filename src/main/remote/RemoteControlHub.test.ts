@@ -258,7 +258,7 @@ describe('RemoteControlHub', () => {
         socket.once('error', reject)
       })
       socket.write(
-        encodeLine({ type: 'hello', proto: 1, auth: SECRET, role: 'daemon', device: 'vavd' })
+        encodeLine({ type: 'hello', proto: 1, auth: SECRET, role: 'daemon', device: 'vav-server' })
       )
       await new Promise((resolve) => setTimeout(resolve, 80))
       assert.equal(handed, '')

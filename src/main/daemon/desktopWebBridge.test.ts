@@ -31,7 +31,7 @@ describe('desktop web bridge', () => {
       assert.ok(web)
       const res = await fetch(`http://127.0.0.1:${web.port}/discover`)
       const info = (await res.json()) as { app?: string; secret?: string; name?: string }
-      assert.equal(info.app, 'vavd')
+      assert.equal(info.app, 'vav-server')
       assert.equal(info.secret, SECRET)
       assert.equal(info.name, 'VAV')
     } finally {

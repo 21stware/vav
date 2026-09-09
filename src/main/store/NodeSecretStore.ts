@@ -1,5 +1,5 @@
 /**
- * File-backed secrets for headless `vavd` (mode 0600). Same method surface
+ * File-backed secrets for headless `vav-server` (mode 0600). Same method surface
  * AgentRuntime / resolveVavCredentials need from Electron SecretStore.
  */
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -107,7 +107,7 @@ export class NodeSecretStore {
   }
 
   setOAuthSnapshot(_accountId: string, _snapshot: unknown): void {
-    /* headless vavd does not persist CLI OAuth snapshots */
+    /* headless vav-server does not persist CLI OAuth snapshots */
   }
 
   clearOAuthSnapshot(_accountId: string): void {

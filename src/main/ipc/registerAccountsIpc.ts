@@ -50,7 +50,7 @@ export type AccountsIpcHost = {
   finishOAuth: (host: string, status: 'ok' | 'error' | 'cancelled', message?: string) => void
   runLogout: (resolved: string, host: string) => Promise<void>
   refreshQuotaPanel: (host: string) => void
-  /** Spawned loopback vavd — Settings accounts share the store Chrome uses. */
+  /** Spawned loopback vav-server — Settings accounts share the store Chrome uses. */
   remote?: () => { request: (method: string, params?: unknown) => Promise<unknown> } | null
   /** After a remote account write, push merged host settings (apiKeyPresent). */
   publishSettings?: () => Promise<void>

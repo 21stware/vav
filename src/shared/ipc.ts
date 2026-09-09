@@ -227,22 +227,34 @@ export type SettingsView =
 /** `'api'` / `'accounts'` are legacy aliases for Providers. */
 export function resolveSettingsView(
   view?: SettingsView | null,
-  agentId?: string | null
-): { view: SettingsView; agentId?: string } {
+  agentId?: string | null,
+  machineId?: string | null
+): { view: SettingsView; agentId?: string; machineId?: string } {
   const trimmed = agentId?.trim() || undefined
+  const machine = machineId?.trim() || undefined
   if (view === 'api' || view === 'accounts') {
-    return { view: 'agents', agentId: trimmed }
+    return { view: 'agents', agentId: trimmed, ...(machine ? { machineId: machine } : {}) }
   }
   if (!view) {
-    return { view: trimmed ? 'agents' : 'appearance', agentId: trimmed }
+    return {
+      view: trimmed ? 'agents' : 'appearance',
+      agentId: trimmed,
+      ...(machine ? { machineId: machine } : {})
+    }
   }
-  return trimmed ? { view, agentId: trimmed } : { view }
+  return {
+    view,
+    ...(trimmed ? { agentId: trimmed } : {}),
+    ...(machine ? { machineId: machine } : {})
+  }
 }
 
-/** Raise Settings on a category, optionally selecting a provider row. */
+/** Raise Settings on a category, optionally selecting a provider row / vav-server. */
 export interface SettingsViewPayload {
   view: SettingsView
   agentId?: string
+  /** Sidebar instance whose appearance / host settings this window should edit. */
+  machineId?: string
 }
 
 export interface FileAssociationStatus {
@@ -268,7 +280,7 @@ export interface CliStatus {
   error?: string
   /** Soft note (e.g. auto-fallback to ~/.local/bin). */
   notice?: string
-  /** All shims this install writes (`vav` plus vavd / vavc / vavcli). */
+  /** All shims this install writes (`vav` plus vav-server / vav-board / vav-tui). */
   commands?: string[]
 }
 
@@ -1145,13 +1157,20 @@ export interface VavApi {
     pickAttachments(): Promise<{ ok: true; paths: string[] } | { ok: false; cancelled?: boolean }>
     /**
      * Drag-select a screen region, annotate, attach PNG.
-     * App windows stay visible and are included in the capture.
+     * By default app windows stay visible. Pass `hideWindows` to conceal
+     * them before capture (dropdown: 隐藏窗口截图).
      * Resolves after confirm / cancel / failure.
      */
-    captureScreenshot(): Promise<
+    captureScreenshot(options?: { hideWindows?: boolean }): Promise<
       | { ok: true; path: string }
       | { ok: false; cancelled?: boolean; error?: 'denied' | 'failed' | 'busy' }
     >
+    /** macOS Screen Recording status (non-darwin resolves 'granted'). */
+    screenshotPermission(): Promise<
+      'granted' | 'denied' | 'not-determined' | 'restricted' | 'unknown'
+    >
+    /** Open System Settings → Privacy → Screen Recording so the user can authorize. */
+    openScreenshotPermissionSettings(): Promise<void>
     /** Save dialog + write text contents (markdown Copy/Save, file viewer). */
     saveAs(
       defaultName: string,
@@ -1481,7 +1500,7 @@ export interface VavApi {
     onAccentColorChanged(handler: (hex: string) => void): () => void
     shellPath(shell: ShellKind): Promise<string>
     /** Settings live in their own window, not a sheet over the transcript. */
-    openSettings(view?: SettingsView, agentId?: string): Promise<void>
+    openSettings(view?: SettingsView, agentId?: string, machineId?: string): Promise<void>
     closeSettings(): Promise<void>
     /** Last category ⌘, / Open Settings asked for — pull after the lazy chunk mounts. */
     desiredSettingsView(): Promise<SettingsViewPayload>
@@ -1960,6 +1979,8 @@ export const IPC = {
   filesCopyImage: 'vav:files:copy-image',
   filesPickAttachments: 'vav:files:pick-attachments',
   filesCaptureScreenshot: 'vav:files:capture-screenshot',
+  filesScreenshotPermission: 'vav:files:screenshot-permission',
+  filesOpenScreenshotPermissionSettings: 'vav:files:screenshot-permission-open',
   screenshotReady: 'vav:screenshot:ready',
   screenshotInit: 'vav:screenshot:init',
   screenshotPainted: 'vav:screenshot:painted',

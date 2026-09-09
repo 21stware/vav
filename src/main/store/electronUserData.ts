@@ -1,5 +1,5 @@
 /**
- * Electron `userData` without a static `electron` import so headless `vavd`
+ * Electron `userData` without a static `electron` import so headless `vav-server`
  * can construct stores when a directory is injected.
  */
 export function electronUserData(): string {

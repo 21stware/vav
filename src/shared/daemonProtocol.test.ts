@@ -55,7 +55,7 @@ describe('daemon server frames', () => {
     const frame = parseDaemonServerFrame({
       type: 'welcome',
       proto: 1,
-      app: 'vavd',
+      app: 'vav-server',
       version: '1.0.0',
       host: { id: 'box', name: 'build', kind: 'remote', online: true },
       home: '/home/u',
@@ -70,7 +70,7 @@ describe('daemon server frames', () => {
     const frame = parseDaemonServerFrame({
       type: 'welcome',
       proto: 1,
-      app: 'vavd',
+      app: 'vav-server',
       version: '1.0.0',
       host: { id: 'box', name: 'build', kind: 'remote', online: true },
       home: '/home/u',

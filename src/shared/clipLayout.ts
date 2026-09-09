@@ -1,5 +1,5 @@
-/** Temp overlay folder — same name on desktop, Chrome, and vavd. */
-export const CLIP_FOLDER = 'vav-clips'
+/** Temp overlay folder — same name on desktop, Chrome, and vav-server. */
+export const CLIP_FOLDER = 'vav-tuips'
 
 const SAFE_NAME = /[^A-Za-z0-9._-]+/g
 

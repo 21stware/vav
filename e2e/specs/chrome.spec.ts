@@ -139,6 +139,7 @@ test('composer exposes attach and screenshot actions', async () => {
     const { page } = harness
     await expect(page.locator('[data-testid="composer-attach"]')).toBeVisible()
     await expect(page.locator('[data-testid="composer-screenshot"]')).toBeVisible()
+    await expect(page.locator('[data-testid="composer-screenshot-menu"]')).toBeVisible()
   } finally {
     await harness.dispose()
   }

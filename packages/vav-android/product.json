@@ -1,6 +1,6 @@
 {
   "name": "@21stware/vav-android",
-  "version": "1.20.0",
+  "version": "1.21.0",
   "role": "vav-android",
   "kind": "native",
   "sources": [
@@ -10,7 +10,7 @@
     "packages/vav-android/VAVRemote/app/src/main/java/com/vav/remote/ui/SessionDetailScreen.kt"
   ],
   "talksTo": [
-    "vavd"
+    "vav-server"
   ],
   "hello": [
     "phone"

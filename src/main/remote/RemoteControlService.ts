@@ -90,9 +90,9 @@ export class RemoteControlService {
   private generation = 0
   private knownDevices: { device: string; lastSeen: number }[] = []
   private devicesLoaded = false
-  /** Sidecar is up (or starting) — used when forwarding to vavd with no local hub listen. */
+  /** Sidecar is up (or starting) — used when forwarding to vav-server with no local hub listen. */
   private started = false
-  /** Loopback vavd: phone QR secret + sidecar `--forward` target. */
+  /** Loopback vav-server: phone QR secret + sidecar `--forward` target. */
   private tunnelForward: { port: number; secret: string } | null = null
   readonly hub: RemoteControlHub
 
@@ -148,7 +148,7 @@ export class RemoteControlService {
   }
 
   /**
-   * Point the phone tailcat sidecar at a loopback vavd. QR secret becomes
+   * Point the phone tailcat sidecar at a loopback vav-server. QR secret becomes
    * the daemon's; Electron's hub no longer owns those sockets.
    */
   setTunnelForward(target: { port: number; secret: string } | null): void {

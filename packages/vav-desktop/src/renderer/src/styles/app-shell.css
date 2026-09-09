@@ -7175,6 +7175,7 @@ mark {
 
 .sidebar-foot-connect-chevron {
   flex: 0 0 auto;
+  margin-left: auto;
   opacity: 0.45;
 }
 

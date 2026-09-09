@@ -187,7 +187,7 @@ function PhoneChrome({ transport }: { transport: PhoneTransport }): React.JSX.El
               ? `Connected · ${link.version}`
               : 'Connected'
             : link.status === 'error'
-              ? link.error || 'Can’t reach vavd'
+              ? link.error || 'Can’t reach vav-server'
               : link.status === 'reconnecting'
                 ? 'Reconnecting…'
                 : 'Looking for this machine…'}
@@ -258,7 +258,7 @@ function PhoneChrome({ transport }: { transport: PhoneTransport }): React.JSX.El
             <p>
               {transport.variant === 'extension'
                 ? 'Open the VAV desktop app on this machine. This panel finds it automatically. Or paste a Connect line / local URL.'
-                : 'This page talks to the vavd on this machine. Paste a Connect line if it did not pair automatically.'}
+                : 'This page talks to the vav-server on this machine. Paste a Connect line if it did not pair automatically.'}
             </p>
             <input
               id="secret"

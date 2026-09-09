@@ -172,7 +172,7 @@ export const zhCN = {
   'sidebar.switchService': '切换服务',
   'sidebar.serviceTheme': '此连接的主题',
   'sidebar.serviceThemeSettings': '外观设置…',
-  'sidebar.configureService': '配置此 vavd…',
+  'sidebar.configureService': '配置此 vav-server…',
   'sidebar.pairDevice': '配对其他设备…',
   'sidebar.emptyRemoteTitle': '这台设备上还没有会话',
   'sidebar.emptyRemoteDesc': '新建一个会话，工作目录和 Agent 会在 {name} 上运行',
@@ -655,7 +655,7 @@ export const zhCN = {
   'settings.nav.notifications': '通知',
   'settings.nav.connect': '远程隧道',
   'settings.hostSettingsUnavailable': '无法读取该连接的服务设置',
-  'settings.hostSettingsUnavailableHint': '这次改动没有写到远端。请确认该 vavd 在线后再试。',
+  'settings.hostSettingsUnavailableHint': '这次改动没有写到远端。请确认该 vav-server 在线后再试。',
   'settings.nav.connectors': '连接器',
   'settings.nav.agents': 'Providers',
   'settings.nav.accounts': '账户',
@@ -1111,7 +1111,7 @@ export const zhCN = {
 
   // —— appearance ——
   'appearance.connectionTheme': '连接主题',
-  'appearance.connectionThemeHint': '每个已连接的服务可以有自己的主题、强调色和底纹。默认继承该 vavd 自己的样式，改动只在本机生效。',
+  'appearance.connectionThemeHint': '每个已连接的服务可以有自己的主题、强调色和底纹。默认继承该 vav-server 自己的样式，改动只在本机生效。',
   'appearance.theme': '主题',
   'appearance.theme.system': '系统',
   'appearance.theme.light': '浅色',
@@ -1188,6 +1188,14 @@ export const zhCN = {
   'appearance.windowVibrancy': '系统毛玻璃',
   'appearance.windowVibrancyHint':
     '会话列表与设置侧栏透出 macOS 桌面模糊材质。关闭后使用不透明背景。',
+  'appearance.screenshotKeepFront': '截图时保持窗口在最前端',
+  'appearance.screenshotKeepFrontHint':
+    '默认直接截图，窗口会出现在画面里。关闭后，截图前先隐藏窗口。',
+  'appearance.screenshotPermission': '屏幕录制权限',
+  'appearance.screenshotPermissionGranted': '已授权',
+  'appearance.screenshotPermissionAuthorize': '去系统设置授权…',
+  'appearance.screenshotPermissionHint':
+    '截图需要「屏幕录制」权限。点上方按钮打开系统设置 → 隐私与安全性 → 屏幕录制，勾选 VAV 后返回即可。',
   'appearance.sendKey': '发送快捷键',
   'appearance.sendKey.enter': 'Enter',
   'appearance.sendKey.modEnter': '⌘↵',
@@ -1238,7 +1246,7 @@ export const zhCN = {
   'cli.installTitle': '安装 VAV 命令',
   'cli.uninstallTitle': '卸载 VAV 命令',
   'cli.uninstallBody':
-    '将从 {path} 中移除 vav、vavd、vavc、vavcli。VAV 主程序和数据不受影响。可随时重新安装。',
+    '将从 {path} 中移除 vav、vav-server、vav-board、vav-tui。VAV 主程序和数据不受影响。可随时重新安装。',
   'cli.pathWarning':
     '{location} 可能不在 PATH 中。若终端找不到 VAV，在 shell 配置中加入 export PATH="$HOME/.local/bin:$PATH"（或对应目录）后重开终端。',
   'cli.fellBackToLocal':
@@ -1355,11 +1363,18 @@ export const zhCN = {
   'composer.slashCommands': '斜杠命令',
   'composer.screenshot': '截屏',
   'composer.screenshotTitle': '截屏并标注后附加到对话',
+  'composer.screenshotHideWindow': '隐藏窗口截图',
+  'composer.screenshotMenu': '更多截图方式',
+  'composer.screenshotSettings': '设置…',
   'composer.attachFile': '选择文件',
   'composer.attachFileTitle': '附加文件',
   'composer.dropFiles': '松开以添加到对话',
   'composer.previewFile': '预览文件',
   'composer.screenshotDenied': '需要屏幕录制权限才能截屏',
+  'composer.screenshotDeniedTitle': '需要屏幕录制权限',
+  'composer.screenshotDeniedBody':
+    'VAV 还没有「屏幕录制」权限，无法截屏。点下方按钮打开「系统设置 → 隐私与安全性 → 屏幕录制」，勾选 VAV 后返回即可。',
+  'composer.screenshotOpenSystemSettings': '打开系统设置',
   'composer.screenshotFailed': '截屏失败，请重试',
   'screenshot.hint': '拖拽选择 · 双击完成 · Esc 退出',
   'screenshot.move': '移动',
@@ -1631,7 +1646,7 @@ export const zhCN = {
   'machines.pairUnreachable':
     '连不上 {host}。两台电脑要在同一局域网（不要用访客 Wi-Fi / 路由器 AP 隔离）。macOS 请在「系统设置 → 隐私与安全性 → 本地网络」允许 VAV，然后重试。',
   'machines.pairRefused':
-    '{host} 拒绝连接。确认对方 VAV / vavd 仍在运行，并且已打开「允许其他设备连接」。',
+    '{host} 拒绝连接。确认对方 VAV / vav-server 仍在运行，并且已打开「允许其他设备连接」。',
   'machines.pairTimeout': '连接 {host} 超时。请检查防火墙是否放行，以及双方是否在同一网络。',
   'machines.pairAuth': '配对密钥不正确。请重新复制对方电脑上的配对 URI。',
   'machines.pairTunnel':
@@ -1683,11 +1698,11 @@ export const zhCN = {
   // —— cli extras ——
   'cli.commandTitle': 'VAV 命令',
   'cli.commandIntro':
-    '安装 vav、vavd、vavc、vavcli。vav 打开桌面应用；vavd 是守护进程；vavc 控制会话；vavcli 在终端里跑一轮。三者都接到同一套 vavd。',
+    '安装 vav、vav-server、vav-board、vav-tui。vav 打开桌面应用；vav-server 是守护进程；vav-board 控制会话；vav-tui 在终端里跑一轮。三者都接到同一套 vav-server。',
   'cli.installingTo': '正在安装到 {path}…',
   'cli.installedAt': '已安装到 {path}{version}',
-  'cli.installedHint': 'vav 打开应用；vavd / vavc / vavcli 对接同一套守护进程。执行 vav -h、vavc -h、vavcli -h。',
-  'cli.afterInstallHint': '安装后执行 vav -h、vavc -h、vavcli -h。vavc 与 vavcli 会自动发现本机正在跑的 vavd（含应用拉起的那一个）。',
+  'cli.installedHint': 'vav 打开应用；vav-server / vav-board / vav-tui 对接同一套守护进程。执行 vav -h、vav-board -h、vav-tui -h。',
+  'cli.afterInstallHint': '安装后执行 vav -h、vav-board -h、vav-tui -h。vav-board 与 vav-tui 会自动发现本机正在跑的 vav-server（含应用拉起的那一个）。',
   'cli.installFailedPrefix': '安装失败：{message}',
   'cli.notInstalled': '未安装 — 点击右侧按钮安装到 {path}',
   'cli.confirmUninstall': '确认卸载',
@@ -1704,7 +1719,7 @@ export const zhCN = {
   'about.subtitle': 'macOS AI agent · 本地优先',
   'about.currentVersion': '当前版本',
   'about.vavVersion': 'VAV',
-  'about.vavdVersion': 'vavd',
+  'about.vavServerVersion': 'vav-server',
   'about.buildNumber': '构建号',
   'about.license': '许可',
   'about.licenseValue': 'PolyForm Noncommercial',
@@ -1734,7 +1749,7 @@ export const zhCN = {
   'about.recordsLabel': '记录',
 
   'logs.hint':
-    '这里是本机 vavd 的诊断日志：用户发送、agent 回合、工具与启动/退出，方便排查回合卡住、工具失败、取消不同步。临时记录只留在内存 15 分钟；会话记录跟会话走，删会话或满 24 小时即移除；留存记录默认 7 天，可改时长或手动清空。',
+    '这里是本机 vav-server 的诊断日志：用户发送、agent 回合、工具与启动/退出，方便排查回合卡住、工具失败、取消不同步。临时记录只留在内存 15 分钟；会话记录跟会话走，删会话或满 24 小时即移除；留存记录默认 7 天，可改时长或手动清空。',
   'logs.retention': '留存时长',
   'logs.retention.hint':
     '错误、发送/停止、崩溃等留存记录过期后删除。会话记录最多 24 小时，或随会话删除。临时记录 15 分钟后消失，不写磁盘。',
@@ -2555,7 +2570,7 @@ export const en: Record<MessageKey, string> = {
   'sidebar.switchService': 'Switch service',
   'sidebar.serviceTheme': 'Theme for this connection',
   'sidebar.serviceThemeSettings': 'Appearance settings…',
-  'sidebar.configureService': 'Configure this vavd…',
+  'sidebar.configureService': 'Configure this vav-server…',
   'sidebar.pairDevice': 'Pair another device…',
   'sidebar.emptyRemoteTitle': 'No sessions on this device',
   'sidebar.emptyRemoteDesc': 'Start a session. The folder and agent will run on {name}.',
@@ -3037,7 +3052,7 @@ export const en: Record<MessageKey, string> = {
   'settings.nav.notifications': 'Notifications',
   'settings.nav.connect': 'Remote Tunnel',
   'settings.hostSettingsUnavailable': 'Could not read settings from this connection',
-  'settings.hostSettingsUnavailableHint': 'The change was not written to the remote. Make sure that vavd is online and try again.',
+  'settings.hostSettingsUnavailableHint': 'The change was not written to the remote. Make sure that vav-server is online and try again.',
   'settings.nav.connectors': 'Connectors',
   'settings.nav.agents': 'Providers',
   'settings.nav.accounts': 'Accounts',
@@ -3512,7 +3527,7 @@ export const en: Record<MessageKey, string> = {
 
   'appearance.connectionTheme': 'Connection theme',
   'appearance.connectionThemeHint':
-    'Each connected service can have its own theme, accent, and pattern. Defaults come from that vavd; changes stay on this computer.',
+    'Each connected service can have its own theme, accent, and pattern. Defaults come from that vav-server; changes stay on this computer.',
   'appearance.theme': 'Theme',
   'appearance.theme.system': 'System',
   'appearance.theme.light': 'Light',
@@ -3590,6 +3605,14 @@ export const en: Record<MessageKey, string> = {
   'appearance.windowVibrancy': 'System vibrancy',
   'appearance.windowVibrancyHint':
     'Frosted glass behind the session list and Settings sidebar (macOS desktop blur). Turn off for a solid background.',
+  'appearance.screenshotKeepFront': 'Keep window in front when capturing',
+  'appearance.screenshotKeepFrontHint':
+    'Default is a direct capture that includes this window. Turn off to hide the window first.',
+  'appearance.screenshotPermission': 'Screen Recording permission',
+  'appearance.screenshotPermissionGranted': 'Granted',
+  'appearance.screenshotPermissionAuthorize': 'Authorize in System Settings…',
+  'appearance.screenshotPermissionHint':
+    'Screenshots need the Screen Recording permission. Click above to open System Settings → Privacy & Security → Screen Recording, enable VAV, then come back.',
   'appearance.sendKey': 'Send shortcut',
   'appearance.sendKey.enter': 'Enter',
   'appearance.sendKey.modEnter': '⌘↵',
@@ -3637,7 +3660,7 @@ export const en: Record<MessageKey, string> = {
   'cli.installTitle': 'Install VAV command',
   'cli.uninstallTitle': 'Uninstall VAV command',
   'cli.uninstallBody':
-    'Removes vav, vavd, vavc, and vavcli from {path}. The VAV app and your data are untouched. You can reinstall anytime.',
+    'Removes vav, vav-server, vav-board, and vav-tui from {path}. The VAV app and your data are untouched. You can reinstall anytime.',
   'cli.pathWarning':
     '{location} may not be on your PATH. If the shell cannot find VAV, add export PATH="$HOME/.local/bin:$PATH" (or the matching directory) to your shell config and open a new terminal.',
   'cli.fellBackToLocal':
@@ -3747,11 +3770,18 @@ export const en: Record<MessageKey, string> = {
   'composer.slashCommands': 'Slash commands',
   'composer.screenshot': 'Screenshot',
   'composer.screenshotTitle': 'Capture the screen, annotate, then attach',
+  'composer.screenshotHideWindow': 'Hide window, then capture',
+  'composer.screenshotMenu': 'More capture options',
+  'composer.screenshotSettings': 'Settings…',
   'composer.attachFile': 'Attach files',
   'composer.attachFileTitle': 'Attach files',
   'composer.dropFiles': 'Drop to add to the conversation',
   'composer.previewFile': 'Preview file',
   'composer.screenshotDenied': 'Screen Recording permission is required to capture',
+  'composer.screenshotDeniedTitle': 'Screen Recording permission needed',
+  'composer.screenshotDeniedBody':
+    "VAV doesn't have Screen Recording permission yet, so it can't capture. Click below to open System Settings → Privacy & Security → Screen Recording, enable VAV, then come back.",
+  'composer.screenshotOpenSystemSettings': 'Open System Settings',
   'composer.screenshotFailed': 'Screenshot failed. Try again.',
   'screenshot.hint': 'Drag to select · Double-click to finish · Esc to exit',
   'screenshot.move': 'Move',
@@ -4034,7 +4064,7 @@ export const en: Record<MessageKey, string> = {
   'machines.pairUnreachable':
     'Cannot reach {host}. Both computers must be on the same LAN (not guest Wi-Fi / AP isolation). On macOS, allow VAV under System Settings → Privacy & Security → Local Network, then try again.',
   'machines.pairRefused':
-    '{host} refused the connection. Keep VAV / vavd running on the other machine and leave “Allow other devices” on.',
+    '{host} refused the connection. Keep VAV / vav-server running on the other machine and leave “Allow other devices” on.',
   'machines.pairTimeout':
     'Timed out reaching {host}. Check the firewall and that both devices are on the same network.',
   'machines.pairAuth': 'The pairing secret is wrong. Copy a fresh pairing URI from the other computer.',
@@ -4086,12 +4116,12 @@ export const en: Record<MessageKey, string> = {
 
   'cli.commandTitle': 'VAV command',
   'cli.commandIntro':
-    'Installs vav, vavd, vavc, and vavcli. vav opens the desktop app; vavd is the daemon; vavc controls sessions; vavcli runs a turn in the terminal. All three talk to the same vavd.',
+    'Installs vav, vav-server, vav-board, and vav-tui. vav opens the desktop app; vav-server is the daemon; vav-board controls sessions; vav-tui runs a turn in the terminal. All three talk to the same vav-server.',
   'cli.installingTo': 'Installing to {path}…',
   'cli.installedAt': 'Installed at {path}{version}',
-  'cli.installedHint': 'vav opens the app; vavd / vavc / vavcli talk to the same daemon. Run vav -h, vavc -h, vavcli -h.',
+  'cli.installedHint': 'vav opens the app; vav-server / vav-board / vav-tui talk to the same daemon. Run vav -h, vav-board -h, vav-tui -h.',
   'cli.afterInstallHint':
-    'After installing, run vav -h, vavc -h, and vavcli -h. vavc and vavcli discover a local vavd, including the one the app spawned.',
+    'After installing, run vav -h, vav-board -h, and vav-tui -h. vav-board and vav-tui discover a local vav-server, including the one the app spawned.',
   'cli.installFailedPrefix': 'Install failed: {message}',
   'cli.notInstalled': 'Not installed — click Install to add it at {path}',
   'cli.confirmUninstall': 'Uninstall',
@@ -4107,7 +4137,7 @@ export const en: Record<MessageKey, string> = {
   'about.subtitle': 'macOS AI agent · local-first',
   'about.currentVersion': 'Version',
   'about.vavVersion': 'VAV',
-  'about.vavdVersion': 'vavd',
+  'about.vavServerVersion': 'vav-server',
   'about.buildNumber': 'Build',
   'about.license': 'License',
   'about.licenseValue': 'PolyForm Noncommercial',
@@ -4139,7 +4169,7 @@ export const en: Record<MessageKey, string> = {
   'about.recordsLabel': 'Records',
 
   'logs.hint':
-    'This is the local vavd diagnostic sink — sends, agent turns, tools, and boot/quit — so you can debug a stuck turn, a failed tool, or a stop that did not take. Temporary records stay in memory for 15 minutes; session records follow the chat (deleted with it, or after 24 hours); durable records last 7 days by default, or until you clear them.',
+    'This is the local vav-server diagnostic sink — sends, agent turns, tools, and boot/quit — so you can debug a stuck turn, a failed tool, or a stop that did not take. Temporary records stay in memory for 15 minutes; session records follow the chat (deleted with it, or after 24 hours); durable records last 7 days by default, or until you clear them.',
   'logs.retention': 'Keep records for',
   'logs.retention.hint':
     'Durable records (errors, send/stop, crashes) expire after this. Session records last 24 hours or until you delete the session. Temporary records vanish after 15 minutes and never hit disk.',

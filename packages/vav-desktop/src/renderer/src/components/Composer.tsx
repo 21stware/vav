@@ -4,10 +4,12 @@ import {
   useRef,
   useState,
   type ClipboardEvent,
-  type MouseEvent
+  type MouseEvent,
+  type WheelEvent
 } from 'react'
 import {
   ArrowUp,
+  ChevronDown,
   CornerUpLeft,
   FileText,
   MapPin,
@@ -41,7 +43,9 @@ import { vendorIdFromEndpoint } from '@shared/llmVendors'
 import { useAccountGroups, vavAccountsOf } from '../lib/accountGroups'
 import { useT } from '../i18n/useT'
 import { attachPickedFiles, attachScreenshot } from '../lib/composerAttach'
+import { composerWheelStaysOnField, fitComposerTextarea } from '../lib/composerTextarea'
 import { collectClipboardImages, writeClipboardImage } from '../lib/pasteImages'
+import { menuAnchor, showMenu } from '../lib/nativeMenu'
 import { prettyAccelerator, resolveKeyBindings } from '@shared/keyBindings'
 import { Button } from './ui'
 import { AgentModelPicker } from './AgentModelPicker'
@@ -192,6 +196,7 @@ export function Composer({
   const queueFull = queueLen >= MESSAGE_QUEUE_MAX
   const sendKeySetting = useSessionStore((s) => s.settings.sendKey)
   const keyBindings = useSessionStore((s) => s.settings.keyBindings)
+  const openSettings = useSessionStore((s) => s.openSettings)
   const focusTick = useSessionStore((s) => s.composerFocusTick)
   const focusId = useSessionStore((s) => s.composerFocusId)
 
@@ -286,10 +291,6 @@ export function Composer({
     commentCards.length > 0
   const canSend = !awaiting && hasPayload && !(isRunning && queueFull)
 
-  /** Focused floor / empty-blur floor / hard ceiling (main-chat-search.rpml). */
-  const COMPOSER_MIN_FOCUSED_ROWS = 3
-  const COMPOSER_MAX_ROWS = 8
-
   // file-preview.rpml: when the file chip is dismissed, fall back to a generic
   // "Ask the agent…" prompt; when attached on a file session, prefer the
   // file-oriented phrasing.
@@ -330,15 +331,20 @@ export function Composer({
     if (!element) return
     // Avoid reflowing height mid-composition — can cancel IME on macOS.
     if (composingRef.current) return
-    const lineHeight = parseFloat(getComputedStyle(element).lineHeight) || 20
-    const minRows = focused && !inputDisabled ? COMPOSER_MIN_FOCUSED_ROWS : 1
-    const minHeight = minRows * lineHeight
-    const maxHeight = COMPOSER_MAX_ROWS * lineHeight
-    element.style.height = 'auto'
-    const next = Math.min(maxHeight, Math.max(minHeight, element.scrollHeight))
-    element.style.height = `${next}px`
-    element.style.overflowY = element.scrollHeight > maxHeight + 1 ? 'auto' : 'hidden'
+    fitComposerTextarea(element, { focused, disabled: inputDisabled })
   }, [draft, focused, inputDisabled])
+
+  const runScreenshot = (hideWindow?: boolean): void => {
+    void (async () => {
+      if (attachBusy) return
+      setAttachBusy(true)
+      try {
+        await attachScreenshot(hideWindow === undefined ? undefined : { hideWindow })
+      } finally {
+        setAttachBusy(false)
+      }
+    })()
+  }
 
   const flushDraft = (value: string): void => {
     if (!conversationId) return
@@ -524,6 +530,11 @@ export function Composer({
           onPaste={(event) => {
             void handlePaste(event)
           }}
+          onWheel={(event: WheelEvent<HTMLTextAreaElement>) => {
+            if (composerWheelStaysOnField(event.currentTarget, event.deltaY)) {
+              event.stopPropagation()
+            }
+          }}
           onKeyDown={(event) => {
             // Don’t treat IME “confirm” Enter as send.
             if (composingRef.current || event.nativeEvent.isComposing) return
@@ -582,27 +593,50 @@ export function Composer({
             >
               <Plus size={12} strokeWidth={2} />
             </button>
-            <button
-              type="button"
-              className="model-picker session-run-btn is-icon"
-              data-testid="composer-screenshot"
-              title={`${t('composer.screenshotTitle')} ${screenshotChord}`}
-              aria-label={t('composer.screenshot')}
-              disabled={inputDisabled || attachBusy}
-              onClick={() => {
-                void (async () => {
-                  if (attachBusy) return
-                  setAttachBusy(true)
-                  try {
-                    await attachScreenshot()
-                  } finally {
-                    setAttachBusy(false)
-                  }
-                })()
-              }}
-            >
-              <Scissors size={12} strokeWidth={2} style={{ transform: 'rotate(-90deg)' }} />
-            </button>
+            <span className="composer-shot-group">
+              <button
+                type="button"
+                className="model-picker session-run-btn is-icon"
+                data-testid="composer-screenshot"
+                title={`${t('composer.screenshotTitle')} ${screenshotChord}`}
+                aria-label={t('composer.screenshot')}
+                disabled={inputDisabled || attachBusy}
+                onClick={() => runScreenshot()}
+              >
+                <Scissors size={12} strokeWidth={2} style={{ transform: 'rotate(-90deg)' }} />
+              </button>
+              <button
+                type="button"
+                className="model-picker session-run-btn is-icon is-shot-caret"
+                data-testid="composer-screenshot-menu"
+                title={t('composer.screenshotMenu')}
+                aria-label={t('composer.screenshotMenu')}
+                aria-haspopup="menu"
+                disabled={inputDisabled || attachBusy}
+                onClick={(event) => {
+                  event.preventDefault()
+                  event.stopPropagation()
+                  void showMenu(
+                    [
+                      {
+                        label: t('composer.screenshotHideWindow'),
+                        icon: { kind: 'lucide', key: 'app-window' },
+                        onSelect: () => runScreenshot(true)
+                      },
+                      { label: '', divider: true },
+                      {
+                        label: t('composer.screenshotSettings'),
+                        icon: { kind: 'lucide', key: 'settings' },
+                        onSelect: () => openSettings('appearance', 'screenshot')
+                      }
+                    ],
+                    menuAnchor(event.currentTarget)
+                  )
+                }}
+              >
+                <ChevronDown size={9} className="session-run-caret" aria-hidden />
+              </button>
+            </span>
           </span>
 
           <span className="spacer" />

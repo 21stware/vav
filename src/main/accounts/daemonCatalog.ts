@@ -1,6 +1,6 @@
 /**
- * Provider-account catalog the daemon listen serves to Chrome / web / vavc.
- * Desktop Settings IPC proxies to the same store when local-shell vavd is up.
+ * Provider-account catalog the daemon listen serves to Chrome / web / vav-board.
+ * Desktop Settings IPC proxies to the same store when local-shell vav-server is up.
  */
 import {
   createKindForAgent,

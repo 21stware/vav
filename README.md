@@ -30,7 +30,7 @@ New session: pick a workspace, pick an agent, ask one thing. Multi-split CLI TUI
 - **Spending** — Settings panel for local usage plus provider subscriptions, and DeepSeek API balance when VAV talks to official DeepSeek
 - **Swarm** (optional) — multi-split raw CLI TUIs; off by default in Settings → Providers
 - **Remote** — Settings → Allow other devices; pair VAV Remote (iOS) or another computer. Conversations and keys stay on this machine
-- **Headless VAV** — `npx @21stware/vavd` hosts sessions, keys, files, PTY, and agent turns. `vavc` is the herdr-style control client; `vav-cli` / `vavcli` is the Claude Code-style agent CLI. Seven products live under `packages/*` (npm workspaces): vav-desktop, vavd, vav-cli, vavc, vav-iOS, vav-android, vav-chrome-extension. Shared kernel stays in `src/main` + `src/shared`. See [docs/PRODUCT_MATRIX.md](docs/PRODUCT_MATRIX.md).
+- **Headless VAV** — `npx @21stware/vav-server` hosts sessions, keys, files, PTY, and agent turns. `vav-board` is the herdr-style control client; `vav-tui` / `vav-tui` is the Claude Code-style agent CLI. Seven products live under `packages/*` (npm workspaces): vav-desktop, vav-server, vav-tui, vav-board, vav-iOS, vav-android, vav-chrome-extension. Shared kernel stays in `src/main` + `src/shared`. See [docs/PRODUCT_MATRIX.md](docs/PRODUCT_MATRIX.md).
 
 ## Website
 
@@ -58,25 +58,25 @@ Custom domain: `vavapp.com` (see `site/CNAME`). Apex uses GitHub Pages `A`/`AAAA
 
 ## Install
 
-Grab a build from [Releases](https://github.com/21stware/vav/releases). Each `v*` release includes the macOS DMG/ZIP, Windows installer, `@21stware/vavd` tarball, and the Chrome extension zip.
+Grab a build from [Releases](https://github.com/21stware/vav/releases). Each `v*` release includes the macOS DMG/ZIP, Windows installer, `@21stware/vav-server` tarball, and the Chrome extension zip.
 
 - **macOS** — Developer ID signed and notarized (app + DMG, ticket stapled); open the DMG and drag to Applications. Later versions update in-app (About → Check for Updates).
 - **Windows** — not code-signed; SmartScreen may warn on first open (More info → Run anyway). In-app updates use the NSIS installer feed.
 
-Then in Settings → “VAV command”, install `vav`, `vavd`, `vavc`, and `vavcli` (defaults to `~/.local/bin`). `vav .` opens a new desktop session in the current directory. `vavd` is the daemon; `vavc` controls sessions; `vavcli` runs a turn in the terminal. All three talk to the same vavd the app can spawn.
+Then in Settings → “VAV command”, install `vav`, `vav-server`, `vav-board`, and `vav-tui` (defaults to `~/.local/bin`). `vav .` opens a new desktop session in the current directory. `vav-server` is the daemon; `vav-board` controls sessions; `vav-tui` runs a turn in the terminal. All three talk to the same vav-server the app can spawn.
 
 On a machine that should host VAV without opening the desktop app:
 
 ```bash
-npx @21stware/vavd
-# or: npm i -g @21stware/vavd && vavd
-vavc session create --cwd .
-vavcli -p "hello"
+npx @21stware/vav-server
+# or: npm i -g @21stware/vav-server && vav-server
+vav-board session create --cwd .
+vav-tui -p "hello"
 ```
 
-Listens on all interfaces by default (`--listen 127.0.0.1` for local-only). Opens a web UI on `http://127.0.0.1:4752`. Paste the pairing line into VAV → Connect or VAV Remote. The local web UI and Chrome extension discover a loopback daemon and pair automatically — or launch the desktop app with `VAVD_URI` / `--vavd-uri` so it opens as a vavd UI without the Connect paste. `VAVD_SPAWN=1` / `--with-vavd` starts vavd as a child of the app and pairs automatically. Packaged builds do that by default (`VAVD_SPAWN=0` / `--no-vavd` keeps the in-process host). The pairing secret is equivalent to local access on that machine. Set `VAV_API_KEY` (and optional `VAV_API_ENDPOINT`) so the daemon can call your model.
+Listens on all interfaces by default (`--listen 127.0.0.1` for local-only). Opens a web UI on `http://127.0.0.1:4752`. Paste the pairing line into VAV → Connect or VAV Remote. The local web UI and Chrome extension discover a loopback daemon and pair automatically — or launch the desktop app with `VAV_SERVER_URI` / `--vav-server-uri` so it opens as a vav-server UI without the Connect paste. `VAV_SERVER_SPAWN=1` / `--with-vav-server` starts vav-server as a child of the app and pairs automatically. Packaged builds do that by default (`VAV_SERVER_SPAWN=0` / `--no-vav-server` keeps the in-process host). The pairing secret is equivalent to local access on that machine. Set `VAV_API_KEY` (and optional `VAV_API_ENDPOINT`) so the daemon can call your model.
 
-From this repo, `npm run vavc -- session list` / `npm run vavcli -- -p "hello"` talks to that daemon over the same phone protocol. `npm run vav -- send "hello"` remains as a compatibility alias.
+From this repo, `npm run vav-board -- session list` / `npm run vav-tui -- -p "hello"` talks to that daemon over the same phone protocol. `npm run vav -- send "hello"` remains as a compatibility alias.
 
 ## Develop
 
@@ -132,10 +132,10 @@ src/
   shared/      domain types, IPC + phone/daemon contracts, i18n
   main/        shared kernel (stores, agent, daemon server, host, ipc)
 packages/
-  vavd/        daemon entry (`src/vavd.ts`)
+  vav-server/        daemon entry (`src/vav-server.ts`)
   vav-desktop/ Electron main + preload + renderer
-  vav-cli/     Claude Code-style agent CLI
-  vavc/        herdr-style control client
+  vav-tui/     Claude Code-style agent CLI
+  vav-board/        herdr-style control client
   vav-ios/     native Remote
   vav-android/ native Remote (same protocol as iOS)
   vav-chrome-extension/  MV3 side panel + phone-ui

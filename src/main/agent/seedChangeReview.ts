@@ -1,6 +1,6 @@
 /**
  * Deterministic 2-file change-review used by e2e / smoke.
- * Headless vavd and the Electron shell share this so Accept lives on one store.
+ * Headless vav-server and the Electron shell share this so Accept lives on one store.
  */
 import { randomUUID } from 'node:crypto'
 import { mkdirSync, writeFileSync } from 'node:fs'

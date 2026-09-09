@@ -1,11 +1,11 @@
 /**
- * Phone-protocol client used by vavc / vavcli and process-level vavd tests.
+ * Phone-protocol client used by vav-board / vav-tui and process-level vav-server tests.
  * Same frames as iOS Remote, the web UI, and the Chrome extension.
  */
 import { createConnection, type Socket } from 'node:net'
 import { encodeLine, parseServerMessage, type RemoteServerMessage } from '../../shared/remoteControl.ts'
 import { VAV_WEB_SOCKET_PATH } from '../../shared/vavDiscover.ts'
-import type { VavdTarget } from './vavdTarget.ts'
+import type { VavServerTarget } from './vavServerTarget.ts'
 
 export type PhoneClient = {
   frames: RemoteServerMessage[]
@@ -34,7 +34,7 @@ export async function connectPhone(opts: {
     socket.once('error', reject)
   })
   const client = attachPhone(socket)
-  await hello(client, opts.secret, opts.device ?? 'vav-cli', opts.omitRole)
+  await hello(client, opts.secret, opts.device ?? 'vav-tui', opts.omitRole)
   return client
 }
 
@@ -62,13 +62,13 @@ export async function connectPhoneWs(opts: {
     })
   })
   const client = attachWsPhone(ws)
-  await hello(client, opts.secret, opts.device ?? 'vav-cli', false)
+  await hello(client, opts.secret, opts.device ?? 'vav-tui', false)
   return client
 }
 
 export async function connectPhoneTarget(
-  target: VavdTarget,
-  device = 'vav-cli'
+  target: VavServerTarget,
+  device = 'vav-tui'
 ): Promise<PhoneClient> {
   if (target.kind === 'ws') {
     return connectPhoneWs({ origin: target.origin, secret: target.secret, device })

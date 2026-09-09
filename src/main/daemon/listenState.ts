@@ -1,6 +1,6 @@
 /**
- * Persist the control-plane listen address so `vavc` / `vavcli` can find a
- * running vavd from its state dir (including ephemeral `--port 0`).
+ * Persist the control-plane listen address so `vav-board` / `vav-tui` can find a
+ * running vav-server from its state dir (including ephemeral `--port 0`).
  */
 import { existsSync, readFileSync, rmSync } from 'node:fs'
 import { createConnection } from 'node:net'
@@ -9,7 +9,7 @@ import { writePrivateJson } from './identity.ts'
 
 export const LISTEN_FILE = 'listen.json'
 
-export type VavdListenState = {
+export type VavServerListenState = {
   host: string
   port: number
   pid?: number
@@ -20,7 +20,7 @@ export function listenFile(stateDir: string): string {
   return join(stateDir, LISTEN_FILE)
 }
 
-export function writeListenState(stateDir: string, state: VavdListenState): void {
+export function writeListenState(stateDir: string, state: VavServerListenState): void {
   writePrivateJson(listenFile(stateDir), {
     host: state.host,
     port: state.port,
@@ -29,7 +29,7 @@ export function writeListenState(stateDir: string, state: VavdListenState): void
   })
 }
 
-export function readListenState(stateDir: string): VavdListenState | null {
+export function readListenState(stateDir: string): VavServerListenState | null {
   try {
     const raw = JSON.parse(readFileSync(listenFile(stateDir), 'utf8')) as {
       host?: unknown
@@ -64,7 +64,7 @@ export function listenStateExists(stateDir: string): boolean {
 
 /** True when something accepts a TCP connection on the recorded listen address. */
 export function probeListenAlive(
-  state: Pick<VavdListenState, 'host' | 'port'>,
+  state: Pick<VavServerListenState, 'host' | 'port'>,
   timeoutMs = 400
 ): Promise<boolean> {
   return new Promise((resolve) => {

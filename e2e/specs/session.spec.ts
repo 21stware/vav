@@ -67,7 +67,7 @@ test('Archived menu item opens the empty archive list and back restores grouping
   const harness = await launchWorkbench()
   try {
     const { page } = harness
-    await page.locator('[data-testid="sidebar-more"]').click()
+    await page.locator('[data-testid="sidebar-connect"]').click()
     await chooseNativeMenu(page, 'Archived')
     await expect(page.getByText('No archived sessions')).toBeVisible()
     await expect(page.locator('[data-testid="sidebar-grouping"]')).toHaveCount(0)

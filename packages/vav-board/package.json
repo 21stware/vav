@@ -1,0 +1,35 @@
+{
+  "name": "@21stware/vav-board",
+  "version": "1.21.0",
+  "description": "Herdr-style control board for a running vav-server. Sessions, workspaces, agents, files, and PTY panes.",
+  "license": "PolyForm-Noncommercial-1.0.0",
+  "author": "Oboo Cheng",
+  "type": "commonjs",
+  "bin": {
+    "vav-board": "vav-board.js",
+    "vavc": "vav-board.js"
+  },
+  "files": [
+    "vav-board.js",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21stware/vav.git",
+    "directory": "packages/vav-board"
+  },
+  "homepage": "https://github.com/21stware/vav/tree/main/packages/vav-board",
+  "keywords": [
+    "vav",
+    "vav-board",
+    "herdr",
+    "daemon"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}

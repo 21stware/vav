@@ -1,6 +1,6 @@
 # Contributing
 
-Requires **Node 22+** (CI and `@21stware/vavd` use 22). macOS or Windows for a full desktop build; unit tests run on Linux too.
+Requires **Node 22+** (CI and `@21stware/vav-server` use 22). macOS or Windows for a full desktop build; unit tests run on Linux too.
 
 ```bash
 npm ci
@@ -22,4 +22,4 @@ Do not add new tests only to a hardcoded list — the runner globs.
 
 ## Release
 
-See [RELEASING.md](RELEASING.md). Tags `v*` drive `.github/workflows/release.yml` (signed macOS, unsigned Windows, optional npm publish of `vavd`). Bump `package.json` and `packages/vavd` together.
+See [RELEASING.md](RELEASING.md). Tags `v*` drive `.github/workflows/release.yml` (signed macOS, unsigned Windows, optional npm publish of `vav-server`). Bump `package.json` and `packages/vav-server` together.

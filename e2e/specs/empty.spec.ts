@@ -4,7 +4,7 @@ import { dismissNativeMenu, launchWorkbench, peekNativeMenu } from '../launch'
 /**
  * first-run/first-run-no-api-key.rpml + session/main-chat-empty.rpml
  *
- * Same spawned local vavd as production. Empty session: files/terminal
+ * Same spawned local vav-server as production. Empty session: files/terminal
  * usable, no-key hero visible until the host catalog has a key, tools
  * tray starts collapsed.
  */

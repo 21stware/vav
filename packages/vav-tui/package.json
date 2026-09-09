@@ -1,0 +1,37 @@
+{
+  "name": "@21stware/vav-tui",
+  "version": "1.21.0",
+  "description": "Claude Code-style VAV agent TUI against a running vav-server. Interactive REPL, print, JSON, RPC.",
+  "license": "PolyForm-Noncommercial-1.0.0",
+  "author": "Oboo Cheng",
+  "type": "commonjs",
+  "bin": {
+    "vav-tui": "vav-tui.js",
+    "vavcli": "vav-tui.js",
+    "vav-cli": "vav-tui.js"
+  },
+  "files": [
+    "vav-tui.js",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21stware/vav.git",
+    "directory": "packages/vav-tui"
+  },
+  "homepage": "https://github.com/21stware/vav/tree/main/packages/vav-tui",
+  "keywords": [
+    "vav",
+    "vav-tui",
+    "vavcli",
+    "claude-code",
+    "agent"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}

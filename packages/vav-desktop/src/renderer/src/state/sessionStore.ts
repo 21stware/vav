@@ -314,6 +314,8 @@ interface SessionState {
   settingsCategory: SettingsCategory
   /** Settings → Providers: select this row when the window opens. */
   settingsFocusAgentId: string | null
+  /** Settings → Appearance: select this vav-server instance when the window opens. */
+  settingsFocusMachineId: string | null
   /** Settings → Accounts: select this profile when the page opens. */
   settingsFocusAccountId: string | null
   composerFocusTick: number
@@ -584,11 +586,11 @@ interface SessionState {
   updateSettings(patch: Partial<AppSettings>): Promise<void>
   /** Dock / tray / hotkey raise this daemon’s window. */
   setDefaultMachine(machineId: string): Promise<void>
-  /** Switch the sidebar to another vavd without opening a window. */
+  /** Switch the sidebar to another vav-server without opening a window. */
   switchMachine(machineId: string): Promise<void>
   refreshApiKeyHint(): Promise<void>
   resetSettings(): Promise<void>
-  openSettings(category?: SettingsCategory, agentId?: string): void
+  openSettings(category?: SettingsCategory, agentId?: string, machineId?: string): void
   closeSettings(): void
 
   openSearch(): void
@@ -752,6 +754,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   toast: null,
   settingsCategory: 'appearance',
   settingsFocusAgentId: null,
+  settingsFocusMachineId: null,
   settingsFocusAccountId: null,
   composerFocusTick: 0,
   composerFocusId: null,
@@ -2220,9 +2223,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     })
   },
 
-  openSettings(category, agentId) {
+  openSettings(category, agentId, machineId) {
     // Settings own a window; the main window only asks for it to be raised.
-    void window.vav.window.openSettings(category ?? 'appearance', agentId)
+    void window.vav.window.openSettings(category ?? 'appearance', agentId, machineId)
   },
 
   closeSettings() {

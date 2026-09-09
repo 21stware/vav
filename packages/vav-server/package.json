@@ -1,0 +1,51 @@
+{
+  "name": "@21stware/vav-server",
+  "version": "1.21.0",
+  "description": "Headless VAV runtime (vav-server). Hosts sessions, keys, files, PTY multiplexing, model/ACP connections, and agent turns. Pair from desktop, iOS Remote, the web UI, or the Chrome extension.",
+  "license": "PolyForm-Noncommercial-1.0.0",
+  "author": "Oboo Cheng",
+  "type": "commonjs",
+  "bin": {
+    "vav-server": "vav-server.js",
+    "vavd": "vav-server.js",
+    "vav-board": "vav-board.js",
+    "vavc": "vav-board.js",
+    "vav-tui": "vav-tui.js",
+    "vavcli": "vav-tui.js"
+  },
+  "files": [
+    "vav-server.js",
+    "vav-board.js",
+    "vav-tui.js",
+    "phone-ui",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "node-pty": "^1.1.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21stware/vav.git",
+    "directory": "packages/vav-server"
+  },
+  "homepage": "https://github.com/21stware/vav/tree/main/packages/vav-server",
+  "bugs": {
+    "url": "https://github.com/21stware/vav/issues"
+  },
+  "keywords": [
+    "vav",
+    "vav-server",
+    "vav-board",
+    "vav-tui",
+    "daemon",
+    "workspace",
+    "agent"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}

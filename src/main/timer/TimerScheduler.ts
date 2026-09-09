@@ -16,9 +16,9 @@ export type TimerSchedulerDeps = {
   isRunning: (conversationId: string) => boolean
   now?: () => number
   tickMs?: number
-  /** Re-read jobs from disk so a sibling process (desktop ↔ vavd) stays current. */
+  /** Re-read jobs from disk so a sibling process (desktop ↔ vav-server) stays current. */
   reload?: () => void
-  /** When true, skip firing — another host (usually vavd) owns the clock. */
+  /** When true, skip firing — another host (usually vav-server) owns the clock. */
   shouldDefer?: () => boolean | Promise<boolean>
   /** Push the new run conversation to the desktop sidebar. */
   publish?: () => void

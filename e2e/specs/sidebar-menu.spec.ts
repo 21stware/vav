@@ -47,8 +47,8 @@ test('Archive stays in the session list and selects the adjacent row above', asy
     await expect(sessionRow(page, E2E_SESSION_B_ID)).toHaveCount(0)
     await expect(sessionRow(page, E2E_SESSION_ID)).toHaveClass(/selected/)
 
-    // The archive view is reachable from the more menu; Unarchive restores.
-    await page.locator('[data-testid="sidebar-more"]').click()
+    // The archive view is reachable from the active service menu; Unarchive restores.
+    await page.locator('[data-testid="sidebar-connect"]').click()
     await chooseNativeMenu(page, 'Archived · 1')
     await expect(sessionRow(page, E2E_SESSION_B_ID)).toBeVisible()
     await openSessionMenu(page, E2E_SESSION_B_ID)

@@ -3,7 +3,7 @@
  *
  * Local windows use Electron `shell` (Finder, Quick Look). Remote daemons
  * have no Finder on this computer — spawn the equivalent on that machine.
- * Chrome / web / `vavc` use the same commands over `fs.reveal` / `fs.openPath`.
+ * Chrome / web / `vav-board` use the same commands over `fs.reveal` / `fs.openPath`.
  */
 
 import path from 'node:path'

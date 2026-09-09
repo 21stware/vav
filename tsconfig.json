@@ -1,4 +1,13 @@
 {
   "files": [],
-  "references": [{ "path": "./tsconfig.node.json" }, { "path": "./tsconfig.web.json" }]
+  "references": [{ "path": "./tsconfig.node.json" }, { "path": "./tsconfig.web.json" }],
+  "//": "compilerOptions here are NOT used by tsc (typecheck runs the per-project configs directly). They only let `bun` resolve the @shared/@main/@ aliases when running the CLIs directly, e.g. `bun run dev:vav-server`.",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@shared/*": ["src/shared/*"],
+      "@main/*": ["src/main/*"],
+      "@/*": ["packages/vav-desktop/src/renderer/src/*"]
+    }
+  }
 }

@@ -4,7 +4,7 @@ import { IPC } from '../../shared/ipc.ts'
 import { registerConnectorIpc } from './registerConnectorIpc.ts'
 
 describe('registerConnectorIpc', () => {
-  it('proxies catalog and login to spawned vavd', async () => {
+  it('proxies catalog and login to spawned vav-server', async () => {
     const calls: string[] = []
     const handlers = new Map<string, (...args: unknown[]) => unknown>()
     const ipcMain = {

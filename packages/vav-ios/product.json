@@ -1,6 +1,6 @@
 {
   "name": "@21stware/vav-ios",
-  "version": "1.20.0",
+  "version": "1.21.0",
   "role": "vav-ios",
   "kind": "native",
   "sources": [
@@ -9,7 +9,7 @@
     "packages/vav-ios/VAVRemote/VAVRemote/Views/SessionDetailView.swift"
   ],
   "talksTo": [
-    "vavd"
+    "vav-server"
   ],
   "hello": [
     "phone"

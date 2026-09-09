@@ -8,10 +8,10 @@ const root = join(import.meta.dirname, '../..')
 describe('product matrix', () => {
   it('keeps the seven products on disk', () => {
     const paths = {
-      'vavd': 'packages/vavd/src/vavd.ts',
+      'vav-server': 'packages/vav-server/src/vav-server.ts',
       'vav-desktop': 'packages/vav-desktop/package.json',
-      'vav-cli': 'packages/vav-cli/src/vavcli.ts',
-      'vavc': 'packages/vavc/src/vavc.ts',
+      'vav-tui': 'packages/vav-tui/src/vav-tui.ts',
+      'vav-board': 'packages/vav-board/src/vav-board.ts',
       'vav-iOS': 'packages/vav-ios/VAVRemote/VAVRemote/RemoteClient.swift',
       'vav-android': 'packages/vav-android/VAVRemote/app/src/main/java/com/vav/remote/RemoteClient.kt',
       'vav-chrome-extension': 'packages/vav-chrome-extension/extension/background.js'

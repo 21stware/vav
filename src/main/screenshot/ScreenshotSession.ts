@@ -48,7 +48,14 @@ type Pending = {
   revealed: boolean
   requester: BrowserWindow | null
   allowOverlayKey: boolean
+  concealed: BrowserWindow[]
   detachEscape?: () => void
+}
+
+const HIDE_SETTLE_MS = 80
+
+export type CaptureScreenshotOptions = {
+  hideWindows?: boolean
 }
 
 /** skipTaskbar panels steal activation and hide the Dock tile. */
@@ -167,7 +174,10 @@ function captureDisplays(
 }
 
 export function createScreenshotController(host: ScreenshotHost): {
-  start: (event: IpcMainInvokeEvent) => Promise<ScreenshotResult>
+  start: (
+    event: IpcMainInvokeEvent,
+    options?: CaptureScreenshotOptions
+  ) => Promise<ScreenshotResult>
   ready: (event: Electron.IpcMainEvent) => void
   painted: (event: Electron.IpcMainEvent) => void
   dismiss: () => void
@@ -260,11 +270,38 @@ export function createScreenshotController(host: ScreenshotHost): {
     }
   }
 
+  const concealAppWindows = (): BrowserWindow[] => {
+    const hidden: BrowserWindow[] = []
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (win.isDestroyed() || isPooled(win)) continue
+      if (!win.isVisible()) continue
+      hidden.push(win)
+      try {
+        win.hide()
+      } catch {
+        // ignore
+      }
+    }
+    return hidden
+  }
+
+  const restoreAppWindows = (hidden: BrowserWindow[]): void => {
+    for (const win of hidden) {
+      if (win.isDestroyed()) continue
+      try {
+        win.showInactive()
+      } catch {
+        // ignore
+      }
+    }
+  }
+
   const settle = (result: ScreenshotResult): void => {
     const session = pending
     pending = null
     session?.detachEscape?.()
     concealOverlays()
+    if (session?.concealed.length) restoreAppWindows(session.concealed)
     keepDockVisible()
     if (session?.requester && !session.requester.isDestroyed() && !session.requester.isFocused()) {
       try {
@@ -486,10 +523,11 @@ export function createScreenshotController(host: ScreenshotHost): {
       restoreRequester(win)
     },
 
-    async start(event): Promise<ScreenshotResult> {
+    async start(event, options): Promise<ScreenshotResult> {
       if (pending) return { ok: false, error: 'busy' }
       applyAppCursor('crosshair')
       const requester = BrowserWindow.fromWebContents(event.sender)
+      const hideWindows = options?.hideWindows === true
 
       return await new Promise<ScreenshotResult>((resolve) => {
         void (async () => {
@@ -513,6 +551,7 @@ export function createScreenshotController(host: ScreenshotHost): {
             revealed: false,
             requester,
             allowOverlayKey: false,
+            concealed: [],
             detachEscape: () => {
               if (requester && !requester.isDestroyed()) {
                 requester.webContents.off('before-input-event', onEscape)
@@ -521,6 +560,15 @@ export function createScreenshotController(host: ScreenshotHost): {
           }
 
           try {
+            if (hideWindows) {
+              pending.concealed = concealAppWindows()
+              await new Promise<void>((wait) => setTimeout(wait, HIDE_SETTLE_MS))
+              if (!pending) return
+              if (pending.dismissed) {
+                settle({ ok: false, cancelled: true })
+                return
+              }
+            }
             if (process.platform === 'darwin') {
               const status = systemPreferences.getMediaAccessStatus('screen')
               if (status === 'denied') {

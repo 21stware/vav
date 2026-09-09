@@ -1,5 +1,5 @@
 /**
- * Bundled vavd page — same phone protocol as the Chrome extension service worker.
+ * Bundled vav-server page — same phone protocol as the Chrome extension service worker.
  */
 import { mountPhoneShell } from './shell.js'
 import { emptyHtml, paintTranscript, renderLiveTurn, renderSessionRows } from './render.js'
@@ -18,7 +18,7 @@ let liveBlocks = []
 let awaiting = null
 let thread = []
 const secretBox = $('secret')
-if (secretBox) secretBox.value = localStorage.getItem('vavd-secret') || ''
+if (secretBox) secretBox.value = localStorage.getItem('vav-server-secret') || ''
 
 function send(obj) {
   if (ws && ws.readyState === 1) ws.send(JSON.stringify(obj))
@@ -125,7 +125,7 @@ function connect() {
     setStatus('Paste the pairing secret', 'error')
     return
   }
-  localStorage.setItem('vavd-secret', secret)
+  localStorage.setItem('vav-server-secret', secret)
   if (ws) ws.close()
   const proto = location.protocol === 'https:' ? 'wss' : 'ws'
   ws = new WebSocket(proto + '://' + location.host + '/vav')

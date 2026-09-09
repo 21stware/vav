@@ -28,7 +28,7 @@ export type ConnectorIpcRemote = {
 
 export type ConnectorIpcHost = {
   broadcastSettings: () => void
-  /** Spawned loopback vavd — Settings connectors share the catalog Chrome uses. */
+  /** Spawned loopback vav-server — Settings connectors share the catalog Chrome uses. */
   remote?: () => ConnectorIpcRemote | null
 }
 

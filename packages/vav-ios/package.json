@@ -1,6 +1,6 @@
 {
   "name": "@21stware/vav-ios",
-  "version": "1.20.0",
+  "version": "1.21.0",
   "private": true,
   "description": "VAV iOS Remote. Native phone-plane client; hello omits role.",
   "license": "PolyForm-Noncommercial-1.0.0",

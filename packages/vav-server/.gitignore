@@ -1,0 +1,12 @@
+vav-server.js
+vav.js
+vav-board.js
+vav-tui.js
+vav-server.js.map
+vav.js.map
+vav-board.js.map
+vav-tui.js.map
+# Copied from out/phone-ui by pack-vav-server.mjs
+phone-ui/
+LICENSE
+*.tgz

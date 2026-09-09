@@ -25,7 +25,7 @@ function stores(dir: string): {
 }
 
 describe('scheduled task host', () => {
-  it('creates a definition conversation, then fires from a shared vavd store', async () => {
+  it('creates a definition conversation, then fires from a shared vavServer store', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'vav-sched-host-'))
     const desktop = stores(dir)
     const definition = desktop.conversations.create(join(dir, 'Workspace'), 'test', {
@@ -52,31 +52,31 @@ describe('scheduled task host', () => {
       now - 1
     )
 
-    const vavd = stores(dir)
+    const vavServer = stores(dir)
     const ran: string[] = []
     const scheduler = new TimerScheduler({
-      store: vavd.timers,
-      conversations: vavd.conversations,
+      store: vavServer.timers,
+      conversations: vavServer.conversations,
       tmp: dir,
       defaultModel: () => 'test',
       runTurn: (id) => {
         ran.push(id)
       },
       isRunning: () => false,
-      reload: () => vavd.timers.load()
+      reload: () => vavServer.timers.load()
     })
     await scheduler.tick(now)
     assert.equal(ran.length, 1)
-    const run = vavd.timers.listRuns(job.id)[0]
+    const run = vavServer.timers.listRuns(job.id)[0]
     assert.ok(run)
     assert.equal(run.status, 'running')
-    assert.equal(vavd.conversations.get(run.conversationId)?.sessionKind, 'timer')
-    assert.equal(vavd.conversations.get(run.conversationId)?.timerJobId, job.id)
+    assert.equal(vavServer.conversations.get(run.conversationId)?.sessionKind, 'timer')
+    assert.equal(vavServer.conversations.get(run.conversationId)?.timerJobId, job.id)
     assert.ok(existsSync(join(run.workdir, 'brief.md')))
   })
 
-  it('vavd process fires a due job from ~/.vavd-style state', async () => {
-    const state = await mkdtemp(join(tmpdir(), 'vavd-timer-'))
+  it('vavServer process fires a due job from ~/.vavServer-style state', async () => {
+    const state = await mkdtemp(join(tmpdir(), 'vavServer-timer-'))
     const now = Date.now()
     mkdirSync(join(state, 'timers'), { recursive: true })
     writeFileSync(
@@ -111,7 +111,7 @@ describe('scheduled task host', () => {
         '--import',
         aliasHook,
         '--experimental-strip-types',
-        join(root, 'packages/vavd/src/vavd.ts'),
+        join(root, 'packages/vav-server/src/vav-server.ts'),
         '--listen',
         '127.0.0.1',
         '--port',
@@ -121,7 +121,7 @@ describe('scheduled task host', () => {
         state,
         '--no-announce',
         '--name',
-        'timer-vavd'
+        'timer-vavServer'
       ],
       {
         stdio: ['ignore', 'pipe', 'pipe'],
@@ -163,7 +163,7 @@ describe('scheduled task host', () => {
 
     try {
       await new Promise<void>((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error(`vavd did not start\n${stdout}\n${stderr}`)), 12_000)
+        const timer = setTimeout(() => reject(new Error(`vavServer did not start\n${stdout}\n${stderr}`)), 12_000)
         const onData = (): void => {
           if (stdout.includes('vavrtp:') || stdout.includes('vav-daemon:')) {
             clearTimeout(timer)
@@ -173,7 +173,7 @@ describe('scheduled task host', () => {
         child.stdout?.on('data', onData)
         child.on('exit', (code) => {
           clearTimeout(timer)
-          reject(new Error(`vavd exited ${code}: ${stderr || stdout}`))
+          reject(new Error(`vavServer exited ${code}: ${stderr || stdout}`))
         })
         onData()
       })
@@ -194,7 +194,7 @@ describe('scheduled task host', () => {
         await new Promise((resolve) => setTimeout(resolve, 80))
       }
       const run = runs.find((row) => row.jobId === 'job-due')
-      assert.ok(run, `vavd did not fire the due job\n${stdout}\n${stderr}`)
+      assert.ok(run, `vavServer did not fire the due job\n${stdout}\n${stderr}`)
       assert.ok(run.status === 'running' || run.status === 'done', run.status)
       if (run.workdir) {
         assert.ok(existsSync(join(run.workdir, 'brief.md')))

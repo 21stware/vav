@@ -1,10 +1,10 @@
 /** First-class product identities. Entries live under packages/; the kernel stays in src/. */
 
 export const PRODUCT_ROLES = [
-  'vavd',
+  'vav-server',
   'vav-desktop',
-  'vav-cli',
-  'vavc',
+  'vav-tui',
+  'vav-board',
   'vav-ios',
   'vav-android',
   'vav-chrome-extension'
@@ -20,17 +20,17 @@ export type ProductIdentity = {
   dir: `packages/${ProductRole}`
   kind: ProductKind
   sources: string[]
-  talksTo: 'vavd'[]
+  talksTo: 'vav-server'[]
   hello: ProductHello[]
 }
 
 export const PRODUCTS: Record<ProductRole, ProductIdentity> = {
-  vavd: {
-    name: '@21stware/vavd',
-    role: 'vavd',
-    dir: 'packages/vavd',
+  'vav-server': {
+    name: '@21stware/vav-server',
+    role: 'vav-server',
+    dir: 'packages/vav-server',
     kind: 'service',
-    sources: ['packages/vavd/src/vavd.ts'],
+    sources: ['packages/vav-server/src/vav-server.ts'],
     talksTo: [],
     hello: []
   },
@@ -44,25 +44,25 @@ export const PRODUCTS: Record<ProductRole, ProductIdentity> = {
       'packages/vav-desktop/src/renderer/src/App.tsx',
       'packages/vav-desktop/electron-builder.json'
     ],
-    talksTo: ['vavd'],
+    talksTo: ['vav-server'],
     hello: ['phone', 'daemon']
   },
-  'vav-cli': {
-    name: '@21stware/vav-cli',
-    role: 'vav-cli',
-    dir: 'packages/vav-cli',
+  'vav-tui': {
+    name: '@21stware/vav-tui',
+    role: 'vav-tui',
+    dir: 'packages/vav-tui',
     kind: 'cli',
-    sources: ['packages/vav-cli/src/vavcli.ts'],
-    talksTo: ['vavd'],
+    sources: ['packages/vav-tui/src/vav-tui.ts'],
+    talksTo: ['vav-server'],
     hello: ['phone', 'daemon']
   },
-  vavc: {
-    name: '@21stware/vavc',
-    role: 'vavc',
-    dir: 'packages/vavc',
+  'vav-board': {
+    name: '@21stware/vav-board',
+    role: 'vav-board',
+    dir: 'packages/vav-board',
     kind: 'cli',
-    sources: ['packages/vavc/src/vavc.ts'],
-    talksTo: ['vavd'],
+    sources: ['packages/vav-board/src/vav-board.ts'],
+    talksTo: ['vav-server'],
     hello: ['phone', 'daemon']
   },
   'vav-ios': {
@@ -75,7 +75,7 @@ export const PRODUCTS: Record<ProductRole, ProductIdentity> = {
       'packages/vav-ios/VAVRemote/VAVRemote/RemoteClient.swift',
       'packages/vav-ios/VAVRemote/VAVRemote/Views/SessionDetailView.swift'
     ],
-    talksTo: ['vavd'],
+    talksTo: ['vav-server'],
     hello: ['phone']
   },
   'vav-android': {
@@ -89,7 +89,7 @@ export const PRODUCTS: Record<ProductRole, ProductIdentity> = {
       'packages/vav-android/VAVRemote/app/src/main/java/com/vav/remote/RemoteClient.kt',
       'packages/vav-android/VAVRemote/app/src/main/java/com/vav/remote/ui/SessionDetailScreen.kt'
     ],
-    talksTo: ['vavd'],
+    talksTo: ['vav-server'],
     hello: ['phone']
   },
   'vav-chrome-extension': {
@@ -102,7 +102,7 @@ export const PRODUCTS: Record<ProductRole, ProductIdentity> = {
       'packages/vav-chrome-extension/extension/sidepanel.html',
       'packages/vav-chrome-extension/phone-ui/PhoneApp.tsx'
     ],
-    talksTo: ['vavd'],
+    talksTo: ['vav-server'],
     hello: ['phone', 'daemon']
   }
 }

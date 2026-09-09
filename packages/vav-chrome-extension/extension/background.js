@@ -1,5 +1,5 @@
 import {
-  findLocalVavd,
+  findLocalVavServer,
   isLoopbackAddress,
   isPrivateLanAddress,
   loopbackWebOrigin,
@@ -110,10 +110,10 @@ function persistHint(found) {
 }
 
 async function hint() {
-  const saved = await chrome.storage.local.get(['vavDiscoverHint', 'vavdSecret'])
+  const saved = await chrome.storage.local.get(['vavDiscoverHint', 'vavServerSecret'])
   return {
     ...(saved.vavDiscoverHint || {}),
-    secret: saved.vavDiscoverHint?.secret || saved.vavdSecret
+    secret: saved.vavDiscoverHint?.secret || saved.vavServerSecret
   }
 }
 
@@ -136,7 +136,7 @@ function attachSocket(found) {
     }, 8_000)
   }
   ws.onerror = () => {
-    if (state.status !== 'connected') setStatus('reconnecting', { error: 'Could not reach vavd — retrying' })
+    if (state.status !== 'connected') setStatus('reconnecting', { error: 'Could not reach vav-server — retrying' })
   }
   ws.onclose = () => {
     clearTimeout(helloTimer)
@@ -289,7 +289,7 @@ async function connect() {
   setStatus('searching', { error: '' })
   try {
     const saved = await hint()
-    const found = await findLocalVavd(saved)
+    const found = await findLocalVavServer(saved)
     if (found && (found.secret || saved.secret)) {
       attachSocket({ ...found, secret: found.secret || saved.secret })
       return

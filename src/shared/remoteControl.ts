@@ -236,7 +236,7 @@ export type RemoteLocate = {
 }
 /**
  * Phone-plane change review — names + status only, never file bytes.
- * Same Accept / Reject all as desktop / Chrome / `vavc review`.
+ * Same Accept / Reject all as desktop / Chrome / `vav-board review`.
  */
 export type RemoteReview = {
   type: 'review'

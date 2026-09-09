@@ -67,7 +67,7 @@ export function remoteEndpointConfig(role: RemoteEndpointRole): RemoteEndpointCo
 /**
  * How a desktop window should talk to a paired machine.
  *
- * Desktop hosts and headless `vavd` both expose the control plane on the
+ * Desktop hosts and headless `vav-server` both expose the control plane on the
  * listen port (phone hello). The client is a shell — turns stay on the host.
  */
 export function desktopClientAgainst(host: RemoteHostPlane): RemoteEndpointConfig {

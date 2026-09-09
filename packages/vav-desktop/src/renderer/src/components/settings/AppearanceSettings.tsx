@@ -27,14 +27,42 @@ export function AppearanceSettings(): React.JSX.Element {
   const t = useT()
   const settings = useSessionStore((s) => s.settings)
   const updateSettings = useSessionStore((s) => s.updateSettings)
+  const focusAgentId = useSessionStore((s) => s.settingsFocusAgentId)
+  const focusMachineId = useSessionStore((s) => s.settingsFocusMachineId)
   const systemAccent = useSessionStore((s) => s.systemAccentColor)
   const hosts = useSessionStore((s) => s.hosts)
   const windowMachineId = useSessionStore((s) => s.windowMachineId)
   const remotes = userFacingRemotes(hosts)
   const [themeMachineId, setThemeMachineId] = useState(windowMachineId || LOCAL_MACHINE_ID)
   useEffect(() => {
-    setThemeMachineId(windowMachineId || LOCAL_MACHINE_ID)
-  }, [windowMachineId])
+    setThemeMachineId(focusMachineId || windowMachineId || LOCAL_MACHINE_ID)
+    if (focusMachineId) useSessionStore.setState({ settingsFocusMachineId: null })
+  }, [focusMachineId, windowMachineId])
+  useEffect(() => {
+    if (focusAgentId !== 'screenshot') return
+    const row = document.getElementById('settings-screenshot')
+    row?.scrollIntoView({ block: 'center' })
+    useSessionStore.setState({ settingsFocusAgentId: null })
+  }, [focusAgentId])
+  const [screenPermission, setScreenPermission] = useState<
+    'granted' | 'denied' | 'not-determined' | 'restricted' | 'unknown'
+  >('unknown')
+  useEffect(() => {
+    if (!IS_MAC) return
+    let alive = true
+    const refresh = (): void => {
+      void window.vav.files.screenshotPermission().then((status) => {
+        if (alive) setScreenPermission(status)
+      })
+    }
+    refresh()
+    // Re-check when the user returns after granting in System Settings.
+    window.addEventListener('focus', refresh)
+    return () => {
+      alive = false
+      window.removeEventListener('focus', refresh)
+    }
+  }, [])
   const themeTargets = useMemo(
     () => [
       { id: LOCAL_MACHINE_ID, name: LOCAL_MACHINE_ID },
@@ -373,6 +401,48 @@ export function AppearanceSettings(): React.JSX.Element {
             </div>
           </div>
           <div className="form-hint">{t('appearance.windowVibrancyHint')}</div>
+        </>
+      )}
+
+      <div className="form-row" id="settings-screenshot">
+        <label>{t('appearance.screenshotKeepFront')}</label>
+        <div className="control">
+          <Toggle
+            checked={settings.screenshotKeepWindowFront !== false}
+            title={t('appearance.screenshotKeepFront')}
+            testId="settings-screenshot-keep-front"
+            onChange={(screenshotKeepWindowFront) =>
+              void updateSettings({ screenshotKeepWindowFront })
+            }
+          />
+        </div>
+      </div>
+      <div className="form-hint">{t('appearance.screenshotKeepFrontHint')}</div>
+
+      {IS_MAC && (
+        <>
+          <div className="form-row" id="settings-screenshot-permission">
+            <label>{t('appearance.screenshotPermission')}</label>
+            <div className="control">
+              {screenPermission === 'granted' ? (
+                <span data-testid="settings-screenshot-permission-status">
+                  {t('appearance.screenshotPermissionGranted')}
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  className="btn ghost sm"
+                  data-testid="settings-screenshot-authorize"
+                  onClick={() => void window.vav.files.openScreenshotPermissionSettings()}
+                >
+                  {t('appearance.screenshotPermissionAuthorize')}
+                </button>
+              )}
+            </div>
+          </div>
+          {screenPermission !== 'granted' && (
+            <div className="form-hint">{t('appearance.screenshotPermissionHint')}</div>
+          )}
         </>
       )}
 

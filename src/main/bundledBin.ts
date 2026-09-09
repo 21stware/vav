@@ -3,7 +3,7 @@
  *
  * Dev:   <repo>/resources/bin
  * Packaged: process.resourcesPath/bin
- * Headless `vavd`: cwd / resources only — no Electron import on the load path.
+ * Headless `vav-server`: cwd / resources only — no Electron import on the load path.
  */
 import { existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'

@@ -7,7 +7,7 @@ export type WindowIpcActions = {
   applyTheme: (theme: AppSettings['theme']) => void
   accentColor: () => string
   shellPath: (kind: ShellKind) => unknown
-  openSettings: (view: SettingsView, agentId?: string) => void
+  openSettings: (view: SettingsView, agentId?: string, machineId?: string) => void
   settingsDesiredView: () => unknown
   hideSettings: () => void
   openSession: (id: string) => void
@@ -48,8 +48,14 @@ export function registerWindowIpc(ipcMain: IpcMain, actions: WindowIpcActions): 
   )
   ipcMain.handle(IPC.windowGetAccentColor, () => actions.accentColor())
   ipcMain.handle(IPC.windowShellPath, (_event, kind: ShellKind) => actions.shellPath(kind))
-  ipcMain.handle(IPC.windowOpenSettings, (_event, view?: SettingsView, agentId?: string) =>
-    actions.openSettings(view ?? 'appearance', typeof agentId === 'string' ? agentId : undefined)
+  ipcMain.handle(
+    IPC.windowOpenSettings,
+    (_event, view?: SettingsView, agentId?: string, machineId?: string) =>
+      actions.openSettings(
+        view ?? 'appearance',
+        typeof agentId === 'string' ? agentId : undefined,
+        typeof machineId === 'string' ? machineId : undefined
+      )
   )
   ipcMain.handle(IPC.settingsDesiredView, () => actions.settingsDesiredView())
   ipcMain.handle(IPC.windowCloseSettings, () => actions.hideSettings())

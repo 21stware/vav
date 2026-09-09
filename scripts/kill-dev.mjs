@@ -25,7 +25,7 @@ for (const pattern of patterns) {
 }
 
 // Dev process.title / Dock name after branding. Must NOT match release `VAV`.
-for (const name of ['VAV Dev', 'VAVDev']) {
+for (const name of ['VAV Dev', 'VAV_SERVERev']) {
   try {
     execSync(`pkill -x ${JSON.stringify(name)}`, { stdio: 'ignore' })
   } catch {
@@ -39,7 +39,7 @@ try {
   // ignore
 }
 
-for (const name of ['VAV Dev', 'VAVDev']) {
+for (const name of ['VAV Dev', 'VAV_SERVERev']) {
   try {
     execSync(`pkill -9 -x ${JSON.stringify(name)}`, { stdio: 'ignore' })
   } catch {

@@ -98,10 +98,10 @@ import {
   createFileSessionCatalog,
   createTimerCatalog
 } from '@main/daemon/shellCatalogs'
-import { resolveVavdPairing, resolveVavdSpawn, shouldRestoreInProcessPty } from '@main/daemon/vavdClientLaunch'
-import { spawnLocalVavd } from '@main/daemon/vavdSpawn'
+import { resolveVavServerPairing, resolveVavServerSpawn, shouldRestoreInProcessPty } from '@main/daemon/vavServerClientLaunch'
+import { spawnLocalVavServer } from '@main/daemon/vavServerSpawn'
 import { startDesktopWebBridge } from '@main/daemon/desktopWebBridge'
-import { loopbackVavdShell } from '@main/daemon/vavdShellPairing'
+import { loopbackVavServerShell } from '@main/daemon/vavServerShellPairing'
 import { openTailcatDial } from '@main/daemon/tailcatDial'
 import { pluginHostKind } from '@shared/plugins'
 import { hostJoin, isLocalMachine, LOCAL_MACHINE_ID, normalizeMachineId, conversationOnMachine, parseWorkspaceRefList, recentsForMachine, remoteConversationMachineId, type WorkspaceHostInfo } from '@shared/workspaceHost'
@@ -194,7 +194,7 @@ import { registerConnectorIpc } from '@main/ipc/registerConnectorIpc'
 import { registerTimerIpc } from '@main/ipc/registerTimerIpc'
 import { createConnectorRegistry } from '@main/connectors/registry'
 import { TimerStore } from '@main/store/TimerStore'
-import { defaultVavdStateDir } from '@main/store/vavdStateDir'
+import { defaultVavServerStateDir } from '@main/store/vavServerStateDir'
 import { TimerScheduler } from '@main/timer/TimerScheduler'
 import { probeListenAlive, readListenState } from '@main/daemon/listenState'
 import { registerAccountsIpc } from '@main/ipc/registerAccountsIpc'
@@ -465,11 +465,13 @@ protocol.registerSchemesAsPrivileged([
 ])
 
 let mainWindow: BrowserWindow | null = null
-let stopSpawnedVavd: (() => void) | undefined
-/** In-flight auto-pair for the spawned loopback vavd (New Session waits on this). */
+let stopSpawnedVavServer: (() => void) | undefined
+/** State dir of the spawned loopback vav-server, when this app owns one. */
+let spawnedVavServerStateDir: string | null = null
+/** In-flight auto-pair for the spawned loopback vav-server (New Session waits on this). */
 let localShellPairing: Promise<unknown> | null = null
 let stopDesktopWeb: (() => void) | undefined
-let stopVavdLogs: (() => void) | undefined
+let stopVavServerLogs: (() => void) | undefined
 /** Machine the single main shell is showing. */
 let mainShellMachineId = LOCAL_MACHINE_ID
 let settingsWindow: BrowserWindow | null = null
@@ -541,7 +543,7 @@ const settingsStore = new SettingsStore()
 const secretStore = new SecretStore()
 const accountStore = new AccountStore(app.getPath('userData'))
 const conversationStore = new ConversationStore()
-const timerStore = new TimerStore(defaultVavdStateDir(), {
+const timerStore = new TimerStore(defaultVavServerStateDir(), {
   migrateFrom: app.getPath('userData')
 })
 const connectorRegistry = createConnectorRegistry({
@@ -1387,7 +1389,7 @@ timerScheduler = new TimerScheduler({
   reload: () => timerStore.load(),
   publish: () => publishConversations(),
   shouldDefer: async () => {
-    const listen = readListenState(defaultVavdStateDir())
+    const listen = readListenState(defaultVavServerStateDir())
     return listen ? probeListenAlive(listen) : false
   }
 })
@@ -1997,8 +1999,9 @@ const daemonAttach = new DaemonAttachService({
   onIncomingChanged: (controllers) => {
     broadcast(IPC.hostsIncomingChanged, controllers)
   },
+  localShellStateDir: () => spawnedVavServerStateDir,
   onAdvertisedPairingRotated: (pairing) => {
-    const shell = loopbackVavdShell(pairing)
+    const shell = loopbackVavServerShell(pairing)
     if (shell) remoteControl.setTunnelForward({ port: shell.port, secret: shell.secret })
   },
   onDiscovered: (peers) => {
@@ -2039,7 +2042,7 @@ const daemonAttach = new DaemonAttachService({
 
 /**
  * Talk to the host session plane when this conversation lives on another
- * machine. Desktop hosts and headless vavd both expose the hub; returns
+ * machine. Desktop hosts and headless vav-server both expose the hub; returns
  * false only when that plane is not ready.
  */
 function remoteMachineId(conversation: Conversation | undefined | null): string | null {
@@ -2075,7 +2078,7 @@ function activeSettingsClient(): { request: (method: string, params?: unknown) =
   return daemonAttach.clientOf(id) ?? null
 }
 
-/** Local chats persist on spawned vavd only — Electron `conversations/` is a cache. */
+/** Local chats persist on spawned vav-server only — Electron `conversations/` is a cache. */
 function applyConversationPersist(): void {
   const owned = hostRegistry.list().some((host) => host.localShell)
   conversationStore.setShouldPersist(owned ? (row) => !isLocalMachine(row.machineId) : null)
@@ -2184,6 +2187,29 @@ function emitDesktopControlEvents(events: TurnEvent[]): void {
  * newer local apply with a stale `sessions.get`.
  */
 function applyDesktopControlEvent(machineId: string, message: RemoteServerMessage): void {
+  if (message.type === 'sessions') {
+    // `created` is unicast only to the client that created a session; every other
+    // client (this desktop) learns about new/updated sessions on the host via the
+    // debounced `sessions` broadcast. Adopt them so third-party-driven sessions
+    // show up in the sidebar and turn/thread frames find a local row.
+    const rows = Array.isArray(message.sessions) ? message.sessions : []
+    if (!rows.length) return
+    const adoptAs = hostRegistry.get(machineId)?.info.localShell ? LOCAL_MACHINE_ID : machineId
+    let changed = false
+    for (const session of rows) {
+      const adopted = conversationStore.adoptHostConversation(
+        conversationFromRemoteThread(conversationFromRemoteSession(session), []),
+        adoptAs
+      )
+      if (adopted) {
+        if (adopted.workingDirectory) fileService.watchRoot(adopted.id, adopted.workingDirectory)
+        changed = true
+      }
+    }
+    if (changed) publishConversations()
+    return
+  }
+
   if (message.type === 'created') {
     const host = hostRegistry.get(machineId)?.info
     if (host?.localShell) {
@@ -2266,7 +2292,7 @@ function applyDesktopControlEvent(machineId: string, message: RemoteServerMessag
   }
 }
 
-/** Pull one vavd conversation so usage / resume / ACP chrome match the host. */
+/** Pull one vav-server conversation so usage / resume / ACP chrome match the host. */
 function refreshHostSession(machineId: string, hostConversationId: string): void {
   const client = daemonAttach.clientOf(machineId)
   if (!client?.connected) return
@@ -2305,8 +2331,8 @@ function attachLocalShellLogs(machineId: string): void {
   if (!host?.localShell) return
   const client = daemonAttach.clientOf(machineId)
   if (!client?.connected) return
-  stopVavdLogs?.()
-  stopVavdLogs = attachDaemonLogStream(client, (record) => broadcast(IPC.logsChanged, record))
+  stopVavServerLogs?.()
+  stopVavServerLogs = attachDaemonLogStream(client, (record) => broadcast(IPC.logsChanged, record))
 }
 
 /** One in-flight catalog pull per host so a stale `created` fetch cannot overwrite a later bind. */
@@ -3151,10 +3177,16 @@ function loadScreenshotRenderer(window: BrowserWindow): void {
 }
 
 /** Category the next Settings paint should show. ⌘, parks on Appearance. */
-let settingsDesiredView: { view: SettingsView; agentId?: string } = { view: 'appearance' }
+let settingsDesiredView: { view: SettingsView; agentId?: string; machineId?: string } = {
+  view: 'appearance'
+}
 
-function openSettingsWindow(view: SettingsView = 'appearance', agentId?: string): void {
-  const resolved = resolveSettingsView(view ?? 'appearance', agentId)
+function openSettingsWindow(
+  view: SettingsView = 'appearance',
+  agentId?: string,
+  machineId?: string
+): void {
+  const resolved = resolveSettingsView(view ?? 'appearance', agentId, machineId)
   settingsDesiredView = resolved
   void serveAnalysisSnapshot({ refresh: false }).catch((err) => {
     console.error('[analysis] prefetch failed', err)
@@ -6656,7 +6688,7 @@ function registerIpc(): void {
       hosts: decorateHosts(hostRegistry.list()),
       about: {
         version: app.getVersion(),
-        vavdVersion: daemonAttach.vavdVersion() || app.getVersion(),
+        vavServerVersion: daemonAttach.vavServerVersion() || app.getVersion(),
         buildNumber: appBuildNumber(),
         electron: process.versions.electron,
         userDataPath: app.getPath('userData'),
@@ -7307,12 +7339,12 @@ return c as text`
             try {
               hostId = await ensureLocalShellSession(remote)
             } catch (err) {
-              console.warn('[vavd] local-shell session bind failed', err)
+              console.warn('[vav-server] local-shell session bind failed', err)
             }
             const shellId = localShellMachineId()
             const dial = shellId ? daemonAttach.controlOf(shellId) : undefined
             if (!hostId || !dial?.ready) {
-              console.warn('[vavd] local-shell send dropped — control plane not ready')
+              console.warn('[vav-server] local-shell send dropped — control plane not ready')
               return
             }
             dial.send(hostId, text ?? '')
@@ -7710,8 +7742,8 @@ return c as text`
       // with a Tray/Dock-only lifetime after windows close.
       electronAutoUpdater.once('before-quit-for-update', () => {
         daemonAttach.dispose()
-        stopVavdLogs?.()
-        stopSpawnedVavd?.()
+        stopVavServerLogs?.()
+        stopSpawnedVavServer?.()
         stopDesktopWeb?.()
         remoteControl.dispose()
         agent.disposeAll()
@@ -7803,7 +7835,7 @@ async function seedSmokeChangeReview(): Promise<void> {
     console.error('[smoke] still no conversation')
     return
   }
-  const wantsShell = Boolean(stopSpawnedVavd) || process.env.VAVD_SPAWN === '1'
+  const wantsShell = Boolean(stopSpawnedVavServer) || process.env.VAV_SERVER_SPAWN === '1'
   if (wantsShell) {
     for (let i = 0; i < 150; i++) {
       if (daemonAttach.localShellClient()) break
@@ -7829,11 +7861,11 @@ async function seedSmokeChangeReview(): Promise<void> {
     }
     const set = result?.set
     if (!set?.id || !result) {
-      console.error('[smoke] vavd change review missing')
+      console.error('[smoke] vav-server change review missing')
       return
     }
     projectSmokeChangeReview(meta.id, { id: set.id, files: set.files }, result.user, result.assistant)
-    console.log('[smoke] projected vavd change review', set.id, 'conv', meta.id)
+    console.log('[smoke] projected vav-server change review', set.id, 'conv', meta.id)
     return
   }
   const workdir = meta.workingDirectory || app.getPath('temp')
@@ -7918,8 +7950,8 @@ if (!singleInstance) {
     sleepBlocker.release()
     macLidSleep?.stop()
     daemonAttach.dispose()
-    stopVavdLogs?.()
-    stopSpawnedVavd?.()
+    stopVavServerLogs?.()
+    stopSpawnedVavServer?.()
     stopDesktopWeb?.()
     remoteControl.dispose()
     timerScheduler?.stop()
@@ -8124,13 +8156,14 @@ if (!singleInstance) {
     }
 
     mainWindow ??= createWindow()
-    let vavdPairing = resolveVavdPairing(process.env, process.argv)
-    if (resolveVavdSpawn(process.env, process.argv, { packaged: app.isPackaged })) {
+    let vavServerPairing = resolveVavServerPairing(process.env, process.argv)
+    if (resolveVavServerSpawn(process.env, process.argv, { packaged: app.isPackaged })) {
       try {
         const liveAcp = Boolean(process.env.E2E_ACP_MODEL_LOG)
-        const spawned = await spawnLocalVavd({
+        const vavServerStateDir = join(app.getPath('userData'), 'vav-server')
+        const spawned = await spawnLocalVavServer({
           name: isE2eRuntime() ? 'E2E Daemon' : 'VAV Daemon',
-          stateDir: join(app.getPath('userData'), 'vavd'),
+          stateDir: vavServerStateDir,
           stubTurn: isE2eRuntime() && !liveAcp,
           stubStream: isE2eRuntime() && !liveAcp,
           stubApprove: isE2eRuntime() && process.env.VAV_E2E_STUB_APPROVE === '1',
@@ -8142,13 +8175,14 @@ if (!singleInstance) {
           webPort: 4752,
           webListen: '127.0.0.1'
         })
-        stopSpawnedVavd = spawned.stop
-        vavdPairing = spawned.pairing
+        stopSpawnedVavServer = spawned.stop
+        spawnedVavServerStateDir = vavServerStateDir
+        vavServerPairing = spawned.pairing
       } catch (err) {
-        console.warn('[vavd] spawn failed', err)
+        console.warn('[vav-server] spawn failed', err)
       }
     }
-    if (!stopSpawnedVavd && !vavdPairing) {
+    if (!stopSpawnedVavServer && !vavServerPairing) {
       try {
         const web = await startDesktopWebBridge({
           hub: remoteControl.hub,
@@ -8162,24 +8196,25 @@ if (!singleInstance) {
         console.warn('[vav] web bridge failed', err)
       }
     }
-    if (vavdPairing) {
-      const shell = loopbackVavdShell(vavdPairing)
+    if (vavServerPairing) {
+      const shell = loopbackVavServerShell(vavServerPairing)
       if (shell) {
         daemonAttach.setAdvertisedPairing(shell.pairing)
         remoteControl.setTunnelForward({ port: shell.port, secret: shell.secret })
       }
-      const pairing = daemonAttach.pair(vavdPairing, undefined, {
-        localShell: Boolean(stopSpawnedVavd)
+      if (stopSpawnedVavServer) daemonAttach.setLocalShellPairing(vavServerPairing)
+      const pairing = daemonAttach.pair(vavServerPairing, undefined, {
+        localShell: Boolean(stopSpawnedVavServer)
       })
       localShellPairing = pairing
       void pairing.then((result) => {
         if (!result.ok) {
-          console.warn('[vavd] auto-pair failed', result.error)
+          console.warn('[vav-server] auto-pair failed', result.error)
           return
         }
         if (!result.host.localShell) {
           // Persist before did-finish-load → showMainWindow, or the chip
-          // bounces back to local after a successful VAVD_URI pair.
+          // bounces back to local after a successful VAV_SERVER_URI pair.
           applyDefaultMachine(result.host.id)
           void showHostWindow(result.host.id)
         } else {
@@ -8191,7 +8226,7 @@ if (!singleInstance) {
     // from the IDE. Force the main window up once the renderer finishes loading.
     const onMainLoaded = (): void => {
       if (!previewColdOpen) showMainWindow()
-      if (!stopSpawnedVavd) void maybeSeedSmokeChangeReview()
+      if (!stopSpawnedVavServer) void maybeSeedSmokeChangeReview()
       // Companion warm order: session first (global ⌘⇧↵ is latency-critical),
       // then token / preview / settings. A short delay lets the main shell paint
       // once so the hidden session boot does not contend on first frame.

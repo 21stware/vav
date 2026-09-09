@@ -310,7 +310,7 @@ function listCompanions(skillDir: string): string[] {
 }
 
 /**
- * Packed / Electron CJS has `__dirname`. ESM tests and `vavd` do not —
+ * Packed / Electron CJS has `__dirname`. ESM tests and `vav-server` do not —
  * `import.meta.dirname` is the Node 22 equivalent. Never read `__dirname`
  * unguarded or control-plane boot throws ReferenceError.
  */

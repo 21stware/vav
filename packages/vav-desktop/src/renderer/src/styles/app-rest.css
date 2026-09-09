@@ -2851,7 +2851,8 @@
   line-height: 1.55;
   padding: 2px 0;
   user-select: text;
-  overflow-y: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   /* Critical for voice IME: one long unwrapped run must soft-wrap inside the
      card instead of expanding the flex row and shifting the whole UI left. */
   display: block;
@@ -6802,6 +6803,32 @@ html.is-screenshotting * {
   align-items: center;
   gap: 1px;
   flex: 0 0 auto;
+}
+
+.composer-shot-group {
+  display: inline-flex;
+  align-items: center;
+  border-radius: var(--radius-sm);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .composer-shot-group:hover {
+    background: var(--bg-hover);
+  }
+
+  .composer-shot-group:hover .session-run-btn,
+  .composer-shot-group:hover .session-run-btn:hover {
+    background: transparent;
+  }
+}
+
+.composer-shot-group .session-run-btn.is-shot-caret {
+  width: 16px;
+  padding: 0 2px 0 0;
+}
+
+.composer-shot-group .session-run-btn.is-shot-caret svg {
+  opacity: 0.55;
 }
 
 .attachment-file-tile {

@@ -1,5 +1,5 @@
 import {
-  VAVD_WEB_DEFAULT_PORT,
+  VAV_SERVER_WEB_DEFAULT_PORT,
   VAV_WEB_SOCKET_PATH,
   loopbackWebOrigin,
   loopbackWsUrl,
@@ -24,7 +24,7 @@ export function parsePairing(text) {
       if (secret.length < 16) return null
       const advertised = url.hostname.replace(/^\[|\]$/g, '') || '127.0.0.1'
       const host = pairingHost(advertised)
-      const origin = `http://${host.includes(':') ? `[${host}]` : host}:${VAVD_WEB_DEFAULT_PORT}`
+      const origin = `http://${host.includes(':') ? `[${host}]` : host}:${VAV_SERVER_WEB_DEFAULT_PORT}`
       return { secret, host, origin, wsUrl: wsUrlFromOrigin(origin) }
     } catch {
       return null

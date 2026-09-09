@@ -1,6 +1,6 @@
 /**
- * Timer / connector catalogs the daemon listen serves to Chrome / web / vavc.
- * Desktop IPC and vavd share these wrappers so the side panel matches the workbench.
+ * Timer / connector catalogs the daemon listen serves to Chrome / web / vav-board.
+ * Desktop IPC and vav-server share these wrappers so the side panel matches the workbench.
  */
 import {
   connectorCliName,
