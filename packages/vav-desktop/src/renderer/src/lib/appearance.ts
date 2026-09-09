@@ -6,6 +6,7 @@ import { useSessionStore } from '../state/sessionStore'
 import { IS_MAC } from './platform'
 import { paintTerminalThemes } from './terminalRegistryHandle'
 import { customSurfaceTile, surfacePatternPreset } from './surfacePatterns'
+import { drivesNativeWindowTheme } from './nativeWindowTheme'
 
 /** CSS custom properties driven by a fixed or system tint. */
 const SYSTEM_TINT_VARS = [
@@ -346,6 +347,13 @@ export function useAppearance(): void {
     apply()
     media.addEventListener('change', apply)
     return () => media.removeEventListener('change', apply)
+  }, [theme])
+
+  // Native vibrancy follows `nativeTheme`, not `data-theme`. Per-connection
+  // light appearance otherwise paints dark ink on dark glass.
+  useEffect(() => {
+    if (!drivesNativeWindowTheme(window.location.search)) return
+    void window.vav?.window?.setTheme?.(theme)
   }, [theme])
 
   useEffect(() => {

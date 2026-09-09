@@ -591,6 +591,21 @@ html[data-resizing='true'] .banner.error {
   -webkit-backdrop-filter: none !important;
 }
 
+/*
+ * Light ink on fully clear glass fails when the desktop (or a stuck dark
+ * NSVisualEffectView) shows through. Frost the column the way Finder does so
+ * titles stay readable; dark mode already has a heavy material tint.
+ */
+:root[data-theme='light'][data-platform='darwin'][data-vibrancy='true'] .sidebar-column,
+:root[data-theme='light'][data-platform='darwin'][data-vibrancy='true']
+  .app-shell
+  .body-split
+  > .sidebar:not(.floating),
+:root[data-theme='light'][data-platform='darwin'][data-vibrancy='true'] .titlebar.sidebar-chrome,
+:root[data-theme='light'][data-platform='darwin'][data-vibrancy='true'] .settings-nav {
+  background: color-mix(in srgb, var(--bg-window) 82%, transparent) !important;
+}
+
 :root[data-platform='darwin'][data-vibrancy='false'] html,
 :root[data-platform='darwin'][data-vibrancy='false'] body,
 :root[data-platform='darwin'][data-vibrancy='false'] #root,

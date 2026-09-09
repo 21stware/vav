@@ -5901,8 +5901,17 @@ function registerGlobalHotkey(accelerator: string): boolean {
   return toggleOk
 }
 
+/** Last source we applied — skip a no-op so launch does not flash glass. */
+let appliedThemeSource: AppSettings['theme'] | null = null
+
 function applyTheme(theme: AppSettings['theme']): void {
+  const changed = appliedThemeSource !== theme
+  appliedThemeSource = theme
   nativeTheme.themeSource = theme
+  // NSVisualEffectView keeps the previous appearance unless glass is torn down.
+  if (!changed || !IS_MAC) return
+  if (mainWindow && !mainWindow.isDestroyed()) scheduleVibrancyRefresh(mainWindow)
+  if (settingsWindow && !settingsWindow.isDestroyed()) scheduleVibrancyRefresh(settingsWindow)
 }
 
 /** Last hex we broadcast — avoid spam on focus re-samples. */
