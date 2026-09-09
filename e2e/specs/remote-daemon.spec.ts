@@ -15,7 +15,8 @@ import {
   waitForDaemonPairing,
   waitForHostWindow,
   pairRemoteDaemon,
-  ensureSelectedSession
+  ensureSelectedSession,
+  waitForRemoteFolderPicker
 } from '../launch'
 import { startVavServer } from '../startVavServer'
 
@@ -241,15 +242,14 @@ test('workdir menu opens the remote folder picker and binds the session', async 
     await expect(remote.locator('[data-testid="sidebar-connect"]')).toContainText('E2E Daemon')
     await ensureSelectedSession(remote)
     await remote.locator('[data-testid="workdir-chip"] [data-testid="chip-action"]').click()
-    await chooseNativeMenu(remote, 'Choose another folder…')
-
-    const picker = remote.locator('[data-testid="remote-folder-picker"]')
-    await expect(picker).toBeVisible()
-    await remote.locator('[data-testid="remote-folder-path"]').fill(daemon.workspace)
-    await expect(remote.locator('[data-testid="remote-folder-entry-remote-pkg"]')).toBeVisible()
-    await remote.locator('[data-testid="remote-folder-entry-remote-pkg"]').click()
-    await remote.locator('[data-testid="remote-folder-select"]').click()
-    await expect(picker).toHaveCount(0)
+    const picker = await waitForRemoteFolderPicker(harness, () =>
+      chooseNativeMenu(remote, 'Choose another folder…')
+    )
+    await picker.locator('[data-testid="remote-folder-path"]').fill(daemon.workspace)
+    await expect(picker.locator('[data-testid="remote-folder-entry-remote-pkg"]')).toBeVisible()
+    await picker.locator('[data-testid="remote-folder-entry-remote-pkg"]').click()
+    await picker.locator('[data-testid="remote-folder-select"]').click()
+    await expect.poll(() => picker.isClosed()).toBe(true)
 
     const nested = join(daemon.workspace, 'remote-pkg')
     const activeId = await remote
@@ -780,12 +780,12 @@ test('pair another VAV, pull its sessions and folder recents', async () => {
     await expect(remote.locator('[data-file-path$="host-only.md"]')).toHaveCount(0)
 
     await remote.locator('[data-testid="workdir-chip"] [data-testid="chip-action"]').click()
-    await chooseNativeMenu(remote, 'Choose another folder…')
-    const picker = remote.locator('[data-testid="remote-folder-picker"]')
-    await expect(picker).toBeVisible()
-    await remote.locator('[data-testid="remote-folder-path"]').fill(host.extraWorkspace!)
-    await remote.locator('[data-testid="remote-folder-select"]').click()
-    await expect(picker).toHaveCount(0)
+    const picker = await waitForRemoteFolderPicker(client, () =>
+      chooseNativeMenu(remote, 'Choose another folder…')
+    )
+    await picker.locator('[data-testid="remote-folder-path"]').fill(host.extraWorkspace!)
+    await picker.locator('[data-testid="remote-folder-select"]').click()
+    await expect.poll(() => picker.isClosed()).toBe(true)
     await expect(remote.locator('[data-file-path$="host-only.md"]')).toBeVisible()
 
     await remote.evaluate((path) => window.vav.conversations.revealInFinder(path), host.extraWorkspace)

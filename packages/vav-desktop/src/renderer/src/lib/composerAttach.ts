@@ -1,4 +1,5 @@
 import { tt } from '../i18n/useT'
+import { handoffFileFocusToCli } from './cliFocusHandoff'
 import { useSessionStore } from '../state/sessionStore'
 
 async function ensureActiveConversation(): Promise<string | null> {
@@ -54,4 +55,16 @@ export async function attachPickedFiles(): Promise<void> {
   const result = await window.vav.files.pickAttachments()
   if (!result.ok || result.paths.length === 0) return
   useSessionStore.getState().addAttachments(id, result.paths)
+}
+
+/** Files panel / preview: pin paths on the composer like a paperclip or drop. */
+export function addFilesToComposer(paths: string[], conversationId?: string | null): void {
+  const store = useSessionStore.getState()
+  const id = conversationId?.trim() || store.activeId
+  if (!id) return
+  const files = [...new Set(paths.map((path) => path.trim()).filter(Boolean))]
+  if (files.length === 0) return
+  store.addAttachments(id, files)
+  store.focusComposer(id)
+  if (files.length === 1) void handoffFileFocusToCli(id, files[0]!)
 }

@@ -30,6 +30,7 @@ import type {
 import { conversationOnMachine, isLocalMachine, LOCAL_MACHINE_ID } from '@shared/workspaceHost'
 import { isWorkspaceSession, sessionKindOf } from '@shared/sessionKind'
 import { mergeAdoptedHostMessages } from '@shared/remoteControlApply'
+import { isSparseRemoteConversation, UNKNOWN_REMOTE_MODEL } from '@shared/remoteDesktop'
 import { parseThinkingLevel } from '@shared/thinkingLevel'
 import { normalizeCursorConversationModel } from '@shared/cursorModel'
 import { hostTranscriptKey } from '@shared/types'
@@ -271,6 +272,17 @@ export class ConversationStore {
     return matches.find((c) => isLocalMachine(c.machineId)) ?? matches[0]
   }
 
+  /** Row already adopted onto this machine — does not cross onto a local workbench id. */
+  findAdoptedOnMachine(machineId: string, hostConversationId: string): Conversation | undefined {
+    const hostId = hostConversationId.trim()
+    if (!hostId) return undefined
+    return this.conversations.find(
+      (c) =>
+        conversationOnMachine(c, machineId) &&
+        (c.id === hostId || (c.duplicateSourceId ?? '').trim() === hostId)
+    )
+  }
+
   /** Map a local chat onto a spawned-vav-server session (same sidebar, turns on the daemon). */
   bindHostSession(id: string, hostConversationId: string): Conversation | undefined {
     const conversation = this.get(id)
@@ -467,41 +479,48 @@ export class ConversationStore {
         this.adoptTreeShape(existingLocal)
         changed = true
       }
-      if (typeof source.tokensUsed === 'number') {
-        existingLocal.tokensUsed = source.tokensUsed
+      if (source.title && source.title !== existingLocal.title) {
+        existingLocal.title = source.title
         changed = true
       }
-      if (typeof source.tokenLimit === 'number') {
-        existingLocal.tokenLimit = source.tokenLimit
-        changed = true
-      }
-      if (Array.isArray(source.tokenHistory)) {
-        existingLocal.tokenHistory = source.tokenHistory
-        changed = true
-      }
-      if (source.cliResumeCursor !== undefined) {
-        existingLocal.cliResumeCursor = source.cliResumeCursor
-        changed = true
-      }
-      if (source.acpSession !== undefined) {
-        existingLocal.acpSession = source.acpSession
-        changed = true
-      }
-      if (source.cliHost !== undefined) {
-        existingLocal.cliHost = source.cliHost
-        changed = true
-      }
-      if (source.model) {
-        existingLocal.model = source.model
-        changed = true
-      }
-      if (typeof source.fast === 'boolean') {
-        existingLocal.fast = source.fast
-        changed = true
-      }
-      if (source.thinkingLevel !== undefined) {
-        existingLocal.thinkingLevel = parseThinkingLevel(source.thinkingLevel)
-        changed = true
+      // List-only `sessions` frames fill model=`unknown` and cliHost=null.
+      if (!isSparseRemoteConversation(source)) {
+        if (typeof source.tokensUsed === 'number') {
+          existingLocal.tokensUsed = source.tokensUsed
+          changed = true
+        }
+        if (typeof source.tokenLimit === 'number') {
+          existingLocal.tokenLimit = source.tokenLimit
+          changed = true
+        }
+        if (Array.isArray(source.tokenHistory)) {
+          existingLocal.tokenHistory = source.tokenHistory
+          changed = true
+        }
+        if (source.cliResumeCursor !== undefined) {
+          existingLocal.cliResumeCursor = source.cliResumeCursor
+          changed = true
+        }
+        if (source.acpSession !== undefined) {
+          existingLocal.acpSession = source.acpSession
+          changed = true
+        }
+        if (source.cliHost !== undefined) {
+          existingLocal.cliHost = source.cliHost
+          changed = true
+        }
+        if (source.model) {
+          existingLocal.model = source.model
+          changed = true
+        }
+        if (typeof source.fast === 'boolean') {
+          existingLocal.fast = source.fast
+          changed = true
+        }
+        if (source.thinkingLevel !== undefined) {
+          existingLocal.thinkingLevel = parseThinkingLevel(source.thinkingLevel)
+          changed = true
+        }
       }
       if (changed) {
         this.markDirty(existingLocal.id)
@@ -541,7 +560,7 @@ export class ConversationStore {
         ? (cloned.title ?? null)
         : (cloned.duplicateSourceTitle ?? null),
       workingDirectory: cloned.workingDirectory ?? null,
-      model: cloned.model || 'unknown',
+      model: cloned.model || UNKNOWN_REMOTE_MODEL,
       title: cloned.title || defaultSessionTitle(currentLocale()),
       approvalMode: cloned.approvalMode || 'auto',
       thinkingLevel: parseThinkingLevel(cloned.thinkingLevel),
@@ -550,7 +569,7 @@ export class ConversationStore {
       tokenLimit:
         typeof cloned.tokenLimit === 'number'
           ? cloned.tokenLimit
-          : contextWindowFor(cloned.model || 'unknown'),
+          : contextWindowFor(cloned.model || UNKNOWN_REMOTE_MODEL),
       reportedSessionCostUsd: cloned.reportedSessionCostUsd ?? null,
       quotaWindows: Array.isArray(cloned.quotaWindows) ? cloned.quotaWindows : [],
       tokenHistory: Array.isArray(cloned.tokenHistory) ? cloned.tokenHistory : [],
@@ -588,6 +607,24 @@ export class ConversationStore {
       const leafStillThere =
         existing.activeLeafId && adopted.messages.some((message) => message.id === existing.activeLeafId)
       if (leafStillThere) adopted.activeLeafId = existing.activeLeafId
+      if (isSparseRemoteConversation(cloned)) {
+        adopted.model = existing.model
+        adopted.cliHost = existing.cliHost
+        adopted.agentBinaryName = existing.agentBinaryName
+        adopted.accountId = existing.accountId
+        adopted.approvalMode = existing.approvalMode
+        adopted.thinkingLevel = existing.thinkingLevel
+        adopted.fast = existing.fast
+        adopted.acpSession = existing.acpSession
+        adopted.tokensUsed = existing.tokensUsed
+        adopted.tokenLimit = existing.tokenLimit
+        adopted.tokenHistory = existing.tokenHistory
+        adopted.quotaWindows = existing.quotaWindows
+        adopted.reportedSessionCostUsd = existing.reportedSessionCostUsd
+        adopted.cliResumeCursor = existing.cliResumeCursor
+      } else if (!cloned.model || cloned.model === UNKNOWN_REMOTE_MODEL) {
+        adopted.model = existing.model
+      }
     }
     this.adoptTreeShape(adopted)
 

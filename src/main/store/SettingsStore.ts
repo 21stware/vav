@@ -33,6 +33,7 @@ import {
   workspaceRef
 } from '@shared/workspaceHost'
 import { clampKeepAwakeBatteryFloor } from '@shared/sleepBlocker'
+import { clampUiZoom } from '@shared/uiZoom'
 import { resolveAutoUpdatePolicy } from '@shared/updatePolicy'
 import { clampLogRetentionDays } from '@shared/appLog'
 import { createDebouncedWriter } from './debounceWrite'
@@ -245,6 +246,7 @@ export class SettingsStore {
     const providers = new Set(['auto', 'duckduckgo', 'searxng', 'brave', 'tinyfish'])
     if (!providers.has(s.webSearchProvider)) s.webSearchProvider = 'auto'
     s.fontSize = Math.min(24, Math.max(10, s.fontSize))
+    s.uiZoom = clampUiZoom(s.uiZoom)
     if (s.bashBackground !== 'dark' && s.bashBackground !== 'theme') s.bashBackground = 'theme'
     if (!SURFACE_PATTERNS.includes(s.surfacePattern as SurfacePattern)) {
       s.surfacePattern = DEFAULT_SETTINGS.surfacePattern

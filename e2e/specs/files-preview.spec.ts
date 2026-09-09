@@ -29,6 +29,27 @@ test('selecting a file and pressing Space opens the session preview', async () =
   }
 })
 
+test('selecting a file does not attach it; Add to composer pins an attachment tile', async () => {
+  const harness = await launchWorkbench()
+  try {
+    const { page } = harness
+    await openFilesTray(page)
+    const file = page.locator('[data-file-path$="hello.md"]')
+    await file.click()
+    await expect(file).toHaveClass(/selected/)
+    await expect(page.locator('.file-context-chip')).toHaveCount(0)
+    await expect(page.locator('.composer-box .attachment-image-chip')).toHaveCount(0)
+
+    await file.click({ button: 'right' })
+    await chooseNativeMenu(page, 'Add to composer')
+    await expect(page.locator('.composer-box .attachment-image-chip')).toHaveCount(1)
+    await expect(page.locator('.composer-box .attachment-file-name')).toHaveText('hello.md')
+    await expect(page.locator('.file-context-chip')).toHaveCount(0)
+  } finally {
+    await harness.dispose()
+  }
+})
+
 test('previewing a second file replaces the drawer contents', async () => {
   const harness = await launchWorkbench()
   try {
@@ -363,7 +384,9 @@ test('Files Open menu item opens a companion preview window', async () => {
     await file.click({ button: 'right' })
     await expect
       .poll(async () => (await peekNativeMenu(page))?.map((item) => item.label) ?? [])
-      .toEqual(expect.arrayContaining(['Open', 'Preview', 'Open with default app']))
+      .toEqual(
+        expect.arrayContaining(['Add to composer', 'Open', 'Preview', 'Open with default app'])
+      )
     const companion = await waitForNewWindow(harness, () => chooseNativeMenu(page, 'Open'))
     await expect(companion.locator('[data-testid="file-preview-name"]')).toHaveText('hello.md', {
       timeout: 20_000

@@ -169,9 +169,28 @@ export function buildAppMenu(
       }
     }),
     { type: 'separator' },
-    { role: 'resetZoom', label: t('menu.actualSize') },
-    { role: 'zoomIn', label: t('menu.zoomIn') },
-    { role: 'zoomOut', label: t('menu.zoomOut') },
+    {
+      label: t('menu.actualSize'),
+      accelerator: 'CommandOrControl+0',
+      click: send('zoom-reset')
+    },
+    {
+      label: t('menu.zoomIn'),
+      accelerator: 'CommandOrControl+=',
+      click: send('zoom-in')
+    },
+    {
+      label: t('menu.zoomIn'),
+      accelerator: 'CommandOrControl+Plus',
+      visible: false,
+      acceleratorWorksWhenHidden: true,
+      click: send('zoom-in')
+    },
+    {
+      label: t('menu.zoomOut'),
+      accelerator: 'CommandOrControl+-',
+      click: send('zoom-out')
+    },
     { role: 'togglefullscreen', label: t('menu.fullscreen') },
     ...(isDev
       ? ([

@@ -38,4 +38,27 @@ describe('buildAcpPrompt', () => {
       assert.ok(blocks[1].uri.startsWith('file://'))
     }
   })
+
+  it('inlines a small png when the agent advertises image', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vav-acp-prompt-img-'))
+    const path = join(dir, 'shot.png')
+    await writeFile(
+      path,
+      Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+        'base64'
+      )
+    )
+    const blocks = await buildAcpPrompt({
+      text: 'what is this',
+      attachments: [path],
+      capabilities: { image: true, audio: false, embeddedContext: true }
+    })
+    assert.equal(blocks[0]?.type, 'text')
+    assert.equal(blocks[1]?.type, 'image')
+    if (blocks[1]?.type === 'image') {
+      assert.equal(blocks[1].mimeType, 'image/png')
+      assert.ok(blocks[1].data.length > 0)
+    }
+  })
 })

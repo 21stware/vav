@@ -112,21 +112,20 @@ export function SessionWorkspaceChrome({
   if (!activeId) return null
 
   const showCli = swarmEnabled && !cliMode
+  if (!showCli) return null
 
   return (
     <div className={`session-workspace-chrome${copy.entering ? ' is-entering' : ''}`}>
-      {showCli ? (
-        <p className="session-workspace-prose">
-          <StaggerLine baseDelay={280} key={`${motionKey}:cli`}>
-            <TextBtn
-              title={t('empty.useCliHint')}
-              onClick={() => requestCliSurface(activeId, true)}
-            >
-              {t('empty.useCliAction')}
-            </TextBtn>
-          </StaggerLine>
-        </p>
-      ) : null}
+      <p className="session-workspace-prose">
+        <StaggerLine baseDelay={280} key={`${motionKey}:cli`}>
+          <TextBtn
+            title={t('empty.useCliHint')}
+            onClick={() => requestCliSurface(activeId, true)}
+          >
+            {t('empty.useCliAction')}
+          </TextBtn>
+        </StaggerLine>
+      </p>
     </div>
   )
 }

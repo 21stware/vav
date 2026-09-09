@@ -16,7 +16,7 @@ export function AgentPanelToggleButton({
   return (
     <button
       type="button"
-      className={`btn ghost sm icon-only preview-agent-logo-btn${open ? ' is-active-toggle' : ''}${className ? ` ${className}` : ''}`}
+      className={`btn ghost icon-only preview-agent-logo-btn${open ? ' is-active-toggle' : ''}${className ? ` ${className}` : ''}`}
       title={title}
       aria-label={title}
       aria-pressed={open}

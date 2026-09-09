@@ -87,11 +87,24 @@ test('screenshot overlay crop can move and resize, then attach without crashing'
 
     const overlay = await overlayPage(app)
     await expect(overlay.locator('[data-testid="screenshot-overlay"]')).toBeVisible()
+    await expect(overlay.locator('[data-testid="screenshot-overlay"]')).toHaveAttribute(
+      'data-selecting',
+      'true'
+    )
+    await expect(overlay.locator('[data-testid="screenshot-overlay"]')).toHaveCSS(
+      'cursor',
+      'crosshair'
+    )
 
     await pointer(overlay, 'pointerdown', 180, 160)
     await pointer(overlay, 'pointermove', 420, 340)
     await pointer(overlay, 'pointerup', 420, 340)
     await expect(overlay.locator('.screenshot-handle-se')).toBeVisible()
+    await expect(overlay.locator('[data-testid="screenshot-overlay"]')).toHaveAttribute(
+      'data-selecting',
+      'false'
+    )
+    await expect(overlay.locator('.screenshot-toolbar')).toHaveCSS('cursor', 'default')
 
     const before = await cropBox(overlay)
     expect(before.w).toBeGreaterThan(80)

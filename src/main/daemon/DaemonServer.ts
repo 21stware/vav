@@ -42,10 +42,18 @@ import {
   checkoutGitBranch,
   createGitBranch,
   createGitWorktree,
+  deleteGitBranch,
   getGitDiff,
+  getGitPatch,
   getGitShowBase64,
   getGitSnapshot,
-  initGitRepo
+  initGitRepo,
+  listGitBranches,
+  listGitLog,
+  listGitStashes,
+  stashGitApply,
+  stashGitDrop,
+  stashGitPush
 } from '../git/GitService.ts'
 import {
   getGithubActionRun,
@@ -1239,13 +1247,35 @@ export class DaemonServer {
         )
       case 'git.init':
         return initGitRepo(asString(p.cwd), asString(p.conversationId) || undefined)
+      case 'git.log':
+        return listGitLog(asString(p.cwd), {
+          limit: typeof p.limit === 'number' ? p.limit : undefined,
+          conversationId: asString(p.conversationId) || undefined
+        })
+      case 'git.branches':
+        return listGitBranches(asString(p.cwd), asString(p.conversationId) || undefined)
+      case 'git.stashes':
+        return listGitStashes(asString(p.cwd), asString(p.conversationId) || undefined)
+      case 'git.patch':
+        return getGitPatch(
+          asString(p.cwd),
+          asString(p.spec),
+          asString(p.conversationId) || undefined
+        )
       case 'git.createBranch':
         return createGitBranch(asString(p.cwd), asString(p.name), {
           checkout: p.checkout === true,
+          startPoint: asString(p.startPoint) || undefined,
           conversationId: asString(p.conversationId) || undefined
         })
       case 'git.checkoutBranch':
         return checkoutGitBranch(
+          asString(p.cwd),
+          asString(p.name),
+          asString(p.conversationId) || undefined
+        )
+      case 'git.deleteBranch':
+        return deleteGitBranch(
           asString(p.cwd),
           asString(p.name),
           asString(p.conversationId) || undefined
@@ -1258,6 +1288,22 @@ export class DaemonServer {
             newBranch: asString(p.newBranch) || undefined,
             branch: asString(p.branch) || undefined
           },
+          asString(p.conversationId) || undefined
+        )
+      case 'git.stashPush':
+        return stashGitPush(asString(p.cwd), {
+          message: asString(p.message) || undefined,
+          conversationId: asString(p.conversationId) || undefined
+        })
+      case 'git.stashApply':
+        return stashGitApply(asString(p.cwd), Number(p.index), {
+          pop: p.pop === true,
+          conversationId: asString(p.conversationId) || undefined
+        })
+      case 'git.stashDrop':
+        return stashGitDrop(
+          asString(p.cwd),
+          Number(p.index),
           asString(p.conversationId) || undefined
         )
       case 'github.listPulls':

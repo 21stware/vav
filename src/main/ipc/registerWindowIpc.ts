@@ -33,6 +33,9 @@ export type WindowIpcActions = {
   ) => void
   providerAccountView: () => unknown
   fitProviderAccount: (height: number) => void
+  openRemoteFolder: (sender: IpcMainInvokeEvent['sender'], request: unknown) => void
+  remoteFolderView: () => unknown
+  chooseRemoteFolder: (sender: IpcMainInvokeEvent['sender'], path: unknown) => void
   openSwarmHistory: (
     sender: IpcMainInvokeEvent['sender'],
     conversationId: string,
@@ -103,6 +106,13 @@ export function registerWindowIpc(ipcMain: IpcMain, actions: WindowIpcActions): 
   ipcMain.handle(IPC.providerAccountFit, (_event, height: unknown) => {
     if (typeof height !== 'number' || !Number.isFinite(height)) return
     actions.fitProviderAccount(height)
+  })
+  ipcMain.handle(IPC.windowOpenRemoteFolder, (event, request: unknown) => {
+    actions.openRemoteFolder(event.sender, request)
+  })
+  ipcMain.handle(IPC.remoteFolderGetView, () => actions.remoteFolderView())
+  ipcMain.handle(IPC.remoteFolderChoose, (event, path: unknown) => {
+    actions.chooseRemoteFolder(event.sender, path)
   })
   ipcMain.handle(
     IPC.windowOpenSwarmHistory,

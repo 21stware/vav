@@ -4,6 +4,10 @@ User-facing changes by release. Unreleased work lives at the top until the next 
 
 ## Unreleased
 
+## 1.23.0
+
+The sidebar switches Task / File / Scheduled / Archived with the same chip accordion as services. The Git tray has Workspace, Commits, Local, Origin, and Stashes — checkout, create a branch from a commit, and stash apply / pop / drop without leaving the workbench. Chrome / web and `vav-board` speak those same `git.log` / `git.branches` / `git.stashes` verbs. Appearance and the View menu zoom the whole UI from 75% to 150%. Remote folder pick opens a dedicated window. Files drag onto the conversation pin as composer attachments. Screenshot can omit VAV from the native capture. Empty folders show a real empty state. Composer attachments and file context share one chip row; the prompt keeps a stable three-row floor.
+
 ## 1.22.1
 
 Restoring a minimized macOS window no longer flashes a transparent hole before the glass comes back — the native fill stays opaque until the system material is composited again. A first Cursor (or other CLI) prompt no longer seals as “This turn was cancelled” when a same-folder workspace re-assert interrupts the handshake, or when a leftover Stop poisons the next send. Empty cancelled turns stay out of the transcript.

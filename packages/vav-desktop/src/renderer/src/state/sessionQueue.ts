@@ -18,13 +18,26 @@ export interface QueuedMessage {
 /** Max pending items per conversation (spec §2.10). */
 export const MESSAGE_QUEUE_MAX = 20
 
-/** Composer chip, else the session's focused file (CLI handoff uses the same). */
+/**
+ * Leftover open-file context only. Preview / tree selection / focusedFilePath
+ * must not become composer context — that is right-click or drag → attachments.
+ */
 export function resolveComposerContextFile(
   contextFiles: Record<string, string | null | undefined>,
-  conversations: Array<{ id: string; focusedFilePath?: string | null }>,
   id: string
 ): string | null {
-  return (contextFiles[id] ?? null) || conversations.find((c) => c.id === id)?.focusedFilePath || null
+  return contextFiles[id]?.trim() || null
+}
+
+/** Paint leftover open-file context with the same tiles as paperclip attachments. */
+export function mergeComposerFilePaths(
+  contextFile: string | null | undefined,
+  attachments: string[]
+): string[] {
+  const path = contextFile?.trim() || ''
+  if (!path) return attachments
+  if (attachments.includes(path)) return attachments
+  return [path, ...attachments]
 }
 
 export function isEmptyComposerSend(
@@ -139,6 +152,7 @@ export function composerClearedPatch<
     quotes: Record<string, QuoteDraft | null>
     previewRefs: Record<string, PreviewRef[]>
     commentCards: Record<string, { ref: PreviewRef; comment: string }[]>
+    contextFiles: Record<string, string | null>
   }
 >(state: T, activeId: string): {
   drafts: T['drafts']
@@ -146,6 +160,7 @@ export function composerClearedPatch<
   quotes: T['quotes']
   previewRefs: T['previewRefs']
   commentCards: T['commentCards']
+  contextFiles: T['contextFiles']
   errorBanner: null
   errorBannerKind: null
   errorBannerDetail: null
@@ -156,6 +171,7 @@ export function composerClearedPatch<
     quotes: { ...state.quotes, [activeId]: null },
     previewRefs: { ...state.previewRefs, [activeId]: [] },
     commentCards: { ...state.commentCards, [activeId]: [] },
+    contextFiles: { ...state.contextFiles, [activeId]: null },
     errorBanner: null,
     errorBannerKind: null,
     errorBannerDetail: null
@@ -171,6 +187,7 @@ export function enqueueQueuedMessagePatch<
     quotes: Record<string, QuoteDraft | null>
     previewRefs: Record<string, PreviewRef[]>
     commentCards: Record<string, { ref: PreviewRef; comment: string }[]>
+    contextFiles: Record<string, string | null>
   }
 >(
   state: T,

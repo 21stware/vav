@@ -5,7 +5,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
 import { describe, it } from 'node:test'
-import { ACP_CLIENT_CAPABILITIES, ACP_PROTOCOL_VERSION } from '../../../shared/acpSession.ts'
+import {
+  ACP_CLIENT_CAPABILITIES,
+  ACP_PROTOCOL_VERSION,
+  GROK_ACP_CLIENT_CAPABILITIES
+} from '../../../shared/acpSession.ts'
 import { RpcErrorCode } from '../../../shared/cliErrors.ts'
 import { acpInvokeArgs, wireAcp } from './acp.ts'
 import type { AcpFileAccess } from './acpFs.ts'
@@ -602,9 +606,11 @@ describe('wireAcp grok protocol', () => {
       loadError?: boolean
       resumeError?: boolean
       auth?: boolean
+      yoloMode?: boolean
     }
   ): Promise<void> {
     const init = await waitFor(outbound, (msg) => msg.method === 'initialize')
+    assert.deepEqual(asRecord(init.params)?.clientCapabilities, GROK_ACP_CLIENT_CAPABILITIES)
     toClient({
       jsonrpc: '2.0',
       id: init.id,
@@ -654,6 +660,9 @@ describe('wireAcp grok protocol', () => {
     const created = await waitFor(outbound, (msg) => msg.method === 'session/new')
     const requested = asRecord(created.params)?.modelId
     if (requested) assert.equal(String(requested).includes('['), false)
+    const meta = asRecord(asRecord(created.params)?._meta)
+    if (extras?.yoloMode) assert.equal(meta?.yoloMode, true)
+    else assert.equal(meta?.yoloMode, undefined)
     toClient({
       jsonrpc: '2.0',
       id: created.id,
@@ -704,7 +713,7 @@ describe('wireAcp grok protocol', () => {
       (event) => events.push(event)
     )
 
-    await handshakeGrok(toClient, outbound, { auth: true })
+    await handshakeGrok(toClient, outbound, { auth: true, yoloMode: true })
     const setModel = await waitFor(outbound, (msg) => msg.method === 'session/set_model')
     assert.equal(asRecord(setModel.params)?.modelId, 'grok-4.5')
     toClient({ jsonrpc: '2.0', id: setModel.id, result: {} })
@@ -789,6 +798,40 @@ describe('wireAcp grok protocol', () => {
     assert.equal(secondText, 'and then?')
     assert.equal(asRecord(second.params)?.sessionId, 'fresh-sess')
     assert.equal(asRecord(first.params)?.sessionId, 'fresh-sess')
+    driver.dispose()
+  })
+
+  it('inlines image attachments even when Grok omits promptCapabilities.image', async () => {
+    const events: DriverEvent[] = []
+    const { proc, outbound, toClient } = fakeStdio()
+    const dir = await mkdtemp(join(tmpdir(), 'vav-acp-grok-img-'))
+    const png = join(dir, 'shot.png')
+    await writeFile(
+      png,
+      Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+        'base64'
+      )
+    )
+    const driver = wireAcp(
+      'grok',
+      proc,
+      { binary: 'grok', cwd: dir, approvalMode: 'edit' },
+      (event) => events.push(event)
+    )
+    await handshakeGrok(toClient, outbound)
+    await waitForEvent(events, (event) => event.type === 'connected')
+
+    driver.prompt('what is this', { attachments: [png] })
+    const prompt = await waitFor(outbound, (msg) => msg.method === 'session/prompt')
+    const blocks = Array.isArray(asRecord(prompt.params)?.prompt)
+      ? (asRecord(prompt.params)?.prompt as unknown[])
+      : []
+    const image = blocks.map((block) => asRecord(block)).find((block) => block?.type === 'image')
+    assert.ok(image)
+    assert.equal(image.mimeType, 'image/png')
+    assert.equal(typeof image.data, 'string')
+    assert.ok(String(image.data).length > 0)
     driver.dispose()
   })
 
@@ -1138,6 +1181,13 @@ describe('acpInvokeArgs', () => {
       'agent',
       '-m',
       'grok-4.5',
+      'stdio'
+    ])
+    assert.deepEqual(acpInvokeArgs('grok', 'bypass', { model: 'grok-4.5' }), [
+      'agent',
+      '-m',
+      'grok-4.5',
+      '--always-approve',
       'stdio'
     ])
   })

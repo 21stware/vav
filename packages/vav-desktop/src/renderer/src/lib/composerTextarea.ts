@@ -1,9 +1,6 @@
-/** Idle floor / focused floor / hard ceiling (main-chat-search.rpml). */
-export const COMPOSER_MIN_FOCUSED_ROWS = 3
+/** Idle floor / hard ceiling. Focus does not change the minimum. */
+export const COMPOSER_MIN_ROWS = 3
 export const COMPOSER_MAX_ROWS = 8
-/** Scheduled-task editor: taller prompt, no send. */
-export const SCHEDULE_MIN_ROWS = 10
-export const SCHEDULE_MAX_ROWS = 24
 
 /**
  * Grow the prompt to its content, then cap at {@link COMPOSER_MAX_ROWS}.
@@ -13,20 +10,17 @@ export const SCHEDULE_MAX_ROWS = 24
  */
 export function fitComposerTextarea(
   element: HTMLTextAreaElement,
-  opts: {
-    focused: boolean
-    disabled: boolean
+  opts?: {
     lineHeight?: number
     minRows?: number
     maxRows?: number
   }
 ): void {
   const lineHeight =
-    opts.lineHeight ?? (parseFloat(getComputedStyle(element).lineHeight) || 20)
-  const minRows =
-    opts.minRows ?? (opts.focused && !opts.disabled ? COMPOSER_MIN_FOCUSED_ROWS : 1)
+    opts?.lineHeight ?? (parseFloat(getComputedStyle(element).lineHeight) || 20)
+  const minRows = opts?.minRows ?? COMPOSER_MIN_ROWS
   const minHeight = minRows * lineHeight
-  const maxHeight = (opts.maxRows ?? COMPOSER_MAX_ROWS) * lineHeight
+  const maxHeight = (opts?.maxRows ?? COMPOSER_MAX_ROWS) * lineHeight
   element.style.height = 'auto'
   const contentHeight = element.scrollHeight
   element.style.height = `${Math.min(maxHeight, Math.max(minHeight, contentHeight))}px`

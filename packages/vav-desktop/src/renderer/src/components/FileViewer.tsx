@@ -936,14 +936,6 @@ export function FileViewer({
     void selectConversation(agentConversationId)
   }, [agentConversationId, selectConversation])
 
-  // File Attachment Chip: auto-attach on open / path change / re-open preview.
-  // Dismiss (✕) only clears context — this effect re-runs when filePath or
-  // session id changes, restoring the chip per file-preview.rpml.
-  useEffect(() => {
-    if (!agentConversationId || !filePath) return
-    void useSessionStore.getState().attachContextFile(agentConversationId, filePath)
-  }, [agentConversationId, filePath])
-
   const toggleAgentPanel = async (): Promise<void> => {
     if (agentPanelOpen) {
       // Collapsing the agent column must not ask to Save/Discard — dirty buffer

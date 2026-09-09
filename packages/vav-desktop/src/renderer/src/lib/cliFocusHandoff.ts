@@ -25,7 +25,7 @@ function readFocus(conversationId: string): {
   cards: { ref: PreviewRef; comment: string }[]
 } {
   const store = useSessionStore.getState()
-  const path = resolveComposerContextFile(store.contextFiles, store.conversations, conversationId)
+  const path = resolveComposerContextFile(store.contextFiles, conversationId)
   const cards = store.commentCards[conversationId] ?? []
   return { path, cards }
 }

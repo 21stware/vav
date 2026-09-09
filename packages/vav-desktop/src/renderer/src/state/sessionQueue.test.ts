@@ -15,6 +15,7 @@ import {
   updateQueuedMessagePatch,
   removeQueuedMessagePatch,
   isEmptyComposerSend,
+  mergeComposerFilePaths,
   mergePreviewAndCommentRefs,
   MESSAGE_QUEUE_MAX,
   pollUntil,
@@ -178,7 +179,8 @@ describe('composer send helpers', () => {
         attachments: { a: ['/x'] },
         quotes: { a: { messageId: 'm', summary: 'q' } },
         previewRefs: { a: [{ id: 'r', filePath: '/a.ts' }] },
-        commentCards: { a: [{ ref: { id: 'c', filePath: '/a.ts' }, comment: 'n' }] }
+        commentCards: { a: [{ ref: { id: 'c', filePath: '/a.ts' }, comment: 'n' }] },
+        contextFiles: { a: '/notes.md', b: '/keep.ts' }
       },
       'a'
     )
@@ -188,6 +190,8 @@ describe('composer send helpers', () => {
     assert.equal(patch.quotes.a, null)
     assert.deepEqual(patch.previewRefs.a, [])
     assert.deepEqual(patch.commentCards.a, [])
+    assert.equal(patch.contextFiles.a, null)
+    assert.equal(patch.contextFiles.b, '/keep.ts')
     assert.equal(patch.errorBanner, null)
   })
 
@@ -209,7 +213,8 @@ describe('composer send helpers', () => {
         attachments: { a: ['/x'] },
         quotes: { a: { messageId: 'm', summary: 'q' } },
         previewRefs: { a: [{ id: 'r', filePath: '/a.ts' }] },
-        commentCards: { a: [{ ref: { id: 'c', filePath: '/a.ts' }, comment: 'n' }] }
+        commentCards: { a: [{ ref: { id: 'c', filePath: '/a.ts' }, comment: 'n' }] },
+        contextFiles: { a: '/notes.md' }
       },
       'a',
       item
@@ -219,6 +224,7 @@ describe('composer send helpers', () => {
     assert.equal(next.drafts.a, '')
     assert.equal(next.drafts.b, 'keep')
     assert.deepEqual(next.attachments.a, [])
+    assert.equal(next.contextFiles.a, null)
     assert.equal(next.errorBanner, null)
   })
 
@@ -251,14 +257,21 @@ describe('composer send helpers', () => {
 })
 
 describe('resolveComposerContextFile', () => {
-  it('prefers the composer chip, then the session focused file', () => {
-    const conversations = [{ id: 'a', focusedFilePath: '/from-session.ts' }]
-    assert.equal(
-      resolveComposerContextFile({ a: '/chip.ts' }, conversations, 'a'),
-      '/chip.ts'
-    )
-    assert.equal(resolveComposerContextFile({}, conversations, 'a'), '/from-session.ts')
-    assert.equal(resolveComposerContextFile({ a: null }, [], 'a'), null)
+  it('returns leftover composer context only — not the session focused file', () => {
+    assert.equal(resolveComposerContextFile({ a: '/chip.ts' }, 'a'), '/chip.ts')
+    assert.equal(resolveComposerContextFile({}, 'a'), null)
+    assert.equal(resolveComposerContextFile({ a: null }, 'a'), null)
+    assert.equal(resolveComposerContextFile({ a: '  ' }, 'a'), null)
+  })
+})
+
+describe('mergeComposerFilePaths', () => {
+  it('paints leftover context as the first attachment tile without duplicating', () => {
+    assert.deepEqual(mergeComposerFilePaths(null, ['/a.png']), ['/a.png'])
+    assert.deepEqual(mergeComposerFilePaths('/notes.md', []), ['/notes.md'])
+    assert.deepEqual(mergeComposerFilePaths('/notes.md', ['/a.png']), ['/notes.md', '/a.png'])
+    assert.deepEqual(mergeComposerFilePaths('/a.png', ['/a.png', '/b.pdf']), ['/a.png', '/b.pdf'])
+    assert.deepEqual(mergeComposerFilePaths('  ', ['/a.png']), ['/a.png'])
   })
 })
 

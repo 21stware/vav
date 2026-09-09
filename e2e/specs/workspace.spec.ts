@@ -130,6 +130,39 @@ test('seeded git repo lists the dirty file on the Git tab', async () => {
   }
 })
 
+test('Git tab subtabs list commits and local branches', async () => {
+  const harness = await launchWorkbench({ seedGit: true })
+  try {
+    const { page } = harness
+    await openFilesTray(page)
+    await page.locator('[data-testid="segment-git"]').click()
+    await expect(page.locator('[data-testid="git-subtabs"]')).toBeVisible()
+    await expect(page.locator('[data-testid="segment-workspace"]')).toBeVisible()
+    await expect(page.locator('[data-testid="segment-commits"]')).toBeVisible()
+    await expect(page.locator('[data-testid="segment-local"]')).toBeVisible()
+    await expect(page.locator('[data-testid="segment-origin"]')).toBeVisible()
+    await expect(page.locator('[data-testid="segment-stashes"]')).toBeVisible()
+    await expect(page.locator('.git-change-row .git-change-path')).toHaveText('hello.md')
+
+    await page.locator('[data-testid="segment-commits"]').click()
+    const commit = page.locator('[data-testid="git-commit-list-row"]')
+    await expect(commit).toBeVisible()
+    await expect(commit).toContainText('seed')
+
+    await page.locator('[data-testid="segment-local"]').click()
+    const branch = page.locator('[data-testid="git-local-list-row"]')
+    await expect(branch).toBeVisible()
+    await expect(branch).toContainText('main')
+
+    await page.locator('[data-testid="segment-origin"]').click()
+    await expect(page.getByText('No origin branches')).toBeVisible()
+    await page.locator('[data-testid="segment-stashes"]').click()
+    await expect(page.getByText('No stashes')).toBeVisible()
+  } finally {
+    await harness.dispose()
+  }
+})
+
 test('double-clicking a git change opens the session diff drawer', async () => {
   const harness = await launchWorkbench({ seedGit: true })
   try {

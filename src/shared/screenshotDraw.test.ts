@@ -3,6 +3,7 @@ import { describe, it } from 'node:test'
 import {
   arrowHead,
   clampCrop,
+  cropCursor,
   cropIsUsable,
   DOUBLE_CLICK_MS,
   DOUBLE_CLICK_RADIUS,
@@ -17,6 +18,7 @@ import {
   normalizeRect,
   resizeCrop,
   resizeMark,
+  screenshotSessionCursor,
   type ScreenshotMark
 } from './screenshotDraw.ts'
 
@@ -69,6 +71,14 @@ describe('screenshotDraw', () => {
       h: 50
     })
     assert.equal(resizeCrop(origin, 'e', 22, 40, 100, 100).w, 8)
+  })
+
+  it('uses a crosshair until a usable crop exists, then the default arrow', () => {
+    assert.equal(screenshotSessionCursor({ hasUsableCrop: false, creating: false }), 'crosshair')
+    assert.equal(screenshotSessionCursor({ hasUsableCrop: false, creating: true }), 'crosshair')
+    assert.equal(screenshotSessionCursor({ hasUsableCrop: true, creating: true }), 'crosshair')
+    assert.equal(screenshotSessionCursor({ hasUsableCrop: true, creating: false }), 'default')
+    assert.equal(cropCursor(null), '')
   })
 
   it('hits handles first, then the whole crop body as move', () => {

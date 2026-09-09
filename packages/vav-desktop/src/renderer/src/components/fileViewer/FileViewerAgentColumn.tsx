@@ -105,15 +105,14 @@ export function FileViewerAgentColumn({
             <button
               type="button"
               ref={historyAnchorRef}
-              className={`btn ghost sm icon-only${historyOpen ? ' is-active-toggle' : ''}`}
+              className={`btn ghost icon-only${historyOpen ? ' is-active-toggle' : ''}`}
               title={t('preview.sessionHistory')}
               onClick={() => setHistoryOpen((v) => !v)}
             >
-              <Clock size={12} />
+              <Clock size={14} />
             </button>
             <Button
-              icon={<Plus size={12} />}
-              size="sm"
+              icon={<Plus size={14} />}
               variant="ghost"
               title={t('preview.newSession')}
               onClick={() => void newFileSession()}

@@ -485,6 +485,8 @@ html[data-resizing='true'] .banner.error {
   height: var(--toolbar-height);
   min-height: var(--toolbar-height);
   box-sizing: border-box;
+  /* Same plate as .sidebar-column — no second fill on top of the glass. */
+  background: transparent;
   /* Lead clears traffic lights; trail is modest — column is only ~232px. */
   padding: 0 10px 0 var(--chrome-lead);
 }
@@ -578,7 +580,6 @@ html[data-resizing='true'] .banner.error {
  */
 :root[data-platform='darwin'][data-vibrancy='true'] .sidebar-column,
 :root[data-platform='darwin'][data-vibrancy='true'] .app-shell .body-split > .sidebar:not(.floating),
-:root[data-platform='darwin'][data-vibrancy='true'] .titlebar.sidebar-chrome,
 :root[data-platform='darwin'][data-vibrancy='true'] .settings-nav {
   background: color-mix(in srgb, var(--bg-window) 38%, transparent) !important;
 }
@@ -588,7 +589,6 @@ html[data-resizing='true'] .banner.error {
   .app-shell
   .body-split
   > .sidebar:not(.floating),
-:root[data-theme='light'][data-platform='darwin'][data-vibrancy='true'] .titlebar.sidebar-chrome,
 :root[data-theme='light'][data-platform='darwin'][data-vibrancy='true'] .settings-nav {
   background: color-mix(in srgb, var(--bg-window) 72%, transparent) !important;
 }
@@ -596,7 +596,6 @@ html[data-resizing='true'] .banner.error {
 @media (prefers-reduced-transparency: reduce) {
   :root[data-platform='darwin'][data-vibrancy='true'] .sidebar-column,
   :root[data-platform='darwin'][data-vibrancy='true'] .app-shell .body-split > .sidebar:not(.floating),
-  :root[data-platform='darwin'][data-vibrancy='true'] .titlebar.sidebar-chrome,
   :root[data-platform='darwin'][data-vibrancy='true'] .settings-nav {
     background: var(--bg-window) !important;
   }
@@ -620,8 +619,7 @@ html[data-resizing='true'] .banner.error {
 
 .app-shell .detail,
 .app-shell .terminal-host-session,
-.app-shell .workspace-view,
-.app-shell .schedule-editor {
+.app-shell .workspace-view {
   border-radius: 0;
   border: 0;
 }
@@ -641,14 +639,12 @@ html[data-resizing='true'] .banner.error {
 }
 
 /* Docked sidebar owns traffic-light chrome in the list column. */
-.app-shell.panel-flush-top .terminal-host-chrome,
-.app-shell.panel-flush-top .schedule-editor-chrome {
+.app-shell.panel-flush-top .terminal-host-chrome {
   -webkit-app-region: drag;
 }
 
 /* Collapsed session: agent chrome is the window top bar (lead clears lights). */
-.app-shell.panel-shell-chrome .terminal-host-chrome.has-shell-leading,
-.app-shell.panel-shell-chrome .schedule-editor-chrome.has-shell-leading {
+.app-shell.panel-shell-chrome .terminal-host-chrome.has-shell-leading {
   padding-left: var(--chrome-lead);
   height: var(--toolbar-height);
   min-height: var(--toolbar-height);
@@ -675,22 +671,12 @@ html[data-resizing='true'] .banner.error {
 .app-shell.panel-flush-top .terminal-host-chrome input,
 .app-shell.panel-flush-top .terminal-host-chrome a,
 .app-shell.panel-flush-top .terminal-host-chrome .btn,
-.app-shell.panel-flush-top .schedule-editor-chrome button,
-.app-shell.panel-flush-top .schedule-editor-chrome label,
-.app-shell.panel-flush-top .schedule-editor-chrome select,
-.app-shell.panel-flush-top .schedule-editor-chrome input,
-.app-shell.panel-flush-top .schedule-editor-chrome .btn,
 .app-shell.panel-shell-chrome .terminal-host-chrome button,
 .app-shell.panel-shell-chrome .terminal-host-chrome label,
 .app-shell.panel-shell-chrome .terminal-host-chrome select,
 .app-shell.panel-shell-chrome .terminal-host-chrome input,
 .app-shell.panel-shell-chrome .terminal-host-chrome a,
 .app-shell.panel-shell-chrome .terminal-host-chrome .btn,
-.app-shell.panel-shell-chrome .schedule-editor-chrome button,
-.app-shell.panel-shell-chrome .schedule-editor-chrome label,
-.app-shell.panel-shell-chrome .schedule-editor-chrome select,
-.app-shell.panel-shell-chrome .schedule-editor-chrome input,
-.app-shell.panel-shell-chrome .schedule-editor-chrome .btn,
 .app-shell.panel-shell-chrome .file-viewer-header.has-shell-leading button,
 .app-shell.panel-shell-chrome .file-viewer-header.has-shell-leading label,
 .app-shell.panel-shell-chrome .file-viewer-header.has-shell-leading select,
@@ -706,6 +692,29 @@ html[data-resizing='true'] .banner.error {
   align-items: center;
   gap: 4px;
   flex: 0 0 auto;
+}
+
+/* 42px window chrome: 28×28 hit, 14px glyph on both edges. */
+.titlebar .btn.icon-only,
+.shell-leading-controls .btn.icon-only,
+.agent-mode-chrome-trailing .btn.icon-only,
+.file-viewer-header .btn.icon-only,
+.workspace-preview-chrome .btn.icon-only,
+.workspace-preview-empty-bar .btn.icon-only,
+.preview-file-session-actions .btn.icon-only {
+  width: 28px;
+  height: 28px;
+}
+
+.titlebar .btn.icon-only svg,
+.shell-leading-controls .btn.icon-only svg,
+.agent-mode-chrome-trailing .btn.icon-only svg,
+.file-viewer-header .btn.icon-only svg,
+.workspace-preview-chrome .btn.icon-only svg,
+.workspace-preview-empty-bar .btn.icon-only svg,
+.preview-file-session-actions .btn.icon-only svg {
+  width: 14px;
+  height: 14px;
 }
 
 .agent-mode-shell-leading {
@@ -930,6 +939,7 @@ html[data-resizing='true'] .banner.error {
 
 .session-window .transcript:has(> .transcript-inner > .empty-state-session) {
   padding-top: var(--session-titlebar-h);
+  padding-bottom: 12px;
 }
 
 .session-window .detail:has(> .banner) .transcript,
@@ -989,6 +999,7 @@ html[data-resizing='true'] .banner.error {
 
 .app-shell:not(.session-window) .detail .transcript:has(> .transcript-inner > .empty-state-session) {
   padding-top: 8px;
+  padding-bottom: 8px;
 }
 
 .app-shell:not(.session-window) .detail-stream[data-search='true'] .plan-overlay {
@@ -1056,6 +1067,15 @@ html[data-resizing='true'] .banner.error {
 .btn.icon-only {
   width: 28px;
   padding: 0;
+}
+
+.btn.is-active-toggle {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.btn.is-active-toggle:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 16%, var(--bg-hover));
 }
 
 .btn.secondary {
@@ -1536,122 +1556,122 @@ kbd {
 }
 
 .sidebar-search {
-  padding: 4px 10px 4px;
+  padding: 4px 10px 8px;
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
 
-.sidebar-search .text-field {
-  background: var(--bg-hover);
-  box-shadow: none;
-}
-
-.sidebar-grouping {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.sidebar-grouping-label {
-  flex: 0 0 auto;
-  font-size: 11px;
-  color: var(--text-tertiary);
-}
-
-.sidebar-grouping-control {
+.sidebar-search-field {
   position: relative;
-  display: inline-flex;
-  align-items: center;
-  min-width: 0;
-  max-width: 100%;
 }
 
-.sidebar-grouping-select,
-.text-field.sidebar-grouping-select,
-.text-field.sidebar-grouping-select:focus {
+.sidebar-category-bar.sidebar-service-bar {
   flex: 0 0 auto;
-  width: auto;
   min-width: 0;
-  max-width: 100%;
-  height: 26px;
-  appearance: none;
-  -webkit-appearance: none;
-  padding: 0 26px 0 8px;
-  font-size: 12px;
-  field-sizing: content;
-  text-align: left;
+  padding: 4px 10px 0;
+  overflow-x: hidden;
   background: transparent;
-  background-image: none;
-  box-shadow: none;
 }
 
-.text-field.sidebar-grouping-select:focus {
-  background: transparent;
-  box-shadow: none;
-}
-
-.sidebar-grouping-chevron {
-  position: absolute;
-  right: 8px;
-  top: 50%;
-  transform: translateY(-50%);
-  pointer-events: none;
-  color: var(--text-tertiary);
-}
-
-.sidebar-list-controls {
+.sidebar-list-toolbar {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 6px 12px;
+  gap: 2px;
+  min-width: 0;
 }
 
-.sidebar-filter {
-  display: inline-flex;
+.sidebar-new-row {
+  flex: 1 1 auto;
+  display: flex;
   align-items: center;
   gap: 6px;
   min-width: 0;
-  max-width: 100%;
-  height: 26px;
+  height: 28px;
   margin: 0;
-  padding: 0 2px 0 0;
+  padding: 0 8px;
   border: 0;
+  border-radius: 7px;
   background: transparent;
-  color: var(--text-tertiary);
+  color: var(--text-secondary);
   font: inherit;
-  font-size: 11px;
+  font-size: 12px;
+  text-align: left;
   cursor: default;
-  transition: color 160ms ease;
+  user-select: none;
+  -webkit-user-select: none;
+  transition:
+    background var(--dur-hover) ease,
+    color var(--dur-hover) ease,
+    transform var(--dur-press) var(--ease-out);
 }
 
-.sidebar-filter:active {
+.sidebar-new-row:hover {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+
+.sidebar-new-row:active {
   transform: scale(0.97);
 }
 
-.sidebar-filter-label {
-  flex: 0 0 auto;
-}
-
-.sidebar-filter-value {
-  min-width: 0;
-  max-width: 9.5em;
+.sidebar-new-row span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 12px;
-  color: var(--text-secondary);
-  transition: color 160ms ease;
 }
 
-.sidebar-filter.is-active .sidebar-filter-label,
-.sidebar-filter.is-active .sidebar-filter-value {
-  color: var(--accent-text, var(--accent));
-}
-
-.sidebar-filter-chevron {
+.sidebar-new-row svg,
+.sidebar-list-menu svg {
   flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+}
+
+.sidebar-list-menu {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
   color: var(--text-tertiary);
+  cursor: default;
+  transition:
+    background var(--dur-hover) ease,
+    color var(--dur-hover) ease,
+    transform var(--dur-press) var(--ease-out);
+}
+
+.sidebar-list-menu:hover {
+  color: var(--text);
+  background: var(--bg-hover);
+}
+
+.sidebar-list-menu:active {
+  transform: scale(0.97);
+}
+
+.sidebar-list-menu.is-active {
+  color: var(--accent-text, var(--accent));
+  background: var(--accent-soft);
+}
+
+.sidebar-search-field .text-field {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+
+.sidebar-search-field .text-field:focus {
+  background: var(--bg-raised);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent),
+    var(--ring-accent);
 }
 
 .sidebar-list {
@@ -2112,6 +2132,15 @@ kbd {
    ========================================================================== */
 
 /* Conversation column sits on the window wash with a light edge, not elevation. */
+.detail.category-empty {
+  align-items: stretch;
+  justify-content: flex-start;
+}
+
+.detail.category-empty .empty-state {
+  flex: 1;
+}
+
 .detail {
   position: relative;
   isolation: isolate;
@@ -2242,7 +2271,7 @@ kbd {
 }
 
 /* Bubbles above the dock, still inside the Agent log column.
-   Modes: empty (unmounted) · file chip · comments · quote · queue · combinations.
+   Modes: empty (unmounted) · comments · quote · queue · combinations.
    Always share the same reading column as composer + tools-header. */
 .composer-context {
   flex: 0 0 auto;
@@ -3758,11 +3787,6 @@ kbd {
   margin-bottom: 6px;
   min-width: 0;
   max-width: min(100%, 560px);
-}
-
-.message-user-context .file-context-chip.is-readonly {
-  /* No dismiss control; chip is a snapshot of send-time context. */
-  padding-right: 12px;
 }
 
 /* Sent comments — single-line chip rows (not stacked composer cards). */
@@ -7074,20 +7098,43 @@ mark {
   align-items: center;
   gap: 2px;
   overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.sidebar-service-bar::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 .sidebar-service-chip {
   display: flex;
   align-items: center;
-  gap: 6px;
+  justify-content: center;
+  /* Hug the icon, or the icon + full label — never grow to fill the bar. */
+  flex: 0 0 auto;
+  gap: 0;
+  /* Same 28×28 / 14px glyph as the titlebar above this row. */
   min-width: 28px;
-  height: 26px;
+  height: 28px;
   padding: 0 7px;
   border: none;
   border-radius: 7px;
   background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
+  transition:
+    gap var(--dur-pop) var(--ease-out),
+    background var(--dur-hover) ease,
+    color var(--dur-hover) ease,
+    transform var(--dur-press) var(--ease-out);
+}
+
+.sidebar-service-chip > svg {
+  display: block;
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
 }
 
 .sidebar-service-chip:hover {
@@ -7100,32 +7147,59 @@ mark {
 }
 
 .sidebar-service-chip[data-expanded='true'] {
-  flex: 1 1 auto;
+  justify-content: flex-start;
+  gap: 6px;
   min-width: 0;
+  /* Shrink before the row sprouts a scrollbar; collapsed chips stay 28px. */
+  flex: 0 1 auto;
+  overflow: hidden;
   color: var(--text);
   background: var(--bg-selected);
 }
 
+/*
+ * Label is always laid out at full width. A 0fr→1fr clip opens left-to-right
+ * so the complete string wipes in — not an ellipsis that grows with the cell.
+ */
 .sidebar-service-label-clip {
   display: grid;
   grid-template-columns: 0fr;
   min-width: 0;
-  transition: grid-template-columns 180ms ease-out;
+  overflow: hidden;
+  transition: grid-template-columns var(--dur-pop) var(--ease-out);
 }
 
 .sidebar-service-chip[data-expanded='true'] .sidebar-service-label-clip {
   grid-template-columns: 1fr;
 }
 
-.sidebar-service-label {
-  overflow: hidden;
+.sidebar-service-label-inner {
+  display: flex;
+  align-items: center;
+  gap: 4px;
   min-width: 0;
-  white-space: nowrap;
+  overflow: hidden;
+}
+
+.sidebar-service-label {
+  flex: 0 1 auto;
+  min-width: 0;
+  width: max-content;
+  max-width: 100%;
+  overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 12px;
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .sidebar-service-chip {
+    transition:
+      background var(--dur-hover) ease,
+      color var(--dur-hover) ease,
+      transform var(--dur-press) var(--ease-out);
+  }
+
   .sidebar-service-label-clip {
     transition: none;
   }
@@ -7139,7 +7213,6 @@ mark {
 
 .sidebar-foot-connect-chevron {
   flex: 0 0 auto;
-  margin-left: auto;
   opacity: 0.45;
 }
 
@@ -7308,72 +7381,53 @@ mark {
   color: color-mix(in srgb, var(--danger) 45%, var(--accent-text));
 }
 
-.schedule-editor {
-  flex: 1;
-  min-width: 0;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  background: var(--bg-content);
-}
-
-.schedule-editor-chrome {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-height: var(--toolbar-height);
-  padding: 0 14px;
-  flex: 0 0 auto;
-  -webkit-app-region: drag;
-}
-
-.schedule-editor-chrome > * {
-  -webkit-app-region: no-drag;
-}
-
-.schedule-editor-chrome > .spacer {
-  flex: 1 1 auto;
-  min-width: 8px;
-  -webkit-app-region: drag;
-}
-
 .schedule-editor-body {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  width: 100%;
+  align-self: stretch;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 28px 36px 40px;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 12px 20px;
   box-sizing: border-box;
 }
 
-.schedule-editor-title {
-  width: 100%;
-  min-width: 0;
-  border: 0;
-  background: none;
-  color: var(--text);
-  font: inherit;
-  font-size: 28px;
-  font-weight: 560;
-  letter-spacing: -0.03em;
-  line-height: 1.15;
-  padding: 4px 0 12px;
-  outline: none;
-  user-select: text;
+/* Optical vertical center — same spacer language as pane empty states. */
+.schedule-editor-body::before,
+.schedule-editor-body::after {
+  content: '';
+  align-self: stretch;
+  pointer-events: none;
+  min-height: 0;
 }
 
-.schedule-editor-title::placeholder {
-  color: var(--text-tertiary);
+.schedule-editor-body::before {
+  flex: 0.48 1 0;
 }
 
-.schedule-editor-actions {
+.schedule-editor-body::after {
+  flex: 0.52 1 0;
+}
+
+.schedule-editor-group {
+  flex: 0 0 auto;
+  width: min(100%, var(--reading-max));
+  max-width: var(--reading-max);
   display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
+  flex-direction: column;
+  gap: 12px;
+  padding: 0 var(--composer-gutter);
+  box-sizing: border-box;
+}
+
+.schedule-editor-group .composer {
+  width: 100%;
+  max-width: none;
+  align-self: stretch;
+  padding: 0;
 }
 
 .schedule-editor-enable-label {
@@ -7384,175 +7438,60 @@ mark {
 .schedule-editor-when {
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  padding: 4px 0 20px;
+  gap: 10px;
 }
 
 .schedule-editor-when-row {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 14px 18px;
+  gap: 8px 12px;
 }
 
-.schedule-editor-weekday {
-  width: 36px;
-  height: 32px;
-  padding: 0;
-  border-radius: 999px;
-  border: 1px solid transparent;
-  background: color-mix(in srgb, var(--text) 6%, transparent);
-  color: var(--text-secondary);
-  font: inherit;
-  font-size: 13px;
-  cursor: default;
-}
-
-.schedule-editor-weekday:hover {
-  background: color-mix(in srgb, var(--text) 10%, transparent);
-}
-
-.schedule-editor-weekday.is-on {
-  background: color-mix(in srgb, var(--accent) 16%, transparent);
-  color: var(--text);
-}
-
-.schedule-editor-weekday:active {
-  transform: scale(0.97);
+.schedule-editor-when-row > .text-field {
+  width: auto;
+  min-width: 9.5em;
 }
 
 .schedule-editor-field {
   display: flex;
   align-items: center;
-  gap: 10px;
-  font-size: 13.5px;
+  gap: 8px;
+  font-size: 12px;
   color: var(--text-secondary);
 }
 
-.schedule-editor-field .text-field,
-.schedule-editor-once,
-.schedule-editor-mode-select {
+.schedule-editor-field .text-field {
   width: auto;
-  min-width: 168px;
-  height: 34px;
-  padding: 0 12px;
-  font-size: 14px;
+  min-width: 8.5em;
 }
 
-.schedule-editor-mode-select {
-  cursor: default;
+.schedule-editor-field .text-field[type='number'] {
+  min-width: 4.5em;
 }
 
 .schedule-editor-weekdays {
   display: flex;
-  gap: 6px;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.schedule-editor-weekdays .chip {
+  width: 28px;
+  max-width: 28px;
+  padding: 0;
+  justify-content: center;
 }
 
 .schedule-editor-next {
-  font-size: 13px;
+  font-size: 11px;
   color: var(--text-tertiary);
-}
-
-.schedule-editor .composer {
-  flex: 0 0 auto;
-  align-self: stretch;
-  width: 100%;
-  max-width: none;
-  padding: 0;
-  margin: 0;
-}
-
-.schedule-editor .composer-box {
-  padding: 12px 14px 10px 16px;
-}
-
-.schedule-editor .composer-box textarea {
-  font-size: 15px;
-  line-height: 1.55;
 }
 
 .timer-jobs {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 6px 8px 12px;
   min-width: 0;
-}
-
-.timer-job-form,
-.timer-job {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 8px;
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--text) 5%, transparent);
-}
-
-.timer-job.is-active {
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
-}
-
-.timer-job-sessions {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-}
-
-.timer-job-sessions .conv-row {
-  padding-left: 10px;
-}
-
-.timer-job-archived-toggle {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  width: 100%;
-  border: 0;
-  background: none;
-  color: var(--text-tertiary);
-  font-size: 11px;
-  padding: 4px 8px;
-  cursor: pointer;
-}
-
-.timer-job-form-row,
-.timer-job-head {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-}
-
-.timer-job-copy {
-  flex: 1;
-  min-width: 0;
-  text-align: left;
-  background: none;
-  border: 0;
-  padding: 0;
-  color: inherit;
-  cursor: pointer;
-}
-
-.timer-job-title {
-  font-size: 12px;
-  font-weight: 550;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.timer-job-sub,
-.timer-job-empty {
-  font-size: 11px;
-  color: var(--text-tertiary);
-}
-
-.timer-run-list {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
 }
 
 .files-missing-root {
@@ -7561,8 +7500,8 @@ mark {
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  justify-content: center;
-  padding: 12px 10px 20px;
+  justify-content: flex-start;
+  padding: 0;
 }
 
 .files-missing-nested {
@@ -7620,7 +7559,7 @@ mark {
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  justify-content: center;
+  justify-content: flex-start;
   padding-top: var(--toolbar-height);
   box-sizing: border-box;
 }
@@ -7640,56 +7579,6 @@ mark {
   min-height: var(--toolbar-height);
   padding: 0 10px;
   box-sizing: border-box;
-}
-
-.sidebar-archive-head {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 2px 0;
-  min-width: 0;
-}
-
-/* Arrow + title share one hit target (text click returns too). */
-.sidebar-archive-back {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  max-width: 100%;
-  margin: 0;
-  padding: 4px 6px 4px 4px;
-  border: 0;
-  border-radius: var(--radius-sm, 6px);
-  background: transparent;
-  color: var(--text);
-  font: inherit;
-  cursor: default;
-  text-align: left;
-  /* Never I-beam / select on chrome labels — first click must activate. */
-  user-select: none;
-  -webkit-user-select: none;
-}
-
-.sidebar-archive-back:hover {
-  background: var(--bg-hover);
-}
-
-.sidebar-archive-back:active {
-  background: var(--bg-active, var(--bg-hover));
-}
-
-.sidebar-archive-title {
-  font-size: 12px;
-  font-weight: 550;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  /* Hit target is the button; text nodes must not steal the first click. */
-  pointer-events: none;
-  user-select: none;
-  -webkit-user-select: none;
-  cursor: default;
 }
 
 .ask-card.submitting {
@@ -8170,32 +8059,91 @@ mark {
 
 .empty-state {
   position: relative;
-  margin: auto;
-  padding: 40px 24px;
+  margin: 0 auto;
+  padding: 16px 24px;
   max-width: 480px;
   text-align: center;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 12px;
+  box-sizing: border-box;
 }
 
-/* Session empty: fill the transcript column — logo, name, and git prose as one stack. */
+/*
+ * Pane empty states fill the tray. Shrinking spacers share leftover height so
+ * the stack sits a hair above geometric center (optical, not the upper third).
+ * Flex gap still counts zero-height pseudos, so spacing lives on real siblings.
+ */
+.empty-state:not(.empty-state-session) {
+  flex: 1 1 auto;
+  align-self: stretch;
+  width: 100%;
+  max-width: none;
+  min-height: 0;
+  margin: 0;
+  padding: 12px 20px;
+  gap: 0;
+  justify-content: flex-start;
+  overflow: hidden;
+}
+
+.empty-state:not(.empty-state-session) > * + * {
+  margin-top: 8px;
+}
+
+.empty-state:not(.empty-state-session) .empty-logo {
+  margin-bottom: 0;
+}
+
+.empty-state:not(.empty-state-session)::before,
+.empty-state:not(.empty-state-session)::after {
+  content: '';
+  align-self: stretch;
+  pointer-events: none;
+  min-height: 0;
+}
+
+.empty-state:not(.empty-state-session)::before {
+  flex: 0.48 1 0;
+}
+
+.empty-state:not(.empty-state-session)::after {
+  flex: 0.52 1 0;
+}
+
+/* Session empty: fill the transcript — logo + name as one stack. */
 .empty-state-session {
-  flex: 1 0 auto;
+  flex: 1 1 auto;
   align-self: stretch;
   width: 100%;
   max-width: none;
   min-height: 100%;
   margin: 0;
-  padding: 28px;
+  padding: 16px 28px;
   gap: 0;
   box-sizing: border-box;
   overflow: visible;
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
+}
+
+.empty-state-session::before,
+.empty-state-session::after {
+  content: '';
+  align-self: stretch;
+  pointer-events: none;
+  min-height: 0;
+}
+
+.empty-state-session::before {
+  flex: 0.48 1 0;
+}
+
+.empty-state-session::after {
+  flex: 0.52 1 0;
 }
 
 .empty-state-hero {
@@ -8229,17 +8177,27 @@ mark {
   width: min(420px, 100%);
   min-width: min(420px, 100%);
   max-width: min(420px, 100%);
-  /* Two prose lines + chrome gap. Pin before git status lands so the
-     empty-in stack cannot hitch when “加载中” swaps for the real copy.
-     Never `display: none` this box — that rebuilds the hero subtree and
-     cancels sibling empty-in (logo + stagger). */
-  min-height: calc(11.5px * 1.5 * 2 + 4px);
-  margin: 22px 0 0;
+  min-height: 0;
+  margin: 16px 0 0;
   padding: 0;
   text-align: center;
   display: flex;
   flex-direction: column;
   align-items: center;
+}
+
+/* Chrome that rendered nothing. Stay in the tree (display:none rebuilds the
+   hero and cancels sibling empty-in) but leave the flow so a zero box does
+   not still eat hero gap / reserved line height. */
+.empty-state-foot:empty {
+  position: absolute;
+  width: 0;
+  min-width: 0;
+  max-width: 0;
+  height: 0;
+  margin: 0;
+  overflow: hidden;
+  pointer-events: none;
 }
 
 .first-run-checklist {
@@ -8419,6 +8377,7 @@ mark {
   font-weight: 600;
   /* Tracking is size-specific: large text reads too loose at zero. */
   letter-spacing: -0.3px;
+  max-width: 20em;
 }
 
 .empty-agent-name {
@@ -8634,19 +8593,27 @@ mark {
 .empty-state .empty-desc {
   color: var(--text-secondary);
   line-height: 1.7;
+  max-width: 28em;
+}
+
+.empty-state:not(.empty-state-session) .empty-desc {
+  line-height: 1.45;
 }
 
 /* Compact empty session when the transcript viewport is short / narrow. */
 @container transcript (max-height: 420px) {
   .empty-state:not(.empty-state-session) {
-    padding: 16px 16px;
-    gap: 8px;
+    padding: 8px 16px;
     max-width: 100%;
+  }
+
+  .empty-state:not(.empty-state-session) > * + * {
+    margin-top: 6px;
   }
 
   .empty-state:not(.empty-state-session) .empty-logo {
     min-height: 48px;
-    margin-bottom: 2px;
+    margin-bottom: 0;
   }
 
   .empty-state:not(.empty-state-session) .empty-logo-mark > img,
@@ -8661,11 +8628,6 @@ mark {
   .session-workspace-prose {
     font-size: 11px;
     min-height: calc(11px * 1.5);
-  }
-
-  .session-workspace-chrome,
-  .empty-state-foot {
-    min-height: calc(11px * 1.5 * 2 + 4px);
   }
 }
 
@@ -8686,7 +8648,7 @@ mark {
    box) and overflow:hidden clipped the rest. */
 @container transcript (max-height: 360px) {
   .empty-state-session {
-    padding: 20px 16px;
+    padding: 12px 16px;
   }
 
   .empty-state-session .empty-logo {
@@ -8694,13 +8656,13 @@ mark {
   }
 
   .empty-state-foot {
-    margin-top: 16px;
+    margin-top: 12px;
   }
 }
 
 @container transcript (max-height: 280px) {
   .empty-state-session {
-    padding: 12px 16px;
+    padding: 8px 16px;
   }
 
   .empty-state-session .empty-logo {
@@ -9219,10 +9181,32 @@ mark {
 
 .file-tree {
   flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
   overflow: auto;
   padding: 0 8px 10px;
   /* Contain paint so long names / sizes don't shift sibling columns. */
   min-width: 0;
+}
+
+.file-tree:has(> .empty-state) {
+  padding: 0;
+  overflow: hidden;
+}
+
+.file-tree > .empty-state,
+.file-column > .empty-state,
+.files-missing-root > .empty-state,
+.files-browser > .empty-state {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
+}
+
+.files-empty-nested {
+  height: 24px;
+  line-height: 24px;
 }
 
 .files-toolbar .segmented {
@@ -9346,6 +9330,12 @@ mark {
   min-width: 0;
 }
 
+.files-tray-pane > .empty-state,
+.artifacts-panel > .empty-state {
+  flex: 1;
+  min-height: 0;
+}
+
 .artifacts-panel .transcript-artifacts-list {
   flex: 1;
   min-height: 0;
@@ -9360,6 +9350,11 @@ mark {
   display: flex;
   flex-direction: column;
   min-width: 0;
+}
+
+.git-panel > .empty-state {
+  flex: 1;
+  min-height: 0;
 }
 
 .git-panel-meta {
@@ -9405,10 +9400,159 @@ mark {
   min-width: 0;
 }
 
+.git-filter {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  padding: 4px 8px 2px;
+}
+
+.git-filter .segmented {
+  height: 22px;
+  padding: 0;
+  gap: 2px;
+  background: transparent;
+  box-shadow: none;
+  border-radius: 0;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+
+.git-filter .segmented button {
+  box-sizing: border-box;
+  width: auto;
+  height: 22px;
+  padding: 0 7px;
+  border-radius: 0;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-tertiary);
+  background: transparent;
+  box-shadow: none;
+  white-space: nowrap;
+}
+
+.git-filter .segmented button:hover:not(.active) {
+  color: var(--text-secondary);
+  background: transparent;
+}
+
+.git-filter .segmented button.active {
+  background: transparent;
+  box-shadow: none;
+  color: var(--text);
+  font-weight: 500;
+}
+
+.git-list-pane {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-right: 0.5px solid var(--border-subtle, color-mix(in srgb, var(--text) 8%, transparent));
+}
+
+.git-panel-body.is-list-only .git-list-pane {
+  border-right: 0;
+}
+
+.git-list-pane > .empty-state,
+.git-ref-empty {
+  flex: 1;
+  min-height: 0;
+}
+
+.git-ref-empty {
+  display: flex;
+  flex-direction: column;
+}
+
+.git-ref-list {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 2px 0 6px;
+  outline: none;
+}
+
+.git-ref-list:focus-visible {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent, #0a84ff) 55%, transparent);
+}
+
+.git-ref-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 5px 10px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: default;
+}
+
+.git-ref-row:hover {
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+}
+
+.git-ref-row.is-selected {
+  background: color-mix(in srgb, var(--accent, #0a84ff) 16%, transparent);
+}
+
+.git-ref-row.is-focused:not(.is-selected) {
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+.git-ref-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.git-ref-current {
+  display: inline-block;
+  margin-right: 5px;
+  font-size: 8px;
+  color: var(--accent, #0a84ff);
+  vertical-align: middle;
+}
+
+.git-ref-track,
+.git-ref-sha,
+.git-ref-meta {
+  flex: 0 0 auto;
+  font-size: 10.5px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
+.git-ref-sha {
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font-code, ui-monospace, SFMono-Regular, Menlo, monospace);
+}
+
+.git-detail-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  font-size: 12px;
+  color: var(--text-tertiary);
+  text-align: center;
+}
+
 .git-change-list {
   list-style: none;
   margin: 0;
   padding: 4px 0;
+  min-width: 0;
+  min-height: 0;
   overflow: auto;
   outline: none;
   border-right: 0.5px solid var(--border-subtle, color-mix(in srgb, var(--text) 8%, transparent));
@@ -9685,59 +9829,18 @@ mark {
 }
 
 .plugins-panel > .empty-state {
-  border-top: 1px solid var(--border-subtle, color-mix(in srgb, var(--text) 10%, transparent));
+  flex: 1;
+  min-height: 0;
+  border-top: 0;
 }
 
-.plugins-panel-meta {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
+.plugins-panel-error {
   padding: 6px 10px 0;
   font-size: 11px;
-  color: var(--text-secondary);
-}
-
-.plugins-panel-host {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.plugins-panel-hint,
-.plugins-panel-error {
-  flex: 0 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.plugins-panel-error {
   color: var(--danger, #ff453a);
-}
-
-.plugins-panel-filters {
-  display: flex;
-  gap: 4px;
-  padding: 6px 10px 4px;
-}
-
-.plugins-filter {
-  border: 0;
-  background: transparent;
-  color: var(--text-secondary);
-  font: inherit;
-  font-size: 11px;
-  padding: 3px 8px;
-  border-radius: 999px;
-  cursor: pointer;
-}
-
-.plugins-filter.is-active {
-  color: var(--text);
-  background: color-mix(in srgb, var(--text) 8%, transparent);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .plugins-panel-body {
@@ -9923,6 +10026,11 @@ mark {
   min-width: 0;
 }
 
+.github-panel > .empty-state {
+  flex: 1;
+  min-height: 0;
+}
+
 .github-panel-body {
   flex: 1;
   min-height: 0;
@@ -9964,7 +10072,8 @@ mark {
   white-space: nowrap;
 }
 
-.github-filter {
+.github-filter,
+.plugins-panel-filters {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
@@ -10298,7 +10407,8 @@ mark {
   }
 }
 
-.github-filter .segmented {
+.github-filter .segmented,
+.plugins-panel-filters .segmented {
   height: 22px;
   padding: 0;
   gap: 2px;
@@ -10309,7 +10419,8 @@ mark {
   min-width: 0;
 }
 
-.github-filter .segmented button {
+.github-filter .segmented button,
+.plugins-panel-filters .segmented button {
   box-sizing: border-box;
   width: auto;
   height: 22px;
@@ -10323,12 +10434,14 @@ mark {
   white-space: nowrap;
 }
 
-.github-filter .segmented button:hover:not(.active) {
+.github-filter .segmented button:hover:not(.active),
+.plugins-panel-filters .segmented button:hover:not(.active) {
   color: var(--text-secondary);
   background: transparent;
 }
 
-.github-filter .segmented button.active {
+.github-filter .segmented button.active,
+.plugins-panel-filters .segmented button.active {
   background: transparent;
   box-shadow: none;
   color: var(--text);
@@ -11373,7 +11486,28 @@ mark {
 .file-column {
   flex: 0 0 220px;
   width: 220px;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
   overflow-y: auto;
   border-right: 0.5px solid var(--border);
   padding: 4px 4px 4px 2px;
+}
+
+.file-column:has(> .empty-state) {
+  flex: 1 1 auto;
+  width: auto;
+  min-width: min(220px, 100%);
+  padding: 0;
+  border-right: 0;
+  overflow: hidden;
+}
+
+.file-columns:has(> .file-column:only-child > .empty-state) {
+  border-top: 0;
+}
+
+.file-columns:has(> .file-column:only-child > .empty-state) > .file-column {
+  width: 100%;
+  max-width: none;
 }

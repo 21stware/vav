@@ -57,7 +57,6 @@ export function openFileInSessionPreview(rawPath: string): void {
   }
   if (!id) return
   useWorkspaceStore.getState().selectPath(id, resolved)
-  void state.attachContextFile(id, resolved)
   state.setSessionPreview({ kind: 'file' })
   state.setFilePreviewOpen(true)
 }

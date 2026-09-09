@@ -11,7 +11,6 @@ import {
   ArrowUp,
   ChevronDown,
   CornerUpLeft,
-  FileText,
   MapPin,
   MessageSquare,
   Plus,
@@ -30,10 +29,7 @@ import {
   useSessionStore,
   type QueuedMessage
 } from '../state/sessionStore'
-import { useWorkspaceStore } from '../state/workspaceStore'
-import { formatBytes } from '../lib/format'
-import { basename } from '../lib/path'
-import { formatBadge } from '../lib/previewBlocks'
+import { mergeComposerFilePaths } from '../state/sessionQueue'
 import { keys, PLATFORM } from '../lib/platform'
 import { resolveSendKeyMode, shouldSendOnKeyDown } from '../lib/composerSendKey'
 import { isPickGestureActive } from '../lib/clickPick'
@@ -44,10 +40,9 @@ import { useAccountGroups, vavAccountsOf } from '../lib/accountGroups'
 import { useT } from '../i18n/useT'
 import { attachPickedFiles, attachScreenshot } from '../lib/composerAttach'
 import {
+  COMPOSER_MIN_ROWS,
   composerWheelStaysOnField,
-  fitComposerTextarea,
-  SCHEDULE_MAX_ROWS,
-  SCHEDULE_MIN_ROWS
+  fitComposerTextarea
 } from '../lib/composerTextarea'
 import { collectClipboardImages, writeClipboardImage } from '../lib/pasteImages'
 import { menuAnchor, showMenu } from '../lib/nativeMenu'
@@ -60,8 +55,8 @@ import { SessionRunPicker } from './SessionRunPicker'
 const NO_QUEUE: QueuedMessage[] = []
 
 /**
- * Keep the composer from blurring (and collapsing) on mousedown of a nearby
- * control. Blur-first would shrink the dock, move the card, and eat the click.
+ * Keep the composer from blurring on mousedown of a nearby control.
+ * Blur-first would eat the click on the control.
  */
 function retainComposerFocus(event: MouseEvent): void {
   const target = event.target
@@ -83,13 +78,13 @@ const NO_REFS: import('@shared/types').PreviewRef[] = []
 const NO_CARDS: { ref: import('@shared/types').PreviewRef; comment: string }[] = []
 
 /**
- * Quote strip, file-context chip, message queue, and comment cards.
+ * Quote strip, message queue, and comment cards.
  *
  * Lives at the bottom of the Agent log column (not inside the dock) so
  * appear/disappear only resizes the transcript — composer box + tools tray
- * keep a stable height (no jump when Files selection toggles the chip).
+ * keep a stable height.
  *
- * Vertical order: queue → quote/chip → comment cards → (composer in dock).
+ * Vertical order: queue → quote → comment cards → (composer in dock).
  */
 export function ComposerContext({
   conversationId: pinnedConversationId
@@ -99,17 +94,14 @@ export function ComposerContext({
   const t = useT()
   const storeActiveId = useSessionStore((s) => s.activeId)
   const conversationId = (pinnedConversationId?.trim() || storeActiveId) || ''
-  const contextFile = useSessionStore((s) => s.contextFiles[conversationId] ?? null)
   const commentCards = useSessionStore((s) => s.commentCards[conversationId] ?? NO_CARDS)
   const messageQueue = useSessionStore((s) => s.messageQueues[conversationId] ?? NO_QUEUE)
   const quote = useSessionStore((s) => s.quotes[conversationId] ?? null)
-  const dismissContextFile = useSessionStore((s) => s.dismissContextFile)
   const clearQuote = useSessionStore((s) => s.clearQuote)
   const scrollToMessage = useSessionStore((s) => s.scrollToMessage)
 
   const hasCommentCards = commentCards.length > 0
   const hasQueue = messageQueue.length > 0
-  const showFileContextChip = Boolean(contextFile && !hasCommentCards)
   const quoteSource =
     quote?.role === 'user' ? t('composer.quoteFromUser') : t('composer.quoteFromAgent')
 
@@ -126,7 +118,7 @@ export function ComposerContext({
   }, [quote, conversationId, clearQuote])
 
   if (!conversationId) return null
-  if (!quote && !showFileContextChip && !hasCommentCards && !hasQueue) return null
+  if (!quote && !hasCommentCards && !hasQueue) return null
 
   return (
     <div
@@ -159,13 +151,6 @@ export function ComposerContext({
           </button>
         </div>
       )}
-      {showFileContextChip && contextFile && (
-        <FileContextChip
-          path={contextFile}
-          conversationId={conversationId}
-          onDismiss={() => void dismissContextFile(conversationId)}
-        />
-      )}
       <CommentCardsBar conversationId={conversationId} />
     </div>
   )
@@ -178,8 +163,8 @@ export type ComposerVariant = 'chat' | 'schedule'
  * file-preview drawer. Pass {@link conversationId} when the surface owns a
  * session that may lag behind (or differ from) store.activeId for a frame.
  *
- * Context chips live in {@link ComposerContext} (Agent log column) so the dock
- * height stays stable while browsing Files.
+ * Quote / comments / queue live in {@link ComposerContext} (Agent log column)
+ * so the dock height stays independent of those strips.
  *
  * `schedule` reuses the same prompt card without send / screenshot — the
  * scheduled-task editor owns enable / run instead.
@@ -210,6 +195,10 @@ export function Composer({
   const previewRefs = useSessionStore((s) => s.previewRefs[conversationId] ?? NO_REFS)
   const commentCards = useSessionStore((s) => s.commentCards[conversationId] ?? NO_CARDS)
   const contextFile = useSessionStore((s) => s.contextFiles[conversationId] ?? null)
+  const composerFiles = useMemo(
+    () => mergeComposerFilePaths(contextFile, attachments),
+    [contextFile, attachments]
+  )
   const isRunning = useSessionStore((s) => !!s.turns[conversationId]?.isRunning)
   const awaiting = useSessionStore((s) => !!s.turns[conversationId]?.awaitingToolCallId)
   const queueLen = useSessionStore((s) => (s.messageQueues[conversationId] ?? NO_QUEUE).length)
@@ -223,6 +212,7 @@ export function Composer({
   const setDraft = useSessionStore((s) => s.setDraft)
   const setAttachments = useSessionStore((s) => s.setAttachments)
   const addAttachments = useSessionStore((s) => s.addAttachments)
+  const dismissContextFile = useSessionStore((s) => s.dismissContextFile)
   const showToast = useSessionStore((s) => s.showToast)
   const [attachBusy, setAttachBusy] = useState(false)
   const setPreviewRefs = useSessionStore((s) => s.setPreviewRefs)
@@ -252,7 +242,6 @@ export function Composer({
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   /** True while IME / dictation composition is active (Enter must not submit). */
   const composingRef = useRef(false)
-  const [focused, setFocused] = useState(false)
   const accountGroups = useAccountGroups()
   const imageLimits = imageInputLimits(conversation?.cliHost ?? null)
   const catalogModel = useSessionStore((s) => {
@@ -306,7 +295,7 @@ export function Composer({
   // While streaming, send enqueues (blocked only when queue is full).
   const hasPayload =
     draft.trim().length > 0 ||
-    attachments.length > 0 ||
+    composerFiles.length > 0 ||
     previewRefs.length > 0 ||
     commentCards.length > 0
   const canSend = !awaiting && hasPayload && !(isRunning && queueFull)
@@ -315,10 +304,10 @@ export function Composer({
   // "Ask the agent…" prompt; when attached on a file session, prefer the
   // file-oriented phrasing.
   const idlePlaceholder = conversation?.fileId
-    ? contextFile
+    ? composerFiles.length > 0
       ? t('composer.placeholderFile')
       : t('composer.placeholder')
-    : contextFile
+    : composerFiles.length > 0
       ? t('composer.placeholderFile')
       : t('composer.placeholderCommand')
   const sendKey = resolveSendKeyMode(sendKeySetting)
@@ -353,13 +342,8 @@ export function Composer({
     if (!element) return
     // Avoid reflowing height mid-composition — can cancel IME on macOS.
     if (composingRef.current) return
-    fitComposerTextarea(element, {
-      focused,
-      disabled: inputDisabled,
-      minRows: isSchedule ? SCHEDULE_MIN_ROWS : undefined,
-      maxRows: isSchedule ? SCHEDULE_MAX_ROWS : undefined
-    })
-  }, [draft, focused, inputDisabled, isSchedule])
+    fitComposerTextarea(element, { minRows: COMPOSER_MIN_ROWS })
+  }, [draft])
 
   const runScreenshot = (hideWindow?: boolean): void => {
     void (async () => {
@@ -509,17 +493,18 @@ export function Composer({
             }}
           />
         ) : null}
-        {attachments.length > 0 && conversationId && (
+        {composerFiles.length > 0 && conversationId && (
           <ComposerAttachments
-            paths={attachments}
+            paths={composerFiles}
             conversationId={conversationId}
             imageInputSupported={imageInputSupported}
-            onRemove={(path) =>
+            onRemove={(path) => {
+              if (path === contextFile) void dismissContextFile(conversationId)
               setAttachments(
                 conversationId,
                 attachments.filter((p) => p !== path)
               )
-            }
+            }}
           />
         )}
 
@@ -527,11 +512,10 @@ export function Composer({
           id="text"
           ref={textareaRef}
           data-testid={isSchedule ? 'timer-prompt' : 'composer-input'}
-          rows={isSchedule ? SCHEDULE_MIN_ROWS : 1}
+          rows={COMPOSER_MIN_ROWS}
           placeholder={placeholder}
           value={draft}
           disabled={inputDisabled}
-          onFocus={() => setFocused(true)}
           onCompositionStart={() => {
             composingRef.current = true
           }}
@@ -552,7 +536,6 @@ export function Composer({
             }, 32)
           }}
           onBlur={() => {
-            setFocused(false)
             // Composition can be aborted without compositionend (focus loss).
             composingRef.current = false
             const next = textareaRef.current?.value ?? draft
@@ -1056,54 +1039,6 @@ function CommentCardsBar({
           </div>
         )
       })}
-    </div>
-  )
-}
-
-/**
- * File Attachment Chip (main-chat / file-preview / workspace-view).
- * Shows name · size · format; ✕ dismisses context only (not the preview).
- */
-function FileContextChip({
-  path,
-  conversationId,
-  onDismiss
-}: {
-  path: string
-  conversationId: string
-  onDismiss: () => void
-}): React.JSX.Element {
-  const t = useT()
-  const size = useWorkspaceStore((s) => {
-    const dirs = s.workspaces[conversationId]?.dirs
-    if (!dirs) return null
-    for (const entries of Object.values(dirs)) {
-      const hit = entries.find((e) => e.path === path)
-      if (hit && !hit.isDirectory) return hit.size
-    }
-    return null
-  })
-  const name = basename(path)
-  const badge = formatBadge(path, 'text')
-  const sizeLabel = size != null ? formatBytes(size) : null
-  const label = [name, sizeLabel, badge].filter(Boolean).join(' · ')
-
-  return (
-    <div className="file-context-chip" title={path}>
-      <FileText size={14} aria-hidden />
-      <span className="file-context-chip-label">
-        {label}
-        <span className="file-context-chip-suffix"> — {t('composer.fileContextAttached')}</span>
-      </span>
-      <button
-        type="button"
-        className="btn icon-only sm"
-        title={t('composer.dismissFileContext')}
-        aria-label={t('composer.dismissFileContext')}
-        onClick={onDismiss}
-      >
-        <X size={12} />
-      </button>
     </div>
   )
 }

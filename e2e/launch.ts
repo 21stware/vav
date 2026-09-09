@@ -690,6 +690,33 @@ export async function pairRemoteDaemon(
   return paired
 }
 
+/** Native remote-folder dialog (modal BrowserWindow). */
+export async function waitForRemoteFolderPicker(
+  harness: VavHarness,
+  action: () => Promise<void>
+): Promise<Page> {
+  await action()
+  let found: Page | undefined
+  await expect
+    .poll(async () => {
+      for (const win of harness.app.windows()) {
+        try {
+          if ((await win.locator('[data-testid="remote-folder-picker"]').count()) > 0) {
+            found = win
+            return true
+          }
+        } catch {
+          // window may still be loading
+        }
+      }
+      return false
+    })
+    .toBe(true)
+  if (!found) throw new Error('expected remote folder picker window')
+  await found.locator('[data-testid="remote-folder-picker"]').waitFor({ state: 'visible' })
+  return found
+}
+
 /** Independent Settings window (README.rpml §1.4 / §2.6). */
 export async function openSettingsWindow(
   harness: VavHarness,

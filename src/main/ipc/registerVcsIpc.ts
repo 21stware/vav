@@ -4,10 +4,18 @@ import {
   checkoutGitBranch,
   createGitBranch,
   createGitWorktree,
+  deleteGitBranch,
   getGitDiff,
+  getGitPatch,
   getGitShowBase64,
   getGitSnapshot,
-  initGitRepo
+  initGitRepo,
+  listGitBranches,
+  listGitLog,
+  listGitStashes,
+  stashGitApply,
+  stashGitDrop,
+  stashGitPush
 } from '../git/GitService'
 import {
   getGithubActionRun,
@@ -62,8 +70,39 @@ export function registerVcsIpc(ipcMain: IpcMain, creds: VcsIpcCreds): void {
     return initGitRepo(cwd, conversationId)
   })
   ipcMain.handle(
+    IPC.gitLog,
+    async (_event, cwd: string, opts?: { limit?: number; conversationId?: string }) => {
+      const client = remote()
+      if (client) return client.request('git.log', { cwd, ...opts })
+      return listGitLog(cwd, opts)
+    }
+  )
+  ipcMain.handle(IPC.gitBranches, async (_event, cwd: string, conversationId?: string) => {
+    const client = remote()
+    if (client) return client.request('git.branches', { cwd, conversationId })
+    return listGitBranches(cwd, conversationId)
+  })
+  ipcMain.handle(IPC.gitStashes, async (_event, cwd: string, conversationId?: string) => {
+    const client = remote()
+    if (client) return client.request('git.stashes', { cwd, conversationId })
+    return listGitStashes(cwd, conversationId)
+  })
+  ipcMain.handle(
+    IPC.gitPatch,
+    async (_event, cwd: string, spec: string, conversationId?: string) => {
+      const client = remote()
+      if (client) return client.request('git.patch', { cwd, spec, conversationId })
+      return getGitPatch(cwd, spec, conversationId)
+    }
+  )
+  ipcMain.handle(
     IPC.gitCreateBranch,
-    async (_event, cwd: string, name: string, opts?: { checkout?: boolean; conversationId?: string }) => {
+    async (
+      _event,
+      cwd: string,
+      name: string,
+      opts?: { checkout?: boolean; startPoint?: string; conversationId?: string }
+    ) => {
       const client = remote()
       if (client) return client.request('git.createBranch', { cwd, name, ...opts })
       return createGitBranch(cwd, name, opts)
@@ -78,6 +117,14 @@ export function registerVcsIpc(ipcMain: IpcMain, creds: VcsIpcCreds): void {
     }
   )
   ipcMain.handle(
+    IPC.gitDeleteBranch,
+    async (_event, cwd: string, name: string, conversationId?: string) => {
+      const client = remote()
+      if (client) return client.request('git.deleteBranch', { cwd, name, conversationId })
+      return deleteGitBranch(cwd, name, conversationId)
+    }
+  )
+  ipcMain.handle(
     IPC.gitCreateWorktree,
     async (
       _event,
@@ -88,6 +135,35 @@ export function registerVcsIpc(ipcMain: IpcMain, creds: VcsIpcCreds): void {
       const client = remote()
       if (client) return client.request('git.createWorktree', { cwd, ...options, conversationId })
       return createGitWorktree(cwd, options, conversationId)
+    }
+  )
+  ipcMain.handle(
+    IPC.gitStashPush,
+    async (_event, cwd: string, opts?: { message?: string; conversationId?: string }) => {
+      const client = remote()
+      if (client) return client.request('git.stashPush', { cwd, ...opts })
+      return stashGitPush(cwd, opts)
+    }
+  )
+  ipcMain.handle(
+    IPC.gitStashApply,
+    async (
+      _event,
+      cwd: string,
+      index: number,
+      opts?: { pop?: boolean; conversationId?: string }
+    ) => {
+      const client = remote()
+      if (client) return client.request('git.stashApply', { cwd, index, ...opts })
+      return stashGitApply(cwd, index, opts)
+    }
+  )
+  ipcMain.handle(
+    IPC.gitStashDrop,
+    async (_event, cwd: string, index: number, conversationId?: string) => {
+      const client = remote()
+      if (client) return client.request('git.stashDrop', { cwd, index, conversationId })
+      return stashGitDrop(cwd, index, conversationId)
     }
   )
   ipcMain.handle(

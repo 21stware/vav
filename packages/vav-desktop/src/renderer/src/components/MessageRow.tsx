@@ -6,7 +6,6 @@ import {
   Copy,
   CornerUpLeft,
   FileDiff,
-  FileText,
   GitBranch,
   MessageSquare,
   Pencil,
@@ -19,8 +18,7 @@ import type { ChatMessage, PreviewRef, TextBlock } from '@shared/types'
 import { AttachmentTile } from './ComposerAttachments'
 import { markdownToPlainText } from '@shared/markdownPlain'
 import { showMenu, type MenuItem } from '../lib/nativeMenu'
-import { basename } from '../lib/path'
-import { formatBadge } from '../lib/previewBlocks'
+import { mergeComposerFilePaths } from '../state/sessionQueue'
 import { useSessionStore } from '../state/sessionStore'
 import { useT } from '../i18n/useT'
 import { InlineChangeReview } from './InlineChangeReview'
@@ -675,8 +673,8 @@ export const MessageRow = memo(function MessageRow({
 })
 
 /**
- * Read-only replay of composer context: file chip, comment cards, selection
- * chips, attachment chips — same shapes the user saw when sending.
+ * Read-only replay of composer context: comment cards, selection chips,
+ * attachment tiles — same shapes the user saw when sending.
  */
 function UserMessageContext({
   contextFile,
@@ -687,32 +685,20 @@ function UserMessageContext({
   contextBlocks?: PreviewRef[]
   attachments?: string[]
 }): React.JSX.Element | null {
-  const t = useT()
   const blocks = contextBlocks ?? []
-  const files = attachments ?? []
+  const files = mergeComposerFilePaths(contextFile, attachments ?? [])
   const commented = blocks.filter((r) => (r.comment ?? '').trim().length > 0)
   // When comment cards are present, the composer hides the plain selection chips
   // that duplicate those refs; mirror that: only show chip for uncommented refs.
   const commentedIds = new Set(commented.map((r) => r.id))
   const plainRefs = blocks.filter((r) => !commentedIds.has(r.id))
-  // Composer also hides the file chip when comment cards are showing.
-  const showFile = Boolean(contextFile && commented.length === 0)
 
-  if (!showFile && commented.length === 0 && plainRefs.length === 0 && files.length === 0) {
+  if (commented.length === 0 && plainRefs.length === 0 && files.length === 0) {
     return null
   }
 
   return (
     <div className="message-user-context">
-      {showFile && contextFile && (
-        <div className="file-context-chip is-readonly" title={contextFile}>
-          <FileText size={14} aria-hidden />
-          <span className="file-context-chip-label">
-            {[basename(contextFile), formatBadge(contextFile, 'text')].filter(Boolean).join(' · ')}
-            <span className="file-context-chip-suffix"> — {t('composer.fileContextAttached')}</span>
-          </span>
-        </div>
-      )}
       {commented.length > 0 && (
         <div className="message-comment-rows" role="list">
           {commented.map((ref) => {

@@ -186,7 +186,7 @@ export function SessionDetail({
    */
   const buildLaunchContext = useCallback((): string | null => {
     const store = useSessionStore.getState()
-    const focused = resolveComposerContextFile(store.contextFiles, store.conversations, activeId)
+    const focused = resolveComposerContextFile(store.contextFiles, activeId)
     const cards = store.commentCards[activeId] ?? []
     return buildWorkspaceFocusContext({
       focusedPath: focused,
@@ -909,7 +909,7 @@ export function AgentModeChrome({
                 <button
                   type="button"
                   ref={fs!.historyAnchorRef}
-                  className={`btn ghost sm icon-only${fs!.historyOpen ? ' is-active-toggle' : ''}`}
+                  className={`btn ghost icon-only${fs!.historyOpen ? ' is-active-toggle' : ''}`}
                   title={t('preview.sessionHistory')}
                   onClick={fs!.onToggleHistory}
                 >
@@ -917,7 +917,6 @@ export function AgentModeChrome({
                 </button>
                 <Button
                   icon={<Plus size={14} />}
-                  size="sm"
                   variant="ghost"
                   title={t('preview.newSession')}
                   onClick={fs!.onNewSession}
@@ -928,7 +927,6 @@ export function AgentModeChrome({
             {showSearch && isChat ? (
               <Button
                 icon={<Search size={14} />}
-                size="sm"
                 variant="ghost"
                 testId="session-search"
                 title={`${t('common.search')} ${keys('⌘F')}`}
@@ -940,7 +938,6 @@ export function AgentModeChrome({
               <>
                 <Button
                   icon={<SquareSplitVertical size={14} />}
-                  size="sm"
                   variant="ghost"
                   testId="swarm-split-right"
                   title={`${t('agents.splitRight')} ${keys('⌘D')}`}
@@ -948,7 +945,6 @@ export function AgentModeChrome({
                 />
                 <Button
                   icon={<SquareSplitHorizontal size={14} />}
-                  size="sm"
                   variant="ghost"
                   testId="swarm-split-down"
                   title={`${t('agents.splitDown')} ${keys('⌘⇧D')}`}

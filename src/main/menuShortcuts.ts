@@ -2,9 +2,10 @@ import type { MenuCommand } from '@shared/ipc'
 import {
   acceleratorKeyBindingIds,
   matchesAccelerator,
+  type AcceleratorInput,
   type ResolvedKeyBindings
 } from '@shared/keyBindings'
-import type { Platform } from '@shared/platform'
+import { isMac, type Platform } from '@shared/platform'
 
 const PLATFORM = process.platform as Platform
 
@@ -67,6 +68,30 @@ export function menuCommandFromInput(
     if (!matchesAccelerator(input, bindings[id], PLATFORM)) continue
     const command = KEY_BINDING_MENU_COMMAND[id]
     if (command) return command
+  }
+  return zoomCommandFromInput(input)
+}
+
+/**
+ * View-menu zoom chords. Not remappable — they share Appearance `uiZoom`.
+ * Product bindings are checked first so a rebound Cmd+= still wins.
+ */
+export function zoomCommandFromInput(input: AcceleratorInput): MenuCommand | null {
+  if (input.type !== 'keyDown') return null
+  const chordMod = isMac(PLATFORM) ? input.meta && !input.control : input.control && !input.meta
+  if (!chordMod || input.alt) return null
+  const { key, code } = input
+  if (!input.shift && (key === '0' || code === 'Digit0' || code === 'Numpad0')) {
+    return 'zoom-reset'
+  }
+  if (
+    !input.shift &&
+    (key === '-' || key === 'Minus' || code === 'Minus' || code === 'NumpadSubtract')
+  ) {
+    return 'zoom-out'
+  }
+  if (key === '=' || key === '+' || code === 'Equal' || code === 'NumpadAdd') {
+    return 'zoom-in'
   }
   return null
 }

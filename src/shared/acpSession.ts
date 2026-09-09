@@ -5,14 +5,30 @@
 
 export const ACP_PROTOCOL_VERSION = 1
 
-/** Capabilities VAV advertises as an ACP client. */
-export const ACP_CLIENT_CAPABILITIES = {
-  fs: { readTextFile: true, writeTextFile: true },
-  terminal: true,
+const ACP_CLIENT_SESSION_CAPS = {
   elicitation: { form: {}, url: {} },
   /** Interactive PTY login is not implemented — do not advertise it. */
   auth: { terminal: false },
   session: { configOptions: { boolean: {} } }
+} as const
+
+/** Capabilities VAV advertises as an ACP client. */
+export const ACP_CLIENT_CAPABILITIES = {
+  fs: { readTextFile: true, writeTextFile: true },
+  terminal: true,
+  ...ACP_CLIENT_SESSION_CAPS
+} as const
+
+/**
+ * Grok Build runs shell + filesystem in-process on the agent host.
+ * Advertising `fs` / `terminal` makes it switch to ACP client I/O:
+ * `fs/read_text_file` is text-only (images fail), and `terminal/create`
+ * is a raw spawn without a shell (most commands fail).
+ */
+export const GROK_ACP_CLIENT_CAPABILITIES = {
+  fs: { readTextFile: false, writeTextFile: false },
+  terminal: false,
+  ...ACP_CLIENT_SESSION_CAPS
 } as const
 
 export interface AcpSessionMode {

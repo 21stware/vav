@@ -1973,6 +1973,52 @@ export function installPhoneVav(transport: PhoneTransport): PhoneVavHandle {
           return { ok: false as const, error: (err as Error).message }
         }
       },
+      log: async (cwd, opts) => {
+        const plane = await daemonReady()
+        if (!plane) return { ok: false as const, error: 'unavailable' }
+        try {
+          return (await plane.request('git.log', {
+            cwd,
+            limit: opts?.limit,
+            conversationId: opts?.conversationId
+          })) as Awaited<ReturnType<VavApi['git']['log']>>
+        } catch (err) {
+          return { ok: false as const, error: (err as Error).message }
+        }
+      },
+      branches: async (cwd, conversationId) => {
+        const plane = await daemonReady()
+        if (!plane) return { ok: false as const, error: 'unavailable' }
+        try {
+          return (await plane.request('git.branches', { cwd, conversationId })) as Awaited<
+            ReturnType<VavApi['git']['branches']>
+          >
+        } catch (err) {
+          return { ok: false as const, error: (err as Error).message }
+        }
+      },
+      stashes: async (cwd, conversationId) => {
+        const plane = await daemonReady()
+        if (!plane) return { ok: false as const, error: 'unavailable' }
+        try {
+          return (await plane.request('git.stashes', { cwd, conversationId })) as Awaited<
+            ReturnType<VavApi['git']['stashes']>
+          >
+        } catch (err) {
+          return { ok: false as const, error: (err as Error).message }
+        }
+      },
+      patch: async (cwd, spec, conversationId) => {
+        const plane = await daemonReady()
+        if (!plane) return { ok: false as const, error: 'unavailable' }
+        try {
+          return (await plane.request('git.patch', { cwd, spec, conversationId })) as Awaited<
+            ReturnType<VavApi['git']['patch']>
+          >
+        } catch (err) {
+          return { ok: false as const, error: (err as Error).message }
+        }
+      },
       createBranch: async (cwd, name, opts) => {
         const plane = await daemonReady()
         if (!plane) return { ok: false as const, error: 'unavailable' }
@@ -1981,6 +2027,7 @@ export function installPhoneVav(transport: PhoneTransport): PhoneVavHandle {
             cwd,
             name,
             checkout: opts?.checkout,
+            startPoint: opts?.startPoint,
             conversationId: opts?.conversationId
           })) as Awaited<ReturnType<VavApi['git']['createBranch']>>
         } catch (err) {
@@ -2000,6 +2047,19 @@ export function installPhoneVav(transport: PhoneTransport): PhoneVavHandle {
           return { ok: false as const, error: (err as Error).message }
         }
       },
+      deleteBranch: async (cwd, name, conversationId) => {
+        const plane = await daemonReady()
+        if (!plane) return { ok: false as const, error: 'unavailable' }
+        try {
+          return (await plane.request('git.deleteBranch', {
+            cwd,
+            name,
+            conversationId
+          })) as Awaited<ReturnType<VavApi['git']['deleteBranch']>>
+        } catch (err) {
+          return { ok: false as const, error: (err as Error).message }
+        }
+      },
       createWorktree: async (cwd, options, conversationId) => {
         const plane = await daemonReady()
         if (!plane) return { ok: false as const, error: 'unavailable' }
@@ -2009,6 +2069,46 @@ export function installPhoneVav(transport: PhoneTransport): PhoneVavHandle {
             ...options,
             conversationId
           })) as Awaited<ReturnType<VavApi['git']['createWorktree']>>
+        } catch (err) {
+          return { ok: false as const, error: (err as Error).message }
+        }
+      },
+      stashPush: async (cwd, opts) => {
+        const plane = await daemonReady()
+        if (!plane) return { ok: false as const, error: 'unavailable' }
+        try {
+          return (await plane.request('git.stashPush', {
+            cwd,
+            message: opts?.message,
+            conversationId: opts?.conversationId
+          })) as Awaited<ReturnType<VavApi['git']['stashPush']>>
+        } catch (err) {
+          return { ok: false as const, error: (err as Error).message }
+        }
+      },
+      stashApply: async (cwd, index, opts) => {
+        const plane = await daemonReady()
+        if (!plane) return { ok: false as const, error: 'unavailable' }
+        try {
+          return (await plane.request('git.stashApply', {
+            cwd,
+            index,
+            pop: opts?.pop,
+            conversationId: opts?.conversationId
+          })) as Awaited<ReturnType<VavApi['git']['stashApply']>>
+        } catch (err) {
+          return { ok: false as const, error: (err as Error).message }
+        }
+      },
+      stashDrop: async (cwd, index, conversationId) => {
+        const plane = await daemonReady()
+        if (!plane) return { ok: false as const, error: 'unavailable' }
+        try {
+          return (await plane.request('git.stashDrop', {
+            cwd,
+            index,
+            conversationId
+          })) as Awaited<ReturnType<VavApi['git']['stashDrop']>>
         } catch (err) {
           return { ok: false as const, error: (err as Error).message }
         }

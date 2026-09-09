@@ -47,19 +47,19 @@ test('Archive stays in the session list and selects the adjacent row above', asy
     await expect(sessionRow(page, E2E_SESSION_B_ID)).toHaveCount(0)
     await expect(sessionRow(page, E2E_SESSION_ID)).toHaveClass(/selected/)
 
-    // The archive view is reachable from the active service menu; Unarchive restores.
-    await page.locator('[data-testid="sidebar-connect"]').click()
-    await chooseNativeMenu(page, 'Archived · 1')
+    // The archive view is reachable from the category accordion; Unarchive restores.
+    await page.locator('[data-testid="sidebar-category-archived"]').click()
     await expect(sessionRow(page, E2E_SESSION_B_ID)).toBeVisible()
     await openSessionMenu(page, E2E_SESSION_B_ID)
     await expect
       .poll(async () => (await peekNativeMenu(page))?.map((item) => item.label) ?? [])
       .toEqual(expect.arrayContaining(['Unarchive', 'Delete']))
     await chooseNativeMenu(page, 'Unarchive')
-    await expect(sessionRow(page, E2E_SESSION_B_ID)).toHaveCount(0)
-
-    await page.locator('[data-testid="sidebar-archive-back"]').click()
     await expect(sessionRow(page, E2E_SESSION_B_ID)).toBeVisible()
+    await expect(page.locator('[data-testid="sidebar-category-task"]')).toHaveAttribute(
+      'data-expanded',
+      'true'
+    )
     await expect(page.locator('[data-testid="composer-input"]')).toBeVisible()
   } finally {
     await harness.dispose()

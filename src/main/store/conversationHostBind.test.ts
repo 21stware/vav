@@ -159,6 +159,75 @@ describe('ConversationStore host bind', () => {
     }
   })
 
+  it('does not clobber a paired-remote model from a sessions list stub', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'vav-host-sparse-'))
+    try {
+      const store = new ConversationStore(dir)
+      store.load({ model: 'm', mintWorkdir: () => join(dir, 'ws') })
+      store.adoptHostConversation(
+        {
+          id: 'remote-1',
+          title: 'Live',
+          createdAt: 1,
+          updatedAt: 5,
+          workingDirectory: join(dir, 'ws'),
+          model: 'grok-4.6',
+          cliHost: 'cursor',
+          agentBinaryName: 'cursor',
+          messages: [
+            { id: 'm1', role: 'user', content: 'hi', createdAt: 2 } as Conversation['messages'][number]
+          ]
+        } as Conversation,
+        'box-1'
+      )
+      const clobbered = store.adoptHostConversation(
+        {
+          id: 'remote-1',
+          title: 'Live',
+          createdAt: 1,
+          updatedAt: 6,
+          workingDirectory: join(dir, 'ws'),
+          model: 'unknown',
+          messages: []
+        } as Conversation,
+        'box-1'
+      )
+      assert.ok(clobbered)
+      assert.equal(clobbered.model, 'grok-4.6')
+      assert.equal(clobbered.cliHost, 'cursor')
+      assert.equal(clobbered.messages.length, 1)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('does not reset a local-shell model to unknown from a sessions list stub', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'vav-host-local-sparse-'))
+    try {
+      const store = new ConversationStore(dir)
+      store.load({ model: 'm', mintWorkdir: () => join(dir, 'ws') })
+      store.create(join(dir, 'ws'), 'grok-4.6', { id: 'e2e-session', cliHost: 'cursor' })
+      store.adoptHostConversation(
+        {
+          id: 'e2e-session',
+          title: 'E2E ACP live',
+          createdAt: 1,
+          updatedAt: 5,
+          workingDirectory: join(dir, 'ws'),
+          model: 'unknown',
+          cliHost: null,
+          messages: []
+        } as Conversation,
+        'local'
+      )
+      const row = store.get('e2e-session')
+      assert.equal(row?.model, 'grok-4.6')
+      assert.equal(row?.cliHost, 'cursor')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('keeps host-owned local rows in memory only', () => {
     const dir = mkdtempSync(join(tmpdir(), 'vav-host-persist-'))
     try {

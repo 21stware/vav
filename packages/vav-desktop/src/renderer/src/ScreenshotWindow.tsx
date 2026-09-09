@@ -34,6 +34,7 @@ import {
   normalizeRect,
   resizeCrop,
   resizeMark,
+  screenshotSessionCursor,
   type CropHandle,
   type CropRect,
   type MarkResizeHandle,
@@ -155,6 +156,29 @@ export default function ScreenshotWindow(): React.JSX.Element {
     if (!init) return
     document.documentElement.lang = init.locale === 'zh-CN' ? 'zh-CN' : 'en'
   }, [init])
+
+  useEffect(() => {
+    document.documentElement.classList.add('is-screenshotting')
+    return () => {
+      document.documentElement.classList.remove('is-screenshotting', 'has-crop')
+      document.documentElement.style.removeProperty('cursor')
+      document.body?.style.removeProperty('cursor')
+    }
+  }, [])
+
+  useEffect(() => {
+    const selecting =
+      screenshotSessionCursor({
+        hasUsableCrop: Boolean(crop && cropIsUsable(crop)),
+        creating: gesture?.kind === 'create'
+      }) === 'crosshair'
+    document.documentElement.classList.toggle('has-crop', !selecting)
+    if (selecting) {
+      document.documentElement.style.setProperty('cursor', 'crosshair', 'important')
+      document.body?.style.setProperty('cursor', 'crosshair', 'important')
+      rootRef.current?.style.setProperty('cursor', 'crosshair', 'important')
+    }
+  }, [crop, gesture])
 
   useEffect(() => {
     if (!init) return
@@ -507,7 +531,24 @@ export default function ScreenshotWindow(): React.JSX.Element {
 
   const setRootCursor = (value: string): void => {
     const root = rootRef.current
-    if (root) root.style.cursor = value
+    const box = cropRef.current
+    const creating = gestureRef.current?.kind === 'create'
+    const selecting =
+      screenshotSessionCursor({
+        hasUsableCrop: Boolean(box && cropIsUsable(box)),
+        creating
+      }) === 'crosshair'
+    const next = selecting ? 'crosshair' : value
+    document.documentElement.classList.toggle('has-crop', !selecting)
+    if (selecting) {
+      document.documentElement.style.setProperty('cursor', 'crosshair', 'important')
+      document.body?.style.setProperty('cursor', 'crosshair', 'important')
+      root?.style.setProperty('cursor', 'crosshair', 'important')
+      return
+    }
+    document.documentElement.style.removeProperty('cursor')
+    document.body?.style.removeProperty('cursor')
+    root?.style.setProperty('cursor', next)
   }
 
   const beginCropCreate = (
@@ -698,6 +739,9 @@ export default function ScreenshotWindow(): React.JSX.Element {
   const onPointerMove = (event: React.PointerEvent<HTMLDivElement>): void => {
     const liveGesture = gestureRef.current
     const box = cropRef.current
+    if (!liveGesture && !box) {
+      setRootCursor('crosshair')
+    }
     if (!liveGesture && box) {
       const hit = hitCrop(box, event.clientX, event.clientY, {
         interior: tool === 'move' ? 'move' : 'inside'
@@ -808,10 +852,12 @@ export default function ScreenshotWindow(): React.JSX.Element {
       if (!cropIsUsable(next)) {
         applyCropBox(null)
         setCrop(null)
+        setRootCursor('crosshair')
       } else {
         applyCropBox(next)
         setCrop(next)
         schedulePaint()
+        setRootCursor('default')
       }
       return
     }
@@ -850,9 +896,19 @@ export default function ScreenshotWindow(): React.JSX.Element {
     }
   }
 
-  if (!init) return <div className="screenshot-root" />
+  if (!init)
+    return (
+      <div className="screenshot-root">
+        <div className="screenshot-hit" aria-hidden="true" />
+      </div>
+    )
 
   const toolbar = crop && !gesture
+  const selecting =
+    screenshotSessionCursor({
+      hasUsableCrop: Boolean(crop && cropIsUsable(crop)),
+      creating: gesture?.kind === 'create'
+    }) === 'crosshair'
   const toolbarStyle = toolbar
     ? {
         left: Math.min(maxW - 420, Math.max(8, crop.x)),
@@ -863,13 +919,15 @@ export default function ScreenshotWindow(): React.JSX.Element {
   return (
     <div
       ref={rootRef}
-      className={`screenshot-root${busy ? ' is-done' : ''}`}
+      className={`screenshot-root${busy ? ' is-done' : ''}${selecting ? '' : ' has-crop'}`}
       data-testid="screenshot-overlay"
+      data-selecting={selecting ? 'true' : 'false'}
       data-selected-mark={selectedId ?? undefined}
       onContextMenu={(event) => {
         event.preventDefault()
         cancel()
       }}
+      onPointerEnter={() => setRootCursor(selecting ? 'crosshair' : 'default')}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
@@ -882,12 +940,14 @@ export default function ScreenshotWindow(): React.JSX.Element {
           src={imageUrl}
           alt=""
           draggable={false}
+          onDragStart={(event) => event.preventDefault()}
           onLoad={(event) => {
             if (!init) return
             void announcePainted(event.currentTarget, init.nonce)
           }}
         />
       ) : null}
+      <div className="screenshot-hit" aria-hidden="true" />
       {!crop ? <p className="screenshot-hint">{tt('screenshot.hint')}</p> : null}
       {crop ? (
         <div

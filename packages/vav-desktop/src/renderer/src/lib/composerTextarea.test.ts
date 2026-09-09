@@ -3,9 +3,8 @@ import { describe, it } from 'node:test'
 import {
   composerWheelStaysOnField,
   COMPOSER_MAX_ROWS,
-  fitComposerTextarea,
-  SCHEDULE_MAX_ROWS,
-  SCHEDULE_MIN_ROWS
+  COMPOSER_MIN_ROWS,
+  fitComposerTextarea
 } from './composerTextarea.ts'
 
 describe('composerWheelStaysOnField', () => {
@@ -56,36 +55,34 @@ describe('fitComposerTextarea', () => {
       style,
       scrollHeight: 400
     } as HTMLTextAreaElement
-    fitComposerTextarea(el, { focused: true, disabled: false, lineHeight: 20 })
+    fitComposerTextarea(el, { lineHeight: 20 })
     assert.equal(style.height, `${COMPOSER_MAX_ROWS * 20}px`)
     assert.equal(style.overflowY, 'auto')
   })
 
-  it('hides overflow when the draft is shorter than the cap', () => {
+  it('keeps a three-row floor when the draft is shorter', () => {
     const style: { height?: string; overflowY?: string } = {}
     const el = {
       style,
       scrollHeight: 40
     } as HTMLTextAreaElement
-    fitComposerTextarea(el, { focused: false, disabled: false, lineHeight: 20 })
-    assert.equal(style.height, '40px')
+    fitComposerTextarea(el, { lineHeight: 20 })
+    assert.equal(style.height, `${COMPOSER_MIN_ROWS * 20}px`)
     assert.equal(style.overflowY, 'hidden')
   })
 
-  it('uses schedule floors when minRows / maxRows are passed', () => {
+  it('uses explicit floors when minRows / maxRows are passed', () => {
     const style: { height?: string; overflowY?: string } = {}
     const el = {
       style,
       scrollHeight: 80
     } as HTMLTextAreaElement
     fitComposerTextarea(el, {
-      focused: false,
-      disabled: false,
       lineHeight: 20,
-      minRows: SCHEDULE_MIN_ROWS,
-      maxRows: SCHEDULE_MAX_ROWS
+      minRows: 10,
+      maxRows: 24
     })
-    assert.equal(style.height, `${SCHEDULE_MIN_ROWS * 20}px`)
+    assert.equal(style.height, '200px')
     assert.equal(style.overflowY, 'hidden')
   })
 })

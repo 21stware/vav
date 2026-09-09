@@ -113,20 +113,10 @@ export function FilesPanel({
   const ensureFilesLoaded = useWorkspaceStore((s) => s.ensureFilesLoaded)
   const setSort = useWorkspaceStore((s) => s.setSort)
   const selectPathRaw = useWorkspaceStore((s) => s.selectPath)
-  const attachContextFile = useSessionStore((s) => s.attachContextFile)
   const setSessionPreview = useSessionStore((s) => s.setSessionPreview)
-  /** Select tree path and drive the File Attachment Chip (files only). */
-  const selectPath = (
-    id: string,
-    path: string | null,
-    kind: 'file' | 'dir' | 'clear' = path ? 'file' : 'clear'
-  ): void => {
+  /** Highlight a tree path. Composer context is right-click / drag, not select. */
+  const selectPath = (id: string, path: string | null, _kind?: 'file' | 'dir' | 'clear'): void => {
     selectPathRaw(id, path)
-    if (kind === 'file' && path) {
-      void attachContextFile(id, path)
-    } else if (kind === 'clear' || kind === 'dir') {
-      void attachContextFile(id, null)
-    }
   }
   const loadDirectory = useWorkspaceStore((s) => s.loadDirectory)
   const temporary = isTemporaryWorkspace(conversation?.workingDirectory ?? null, tmp)
@@ -409,7 +399,7 @@ export function FilesPanel({
    * - → enter folder and focus **first child**
    * - ← leave to parent (at root: collapse open folder; never select invisible root)
    * - Enter / Space / double-click: side preview
-   * Highlight only on arrows — no attachContext / preview per key.
+   * Highlight only on arrows — no composer attach / preview per key.
    */
   useEffect(() => {
     if (!visible || !root || rootMissing) return

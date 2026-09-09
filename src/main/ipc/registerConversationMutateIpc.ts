@@ -172,7 +172,12 @@ export function registerConversationMutateIpc(
   )
 
   ipcMain.handle(IPC.convSetModel, async (_event, id: string, model: string) => {
-    if (await host.forwardConfigure?.(id, { model })) return store.listMeta()
+    if (await host.forwardConfigure?.(id, { model })) {
+      // Catalog pull / `sessions` list rows have no model. Re-apply the pick so
+      // the IPC result matches the picker instead of DeepSeek + `unknown`.
+      store.updateMeta(id, { model })
+      return store.listMeta()
+    }
     const conversation = store.get(id)
     const cliHost = (conversation?.cliHost ?? null) as CliHostKind | null
     const creds = host.resolveVavCredentials(conversation)

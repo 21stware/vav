@@ -79,6 +79,91 @@ export function acpSessionFromControls(controls?: RemoteControlsEvent | null): A
   }
 }
 
+/** Sentinel ConversationStore used to fill a missing model id. */
+export const UNKNOWN_REMOTE_MODEL = 'unknown'
+
+/**
+ * Control-plane `sessions` rows have title/pin/workdir only. Adopting one as a
+ * full Conversation would wipe model / cliHost (DeepSeek + `unknown`).
+ */
+export function isSparseRemoteConversation(source: {
+  model?: string | null
+  messages?: readonly unknown[] | null
+  tokensUsed?: number | null
+  tokenLimit?: number | null
+}): boolean {
+  const model = (source.model ?? '').trim()
+  return (
+    (!model || model === UNKNOWN_REMOTE_MODEL) &&
+    (!source.messages || source.messages.length === 0) &&
+    !source.tokensUsed &&
+    !source.tokenLimit
+  )
+}
+
+/** List chrome the `sessions` snapshot is allowed to write on an existing row. */
+export function conversationListPatchFromRemoteSession(
+  session: RemoteSession
+): Partial<ConversationMeta> {
+  const patch: Partial<ConversationMeta> = {
+    pinned: session.pinned === true,
+    pinTime: session.pinned ? (session.pinTime ?? session.updatedAt ?? Date.now()) : null
+  }
+  if (session.title) patch.title = session.title
+  if (typeof session.workdir === 'string') patch.workingDirectory = session.workdir || null
+  return patch
+}
+
+/** Host/model fields from a `controls` frame. Missing controls must not invent defaults. */
+export function conversationPatchFromRemoteControls(
+  controls: RemoteControlsEvent,
+  existing?: Pick<ConversationMeta, 'model' | 'cliHost' | 'agentBinaryName'> | null
+): Partial<ConversationMeta> {
+  const cliHost = cliHostFromAgent(controls.agent)
+  const thinking = asThinkingLevel(controls.thinking)
+  const acpSession = acpSessionFromControls(controls)
+  return {
+    model: controls.model || existing?.model,
+    approvalMode: asApprovalMode(controls.approval),
+    ...(thinking ? { thinkingLevel: thinking } : {}),
+    ...(typeof controls.fast === 'boolean' ? { fast: controls.fast } : {}),
+    cliHost: cliHost ?? existing?.cliHost ?? null,
+    agentBinaryName: cliHost ?? existing?.agentBinaryName ?? null,
+    ...(acpSession ? { acpSession } : {})
+  }
+}
+
+export type DesktopRemoteSessionDecision =
+  | { kind: 'skip' }
+  | { kind: 'patch'; patch: Partial<ConversationMeta> }
+  | { kind: 'adopt'; meta: ConversationMeta }
+
+/**
+ * Chrome remaps `sessions` + `controls` every time. Desktop persists rows, so a
+ * list-only snapshot must patch chrome — never replace model/host.
+ */
+export function desktopRemoteSessionApply(
+  session: RemoteSession,
+  opts: {
+    existing?: Pick<ConversationMeta, 'model' | 'cliHost' | 'agentBinaryName'> | null
+    existingIsLocal?: boolean
+    adoptAsLocal?: boolean
+    controls?: RemoteControlsEvent | null
+    host?: RemoteHostEvent | null
+  }
+): DesktopRemoteSessionDecision {
+  if (opts.existing && opts.existingIsLocal && !opts.adoptAsLocal) return { kind: 'skip' }
+  if (opts.existing) {
+    // List chrome only. Model/host arrive on `controls`; mixing a stale snapshot
+    // here is what snapped the picker back to DeepSeek + `unknown`.
+    return { kind: 'patch', patch: conversationListPatchFromRemoteSession(session) }
+  }
+  return {
+    kind: 'adopt',
+    meta: conversationFromRemoteSession(session, opts.controls, opts.host)
+  }
+}
+
 export function conversationFromRemoteSession(
   session: RemoteSession,
   controls?: RemoteControlsEvent | null,

@@ -13,5 +13,6 @@ describe('drivesNativeWindowTheme', () => {
     assert.equal(drivesNativeWindowTheme('?view=session&conversationId=1'), false)
     assert.equal(drivesNativeWindowTheme('?view=file-preview&path=/tmp/a'), false)
     assert.equal(drivesNativeWindowTheme('?view=token-usage'), false)
+    assert.equal(drivesNativeWindowTheme('?view=remote-folder'), false)
   })
 })

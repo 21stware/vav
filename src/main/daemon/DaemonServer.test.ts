@@ -941,6 +941,29 @@ describe('daemon loopback', () => {
     }
   })
 
+  it('serves git.log from the host working tree', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vav-daemon-git-log-'))
+    execFileSync('git', ['init', '-b', 'main'], { cwd: dir })
+    await writeFile(join(dir, 'hello.md'), 'from daemon git\n')
+    execFileSync('git', ['add', 'hello.md'], { cwd: dir })
+    execFileSync('git', ['-c', 'user.email=e2e@vav.test', '-c', 'user.name=e2e', 'commit', '-m', 'seed'], {
+      cwd: dir
+    })
+    const { server, client } = await startPair(dir)
+    try {
+      const log = (await client.request('git.log', { cwd: dir })) as {
+        ok?: boolean
+        data?: { commits?: Array<{ subject?: string }> }
+      }
+      assert.equal(log.ok, true)
+      assert.equal(log.data?.commits?.[0]?.subject, 'seed')
+    } finally {
+      client.close()
+      server.close()
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
   it('serves fileSessions.open from the host catalog', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'vav-daemon-filesess-'))
     const host = createLocalWorkspaceHost({ name: 'loop' })

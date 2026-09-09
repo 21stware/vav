@@ -156,7 +156,10 @@ const BEHAVIOR = {
     file: 'e2e/specs/send.spec.ts',
     needles: ['composer-send', 'e2e stub reply', 'launchWorkbench']
   },
-  '工作区功能': { file: 'e2e/specs/workspace.spec.ts', needles: ['files-new-file', 'hello.md', 'launchWorkbench'] },
+  '工作区功能': {
+    file: 'e2e/specs/workspace.spec.ts',
+    needles: ['files-new-file', 'hello.md', 'launchWorkbench', 'git-subtabs', 'segment-commits']
+  },
   '文件查看与选择对话': { file: 'e2e/specs/files-preview.spec.ts', needles: ['file-preview', 'hello.md', 'launchWorkbench'] },
   '远程连接': {
     file: 'e2e/specs/phone-remote.spec.ts',

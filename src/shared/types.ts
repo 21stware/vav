@@ -11,6 +11,7 @@ import type { CliPaneBinding } from './cliPaneBinding.ts'
 import type { CliHostKind, ProviderResumeCursor } from './cliHost.ts'
 import type { AcceleratorKeyBindingId } from './keyBindings.ts'
 import { KEEP_AWAKE_BATTERY_FLOOR_DEFAULT } from './sleepBlocker.ts'
+import { UI_ZOOM_DEFAULT } from './uiZoom.ts'
 import { DEFAULT_AUTO_UPDATE_POLICY, type AutoUpdatePolicy } from './updatePolicy.ts'
 import { VAV_DEFAULT_MODEL_ID } from './vavModelList.ts'
 import { LOCAL_MACHINE_ID, type WorkspaceRef } from './workspaceHost.ts'
@@ -195,13 +196,13 @@ export interface ChatMessage {
    */
   contextBlocks?: PreviewRef[]
   /**
-   * File Attachment Chip path at send time (snapshot). Shown on the message
-   * like the composer chip; the model still sees the open file via system
-   * prompt / focusedFilePath while the chip remains attached.
+   * Open-file context path at send time (snapshot). Painted with the same
+   * attachment tiles as {@link attachments}; the model still sees the open
+   * file via system prompt / focusedFilePath while this remains set.
    */
   contextFile?: string
   /**
-   * Paperclip paths attached at send time. Shown as chips; reconstituted for
+   * Paperclip paths attached at send time. Shown as tiles; reconstituted for
    * the model in history (not baked into {@link content}).
    */
   attachments?: string[]
@@ -1061,6 +1062,11 @@ export interface AppSettings {
   displayCurrency: DisplayCurrency
   codeFont: string
   fontSize: number
+  /**
+   * Whole-UI zoom factor (`1` = 100%). Appearance and View → Zoom In/Out
+   * share this value. Applied as Chromium zoomFactor on ordinary windows.
+   */
+  uiZoom: number
   reduceMotion: boolean
   /**
    * macOS: system window vibrancy (desktop blur behind the sidebar).
@@ -1266,6 +1272,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   displayCurrency: 'USD',
   codeFont: 'SF Mono',
   fontSize: 12,
+  uiZoom: UI_ZOOM_DEFAULT,
   reduceMotion: false,
   windowVibrancyEnabled: true,
   screenshotKeepWindowFront: true,

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { ChevronDown, ChevronRight, Pin, Star, Trash2 } from 'lucide-react'
+import { ChevronDown, ChevronRight, Pin, Star } from 'lucide-react'
 import type { ConversationMeta } from '@shared/types'
 import type { TimerJob, TimerRun } from '@shared/timer'
 import { useSessionStore } from '../../state/sessionStore'
@@ -11,7 +11,7 @@ import { showMenu, type MenuItem } from '../../lib/nativeMenu'
 import { lucideMenuIcon } from '../../lib/menuIcons'
 import { useT } from '../../i18n/useT'
 import { RenameField } from './RenameField'
-import { Button } from '../ui'
+import { ConvBracket, type SwarmBracketKind } from './ConvBracket'
 
 function runStatusLabel(status: TimerRun['status'], t: ReturnType<typeof useT>): string {
   if (status === 'running') return t('timer.runRunning')
@@ -39,8 +39,6 @@ export function TimerJobsPanel(): React.JSX.Element {
   const favoriteSet = useMemo(() => new Set(favoriteIds ?? []), [favoriteIds])
   const [jobs, setJobs] = useState<TimerJob[]>([])
   const [runs, setRuns] = useState<TimerRun[]>([])
-  const [, setLoading] = useState(false)
-  const [busyId, setBusyId] = useState<string | null>(null)
   const [archivedOpen, setArchivedOpen] = useState<Set<string>>(() => new Set())
   const weekday = (day: number): string => t(`timer.weekday.${day}` as 'timer.weekday.0')
 
@@ -56,7 +54,6 @@ export function TimerJobsPanel(): React.JSX.Element {
 
   const refresh = useCallback(async (): Promise<void> => {
     if (!window.vav?.timers) return
-    setLoading(true)
     try {
       const [nextJobs, nextRuns] = await Promise.all([
         window.vav.timers.listJobs(),
@@ -65,13 +62,12 @@ export function TimerJobsPanel(): React.JSX.Element {
       setJobs(nextJobs)
       setRuns(nextRuns)
       await hydrateSessions()
+      if (nextJobs.length === 0) void createScheduledConversation()
     } catch {
       setJobs([])
       setRuns([])
-    } finally {
-      setLoading(false)
     }
-  }, [hydrateSessions])
+  }, [createScheduledConversation, hydrateSessions])
 
   useEffect(() => {
     void refresh()
@@ -94,15 +90,12 @@ export function TimerJobsPanel(): React.JSX.Element {
   }
 
   const removeJob = async (job: TimerJob): Promise<void> => {
-    setBusyId(job.id)
-    try {
-      await window.vav.timers.removeJob(job.id)
-      await refresh()
-      const remaining = window.vav.timers.listJobs ? await window.vav.timers.listJobs() : []
-      if (remaining.length === 0) void createScheduledConversation()
-    } finally {
-      setBusyId(null)
+    if (job.conversationId) {
+      requestDelete([job.conversationId])
+      return
     }
+    await window.vav.timers?.removeJob(job.id)
+    await refresh()
   }
 
   const sessionMenu = (targets: ConversationMeta[]): MenuItem[] => {
@@ -185,7 +178,11 @@ export function TimerJobsPanel(): React.JSX.Element {
     ]
   }
 
-  const renderSession = (conversation: ConversationMeta, run?: TimerRun): React.JSX.Element => {
+  const renderSession = (
+    conversation: ConversationMeta,
+    run: TimerRun | undefined,
+    swarmBracket?: SwarmBracketKind
+  ): React.JSX.Element => {
     const isActive = conversation.id === activeId
     const isMultiSelected = selectedIds.length > 1 && selectedIds.includes(conversation.id)
     const index = orderedIds.indexOf(conversation.id)
@@ -201,6 +198,8 @@ export function TimerJobsPanel(): React.JSX.Element {
         key={conversation.id}
         className={`conv-row${isActive ? ' selected' : ''}${isMultiSelected ? ` multi ${runClass}` : ''}${
           conversation.archived ? ' is-archived' : ''
+        }${swarmBracket ? ' is-swarm-item' : ''}${swarmBracket === 'first' ? ' is-swarm-parent' : ''}${
+          swarmBracket && swarmBracket !== 'first' ? ' is-swarm-child' : ''
         }`}
         data-testid="timer-session-row"
         data-conversation-id={conversation.id}
@@ -226,6 +225,7 @@ export function TimerJobsPanel(): React.JSX.Element {
           void showMenu(sessionMenu(targets))
         }}
       >
+        {swarmBracket ? <ConvBracket kind={swarmBracket} /> : null}
         {renamingId === conversation.id ? (
           <RenameField
             initial={conversation.title}
@@ -279,93 +279,175 @@ export function TimerJobsPanel(): React.JSX.Element {
   return (
     <div className="timer-jobs" data-testid="timer-jobs">
       {jobs.map((job) => {
+        const definition = job.conversationId
+          ? conversations.find((row) => row.id === job.conversationId)
+          : undefined
         const { live, archived } = timerSessionsForJob(conversations, job.id)
         const jobRuns = runs.filter((run) => run.jobId === job.id)
         const unmatched = jobRuns.filter(
           (run) => !conversations.some((row) => row.id === run.conversationId)
         )
-        const busy = busyId === job.id
         const jobActive = job.conversationId === activeId
         const showArchived = archivedOpen.has(job.id)
+        const hasTree =
+          live.length + unmatched.length > 0 || (showArchived && archived.length > 0)
+        const title = flattenSessionTitle(definition?.title || job.title)
+        const sub = [
+          timerScheduleLabel(job.schedule, weekday),
+          job.enabled ? t('timer.enabled') : null,
+          job.nextRunAt ? relativeTime(job.nextRunAt) : null
+        ]
+          .filter(Boolean)
+          .join(' · ')
         return (
-          <div
-            key={job.id}
-            className={`timer-job${jobActive ? ' is-active' : ''}`}
-            data-testid={`timer-job-${job.id}`}
-          >
-            <div className="timer-job-head">
-              <button
-                type="button"
-                className="timer-job-copy"
-                data-conversation-id={job.conversationId ?? undefined}
-                onClick={() => void openJob(job)}
-              >
-                <div className="timer-job-title">{job.title}</div>
-                <div className="timer-job-sub">
-                  {timerScheduleLabel(job.schedule, weekday)}
-                  {job.enabled ? ` · ${t('timer.enabled')}` : ''}
-                  {job.nextRunAt ? ` · ${relativeTime(job.nextRunAt)}` : ''}
-                </div>
-              </button>
-              <Button
-                icon={<Trash2 size={13} />}
-                size="sm"
-                title={t('common.delete')}
-                disabled={busy}
-                onClick={() => void removeJob(job)}
-              />
-            </div>
-            {live.length === 0 && unmatched.length === 0 && archived.length === 0 ? (
-              <div className="timer-job-empty">{t('timer.noRuns')}</div>
-            ) : (
-              <div className="timer-job-sessions">
-                {live.map((row) =>
-                  renderSession(
-                    row,
-                    jobRuns.find((run) => run.conversationId === row.id)
-                  )
-                )}
-                {unmatched.map((run) => (
+          <div key={job.id} data-testid={`timer-job-${job.id}`}>
+            <div
+              className={`conv-row${jobActive ? ' selected' : ''}${
+                hasTree ? ' is-swarm-item is-swarm-parent' : ''
+              }`}
+              data-conversation-id={job.conversationId ?? undefined}
+              title={title}
+              onClick={(event) => {
+                if (event.detail > 1) return
+                if (job.conversationId) {
+                  void selectConversation(job.conversationId, {
+                    additive: event.metaKey || event.ctrlKey,
+                    range: event.shiftKey,
+                    rangeIds: orderedIds
+                  })
+                  return
+                }
+                void openJob(job)
+              }}
+              onContextMenu={(event) => {
+                event.preventDefault()
+                event.stopPropagation()
+                if (definition) {
+                  const targets =
+                    selectedIds.length > 1 && selectedIds.includes(definition.id)
+                      ? conversations.filter((row) => selectedIds.includes(row.id))
+                      : [definition]
+                  void showMenu(sessionMenu(targets))
+                  return
+                }
+                void showMenu([
+                  {
+                    label: t('sidebar.menu.delete'),
+                    icon: lucideMenuIcon('trash-2'),
+                    destructive: true,
+                    onSelect: () => void removeJob(job)
+                  }
+                ])
+              }}
+            >
+              {hasTree ? <ConvBracket kind="first" /> : null}
+              {definition && renamingId === definition.id ? (
+                <RenameField
+                  initial={definition.title}
+                  onCommit={(next) => void renameConversation(definition.id, next)}
+                  onCancel={() => beginRename(null)}
+                />
+              ) : (
+                <span className="conv-text">
+                  <span className="conv-title">{middleTruncate(title)}</span>
+                  <span className="conv-subtitle">
+                    <span className="conv-subtitle-text">{sub}</span>
+                  </span>
+                </span>
+              )}
+              {definition && renamingId !== definition.id ? (
+                <>
                   <button
-                    key={run.id}
                     type="button"
-                    className="file-session-item"
-                    data-conversation-id={run.conversationId}
-                    onClick={() => void selectConversation(run.conversationId)}
+                    className={`conv-star-hit${favoriteSet.has(definition.id) ? ' favorited' : ''}`}
+                    title={
+                      favoriteSet.has(definition.id)
+                        ? t('sidebar.menu.unfavorite')
+                        : t('sidebar.menu.favorite')
+                    }
+                    aria-pressed={favoriteSet.has(definition.id)}
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      void setFavorite(definition.id, !favoriteSet.has(definition.id))
+                    }}
                   >
-                    <span className="file-session-item-title">{runStatusLabel(run.status, t)}</span>
-                    <span className="file-session-item-sub">
+                    <Star size={10} strokeWidth={1.75} aria-hidden />
+                  </button>
+                  <button
+                    type="button"
+                    className={`conv-pin-hit${definition.pinned ? ' pinned' : ''}`}
+                    title={definition.pinned ? t('sidebar.menu.unpin') : t('sidebar.menu.pin')}
+                    aria-pressed={!!definition.pinned}
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      void setPinned(definition.id, !definition.pinned)
+                    }}
+                  >
+                    <Pin size={10} strokeWidth={1.75} aria-hidden />
+                  </button>
+                </>
+              ) : null}
+            </div>
+            {live.map((row, index) =>
+              renderSession(
+                row,
+                jobRuns.find((run) => run.conversationId === row.id),
+                index === live.length - 1 && unmatched.length === 0 && archived.length === 0
+                  ? 'last'
+                  : 'mid'
+              )
+            )}
+            {unmatched.map((run, index) => (
+              <div
+                key={run.id}
+                className="conv-row is-swarm-item is-swarm-child"
+                data-conversation-id={run.conversationId}
+                onClick={() => void selectConversation(run.conversationId)}
+              >
+                <ConvBracket
+                  kind={
+                    index === unmatched.length - 1 && archived.length === 0 ? 'last' : 'mid'
+                  }
+                />
+                <span className="conv-text">
+                  <span className="conv-title">{runStatusLabel(run.status, t)}</span>
+                  <span className="conv-subtitle">
+                    <span className="conv-subtitle-text">
                       {relativeTime(run.startedAt)}
                       {run.error ? ` · ${run.error}` : ''}
                     </span>
-                  </button>
-                ))}
-                {archived.length > 0 ? (
-                  <>
-                    <button
-                      type="button"
-                      className="timer-job-archived-toggle"
-                      onClick={() => {
-                        setArchivedOpen((prev) => {
-                          const next = new Set(prev)
-                          if (next.has(job.id)) next.delete(job.id)
-                          else next.add(job.id)
-                          return next
-                        })
-                      }}
-                    >
-                      {showArchived ? (
-                        <ChevronDown size={11} aria-hidden />
-                      ) : (
-                        <ChevronRight size={11} aria-hidden />
-                      )}
-                      {t('timer.archivedCount', { count: archived.length })}
-                    </button>
-                    {showArchived ? archived.map((row) => renderSession(row)) : null}
-                  </>
-                ) : null}
+                  </span>
+                </span>
               </div>
-            )}
+            ))}
+            {archived.length > 0 ? (
+              <>
+                <button
+                  type="button"
+                  className="conv-group-header interactive"
+                  onClick={() => {
+                    setArchivedOpen((prev) => {
+                      const next = new Set(prev)
+                      if (next.has(job.id)) next.delete(job.id)
+                      else next.add(job.id)
+                      return next
+                    })
+                  }}
+                >
+                  {showArchived ? (
+                    <ChevronDown size={11} aria-hidden />
+                  ) : (
+                    <ChevronRight size={11} aria-hidden />
+                  )}
+                  {t('timer.archivedCount', { count: archived.length })}
+                </button>
+                {showArchived
+                  ? archived.map((row, index) =>
+                      renderSession(row, undefined, index === archived.length - 1 ? 'last' : 'mid')
+                    )
+                  : null}
+              </>
+            ) : null}
           </div>
         )
       })}

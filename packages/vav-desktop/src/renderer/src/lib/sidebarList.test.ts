@@ -15,7 +15,10 @@ import {
   incomingConnectLabels,
   pinnableWorkspaceDir,
   nextVisibleSelectionAfterArchive,
-  filterFileSessionRows
+  filterFileSessionRows,
+  sidebarListModeOfConversation,
+  conversationFitsListMode,
+  nextConversationForListMode
 } from './sidebarList.ts'
 
 function conv(partial: Partial<ConversationMeta> & Pick<ConversationMeta, 'id'>): ConversationMeta {
@@ -207,6 +210,51 @@ describe('nextVisibleSelectionAfterArchive', () => {
     assert.equal(nextVisibleSelectionAfterArchive(ids, 'a', ['a', 'b', 'c', 'd']), null)
     assert.equal(nextVisibleSelectionAfterArchive(ids, 'c', ['x']), null)
     assert.equal(nextVisibleSelectionAfterArchive(ids, null, ['c']), null)
+  })
+})
+
+describe('sidebar list mode', () => {
+  it('maps file / timer / archived / task rows onto categories', () => {
+    assert.equal(sidebarListModeOfConversation(conv({ id: 't', sessionKind: 'timer' })), 'timers')
+    assert.equal(sidebarListModeOfConversation(conv({ id: 'f', fileId: 'ino-1' })), 'fileSessions')
+    assert.equal(
+      sidebarListModeOfConversation(conv({ id: 'a', archived: true, archivedAt: 9 })),
+      'archive'
+    )
+    assert.equal(sidebarListModeOfConversation(conv({ id: 'w' })), 'main')
+    assert.equal(
+      sidebarListModeOfConversation(conv({ id: 'af', fileId: 'ino-2', archived: true })),
+      'fileSessions'
+    )
+    assert.ok(conversationFitsListMode(conv({ id: 'w' }), 'main'))
+    assert.equal(conversationFitsListMode(conv({ id: 'a', archived: true }), 'main'), false)
+  })
+
+  it('keeps a matching selection and otherwise picks the newest row on this machine', () => {
+    const rows = [
+      conv({ id: 'old', updatedAt: 1 }),
+      conv({ id: 'live', updatedAt: 8 }),
+      conv({ id: 'arch', archived: true, archivedAt: 20, updatedAt: 2 }),
+      conv({ id: 'file', fileId: 'ino', updatedAt: 9 }),
+      conv({ id: 'job', sessionKind: 'timer', updatedAt: 4 }),
+      conv({ id: 'run', sessionKind: 'timer', timerRunId: 'r1', updatedAt: 12 })
+    ]
+    assert.equal(nextConversationForListMode(rows, 'main', 'live', 'local'), 'live')
+    assert.equal(nextConversationForListMode(rows, 'main', 'arch', 'local'), 'live')
+    assert.equal(nextConversationForListMode(rows, 'archive', 'live', 'local'), 'arch')
+    assert.equal(nextConversationForListMode(rows, 'fileSessions', 'live', 'local'), 'file')
+    assert.equal(nextConversationForListMode(rows, 'timers', 'live', 'local'), 'job')
+    assert.equal(nextConversationForListMode(rows, 'timers', 'run', 'local'), 'run')
+    assert.equal(nextConversationForListMode(rows, 'timers', null, 'local'), 'job')
+    assert.equal(
+      nextConversationForListMode(
+        [conv({ id: 'live', updatedAt: 8 })],
+        'timers',
+        'live',
+        'local'
+      ),
+      null
+    )
   })
 })
 

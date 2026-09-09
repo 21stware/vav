@@ -93,7 +93,6 @@ function PhoneChrome({ transport }: { transport: PhoneTransport }): React.JSX.El
         }
         if (id) {
           useWorkspaceStore.getState().selectPath(id, path)
-          void state.attachContextFile(id, path)
         }
         useSessionStore.getState().setSessionPreview({ kind: 'file' })
         useSessionStore.getState().setFilePreviewOpen(true)

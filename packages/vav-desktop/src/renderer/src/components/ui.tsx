@@ -206,6 +206,7 @@ export function Button({
   title,
   className,
   testId,
+  pressed,
   onClick
 }: {
   id?: string
@@ -217,9 +218,17 @@ export function Button({
   title?: string
   className?: string
   testId?: string
+  pressed?: boolean
   onClick?: (event: React.MouseEvent) => void
 }): React.JSX.Element {
-  const classes = ['btn', variant, size, !label && icon ? 'icon-only' : '', className]
+  const classes = [
+    'btn',
+    variant,
+    size,
+    !label && icon ? 'icon-only' : '',
+    pressed ? 'is-active-toggle' : '',
+    className
+  ]
     .filter(Boolean)
     .join(' ')
   const tip = title ?? label
@@ -231,6 +240,7 @@ export function Button({
       disabled={disabled}
       title={tip}
       aria-label={tip}
+      aria-pressed={pressed}
       data-testid={testId}
       onClick={onClick}
     >

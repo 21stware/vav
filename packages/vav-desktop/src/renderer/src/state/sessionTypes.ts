@@ -22,6 +22,7 @@ export type LiveUsage = {
 export type SessionPreview =
   | { kind: 'file' }
   | { kind: 'git'; cwd: string; entry: GitChangeEntry }
+  | { kind: 'git-patch'; cwd: string; spec: string; title: string }
   | { kind: 'github'; cwd: string; pull: GithubPullListItem }
   | { kind: 'github-action'; cwd: string; run: GithubActionRun }
   | { kind: 'github-site'; cwd: string; site: GithubSite }

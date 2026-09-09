@@ -1,14 +1,21 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
+import { basename, dirname, isAbsolute, resolve } from 'node:path'
 import { existsSync } from 'node:fs'
 import type {
+  GitBranchEntry,
+  GitBranchesPage,
   GitChangeEntry,
+  GitCommitEntry,
   GitFileStatus,
+  GitLogPage,
   GitResult,
   GitSnapshot,
+  GitStashEntry,
+  GitStashesPage,
   GitWorktreeInfo
 } from '@shared/git'
+import { suggestWorktreePath } from '@shared/git'
 import { localHostFs, type HostFs } from '../host/HostFs.ts'
 import { localHostProcess, type HostChild, type HostProcess } from '../host/HostProcess.ts'
 
@@ -524,21 +531,37 @@ export async function getGitDiff(
   }
 }
 
+function isGitBranchName(value: string): boolean {
+  return /^[A-Za-z0-9._/\-]+$/.test(value) && !value.startsWith('-') && !value.includes('..')
+}
+
+function isGitRefArg(value: string): boolean {
+  if (!value || value.length > 256 || value.startsWith('-') || value.includes('..')) return false
+  return /^[A-Za-z0-9._/@{}+\-^~]+$/.test(value)
+}
+
 export async function createGitBranch(
   cwd: string,
   name: string,
-  opts?: { checkout?: boolean; conversationId?: string }
+  opts?: { checkout?: boolean; startPoint?: string; conversationId?: string }
 ): Promise<GitResult<{ branch: string }>> {
   const branch = name.trim()
-  if (!/^[A-Za-z0-9._/\-]+$/.test(branch) || branch.startsWith('-')) {
+  if (!isGitBranchName(branch)) {
     return { ok: false, error: 'Invalid branch name' }
+  }
+  const start = opts?.startPoint?.trim()
+  if (start && !isGitRefArg(start)) {
+    return { ok: false, error: 'Invalid start point' }
   }
   try {
     const ready = await cwdReady(cwd, opts?.conversationId)
+    const extra = start ? [start] : []
     if (opts?.checkout !== false) {
-      await git(ready.abs, ['checkout', '-b', branch], { conversationId: opts?.conversationId })
+      await git(ready.abs, ['checkout', '-b', branch, ...extra], {
+        conversationId: opts?.conversationId
+      })
     } else {
-      await git(ready.abs, ['branch', branch], { conversationId: opts?.conversationId })
+      await git(ready.abs, ['branch', branch, ...extra], { conversationId: opts?.conversationId })
     }
     return { ok: true, data: { branch } }
   } catch (err) {
@@ -553,8 +576,35 @@ export async function checkoutGitBranch(
 ): Promise<GitResult<{ branch: string }>> {
   const branch = name.trim()
   if (!branch) return { ok: false, error: 'Branch required' }
+  if (!isGitRefArg(branch)) return { ok: false, error: 'Invalid branch name' }
   try {
     const ready = await cwdReady(cwd, conversationId)
+    const heads = await git(ready.abs, ['show-ref', '--verify', '--quiet', `refs/heads/${branch}`], {
+      allowFail: true,
+      conversationId
+    })
+    if (heads.code === 0) {
+      await git(ready.abs, ['checkout', branch], { conversationId })
+      return { ok: true, data: { branch } }
+    }
+    const remotes = await git(
+      ready.abs,
+      ['show-ref', '--verify', '--quiet', `refs/remotes/${branch}`],
+      { allowFail: true, conversationId }
+    )
+    if (remotes.code === 0) {
+      const short = branch.includes('/') ? branch.slice(branch.indexOf('/') + 1) : branch
+      const local = await git(ready.abs, ['show-ref', '--verify', '--quiet', `refs/heads/${short}`], {
+        allowFail: true,
+        conversationId
+      })
+      if (local.code === 0) {
+        await git(ready.abs, ['checkout', short], { conversationId })
+        return { ok: true, data: { branch: short } }
+      }
+      await git(ready.abs, ['checkout', '--track', branch], { conversationId })
+      return { ok: true, data: { branch: short } }
+    }
     await git(ready.abs, ['checkout', branch], { conversationId })
     return { ok: true, data: { branch } }
   } catch (err) {
@@ -605,15 +655,284 @@ export async function createGitWorktree(
   }
 }
 
-/** Suggested sibling path for a new worktree. */
-export function suggestWorktreePath(primaryPath: string, branchName: string): string {
-  const project = basename(primaryPath)
-  const slug = branchName
-    .trim()
-    .replace(/[^A-Za-z0-9._\-]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 48) || 'worktree'
-  return join(dirname(primaryPath), `${project}-${slug}`)
+export { suggestWorktreePath }
+
+const LOG_LIMIT = 200
+const LOG_FORMAT = '%H%x00%h%x00%ct%x00%an%x00%s'
+const BRANCH_FORMAT =
+  '%(refname)%00%(refname:short)%00%(objectname)%00%(objectname:short)%00%(committerdate:unix)%00%(subject)%00%(upstream:short)%00%(upstream:track)%00%(HEAD)%00%(symref)'
+const STASH_FORMAT = '%gd%x00%H%x00%h%x00%ct%x00%s'
+
+function parseTrack(raw: string): { ahead: number; behind: number; gone: boolean } {
+  return {
+    ahead: Number(/ahead (\d+)/.exec(raw)?.[1] ?? 0) || 0,
+    behind: Number(/behind (\d+)/.exec(raw)?.[1] ?? 0) || 0,
+    gone: /\[gone\]/.test(raw)
+  }
+}
+
+function parseLog(text: string): GitCommitEntry[] {
+  const out: GitCommitEntry[] = []
+  for (const line of text.split('\n')) {
+    if (!line) continue
+    const [sha, shortSha, date, author, subject] = line.split('\0')
+    if (!sha || !shortSha) continue
+    out.push({
+      sha,
+      shortSha,
+      subject: subject ?? '',
+      author: author ?? '',
+      date: (Number(date) || 0) * 1000
+    })
+  }
+  return out
+}
+
+function parseBranches(text: string): GitBranchesPage {
+  const local: GitBranchEntry[] = []
+  const remote: GitBranchEntry[] = []
+  for (const line of text.split('\n')) {
+    if (!line) continue
+    const [
+      refname,
+      short,
+      sha,
+      shortSha,
+      date,
+      subject,
+      upstream,
+      track,
+      head,
+      symref
+    ] = line.split('\0')
+    if (!refname || !short || !sha) continue
+    if (symref) continue
+    const isRemote = refname.startsWith('refs/remotes/')
+    const isLocal = refname.startsWith('refs/heads/')
+    if (!isRemote && !isLocal) continue
+    let remoteName: string | null = null
+    let name = short
+    if (isRemote) {
+      const rest = refname.slice('refs/remotes/'.length)
+      const slash = rest.indexOf('/')
+      remoteName = slash >= 0 ? rest.slice(0, slash) : rest
+      name = slash >= 0 ? rest.slice(slash + 1) : rest
+      if (name === 'HEAD') continue
+    }
+    const { ahead, behind, gone } = parseTrack(track ?? '')
+    const entry: GitBranchEntry = {
+      name,
+      fullName: short,
+      sha,
+      shortSha: shortSha || sha.slice(0, 7),
+      subject: subject ?? '',
+      date: (Number(date) || 0) * 1000,
+      current: head === '*',
+      upstream: upstream || null,
+      ahead,
+      behind,
+      gone,
+      remote: remoteName
+    }
+    if (isRemote) remote.push(entry)
+    else local.push(entry)
+  }
+  return { local, remote }
+}
+
+function parseStashes(text: string): GitStashEntry[] {
+  const out: GitStashEntry[] = []
+  for (const line of text.split('\n')) {
+    if (!line) continue
+    const [selector, sha, shortSha, date, subject] = line.split('\0')
+    if (!selector || !sha) continue
+    const index = Number(/^stash@\{(\d+)\}$/.exec(selector.trim())?.[1] ?? -1)
+    if (index < 0) continue
+    out.push({
+      index,
+      selector: selector.trim(),
+      sha,
+      shortSha: shortSha || sha.slice(0, 7),
+      subject: subject ?? '',
+      date: (Number(date) || 0) * 1000
+    })
+  }
+  return out
+}
+
+async function requireRepo(
+  cwd: string,
+  conversationId?: string
+): Promise<GitResult<{ abs: string }>> {
+  const snap = await getGitSnapshot(cwd, conversationId)
+  if (!snap.isRepo) {
+    return { ok: false, error: snap.error || 'Not a git repository' }
+  }
+  return { ok: true, data: { abs: snap.cwd } }
+}
+
+export async function listGitLog(
+  cwd: string,
+  opts?: { limit?: number; conversationId?: string }
+): Promise<GitResult<GitLogPage>> {
+  try {
+    const ready = await requireRepo(cwd, opts?.conversationId)
+    if (!ready.ok) return ready
+    const limit = Math.min(Math.max(opts?.limit ?? LOG_LIMIT, 1), 500)
+    const listed = await git(ready.data.abs, ['log', `-n${limit}`, `--format=${LOG_FORMAT}`], {
+      allowFail: true,
+      conversationId: opts?.conversationId
+    })
+    if (listed.code !== 0) {
+      if (/does not have any commits|bad default revision|unknown revision/i.test(listed.stderr)) {
+        return { ok: true, data: { commits: [] } }
+      }
+      return { ok: false, error: listed.stderr.trim() || 'git log failed' }
+    }
+    return { ok: true, data: { commits: parseLog(listed.stdout) } }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  }
+}
+
+export async function listGitBranches(
+  cwd: string,
+  conversationId?: string
+): Promise<GitResult<GitBranchesPage>> {
+  try {
+    const ready = await requireRepo(cwd, conversationId)
+    if (!ready.ok) return ready
+    const listed = await git(
+      ready.data.abs,
+      ['for-each-ref', `--format=${BRANCH_FORMAT}`, '--sort=-committerdate', 'refs/heads', 'refs/remotes'],
+      { conversationId }
+    )
+    return { ok: true, data: parseBranches(listed.stdout) }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  }
+}
+
+export async function listGitStashes(
+  cwd: string,
+  conversationId?: string
+): Promise<GitResult<GitStashesPage>> {
+  try {
+    const ready = await requireRepo(cwd, conversationId)
+    if (!ready.ok) return ready
+    const listed = await git(ready.data.abs, ['stash', 'list', `--format=${STASH_FORMAT}`], {
+      allowFail: true,
+      conversationId
+    })
+    if (listed.code !== 0) {
+      return { ok: false, error: listed.stderr.trim() || 'git stash list failed' }
+    }
+    return { ok: true, data: { stashes: parseStashes(listed.stdout) } }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  }
+}
+
+export async function getGitPatch(
+  cwd: string,
+  spec: string,
+  conversationId?: string
+): Promise<GitResult<string>> {
+  const ref = spec.trim()
+  if (!isGitRefArg(ref)) return { ok: false, error: 'Invalid revision' }
+  try {
+    const ready = await requireRepo(cwd, conversationId)
+    if (!ready.ok) return ready
+    const shown = await git(ready.data.abs, ['show', '--format=medium', '--stat', '-p', ref], {
+      allowFail: true,
+      conversationId
+    })
+    if (shown.code !== 0) {
+      return { ok: false, error: shown.stderr.trim() || 'git show failed' }
+    }
+    return { ok: true, data: shown.stdout || '(empty)' }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  }
+}
+
+export async function deleteGitBranch(
+  cwd: string,
+  name: string,
+  conversationId?: string
+): Promise<GitResult<{ branch: string }>> {
+  const branch = name.trim()
+  if (!isGitBranchName(branch)) return { ok: false, error: 'Invalid branch name' }
+  try {
+    const snap = await getGitSnapshot(cwd, conversationId)
+    if (!snap.isRepo) return { ok: false, error: snap.error || 'Not a git repository' }
+    if (snap.branch === branch) {
+      return { ok: false, error: 'Cannot delete the current branch' }
+    }
+    await git(snap.cwd, ['branch', '-d', branch], { conversationId })
+    return { ok: true, data: { branch } }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  }
+}
+
+export async function stashGitPush(
+  cwd: string,
+  opts?: { message?: string; conversationId?: string }
+): Promise<GitResult<{ selector: string | null }>> {
+  try {
+    const ready = await requireRepo(cwd, opts?.conversationId)
+    if (!ready.ok) return ready
+    const message = opts?.message?.trim()
+    const args = ['stash', 'push']
+    if (message) args.push('-m', message)
+    await git(ready.data.abs, args, { conversationId: opts?.conversationId })
+    const listed = await listGitStashes(cwd, opts?.conversationId)
+    const selector = listed.ok ? listed.data.stashes[0]?.selector ?? null : null
+    return { ok: true, data: { selector } }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  }
+}
+
+export async function stashGitApply(
+  cwd: string,
+  index: number,
+  opts?: { pop?: boolean; conversationId?: string }
+): Promise<GitResult<{ selector: string }>> {
+  if (!Number.isInteger(index) || index < 0) {
+    return { ok: false, error: 'Invalid stash' }
+  }
+  const selector = `stash@{${index}}`
+  try {
+    const ready = await requireRepo(cwd, opts?.conversationId)
+    if (!ready.ok) return ready
+    await git(ready.data.abs, ['stash', opts?.pop ? 'pop' : 'apply', selector], {
+      conversationId: opts?.conversationId
+    })
+    return { ok: true, data: { selector } }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  }
+}
+
+export async function stashGitDrop(
+  cwd: string,
+  index: number,
+  conversationId?: string
+): Promise<GitResult<{ selector: string }>> {
+  if (!Number.isInteger(index) || index < 0) {
+    return { ok: false, error: 'Invalid stash' }
+  }
+  const selector = `stash@{${index}}`
+  try {
+    const ready = await requireRepo(cwd, conversationId)
+    if (!ready.ok) return ready
+    await git(ready.data.abs, ['stash', 'drop', selector], { conversationId })
+    return { ok: true, data: { selector } }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  }
 }
 
 /** `git init` (+ default branch) so an ordinary folder becomes a repo. */

@@ -211,15 +211,15 @@ export function handleMenuCommand(command: MenuCommand): void {
       break
     case 'show-sessions':
       ensureSidebarVisible()
-      store.setSidebarListMode('main')
+      store.activateSidebarListMode('main')
       break
     case 'show-archive':
       ensureSidebarVisible()
-      store.setSidebarListMode('archive')
+      store.activateSidebarListMode('archive')
       break
     case 'show-file-sessions':
       ensureSidebarVisible()
-      store.setSidebarListMode('fileSessions')
+      store.activateSidebarListMode('fileSessions')
       break
     case 'check-updates':
       store.openSettings('about')

@@ -10,6 +10,7 @@ import {
   nativeFileDragProps,
   nativeOsFileActionsAvailable
 } from '../../lib/nativeFileDrag'
+import { addFilesToComposer } from '../../lib/composerAttach'
 import { useSessionStore } from '../../state/sessionStore'
 import { Button } from '../ui'
 import { useT } from '../../i18n/useT'
@@ -80,6 +81,11 @@ export function FileViewerHeader({
             const id = useSessionStore.getState().activeId
             void showMenu(
               [
+                {
+                  label: t('files.addToComposer'),
+                  onSelect: () => addFilesToComposer([filePath])
+                },
+                { label: '', divider: true },
                 {
                   label: t('preview.openWithDefault'),
                   onSelect: () => void window.vav.files.openWithDefault(filePath)
@@ -170,10 +176,9 @@ export function FileViewerHeader({
         {!effectiveReadOnly && (
           <div className={`preview-save-group${hasUnsavedChanges ? ' is-dirty' : ''}`}>
             <Button
-              icon={<Save size={13} />}
+              icon={<Save size={14} />}
               label={t('preview.save')}
               variant={hasUnsavedChanges ? 'primary' : 'secondary'}
-              size="sm"
               className="preview-save-main"
               disabled={!hasUnsavedChanges}
               title={`${t('preview.save')} (⌘S)`}
@@ -182,7 +187,6 @@ export function FileViewerHeader({
             <Button
               icon={<ChevronDown size={14} />}
               variant={hasUnsavedChanges ? 'primary' : 'secondary'}
-              size="sm"
               className="preview-save-more"
               title={t('preview.moreActions')}
               onClick={(event) => {
@@ -228,7 +232,6 @@ export function FileViewerHeader({
         )}
         <Button
           icon={<FileManagerIcon size={14} />}
-          size="sm"
           className={embedded ? undefined : 'titlebar-no-drag'}
           title={t('tools.revealInFm', { fileManager: fileManagerLabel() })}
           onClick={() => {
@@ -245,7 +248,6 @@ export function FileViewerHeader({
         {embedded && onClose ? (
           <Button
             icon={<X size={14} />}
-            size="sm"
             testId="file-preview-close"
             title={t('common.close')}
             onClick={onClose}

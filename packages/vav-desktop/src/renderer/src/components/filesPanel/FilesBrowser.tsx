@@ -6,6 +6,7 @@ import { useWorkspaceStore } from '../../state/workspaceStore'
 import { useT, tt } from '../../i18n/useT'
 import { basename } from '../../lib/path'
 import { formatBytes } from '../../lib/format'
+import { addFilesToComposer } from '../../lib/composerAttach'
 import { showMenu, type MenuItem } from '../../lib/nativeMenu'
 import { fileManagerLabel, IS_MAC } from '../../lib/platform'
 import {
@@ -14,6 +15,7 @@ import {
 } from '../../lib/nativeFileDrag'
 import { setUiFocusScope } from '../../lib/uiFocus'
 import { InlineAlert } from '../ui'
+import { FolderEmptyState } from './FolderEmpty'
 import { prefetchForPath } from '../../lib/prefetchHeavy'
 import { openFileInSessionPreview } from '../../lib/openSessionFile'
 import { expandedAfterCollapseAll, EXPAND_ALL_MAX_DIRS } from '../../lib/filesPanelExpand'
@@ -58,18 +60,8 @@ export function ColumnBrowser({
   const selectedPath = useWorkspaceStore((s) => s.workspaces[activeId]?.selectedPath ?? null)
   const loadDirectory = useWorkspaceStore((s) => s.loadDirectory)
   const selectPathRaw = useWorkspaceStore((s) => s.selectPath)
-  const attachContextFile = useSessionStore((s) => s.attachContextFile)
-  const selectPath = (
-    id: string,
-    path: string | null,
-    kind: 'file' | 'dir' | 'clear' = path ? 'file' : 'clear'
-  ): void => {
+  const selectPath = (id: string, path: string | null, _kind?: 'file' | 'dir' | 'clear'): void => {
     selectPathRaw(id, path)
-    if (kind === 'file' && path) {
-      void attachContextFile(id, path)
-    } else {
-      void attachContextFile(id, null)
-    }
   }
   const columns = [root, ...columnPath]
   const columnsKey = columns.join('\0')
@@ -142,7 +134,7 @@ export function ColumnBrowser({
                 onCancel={onCreateCancel}
               />
             )}
-            {!error && (
+            {!error && entries.length > 0 && (
               <VirtualColumnRows
                 entries={entries}
                 dir={dir}
@@ -156,10 +148,8 @@ export function ColumnBrowser({
                 onMutated={onMutated}
               />
             )}
-            {!error && !loading && entries.length === 0 && dirs?.[dir] && (
-              <div className="muted tiny" style={{ padding: 8 }}>
-                {tt('files.emptyFolder')}
-              </div>
+            {!error && !loading && entries.length === 0 && dirs?.[dir] && creating?.dir !== dir && (
+              <FolderEmptyState />
             )}
           </div>
         )
@@ -268,7 +258,7 @@ function VirtualColumnRows({
             onDoubleClick={() => {
               if (!entry.isDirectory) openFileInSessionPreview(entry.path)
             }}
-            {...nativeFileDragProps(entry.path)}
+            {...nativeFileDragProps(entry.path, { isDirectory: entry.isDirectory })}
             onContextMenu={(event) => {
               event.preventDefault()
               event.stopPropagation()
@@ -381,12 +371,7 @@ export function TreeLevel({
         />
       )}
       {list.length === 0 && !showCreate && (
-        <div
-          className="muted tiny"
-          style={{ paddingLeft: level * 14 + 22, height: 24, lineHeight: '24px' }}
-        >
-          {tt('files.emptyFolder')}
-        </div>
+        <FolderEmptyState compact={level > 0} padLeft={level > 0 ? level * 14 + 22 : undefined} />
       )}
       {list.map((entry) => (
         <TreeRow
@@ -491,11 +476,8 @@ function TreeRow({
   const selected = useWorkspaceStore((s) => s.workspaces[activeId]?.selectedPath === entry.path)
   const toggleExpand = useWorkspaceStore((s) => s.toggleExpand)
   const selectPathRaw = useWorkspaceStore((s) => s.selectPath)
-  const attachContextFile = useSessionStore((s) => s.attachContextFile)
-  const selectEntry = (path: string, isDirectory: boolean): void => {
+  const selectEntry = (path: string): void => {
     selectPathRaw(activeId, path)
-    if (isDirectory) void attachContextFile(activeId, null)
-    else void attachContextFile(activeId, path)
   }
   const [renaming, setRenaming] = useState(false)
   const [draft, setDraft] = useState(entry.name)
@@ -510,7 +492,9 @@ function TreeRow({
         aria-expanded={entry.isDirectory ? !!expanded : undefined}
         style={{ paddingLeft: level * 14 + 10 }}
         title={entry.path}
-        {...(renaming ? { draggable: false as const } : nativeFileDragProps(entry.path))}
+        {...(renaming
+          ? { draggable: false as const }
+          : nativeFileDragProps(entry.path, { isDirectory: entry.isDirectory }))}
         onMouseEnter={() => {
           if (!entry.isDirectory) prefetchForPath(entry.path)
         }}
@@ -518,7 +502,7 @@ function TreeRow({
           event.stopPropagation()
           setUiFocusScope('files')
           if (!entry.isDirectory) prefetchForPath(entry.path)
-          selectEntry(entry.path, entry.isDirectory)
+          selectEntry(entry.path)
           if (entry.isDirectory) void toggleExpand(activeId, entry.path)
         }}
         onDoubleClick={() => {
@@ -528,7 +512,7 @@ function TreeRow({
           event.preventDefault()
           event.stopPropagation()
           setUiFocusScope('files')
-          selectEntry(entry.path, entry.isDirectory)
+          selectEntry(entry.path)
           void showEntryMenu(entry, {
             onOpen,
             onPreview: () => openFileInSessionPreview(entry.path),
@@ -675,6 +659,15 @@ async function showEntryMenu(
         }
       ]
     : [
+        {
+          label: tt('files.addToComposer'),
+          onSelect: () => {
+            const id = useSessionStore.getState().activeId
+            if (!id) return
+            addFilesToComposer([entry.path], id)
+          }
+        },
+        { label: '', divider: true },
         ...(options.onPreview
           ? [{ label: tt('common.preview'), onSelect: () => options.onPreview?.(entry.path) }]
           : []),
@@ -686,21 +679,6 @@ async function showEntryMenu(
         {
           label: tt('files.quickLook'),
           onSelect: () => void window.vav.files.quickLook(entry.path)
-        },
-        {
-          label: tt('files.insertToAgent'),
-          onSelect: () => {
-            const id = useSessionStore.getState().activeId
-            if (!id) return
-            void useSessionStore
-              .getState()
-              .attachContextFile(id, entry.path)
-              .then(() =>
-                import('../../lib/cliFocusHandoff').then(({ handoffFileFocusToCli }) =>
-                  handoffFileFocusToCli(id, entry.path)
-                )
-              )
-          }
         },
         { label: '', divider: true },
         ...osFileMenuItems(entry.path, { copyContents: true }),

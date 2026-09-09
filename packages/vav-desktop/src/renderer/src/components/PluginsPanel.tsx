@@ -7,7 +7,7 @@ import {
   type PluginRecord,
   type PluginSnapshot
 } from '@shared/plugins'
-import { Button, EmptyState } from './ui'
+import { Button, EmptyState, Segmented } from './ui'
 import { useT } from '../i18n/useT'
 import { openFileInSessionPreview } from '../lib/openSessionFile'
 
@@ -176,43 +176,29 @@ export function PluginsPanel({
   if (!snapshot || snapshot.plugins.length === 0) {
     return (
       <div className="plugins-panel">
-        <EmptyState
-          title={t('plugins.emptyTitle')}
-          description={snapshot?.writable ? t('plugins.emptyDescVav') : t('plugins.emptyDescHost')}
-        />
+        <EmptyState title={t('plugins.emptyTitle')} />
       </div>
     )
   }
 
   return (
     <div className="plugins-panel">
-      <header className="plugins-panel-meta">
-        <span className="plugins-panel-host" title={snapshot.root}>
-          {snapshot.hostLabel}
-          {snapshot.root ? ` · ${snapshot.root}` : ''}
-        </span>
-        {!snapshot.writable && <span className="plugins-panel-hint">{t('plugins.acpReadonly')}</span>}
-        {error && <span className="plugins-panel-error">{error}</span>}
-      </header>
-      <div className="plugins-panel-filters" role="tablist" aria-label={t('plugins.filterAria')}>
-        {(['all', 'skill', 'mcp', 'hook'] as const).map((key) => (
-          <button
-            key={key}
-            type="button"
-            role="tab"
-            aria-selected={filter === key}
-            className={`plugins-filter${filter === key ? ' is-active' : ''}`}
-            onClick={() => setFilter(key)}
-          >
-            {key === 'all'
-              ? t('plugins.filterAll')
-              : key === 'skill'
-                ? t('plugins.kindSkill')
-                : key === 'mcp'
-                  ? t('plugins.kindMcp')
-                  : t('plugins.kindHook')}
-          </button>
-        ))}
+      {error ? (
+        <div className="plugins-panel-error" role="alert">
+          {error}
+        </div>
+      ) : null}
+      <div className="plugins-panel-filters" aria-label={t('plugins.filterAria')}>
+        <Segmented<PluginFilter>
+          value={filter}
+          onChange={setFilter}
+          options={[
+            { value: 'all', label: t('plugins.filterAll'), title: t('plugins.filterAll') },
+            { value: 'skill', label: t('plugins.kindSkill'), title: t('plugins.kindSkill') },
+            { value: 'mcp', label: t('plugins.kindMcp'), title: t('plugins.kindMcp') },
+            { value: 'hook', label: t('plugins.kindHook'), title: t('plugins.kindHook') }
+          ]}
+        />
       </div>
       <div className={`plugins-panel-body${selected ? '' : ' is-list-only'}`}>
         <ul className="plugins-list">

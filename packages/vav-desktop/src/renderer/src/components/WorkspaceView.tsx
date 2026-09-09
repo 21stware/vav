@@ -27,7 +27,7 @@ import { Button, EmptyState } from './ui'
 import { SessionDetail, type FileSessionChromeProps } from './SessionDetail'
 import { ScheduleEditor } from './ScheduleEditor'
 import { isTimerDefinition } from '@shared/sessionKind'
-import { GitDiffPreview } from './GitChangesPanel'
+import { GitDiffPreview, GitPatchPreview } from './GitChangesPanel'
 import {
   GithubActionPreview,
   GithubPullPreview,
@@ -110,7 +110,6 @@ export function WorkspaceView({
   const t = useT()
   const activeId = useSessionStore((s) => s.activeId) || conversationId
   const conversation = useSessionStore((s) => s.conversations.find((row) => row.id === activeId))
-  const attachContextFile = useSessionStore((s) => s.attachContextFile)
   const previewOpen = useSessionStore((s) => s.filePreviewOpen)
   const sessionPreview = useSessionStore((s) => s.sessionPreview)
   const setFilePreviewOpen = useSessionStore((s) => s.setFilePreviewOpen)
@@ -276,13 +275,6 @@ export function WorkspaceView({
     return selectedPath
   }, [selectedPath, workspaceRoot, workspaceDirs, workdir])
 
-  // Auto-attach File Attachment Chip for VAV when the preview file changes.
-  useEffect(() => {
-    if (!activeId) return
-    if (previewFilePath) void attachContextFile(activeId, previewFilePath)
-    else void attachContextFile(activeId, null)
-  }, [activeId, previewFilePath, attachContextFile])
-
   useEffect(() => {
     prefetchForPath(previewFilePath)
   }, [previewFilePath])
@@ -302,9 +294,8 @@ export function WorkspaceView({
     onNewSession: () => undefined,
     trail: (
       <Button
-        /* Counterpart of left-sidebar PanelLeft — same glyph family, right side. */
+        /* Counterpart of left-sidebar PanelLeft — same 28×28 / 14px chrome. */
         icon={<PanelRight size={14} />}
-        size="sm"
         variant="ghost"
         className={previewOpen ? 'is-active-toggle' : undefined}
         title={previewOpen ? t('workspace.hidePreview') : t('workspace.showPreview')}
@@ -352,6 +343,14 @@ export function WorkspaceView({
             <GitDiffPreview
               cwd={sessionPreview.cwd}
               entry={sessionPreview.entry}
+              onClose={closeFilePreview}
+            />
+          ) : previewMounted && sessionPreview.kind === 'git-patch' ? (
+            <GitPatchPreview
+              key={`patch-${sessionPreview.spec}`}
+              cwd={sessionPreview.cwd}
+              spec={sessionPreview.spec}
+              title={sessionPreview.title}
               onClose={closeFilePreview}
             />
           ) : previewMounted && sessionPreview.kind === 'github' ? (
@@ -410,7 +409,6 @@ export function WorkspaceView({
                 <span className="spacer" />
                 <Button
                   icon={<X size={14} />}
-                  size="sm"
                   title={t('common.close')}
                   onClick={closeFilePreview}
                 />

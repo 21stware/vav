@@ -53,6 +53,27 @@ test('Open Settings from the no-key empty state opens Providers', async () => {
   }
 })
 
+test('empty session does not reserve a blank foot or extra bottom padding', async () => {
+  const harness = await launchWorkbench()
+  try {
+    const { page } = harness
+    const empty = page.locator('.empty-state-session')
+    await expect(empty).toBeVisible()
+    const layout = await empty.evaluate((el) => {
+      const cs = getComputedStyle(el)
+      const foot = el.querySelector('.empty-state-foot')
+      return {
+        paddingBottom: parseFloat(cs.paddingBottom),
+        footHeight: foot instanceof HTMLElement ? foot.getBoundingClientRect().height : -1
+      }
+    })
+    expect(layout.paddingBottom).toBeLessThanOrEqual(28)
+    expect(layout.footHeight).toBeLessThanOrEqual(1)
+  } finally {
+    await harness.dispose()
+  }
+})
+
 test('empty session hero plays logo and name empty-in on a new visit', async () => {
   const harness = await launchWorkbench({ reduceMotion: false })
   try {

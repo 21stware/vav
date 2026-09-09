@@ -11,6 +11,7 @@ import type {
   DirectoryListing,
   DisplayCurrency,
   FileSortKey,
+  FileViewMode,
   LeafCompaction,
   PreviewRef,
   ProviderResumeCursor,
@@ -24,9 +25,15 @@ import type {
   ValidateKeyResult
 } from './types'
 import type { HostAuthKind } from './cliAccountParse'
-import type { WorkspaceHostInfo } from './workspaceHost'
+import type { WorkspaceHostInfo, WorkspaceRef } from './workspaceHost'
 import type { ChangeSet, UpdateState } from './changeSet'
-import type { GitResult, GitSnapshot } from './git'
+import type {
+  GitBranchesPage,
+  GitLogPage,
+  GitResult,
+  GitSnapshot,
+  GitStashesPage
+} from './git'
 import type {
   GithubActionRunDetail,
   GithubActionsPage,
@@ -515,6 +522,37 @@ export interface HostAccountQuota {
  * Hydrate payload for the native provider-account panel.
  * Same lean-shell pattern as {@link TokenUsageViewPayload}.
  */
+export type RemoteFolderPickPurpose = 'workdir' | 'locate' | 'directory'
+
+export type RemoteFolderPickRequest = {
+  conversationId: string
+  machineId: string
+  purpose?: RemoteFolderPickPurpose
+}
+
+export type RemoteFolderPickResult = {
+  conversationId: string
+  machineId: string
+  purpose: RemoteFolderPickPurpose
+  path: string | null
+}
+
+/**
+ * Lean hydrate payload for the native remote-folder dialog.
+ * Main builds this so the picker never bootstraps the app shell.
+ */
+export interface RemoteFolderViewPayload {
+  conversationId: string
+  machineId: string
+  purpose: RemoteFolderPickPurpose
+  hostName: string
+  home: string
+  recents: WorkspaceRef[]
+  fileViewMode: FileViewMode
+  theme: ThemeMode
+  locale: AppLocale
+}
+
 export interface ProviderAccountViewPayload {
   conversationId: string
   host: CliHostKind | null
@@ -1235,12 +1273,24 @@ export interface VavApi {
       conversationId?: string
     ): Promise<GitResult<{ base64: string | null; missing: boolean }>>
     init(cwd: string, conversationId?: string): Promise<GitResult<GitSnapshot>>
+    log(
+      cwd: string,
+      opts?: { limit?: number; conversationId?: string }
+    ): Promise<GitResult<GitLogPage>>
+    branches(cwd: string, conversationId?: string): Promise<GitResult<GitBranchesPage>>
+    stashes(cwd: string, conversationId?: string): Promise<GitResult<GitStashesPage>>
+    patch(cwd: string, spec: string, conversationId?: string): Promise<GitResult<string>>
     createBranch(
       cwd: string,
       name: string,
-      opts?: { checkout?: boolean; conversationId?: string }
+      opts?: { checkout?: boolean; startPoint?: string; conversationId?: string }
     ): Promise<GitResult<{ branch: string }>>
     checkoutBranch(
+      cwd: string,
+      name: string,
+      conversationId?: string
+    ): Promise<GitResult<{ branch: string }>>
+    deleteBranch(
       cwd: string,
       name: string,
       conversationId?: string
@@ -1250,6 +1300,20 @@ export interface VavApi {
       options: { path: string; newBranch?: string; branch?: string },
       conversationId?: string
     ): Promise<GitResult<{ path: string; branch: string | null }>>
+    stashPush(
+      cwd: string,
+      opts?: { message?: string; conversationId?: string }
+    ): Promise<GitResult<{ selector: string | null }>>
+    stashApply(
+      cwd: string,
+      index: number,
+      opts?: { pop?: boolean; conversationId?: string }
+    ): Promise<GitResult<{ selector: string }>>
+    stashDrop(
+      cwd: string,
+      index: number,
+      conversationId?: string
+    ): Promise<GitResult<{ selector: string }>>
   }
 
   /** Workspace Workers / Pages status from wrangler + the Cloudflare API. */
@@ -1606,6 +1670,17 @@ export interface VavApi {
     /** Hug the account popup to the rendered body (avoids a tall empty panel). */
     fitProviderAccount(height: number): Promise<void>
     /**
+     * Native modal folder dialog for a remote host (the OS picker only sees
+     * this machine). Desktop-only; phone / web keep the in-app overlay.
+     */
+    openRemoteFolderPicker?(request: RemoteFolderPickRequest): Promise<void>
+    getRemoteFolderView?(): Promise<RemoteFolderViewPayload | null>
+    onRemoteFolderView?(handler: (payload: RemoteFolderViewPayload) => void): () => void
+    /** Picker window: confirm `path` or cancel with `null`. */
+    chooseRemoteFolder?(path: string | null): Promise<void>
+    /** Parent window: folder chosen or dialog dismissed. */
+    onRemoteFolderChosen?(handler: (result: RemoteFolderPickResult) => void): () => void
+    /**
      * Native Swarm History select (tray-shaped AppKit/Win32 menu).
      * `anchor` is the History button rect in the sender window’s content coordinates.
      */
@@ -1850,6 +1925,10 @@ export type MenuCommand =
   | 'focus-tools-7'
   | 'focus-tools-8'
   | 'focus-tools-9'
+  /** View menu — persisted UI zoom (Appearance). */
+  | 'zoom-in'
+  | 'zoom-out'
+  | 'zoom-reset'
 
 export const IPC = {
   bootstrap: 'vav:bootstrap',
@@ -2025,9 +2104,17 @@ export const IPC = {
   gitDiff: 'vav:git:diff',
   gitShowBase64: 'vav:git:show-base64',
   gitInit: 'vav:git:init',
+  gitLog: 'vav:git:log',
+  gitBranches: 'vav:git:branches',
+  gitStashes: 'vav:git:stashes',
+  gitPatch: 'vav:git:patch',
   gitCreateBranch: 'vav:git:create-branch',
   gitCheckoutBranch: 'vav:git:checkout-branch',
+  gitDeleteBranch: 'vav:git:delete-branch',
   gitCreateWorktree: 'vav:git:create-worktree',
+  gitStashPush: 'vav:git:stash-push',
+  gitStashApply: 'vav:git:stash-apply',
+  gitStashDrop: 'vav:git:stash-drop',
   githubListPulls: 'vav:github:list-pulls',
   githubGetPull: 'vav:github:get-pull',
   cloudflareStatus: 'vav:cloudflare:status',
@@ -2110,6 +2197,11 @@ export const IPC = {
   providerAccountGetView: 'vav:provider-account:get-view',
   providerAccountView: 'vav:provider-account:view',
   providerAccountFit: 'vav:provider-account:fit',
+  windowOpenRemoteFolder: 'vav:window:open-remote-folder',
+  remoteFolderGetView: 'vav:remote-folder:get-view',
+  remoteFolderView: 'vav:remote-folder:view',
+  remoteFolderChoose: 'vav:remote-folder:choose',
+  remoteFolderChosen: 'vav:remote-folder:chosen',
   windowOpenSwarmHistory: 'vav:window:open-swarm-history',
   swarmHistoryResume: 'vav:swarm-history:resume',
   windowRelaunch: 'vav:window:relaunch',

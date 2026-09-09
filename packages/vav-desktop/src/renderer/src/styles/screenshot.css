@@ -1,5 +1,13 @@
-html.is-screenshotting,
-html.is-screenshotting * {
+html,
+body,
+#root {
+  cursor: crosshair;
+}
+
+/* Force crosshair while drawing the crop. Dropped after `.has-crop` so the
+   toolbar / move / resize cursors can take over. */
+html.is-screenshotting:not(.has-crop),
+html.is-screenshotting:not(.has-crop) * {
   cursor: crosshair !important;
 }
 
@@ -8,7 +16,7 @@ html.is-screenshotting * {
   inset: 0;
   overflow: hidden;
   user-select: none;
-  cursor: crosshair !important;
+  cursor: crosshair;
   background: transparent;
   color: #fff;
   font-family: system-ui, -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC',
@@ -18,15 +26,36 @@ html.is-screenshotting * {
 .screenshot-bg {
   position: absolute;
   inset: 0;
+  z-index: 0;
   width: 100%;
   height: 100%;
   object-fit: fill;
   pointer-events: none;
-  cursor: crosshair !important;
+  -webkit-user-drag: none;
+  user-select: none;
+}
+
+.screenshot-root:not(.has-crop) .screenshot-bg {
+  pointer-events: auto;
+}
+
+/* Sits above the capture bitmap so the image cannot restore the OS arrow. */
+.screenshot-hit {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background: rgba(0, 0, 0, 0.02);
+  pointer-events: auto;
+  cursor: crosshair;
+}
+
+.screenshot-root.has-crop .screenshot-hit {
+  cursor: inherit;
 }
 
 .screenshot-hint {
   position: absolute;
+  z-index: 2;
   left: 50%;
   top: 28px;
   transform: translateX(-50%);
@@ -50,7 +79,7 @@ html.is-screenshotting * {
   box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.92);
   outline: 2px solid rgba(15, 23, 42, 0.28);
   background: rgba(255, 255, 255, 0.1);
-  z-index: 1;
+  z-index: 2;
   contain: layout style;
 }
 
@@ -87,9 +116,14 @@ html.is-screenshotting * {
   cursor: text;
 }
 
-.screenshot-root.is-done {
-  pointer-events: none;
+.screenshot-root.has-crop {
   cursor: default;
+}
+
+.screenshot-root.is-done,
+.screenshot-root.is-done * {
+  pointer-events: none;
+  cursor: default !important;
 }
 
 .screenshot-text {
@@ -116,7 +150,7 @@ html.is-screenshotting * {
 
 .screenshot-toolbar {
   position: absolute;
-  z-index: 2;
+  z-index: 3;
   display: flex;
   align-items: center;
   gap: 2px;

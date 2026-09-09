@@ -16,7 +16,7 @@
  *
  * After welcome, the client issues `req` frames; the server answers `res`
  * and may push `stream` events for process / pty / watch. Git RPCs
- * (`git.status` / `diff` / `init` / …), plugin RPCs (`plugins.list`),
+ * (`git.status` / `diff` / `log` / `branches` / `stashes` / `patch` / `init` / …), plugin RPCs (`plugins.list`),
  * GitHub (`github.listPulls` / Actions / Releases / Pages), timers
  * (`timers.listJobs`), and connector / vendor status (`connectors.catalog`,
  * `connectors.beginLogin`, `cloudflare.status`, `supabase.status`,

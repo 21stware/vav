@@ -43,7 +43,7 @@ import {
   type TurnRuntime,
 } from './sessionTypes'
 import { conversationIdAwaitingTool, hostHoldsControlPlaneKeys, turnRuntimeFromAgentStatus, compactionSucceededPatch, refreshTokenUsagePatch, clearCompactionPatch, conversationStatusPatch } from './sessionUsage'
-import { dispatchQueuedPayload, MESSAGE_QUEUE_MAX, buildQueuedMessage, composerSendDisposition, composerClearedPatch, enqueueQueuedMessagePatch, updateQueuedMessagePatch, removeQueuedMessagePatch, isEmptyComposerSend, mergePreviewAndCommentRefs, pollUntil, resolveComposerContextFile, shouldDrainMessageQueue } from './sessionQueue'
+import { dispatchQueuedPayload, MESSAGE_QUEUE_MAX, buildQueuedMessage, composerSendDisposition, composerClearedPatch, enqueueQueuedMessagePatch, updateQueuedMessagePatch, removeQueuedMessagePatch, isEmptyComposerSend, mergeComposerFilePaths, mergePreviewAndCommentRefs, pollUntil, resolveComposerContextFile, shouldDrainMessageQueue } from './sessionQueue'
 import { applyCliHostSetResult } from './sessionCliHost'
 import { applySessionTurnEvent } from './sessionTurnApply'
 import {
@@ -105,6 +105,8 @@ import {
 } from '@shared/agentImageInput'
 import { tt } from '../i18n/useT'
 import { isTemporaryWorkspace } from '../lib/format'
+import { conversationFitsListMode, nextConversationForListMode } from '../lib/sidebarList'
+import { isTimerDefinition } from '@shared/sessionKind'
 import { isCompanionSessionShell, isMainSessionShell, readWindowMachineId } from '../lib/windowKind'
 import { isLocalMachine, normalizeMachineId } from '@shared/workspaceHost'
 import { compactionForLeaf } from '@shared/compaction'
@@ -231,6 +233,8 @@ interface SessionState {
   /** Tray-identical Running / Done per conversation — drives the window LED. */
   activityById: Record<string, 'running' | 'done'>
   sidebarQuery: string
+  /** Session-list filter field is open (toolbar button, not persisted). */
+  sidebarSearchOpen: boolean
   renamingId: string | null
   /** Set in a detached window, which follows exactly one conversation. */
   pinnedConversationId: string | null
@@ -275,10 +279,9 @@ interface SessionState {
    */
   messageQueues: Record<string, QueuedMessage[]>
   /**
-   * File Attachment Chip path (main-chat / file-preview / workspace-view).
-   * When set, the composer shows the chip and the agent system prompt treats
-   * this file as open context. Null = dismissed or none — preview/selection
-   * may still show the file; only context attachment is cleared.
+   * Leftover open-file context path. New adds go through composer attachments
+   * (right-click / drag). Null = dismissed or none — preview/selection may
+   * still show the file; only this context slot is cleared.
    */
   contextFiles: Record<string, string | null>
   /**
@@ -443,6 +446,11 @@ interface SessionState {
   }): Promise<string | void>
   /** New scheduled task: configure in the current window's right panel. */
   createScheduledConversation(): Promise<void>
+  /**
+   * Scheduled category: keep an editor open. Reuse a timer row when one exists,
+   * otherwise mint the same draft as "New scheduled task".
+   */
+  ensureScheduledConversation(): void
   /** ⌘D / ⌘⇧D: mint a sibling agent session and split the Thread surface. */
   splitSwarmPane(axis?: TerminalSplitAxis): Promise<void>
   /** Hide a Swarm pane without deleting the agent session. */
@@ -490,10 +498,19 @@ interface SessionState {
     purpose?: 'workdir' | 'locate' | 'directory'
   ): void
   closeRemoteFolderPicker(): void
+  applyRemoteFolderPick(result: {
+    conversationId: string
+    machineId: string
+    purpose: 'workdir' | 'locate' | 'directory'
+    path: string | null
+  }): Promise<void>
   /** Move a Temporary workspace so the chosen folder contains `Workspace`. */
   locateWorkspace(id: string): Promise<void>
   finishLocateWorkspace(id: string, destinationDir: string): Promise<void>
   setSidebarQuery(query: string): void
+  openSidebarSearch(): void
+  closeSidebarSearch(): void
+  toggleSidebarSearch(): void
   setPinned(id: string, pinned: boolean): Promise<void>
   /** Star / unstar a session for the sidebar Favorite filter. */
   setFavorite(id: string, favorite: boolean): Promise<void>
@@ -516,12 +533,12 @@ interface SessionState {
   /** Workspace preview focus — built-in VAV agent system / open-file context. */
   setFocusedFile(id: string, path: string | null): Promise<void>
   /**
-   * Attach (or replace) the File Attachment Chip for a conversation.
+   * Attach (or replace) leftover open-file context for a conversation.
    * Syncs focusedFilePath for the built-in agent. Does not paste into CLI TUIs.
    * Pass null to clear without touching tree selection / preview window.
    */
   attachContextFile(id: string, path: string | null): Promise<void>
-  /** Dismiss the chip only — does not close the file preview or deselect. */
+  /** Dismiss leftover open-file context — does not close the file preview or deselect. */
   dismissContextFile(id: string): Promise<void>
   openDetached(id: string): Promise<void>
 
@@ -627,6 +644,8 @@ interface SessionState {
   toggleSidebar(): void
   setSidebarVisible(visible: boolean): void
   setSidebarListMode(mode: SidebarListMode): void
+  /** Switch Task / File / Scheduled / Archived and clear the list search. */
+  activateSidebarListMode(mode: SidebarListMode): void
   toggleToolsPanel(): void
   setToolsCollapsed(collapsed: boolean): void
   setPanelSegment(segment: 'files' | 'terminal'): void
@@ -666,6 +685,8 @@ const sessionToolsLayouts = loadSessionToolsMap()
 /** Cancels overlapping Workspace View enters (fast sidebar clicks / HMR remounts). */
 let workspaceSelectGen = 0
 const hydrationGen = new Map<string, number>()
+/** Coalesce overlapping "new scheduled task" calls (category open + empty list). */
+let scheduledCreateInflight: Promise<void> | null = null
 
 export const useSessionStore = create<SessionState>((set, get) => ({
   sidebarVisible: globalLayout.sidebarVisible,
@@ -698,6 +719,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   detachedConversationIds: [] as string[],
   activityById: {} as Record<string, 'running' | 'done'>,
   sidebarQuery: '',
+  sidebarSearchOpen: false,
   renamingId: null,
   pinnedConversationId: null,
 
@@ -1099,37 +1121,59 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   async createScheduledConversation() {
-    if (!window.vav?.timers?.createScheduled) return
-    try {
-      const untitled = tt('timer.untitled')
-      const jobs = window.vav.timers.listJobs ? await window.vav.timers.listJobs() : []
-      const draft = jobs.find(
-        (job) =>
-          !job.enabled &&
-          !job.prompt.trim() &&
-          (!job.title.trim() || job.title.trim() === untitled) &&
-          !!job.conversationId
-      )
-      if (draft?.conversationId) {
-        set({ sidebarListMode: 'timers' })
-        await get().selectConversation(draft.conversationId)
+    if (scheduledCreateInflight) return scheduledCreateInflight
+    const run = (async () => {
+      if (!window.vav?.timers?.createScheduled) return
+      try {
+        const untitled = tt('timer.untitled')
+        const jobs = window.vav.timers.listJobs ? await window.vav.timers.listJobs() : []
+        const draft = jobs.find(
+          (job) =>
+            !job.enabled &&
+            !job.prompt.trim() &&
+            (!job.title.trim() || job.title.trim() === untitled) &&
+            !!job.conversationId
+        )
+        if (draft?.conversationId) {
+          set({ sidebarListMode: 'timers' })
+          await get().selectConversation(draft.conversationId)
+          get().focusComposer()
+          return
+        }
+        const result = await window.vav.timers.createScheduled()
+        set((state) => ({
+          ...seedEmptyConversationPatch(state, result.conversation),
+          sidebarListMode: 'timers'
+        }))
+        await get().selectConversation(result.conversation.id)
         get().focusComposer()
-        return
+      } catch (err) {
+        get().showToast({
+          kind: 'error',
+          title: tt('timer.createFailed'),
+          description: err instanceof Error ? err.message : String(err)
+        })
       }
-      const result = await window.vav.timers.createScheduled()
-      set((state) => ({
-        ...seedEmptyConversationPatch(state, result.conversation),
-        sidebarListMode: 'timers'
-      }))
-      await get().selectConversation(result.conversation.id)
-      get().focusComposer()
-    } catch (err) {
-      get().showToast({
-        kind: 'error',
-        title: tt('timer.createFailed'),
-        description: err instanceof Error ? err.message : String(err)
-      })
+    })()
+    scheduledCreateInflight = run
+    try {
+      await run
+    } finally {
+      if (scheduledCreateInflight === run) scheduledCreateInflight = null
     }
+  },
+
+  ensureScheduledConversation() {
+    const { conversations, activeId, windowMachineId } = get()
+    const machineId = normalizeMachineId(windowMachineId)
+    const current = conversations.find((row) => row.id === activeId)
+    if (current && conversationFitsListMode(current, 'timers')) return
+    const nextId = nextConversationForListMode(conversations, 'timers', activeId, machineId)
+    if (nextId) {
+      if (nextId !== activeId) void get().selectConversation(nextId)
+      return
+    }
+    void get().createScheduledConversation()
   },
 
   async splitSwarmPane(axis = 'row') {
@@ -1252,6 +1296,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   async renameConversation(id, title) {
     const conversations = await window.vav.conversations.rename(id, title)
     set((state) => renameConversationPatch(state, conversations))
+    const row = get().conversations.find((item) => item.id === id)
+    if (isTimerDefinition(row ?? {}) && row?.timerJobId && window.vav?.timers?.updateJob) {
+      void window.vav.timers.updateJob(row.timerJobId, { title })
+    }
   },
 
   beginRename(id) {
@@ -1270,6 +1318,17 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
       const applyRemove = async (toRemove: string[]): Promise<void> => {
         if (toRemove.length === 0) return
+        const defs = get().conversations.filter(
+          (row) => toRemove.includes(row.id) && isTimerDefinition(row) && row.timerJobId
+        )
+        for (const row of defs) {
+          if (!row.timerJobId || !window.vav?.timers?.removeJob) continue
+          try {
+            await window.vav.timers.removeJob(row.timerJobId)
+          } catch {
+            // Job may already be gone; still drop the definition conversation.
+          }
+        }
         const { removed, conversations: next } = await window.vav.conversations.remove(toRemove)
         for (const id of removed) {
           disposeProjection(id)
@@ -1508,11 +1567,41 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   openRemoteFolderPicker(conversationId, machineId, purpose = 'workdir') {
-    set({ remoteFolderPick: { conversationId, machineId, purpose } })
+    const pick = { conversationId, machineId, purpose }
+    const openNative = window.vav?.window?.openRemoteFolderPicker
+    if (typeof openNative === 'function') {
+      void openNative(pick)
+      return
+    }
+    set({ remoteFolderPick: pick })
   },
 
   closeRemoteFolderPicker() {
     set({ remoteFolderPick: null })
+  },
+
+  async applyRemoteFolderPick(result) {
+    if (result.purpose === 'directory') {
+      window.dispatchEvent(
+        new CustomEvent('vav:phone-folder-picked', { detail: { path: result.path } })
+      )
+      return
+    }
+    const chosen = result.path?.trim() ?? ''
+    if (!chosen) return
+    if (result.purpose === 'locate' && result.conversationId) {
+      await get().finishLocateWorkspace(result.conversationId, chosen)
+      return
+    }
+    if (!result.conversationId) {
+      await get().createConversation({
+        workingDirectory: chosen,
+        machineId: result.machineId,
+        openIn: 'here'
+      })
+      return
+    }
+    await get().setWorkingDirectory(result.conversationId, chosen, result.machineId)
   },
 
   async locateWorkspace(id) {
@@ -1548,6 +1637,27 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   setSidebarQuery(query) {
     set({ sidebarQuery: query })
+  },
+
+  openSidebarSearch() {
+    set((state) => {
+      if (state.sidebarSearchOpen && state.sidebarVisible) return {}
+      const next: Partial<SessionState> = { sidebarSearchOpen: true }
+      if (!state.sidebarVisible) {
+        saveGlobalLayout({ sidebarVisible: true })
+        next.sidebarVisible = true
+      }
+      return next
+    })
+  },
+
+  closeSidebarSearch() {
+    set({ sidebarSearchOpen: false, sidebarQuery: '' })
+  },
+
+  toggleSidebarSearch() {
+    if (get().sidebarSearchOpen) get().closeSidebarSearch()
+    else get().openSidebarSearch()
   },
 
   async setPinned(id, pinned) {
@@ -1716,7 +1826,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     }
     // Always push to main so the built-in VAV agent open-file context stays in sync.
     // CLI / Bash hosts are NOT auto-pasted here — that stacked a new TUI block on
-    // every file click. Use Files → “Insert information to agent” for that.
+    // every file click. Use Files → “Add to composer” for that.
     await get().setFocusedFile(id, path)
   },
 
@@ -1833,11 +1943,13 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const turn = turns[activeId]
     const refs = previewRefs[activeId] ?? []
     const cards = commentCards[activeId] ?? []
+    const leftoverContext = resolveComposerContextFile(contextFiles, activeId)
+    const files = mergeComposerFilePaths(leftoverContext, attachments)
     const activeConversation = conversations.find((c) => c.id === activeId)
     const activeHost = activeConversation?.cliHost ?? null
     const hostHoldsKeys = hostHoldsControlPlaneKeys(hosts, activeConversation?.machineId)
     const disposition = composerSendDisposition({
-      empty: isEmptyComposerSend(text, attachments, refs, cards),
+      empty: isEmptyComposerSend(text, files, refs, cards),
       awaitingTool: !!turn?.awaitingToolCallId,
       needsApiKey: !activeHost && !settings.apiKeyPresent && !hostHoldsKeys,
       isRunning: !!turn?.isRunning,
@@ -1865,14 +1977,13 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     // Streaming: enqueue instead of interrupting (main-chat-streaming.rpml §5).
     if (disposition === 'enqueue') {
       const quote = quotes[activeId] ?? null
-      const contextFile = resolveComposerContextFile(contextFiles, conversations, activeId)
       const item: QueuedMessage = buildQueuedMessage({
         text,
-        attachments,
+        attachments: files,
         previewRefs: refs,
         commentCards: cards,
         quote,
-        contextFile
+        contextFile: null
       })
       set((state) => enqueueQueuedMessagePatch(state, activeId!, item))
       return
@@ -1888,8 +1999,6 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
     const allRefs = mergePreviewAndCommentRefs(refs, cards)
 
-    const contextFile = resolveComposerContextFile(contextFiles, conversations, activeId)
-
     // No optimistic echo: the stored message comes back as a `user` turn event
     // a moment later, already carrying the id and parent the tree needs.
     set((state) => composerClearedPatch(state, activeId))
@@ -1897,10 +2006,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     await window.vav.agent.send(
       activeId,
       text,
-      attachments,
+      files,
       quote,
       allRefs.length ? allRefs : null,
-      contextFile
+      null
     )
   },
 
@@ -2417,6 +2526,13 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   setSidebarListMode(mode) {
     set({ sidebarListMode: mode })
+  },
+
+  activateSidebarListMode(mode) {
+    const { sidebarListMode } = get()
+    if (sidebarListMode === mode) return
+    set({ sidebarListMode: mode, sidebarQuery: '', sidebarSearchOpen: false })
+    if (mode === 'timers') get().ensureScheduledConversation()
   },
 
   toggleToolsPanel() {

@@ -17,6 +17,13 @@ import {
   type ThemeMode
 } from '@shared/types'
 import { swatchPatternSize } from '@shared/surfacePattern'
+import {
+  UI_ZOOM_MAX_PERCENT,
+  UI_ZOOM_MIN_PERCENT,
+  UI_ZOOM_STEP_PERCENT,
+  uiZoomFromPercent,
+  uiZoomPercent
+} from '@shared/uiZoom'
 import { SURFACE_PATTERN_PRESETS } from '../../lib/surfacePatterns'
 import { useSessionStore } from '../../state/sessionStore'
 import { useT } from '../../i18n/useT'
@@ -345,6 +352,29 @@ export function AppearanceSettings(): React.JSX.Element {
           </span>
         </div>
       </div>
+
+      <div className="form-row">
+        <label htmlFor="settings-ui-zoom">{t('appearance.uiZoom')}</label>
+        <div className="control">
+          <input
+            id="settings-ui-zoom"
+            type="range"
+            min={UI_ZOOM_MIN_PERCENT}
+            max={UI_ZOOM_MAX_PERCENT}
+            step={UI_ZOOM_STEP_PERCENT}
+            style={{ flex: 1 }}
+            value={uiZoomPercent(settings.uiZoom)}
+            data-testid="settings-ui-zoom"
+            onChange={(event) =>
+              void updateSettings({ uiZoom: uiZoomFromPercent(event.target.value) })
+            }
+          />
+          <span className="muted" style={{ width: 48 }}>
+            {uiZoomPercent(settings.uiZoom)}%
+          </span>
+        </div>
+      </div>
+      <div className="form-hint">{t('appearance.uiZoomHint')}</div>
 
       <div className="form-row">
         <label>{t('appearance.reduceMotion')}</label>

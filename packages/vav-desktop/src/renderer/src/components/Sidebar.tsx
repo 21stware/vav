@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  ArrowLeft,
   ChevronDown,
   ChevronRight,
+  ListFilter,
   Pin,
   Plus,
   Search,
@@ -10,11 +10,7 @@ import {
   Terminal as TerminalIcon,
   X
 } from 'lucide-react'
-import {
-  enabledCliAgents,
-  type ConversationMeta,
-  type SidebarGroupingMode
-} from '@shared/types'
+import { enabledCliAgents, type ConversationMeta } from '@shared/types'
 import type { FileSessionListEntry } from '@shared/ipc'
 import { useSessionStore } from '../state/sessionStore'
 import { useWorkspaceStore } from '../state/workspaceStore'
@@ -31,23 +27,25 @@ import {
 import { swarmChildrenOf } from '@shared/swarmLayout'
 import { menuAnchor, showMenu, type MenuItem } from '../lib/nativeMenu'
 import { lucideMenuIcon, warmMenuIcons, warmSessionContextMenuIcons } from '../lib/menuIcons'
-import { fileManagerLabel } from '../lib/platform'
+import { fileManagerLabel, keys } from '../lib/platform'
 import { basename } from '../lib/path'
 import {
   agentTypeLabel,
+  conversationFitsListMode,
   conversationSubtitle,
   conversationSelectionRunClass,
   adjacentRunClass,
-  filterValueLabel,
   flattenSessionTitle,
   groupingOptions,
   hostMachineLabel,
   pinnableWorkspaceDir,
+  nextConversationForListMode,
   nextVisibleSelectionAfterArchive,
   filterFileSessionRows
 } from '../lib/sidebarList'
 import { ConvBracket, type SwarmBracketKind } from './sidebar/ConvBracket'
 import { TimerJobsPanel } from './sidebar/TimerJobsPanel'
+import { SidebarCategoryBar } from './sidebar/SidebarCategoryBar'
 import { SidebarServiceBar } from './sidebar/SidebarServiceBar'
 import { RenameField } from './sidebar/RenameField'
 import {
@@ -77,6 +75,7 @@ export function Sidebar({
   const activeId = useSessionStore((s) => s.activeId)
   const selectedIds = useSessionStore((s) => s.selectedIds)
   const query = useSessionStore((s) => s.sidebarQuery)
+  const searchOpen = useSessionStore((s) => s.sidebarSearchOpen)
   // Subscribe to a compact busy fingerprint — not the whole `turns` object —
   // so streaming tool ticks on one session don't repaint every sidebar row.
   const turnBusyKey = useSessionStore((s) => {
@@ -115,11 +114,12 @@ export function Sidebar({
   // (it returns a new array each time → getSnapshot infinite loop).
   const rawCliAgents = useSessionStore((s) => s.settings.cliAgents)
   const cliAgents = useMemo(() => enabledCliAgents(rawCliAgents), [rawCliAgents])
-  const selectWorkspaceGroup = useSessionStore((s) => s.selectWorkspaceGroup)
-
   const setSidebarQuery = useSessionStore((s) => s.setSidebarQuery)
+  const closeSidebarSearch = useSessionStore((s) => s.closeSidebarSearch)
   const selectConversation = useSessionStore((s) => s.selectConversation)
   const createConversation = useSessionStore((s) => s.createConversation)
+  const createScheduledConversation = useSessionStore((s) => s.createScheduledConversation)
+  const ensureScheduledConversation = useSessionStore((s) => s.ensureScheduledConversation)
   const duplicateConversation = useSessionStore((s) => s.duplicateConversation)
   const requestDelete = useSessionStore((s) => s.requestDelete)
   const beginRename = useSessionStore((s) => s.beginRename)
@@ -134,9 +134,10 @@ export function Sidebar({
   const showToast = useSessionStore((s) => s.showToast)
   const showDialog = useSessionStore((s) => s.showDialog)
   const listMode = useSessionStore((s) => s.sidebarListMode)
-  const setListMode = useSessionStore((s) => s.setSidebarListMode)
+  const activateSidebarListMode = useSessionStore((s) => s.activateSidebarListMode)
 
   const listRef = useRef<HTMLDivElement>(null)
+  const searchInputRef = useRef<HTMLInputElement>(null)
   /** Defers float close on single-click so double-click can open a companion. */
   const clickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   /** File-session list: same delay so dblclick can open the standalone window. */
@@ -145,6 +146,15 @@ export function Sidebar({
   const [pinnedCollapsed, setPinnedCollapsed] = useState(false)
   const [fileSessionRows, setFileSessionRows] = useState<FileSessionListEntry[]>([])
   const [fileSessionsLoading, setFileSessionsLoading] = useState(false)
+
+  useEffect(() => {
+    if (!searchOpen) return
+    const frame = window.requestAnimationFrame(() => {
+      searchInputRef.current?.focus()
+      searchInputRef.current?.select()
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [searchOpen])
 
   useEffect(() => {
     if (!activeId) return
@@ -193,6 +203,39 @@ export function Sidebar({
     void refreshFileSessions()
   }, [fileSessionsView, refreshFileSessions])
 
+  const openAFile = useCallback((): void => {
+    void (async () => {
+      const picked = await window.vav.files.pickAttachments()
+      if (!picked.ok || picked.paths.length === 0) return
+      let lastId: string | null = null
+      for (const path of picked.paths) {
+        let conversationId: string | undefined
+        try {
+          const state = await window.vav.fileSessions.open(path)
+          if (state?.activeSessionId) {
+            conversationId = state.activeSessionId
+            lastId = state.activeSessionId
+          }
+        } catch (err) {
+          showToast({
+            kind: 'error',
+            title: t('preview.openFailed'),
+            description: String(err)
+          })
+          continue
+        }
+        void window.vav.window.openFilePreview(path, {
+          origin: 'session',
+          conversationId,
+          surface: 'file'
+        })
+      }
+      await refreshFileSessions()
+      if (lastId) void selectConversation(lastId)
+      onNavigate?.()
+    })()
+  }, [onNavigate, refreshFileSessions, selectConversation, showToast, t])
+
   useEffect(() => {
     return () => {
       if (clickTimerRef.current) clearTimeout(clickTimerRef.current)
@@ -207,17 +250,23 @@ export function Sidebar({
     hostMachineLabel(machineId, hosts, LOCAL_MACHINE_ID, t('sidebar.thisMachine'), fallback)
   const localWindow = isLocalMachine(windowMachineId)
 
-  const archivedCount = useMemo(
-    () =>
-      conversations.filter(
-        (c) =>
-          c.archived &&
-          !c.fileId &&
-          c.sessionKind !== 'timer' &&
-          conversationOnMachine(c, windowMachineId)
-      ).length,
-    [conversations, windowMachineId]
-  )
+  useEffect(() => {
+    const current = conversations.find((row) => row.id === activeId)
+    if (current && conversationFitsListMode(current, listMode)) return
+    if (listMode === 'timers') {
+      ensureScheduledConversation()
+      return
+    }
+    const nextId = nextConversationForListMode(conversations, listMode, activeId, windowMachineId)
+    if (nextId && nextId !== activeId) void selectConversation(nextId)
+  }, [
+    activeId,
+    conversations,
+    ensureScheduledConversation,
+    listMode,
+    selectConversation,
+    windowMachineId
+  ])
 
   const favoriteSet = useMemo(() => new Set(favoriteIds ?? []), [favoriteIds])
 
@@ -519,15 +568,7 @@ export function Sidebar({
         if (event.key === 'Escape') {
           event.preventDefault()
           event.stopImmediatePropagation()
-          setListMode('main')
-          const store = useSessionStore.getState()
-          const active = store.conversations.find((c) => c.id === store.activeId)
-          if (active?.sessionKind === 'timer') {
-            const next = store.conversations.find(
-              (c) => !c.archived && !c.fileId && c.sessionKind !== 'timer'
-            )
-            if (next) void store.selectConversation(next.id)
-          }
+          activateSidebarListMode('main')
         }
         return
       }
@@ -560,7 +601,7 @@ export function Sidebar({
         if (event.key === 'Escape') {
           event.preventDefault()
           event.stopImmediatePropagation()
-          setListMode('main')
+          activateSidebarListMode('main')
         }
         return
       }
@@ -580,15 +621,7 @@ export function Sidebar({
         event.preventDefault()
         // Keep the float open: Escape steps out of archive / file-sessions / timers first.
         event.stopImmediatePropagation()
-        setListMode('main')
-        const store = useSessionStore.getState()
-        const active = store.conversations.find((c) => c.id === store.activeId)
-        if (active?.sessionKind === 'timer') {
-          const next = store.conversations.find(
-            (c) => !c.archived && !c.fileId && c.sessionKind !== 'timer'
-          )
-          if (next) void store.selectConversation(next.id)
-        }
+        activateSidebarListMode('main')
       }
     }
     window.addEventListener('keydown', onKey)
@@ -604,7 +637,7 @@ export function Sidebar({
     timersView,
     fileSessionOrderedIds,
     deleteSelectedFileSessions,
-    setListMode
+    activateSidebarListMode
   ])
 
   /**
@@ -829,6 +862,61 @@ export function Sidebar({
   const visibleIds = visible.map((c) => c.id)
   const selectionRunClass = (id: string): string =>
     conversationSelectionRunClass(id, selectedIds, visibleIds)
+
+  const openListMenu = (anchor: HTMLElement): void => {
+    const applyFilter = (next: SidebarSessionFilter): void => {
+      void updateSettings({
+        sidebarSessionFilter: encodeSidebarSessionFilter(next)
+      })
+    }
+    const recent = recentsForMachine(recentDirs, windowMachineId)
+      .map((ref) => ref.path)
+      .slice(0, 3)
+    const extra =
+      sessionFilter.kind === 'workspace' && !recent.includes(sessionFilter.path)
+        ? [sessionFilter.path]
+        : []
+    const workspaces = [...recent, ...extra]
+    const items: MenuItem[] = [
+      { label: t('sidebar.grouping'), header: true },
+      ...groupingOptions(t).map((option) => ({
+        label: option.label,
+        checked: groupingMode === option.value,
+        onSelect: () =>
+          void updateSettings({
+            sidebarGroupingMode: option.value
+          })
+      })),
+      { label: '', divider: true },
+      { label: t('sidebar.filter'), header: true },
+      {
+        label: t('sidebar.filter.none'),
+        checked: sessionFilter.kind === 'none',
+        onSelect: () => applyFilter({ kind: 'none' })
+      },
+      {
+        label: t('sidebar.filter.active'),
+        checked: sessionFilter.kind === 'active',
+        onSelect: () => applyFilter({ kind: 'active' })
+      },
+      {
+        label: t('sidebar.filter.favorite'),
+        checked: sessionFilter.kind === 'favorite',
+        onSelect: () => applyFilter({ kind: 'favorite' })
+      }
+    ]
+    if (workspaces.length > 0) {
+      items.push({ label: '', divider: true })
+      for (const path of workspaces) {
+        items.push({
+          label: basename(path),
+          checked: sessionFilter.kind === 'workspace' && sessionFilter.path === path,
+          onSelect: () => applyFilter({ kind: 'workspace', path })
+        })
+      }
+    }
+    void showMenu(items, menuAnchor(anchor))
+  }
 
   const toggleGroup = (key: string): void => {
     setCollapsedKeys((prev) => {
@@ -1183,155 +1271,106 @@ export function Sidebar({
 
   return (
     <aside className={`sidebar${floating ? ' floating' : ''}`} data-testid="sidebar">
+      <SidebarCategoryBar />
       <div className="sidebar-search">
-        <div style={{ position: 'relative' }}>
-          <Search
-            size={12}
-            style={{
-              position: 'absolute',
-              left: 7,
-              top: 7,
-              opacity: 0.5,
-              pointerEvents: 'none'
-            }}
-          />
-          <input
-            className="text-field"
-            data-testid="sidebar-search"
-            style={{ paddingLeft: 24, paddingRight: query ? 24 : 8 }}
-            placeholder={t('sidebar.searchPlaceholder')}
-            value={query}
-            onChange={(event) => setSidebarQuery(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Escape') setSidebarQuery('')
-            }}
-          />
-          {query && (
-            <button
-              type="button"
-              className="btn icon-only sm"
-              style={{ position: 'absolute', right: 2, top: 2 }}
-              title={t('common.clear')}
-              aria-label={t('common.clear')}
-              onClick={() => setSidebarQuery('')}
-            >
-              <X size={12} />
-            </button>
-          )}
-        </div>
-        {listMode === 'main' && (
-          <div className="sidebar-list-controls">
-            <label className="sidebar-grouping" title={t('sidebar.grouping')}>
-              <span className="sidebar-grouping-label">{t('sidebar.grouping')}</span>
-              <span className="sidebar-grouping-control">
-                <select
-                  className="text-field sidebar-grouping-select"
-                  data-testid="sidebar-grouping"
-                  value={groupingMode}
-                  title={t('sidebar.grouping')}
-                  onChange={(event) =>
-                    void updateSettings({
-                      sidebarGroupingMode: event.target.value as SidebarGroupingMode
-                    })
-                  }
-                >
-                  {groupingOptions(t).map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-                <ChevronDown className="sidebar-grouping-chevron" size={12} aria-hidden />
-              </span>
-            </label>
-            <button
-              type="button"
-              className={`sidebar-filter${isSidebarSessionFilterEnabled(sessionFilter) ? ' is-active' : ''}`}
-              data-testid="sidebar-filter"
-              title={t('sidebar.filter')}
-              onClick={(event) => {
-                const apply = (next: SidebarSessionFilter): void => {
-                  void updateSettings({
-                    sidebarSessionFilter: encodeSidebarSessionFilter(next)
-                  })
-                }
-                const recent = recentsForMachine(recentDirs, windowMachineId)
-                  .map((ref) => ref.path)
-                  .slice(0, 3)
-                const extra =
-                  sessionFilter.kind === 'workspace' && !recent.includes(sessionFilter.path)
-                    ? [sessionFilter.path]
-                    : []
-                const workspaces = [...recent, ...extra]
-                const items: MenuItem[] = [
-                  {
-                    label: t('sidebar.filter.none'),
-                    checked: sessionFilter.kind === 'none',
-                    onSelect: () => apply({ kind: 'none' })
-                  },
-                  {
-                    label: t('sidebar.filter.active'),
-                    checked: sessionFilter.kind === 'active',
-                    onSelect: () => apply({ kind: 'active' })
-                  },
-                  {
-                    label: t('sidebar.filter.favorite'),
-                    checked: sessionFilter.kind === 'favorite',
-                    onSelect: () => apply({ kind: 'favorite' })
-                  }
-                ]
-                if (workspaces.length > 0) {
-                  items.push({ label: '', divider: true })
-                  for (const path of workspaces) {
-                    items.push({
-                      label: basename(path),
-                      checked:
-                        sessionFilter.kind === 'workspace' && sessionFilter.path === path,
-                      onSelect: () => apply({ kind: 'workspace', path })
-                    })
-                  }
-                }
-                void showMenu(items, menuAnchor(event.currentTarget))
+        {searchOpen && (
+          <div className="sidebar-search-field">
+            <Search
+              size={12}
+              style={{
+                position: 'absolute',
+                left: 7,
+                top: 7,
+                opacity: 0.5,
+                pointerEvents: 'none'
               }}
-            >
-              <span className="sidebar-filter-label">{t('sidebar.filter')}</span>
-              <span className="sidebar-filter-value">
-                {filterValueLabel(sessionFilter, t)}
-              </span>
-              <ChevronDown className="sidebar-filter-chevron" size={12} aria-hidden />
-            </button>
+            />
+            <input
+              ref={searchInputRef}
+              className="text-field"
+              data-testid="sidebar-search"
+              style={{ paddingLeft: 24, paddingRight: query ? 24 : 8 }}
+              placeholder={t('sidebar.searchPlaceholder')}
+              value={query}
+              onChange={(event) => setSidebarQuery(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Escape') {
+                  event.preventDefault()
+                  closeSidebarSearch()
+                }
+              }}
+            />
+            {query && (
+              <button
+                type="button"
+                className="btn icon-only sm"
+                style={{ position: 'absolute', right: 2, top: 2 }}
+                title={t('common.clear')}
+                aria-label={t('common.clear')}
+                onClick={() => setSidebarQuery('')}
+              >
+                <X size={12} />
+              </button>
+            )}
           </div>
         )}
-        {listMode !== 'main' && (
-          <div className="sidebar-archive-head">
+        {(listMode === 'main' || timersView || fileSessionsView) && (
+          <div className="sidebar-list-toolbar">
             <button
               type="button"
-              className="sidebar-archive-back"
-              data-testid="sidebar-archive-back"
-              title={t('sidebar.back')}
+              className="sidebar-new-row"
+              id={listMode === 'main' ? 'create' : undefined}
+              data-testid={
+                listMode === 'main'
+                  ? 'new-session'
+                  : fileSessionsView
+                    ? 'open-a-file'
+                    : 'new-scheduled'
+              }
+              title={
+                listMode === 'main'
+                  ? t('app.newSessionTitle', { shortcut: keys('⌘N') })
+                  : fileSessionsView
+                    ? t('sidebar.openAFile')
+                    : t('timer.new')
+              }
               onClick={() => {
-                setListMode('main')
-                // Leave file-canvas: main list has no file sessions, so keep
-                // showing FileSessionView only while still on a file-bound id.
-                const store = useSessionStore.getState()
-                const active = store.conversations.find((c) => c.id === store.activeId)
-                if (active?.fileId || active?.archived || active?.sessionKind === 'timer') {
-                  const next = store.conversations.find(
-                    (c) => !c.archived && !c.fileId && c.sessionKind !== 'timer'
-                  )
-                  if (next) void store.selectConversation(next.id)
+                if (fileSessionsView) {
+                  openAFile()
+                  return
                 }
+                if (timersView) {
+                  void createScheduledConversation()
+                  return
+                }
+                void createConversation({ machineId: windowMachineId })
+                onNavigate?.()
               }}
             >
-              <ArrowLeft size={13} aria-hidden />
-              <span className="sidebar-archive-title">
-                {archiveView
-                  ? t('sidebar.archivedCount', { count: archivedCount })
-                  : timersView
-                    ? t('sidebar.timersTitle')
-                    : t('sidebar.fileSessionsTitle', { count: fileSessionRows.length })}
+              <Plus size={14} aria-hidden />
+              <span>
+                {listMode === 'main'
+                  ? t('common.newSession')
+                  : fileSessionsView
+                    ? t('sidebar.openAFile')
+                    : t('timer.new')}
               </span>
             </button>
+            {listMode === 'main' && (
+              <button
+                type="button"
+                className={`sidebar-list-menu${isSidebarSessionFilterEnabled(sessionFilter) ? ' is-active' : ''}`}
+                data-testid="sidebar-list-menu"
+                data-grouping={groupingMode}
+                data-filter={sessionFilter.kind}
+                title={t('sidebar.listMenu')}
+                aria-label={t('sidebar.listMenu')}
+                aria-haspopup="menu"
+                onClick={(event) => openListMenu(event.currentTarget)}
+              >
+                <ListFilter size={14} aria-hidden />
+              </button>
+            )}
           </div>
         )}
       </div>
@@ -1379,7 +1418,15 @@ export function Sidebar({
           <EmptyState
             title={t('sidebar.fileSessionsEmptyTitle')}
             description={t('sidebar.fileSessionsEmptyDesc')}
-          />
+          >
+            <button
+              className="btn secondary"
+              title={t('sidebar.openAFile')}
+              onClick={() => openAFile()}
+            >
+              {t('sidebar.openAFile')}
+            </button>
+          </EmptyState>
         )}
         {timersView && (
           <TimerJobsPanel />
@@ -1569,49 +1616,17 @@ export function Sidebar({
 
       <UpdateCorner variant="inline" />
 
-      {(listMode === 'main' || timersView) && (
-        <div className="sidebar-foot">
-          <SidebarServiceBar
-            sessionMenuItems={[
-              {
-                label: t('sidebar.showFileSessions'),
-                icon: lucideMenuIcon('file-sessions'),
-                onSelect: () => {
-                  setSidebarQuery('')
-                  void selectWorkspaceGroup(null)
-                  setListMode('fileSessions')
-                }
-              },
-              {
-                label: t('sidebar.showTimers'),
-                icon: lucideMenuIcon('sessions'),
-                onSelect: () => {
-                  setSidebarQuery('')
-                  void selectWorkspaceGroup(null)
-                  setListMode('timers')
-                }
-              },
-              {
-                label:
-                  archivedCount > 0
-                    ? t('sidebar.archivedCount', { count: archivedCount })
-                    : t('sidebar.archived'),
-                icon: lucideMenuIcon('archive'),
-                onSelect: () => {
-                  setSidebarQuery('')
-                  setListMode('archive')
-                }
-              },
-              { label: '', divider: true },
-              {
-                label: t('sidebar.menu.import'),
-                icon: lucideMenuIcon('import'),
-                onSelect: () => void importSessions()
-              }
-            ]}
-          />
-        </div>
-      )}
+      <div className="sidebar-foot">
+        <SidebarServiceBar
+          sessionMenuItems={[
+            {
+              label: t('sidebar.menu.import'),
+              icon: lucideMenuIcon('import'),
+              onSelect: () => void importSessions()
+            }
+          ]}
+        />
+      </div>
     </aside>
   )
 }

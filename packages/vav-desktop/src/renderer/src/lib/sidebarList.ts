@@ -1,5 +1,8 @@
 import { PRESET_MODELS, type ConversationMeta, type SidebarGroupingMode } from '@shared/types.ts'
 import type { MessageKey, TParams } from '@shared/i18n/index.ts'
+import { isTimerDefinition, sessionKindOf } from '@shared/sessionKind.ts'
+import { conversationOnMachine } from '@shared/workspaceHost.ts'
+import type { SidebarListMode } from '../state/sessionTypes.ts'
 import type { SidebarSessionFilter } from './sidebarSessionFilter.ts'
 import { basename } from './path.ts'
 
@@ -197,4 +200,46 @@ export function filterFileSessionRows<T extends { title: string; path: string }>
       row.path.toLowerCase().includes(needle) ||
       fileBasename(row.path).toLowerCase().includes(needle)
   )
+}
+
+type ListModeRow = Pick<ConversationMeta, 'archived' | 'fileId' | 'sessionKind'>
+
+/** Which sidebar category a row belongs to (file / timer win over archived). */
+export function sidebarListModeOfConversation(row: ListModeRow): SidebarListMode {
+  const kind = sessionKindOf(row)
+  if (kind === 'file') return 'fileSessions'
+  if (kind === 'timer') return 'timers'
+  if (row.archived) return 'archive'
+  return 'main'
+}
+
+export function conversationFitsListMode(row: ListModeRow, mode: SidebarListMode): boolean {
+  return sidebarListModeOfConversation(row) === mode
+}
+
+/** Keep the current row when it belongs here; otherwise the newest match on this machine. */
+export function nextConversationForListMode(
+  conversations: readonly ConversationMeta[],
+  mode: SidebarListMode,
+  activeId: string | null | undefined,
+  windowMachineId: string | null | undefined
+): string | null {
+  const pool = conversations.filter((row) => conversationOnMachine(row, windowMachineId))
+  const current = pool.find((row) => row.id === activeId)
+  if (current && conversationFitsListMode(current, mode)) return current.id
+  const matches = pool.filter((row) => conversationFitsListMode(row, mode))
+  if (matches.length === 0) return null
+  if (mode === 'timers') {
+    const defs = matches.filter((row) => isTimerDefinition(row) && !row.archived)
+    const live = matches.filter((row) => !row.archived)
+    const ranked = defs.length ? defs : live.length ? live : matches
+    ranked.sort((a, b) => b.updatedAt - a.updatedAt)
+    return ranked[0]?.id ?? null
+  }
+  if (mode === 'archive') {
+    matches.sort((a, b) => (b.archivedAt ?? b.updatedAt) - (a.archivedAt ?? a.updatedAt))
+    return matches[0]?.id ?? null
+  }
+  matches.sort((a, b) => b.updatedAt - a.updatedAt)
+  return matches[0]?.id ?? null
 }

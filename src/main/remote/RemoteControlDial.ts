@@ -265,6 +265,10 @@ export class RemoteControlDial {
     this.write({ type: 'thread', conversationId })
   }
 
+  requestControls(conversationId: string): void {
+    this.write({ type: 'controls', conversationId })
+  }
+
   async setWorkspace(
     conversationId: string,
     path: string | null,

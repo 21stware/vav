@@ -36,6 +36,7 @@ import { isE2eRuntime } from '@main/e2eRuntime'
 import { installProcessErrorGuards } from '@main/process/stdioGuard'
 import { isRendererUrl } from '@main/window/rendererUrl'
 import { safeSend } from '@main/window/safeSend'
+import { applyUiZoomFactor } from '@main/window/uiZoom'
 import {
   e2eChoosePopupMenu,
   e2eDismissPopupMenu,
@@ -51,6 +52,8 @@ import {
   type SettingsView,
   resolveSettingsView,
   type ProviderAccountViewPayload,
+  type RemoteFolderPickResult,
+  type RemoteFolderViewPayload,
   type SwarmHistoryResumeEvent,
   type SwarmHistoryViewPayload,
   type TokenUsageViewPayload
@@ -69,13 +72,10 @@ import { agentBinaryCandidates } from '@shared/agentBinary'
 import { localFileStreamUrl, parseVavLocalFilePath } from '@shared/localFileUrl'
 import { compactionForLeaf } from '@shared/compaction'
 import {
-  acpSessionFromControls,
-  asApprovalMode,
-  asThinkingLevel,
   chatMessagesFromRemoteThread,
-  cliHostFromAgent,
-  conversationFromRemoteSession,
-  conversationFromRemoteThread
+  conversationFromRemoteThread,
+  conversationPatchFromRemoteControls,
+  desktopRemoteSessionApply
 } from '@shared/remoteDesktop'
 import {
   hasActiveAgentWork,
@@ -261,6 +261,14 @@ import {
   tokenUsagePopupPosition,
   type TokenUsageAnchor
 } from '@main/window/tokenUsageView'
+import {
+  parseRemoteFolderPickRequest,
+  remoteFolderWindowPosition,
+  REMOTE_FOLDER_WINDOW_HEIGHT,
+  REMOTE_FOLDER_WINDOW_MIN_HEIGHT,
+  REMOTE_FOLDER_WINDOW_MIN_WIDTH,
+  REMOTE_FOLDER_WINDOW_WIDTH
+} from '@main/window/remoteFolderView'
 import { appBuildNumber as formatAppBuildNumber } from '@main/appBuild'
 import { FALLBACK_SYSTEM_ACCENT, normalizeAccentHex } from '@main/window/accentColor'
 import { closeActiveNativePopup, popupNativeMenu } from '@main/window/nativePopup'
@@ -374,6 +382,7 @@ import {
 import { contextWindowFor } from '@main/agent/modelMeta'
 import { validateVavApiKey } from '@main/agent/vavModelProbe'
 import { shellPath } from '@main/terminal/StickyShell'
+import { clampUiZoom, stepUiZoom, UI_ZOOM_DEFAULT } from '@shared/uiZoom'
 import { buildAppMenu } from '@main/menu'
 import { currentLocale, setLocalePreference, t } from '@main/i18n'
 import { codeFonts, type Platform } from '@shared/platform'
@@ -479,6 +488,14 @@ let mainShellMachineId = LOCAL_MACHINE_ID
 let settingsWindow: BrowserWindow | null = null
 let tokenUsageWindow: BrowserWindow | null = null
 let providerAccountWindow: BrowserWindow | null = null
+let remoteFolderWindow: BrowserWindow | null = null
+let remoteFolderParent: BrowserWindow | null = null
+let remoteFolderPick: {
+  conversationId: string
+  machineId: string
+  purpose: RemoteFolderViewPayload['purpose']
+} | null = null
+let remoteFolderSettled = false
 /** Last BrowserWindow that held focus — Dock activate raises this, not always main. */
 let lastFocusedWindow: BrowserWindow | null = null
 let screenshotController: ReturnType<typeof createScreenshotController> | null = null
@@ -1201,6 +1218,7 @@ function rebuildAppChrome(): void {
   )
   Menu.setApplicationMenu(appMenu)
   for (const window of BrowserWindow.getAllWindows()) {
+    if (remoteFolderWindow && window === remoteFolderWindow) continue
     applyMenuBar(window)
   }
   refreshTraySessions()
@@ -2199,6 +2217,48 @@ function emitDesktopControlEvents(events: TurnEvent[]): void {
 }
 
 /**
+ * `sessions` / `created` rows have no model. Patch list chrome on a known id;
+ * only mint a conversation for a new one (then ask for controls).
+ */
+function applyDesktopRemoteSessionRows(machineId: string, rows: RemoteSession[]): void {
+  if (!rows.length) return
+  const adoptAs = hostRegistry.get(machineId)?.info.localShell ? LOCAL_MACHINE_ID : machineId
+  const snap = daemonAttach.controlOf(machineId)?.snapshot()
+  let changed = false
+  const needControls: string[] = []
+  for (const session of rows) {
+    const existing = conversationStore.findAdoptedOnMachine(adoptAs, session.id)
+    const decision = desktopRemoteSessionApply(session, {
+      existing: existing ?? null,
+      existingIsLocal: existing ? isLocalMachine(existing.machineId) : false,
+      adoptAsLocal: isLocalMachine(adoptAs),
+      controls: snap?.controls[session.id] ?? null,
+      host: snap?.host ?? null
+    })
+    if (decision.kind === 'skip') continue
+    if (decision.kind === 'patch' && existing) {
+      conversationStore.updateMeta(existing.id, decision.patch)
+      const path = conversationStore.get(existing.id)?.workingDirectory
+      if (path) fileService.watchRoot(existing.id, path)
+      changed = true
+      continue
+    }
+    if (decision.kind !== 'adopt') continue
+    const adopted = conversationStore.adoptHostConversation(
+      conversationFromRemoteThread(decision.meta, []),
+      adoptAs
+    )
+    if (!adopted) continue
+    if (adopted.workingDirectory) fileService.watchRoot(adopted.id, adopted.workingDirectory)
+    changed = true
+    if (!snap?.controls[session.id]) needControls.push(session.id)
+  }
+  if (changed) publishConversations()
+  const dial = daemonAttach.controlOf(machineId)
+  for (const id of needControls) dial?.requestControls(id)
+}
+
+/**
  * Desktop remote window is an isomorphic control-plane client. Apply thread /
  * turn frames immediately — a full catalog pull is too slow and can race a
  * newer local apply with a stale `sessions.get`.
@@ -2209,35 +2269,14 @@ function applyDesktopControlEvent(machineId: string, message: RemoteServerMessag
     // client (this desktop) learns about new/updated sessions on the host via the
     // debounced `sessions` broadcast. Adopt them so third-party-driven sessions
     // show up in the sidebar and turn/thread frames find a local row.
-    const rows = Array.isArray(message.sessions) ? message.sessions : []
-    if (!rows.length) return
-    const adoptAs = hostRegistry.get(machineId)?.info.localShell ? LOCAL_MACHINE_ID : machineId
-    let changed = false
-    for (const session of rows) {
-      const adopted = conversationStore.adoptHostConversation(
-        conversationFromRemoteThread(conversationFromRemoteSession(session), []),
-        adoptAs
-      )
-      if (adopted) {
-        if (adopted.workingDirectory) fileService.watchRoot(adopted.id, adopted.workingDirectory)
-        changed = true
-      }
-    }
-    if (changed) publishConversations()
+    applyDesktopRemoteSessionRows(machineId, Array.isArray(message.sessions) ? message.sessions : [])
     return
   }
 
   if (message.type === 'created') {
     const host = hostRegistry.get(machineId)?.info
     if (host?.localShell) {
-      const adopted = conversationStore.adoptHostConversation(
-        conversationFromRemoteThread(conversationFromRemoteSession(message.session), []),
-        LOCAL_MACHINE_ID
-      )
-      if (adopted) {
-        if (adopted.workingDirectory) fileService.watchRoot(adopted.id, adopted.workingDirectory)
-        broadcast(IPC.convChanged, conversationStore.listMeta())
-      }
+      applyDesktopRemoteSessionRows(machineId, [message.session])
       return
     }
     void pullRemoteWorkspace(machineId)
@@ -2275,18 +2314,7 @@ function applyDesktopControlEvent(machineId: string, message: RemoteServerMessag
     const localId = desktopControlLocalId(machineId, message.conversationId)
     const local = conversationStore.get(localId)
     if (!local) return
-    const acpSession = acpSessionFromControls(message)
-    conversationStore.updateMeta(local.id, {
-      model: message.model || local.model,
-      approvalMode: asApprovalMode(message.approval),
-      ...(asThinkingLevel(message.thinking)
-        ? { thinkingLevel: asThinkingLevel(message.thinking) }
-        : {}),
-      ...(typeof message.fast === 'boolean' ? { fast: message.fast } : {}),
-      cliHost: cliHostFromAgent(message.agent) ?? local.cliHost,
-      agentBinaryName: cliHostFromAgent(message.agent) ?? local.agentBinaryName,
-      ...(acpSession ? { acpSession } : {})
-    })
+    conversationStore.updateMeta(local.id, conversationPatchFromRemoteControls(message, local))
     publishConversations()
     return
   }
@@ -2405,6 +2433,9 @@ function isAuxiliaryWindow(window: BrowserWindow): boolean {
   if (providerAccountWindow && !providerAccountWindow.isDestroyed() && window === providerAccountWindow) {
     return true
   }
+  if (remoteFolderWindow && !remoteFolderWindow.isDestroyed() && window === remoteFolderWindow) {
+    return true
+  }
   if (screenshotController?.isOverlay(window)) return true
   return false
 }
@@ -2459,6 +2490,18 @@ function sendMenuCommand(command: MenuCommand): void {
   if (shouldSkipDuplicateMenuCommand(command, lastMenuCommand, now, lastMenuCommandAt)) return
   lastMenuCommand = command
   lastMenuCommandAt = now
+  if (command === 'zoom-in') {
+    persistUiZoom(stepUiZoom(settingsStore.get().uiZoom, 1))
+    return
+  }
+  if (command === 'zoom-out') {
+    persistUiZoom(stepUiZoom(settingsStore.get().uiZoom, -1))
+    return
+  }
+  if (command === 'zoom-reset') {
+    persistUiZoom(UI_ZOOM_DEFAULT)
+    return
+  }
   let target = BrowserWindow.getFocusedWindow()
   if (!target || target.isDestroyed() || screenshotController?.isOverlay(target)) {
     target =
@@ -3149,6 +3192,39 @@ function createWindow(): BrowserWindow {
   return window
 }
 
+const uiZoomWired = new WeakSet<Electron.WebContents>()
+
+function applyUiZoomToAllWindows(): void {
+  const zoom = settingsStore.get().uiZoom
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (window.isDestroyed()) continue
+    if (screenshotController?.isOverlay(window)) continue
+    applyUiZoomFactor(window.webContents, zoom)
+  }
+}
+
+function persistUiZoom(next: number): void {
+  const zoom = clampUiZoom(next)
+  const previous = clampUiZoom(settingsStore.get().uiZoom)
+  if (previous !== zoom) settingsStore.update({ uiZoom: zoom })
+  applyUiZoomToAllWindows()
+  if (previous !== zoom) broadcast(IPC.settingsChanged, currentSettings())
+}
+
+/** Stamp Chromium zoom on every ordinary renderer; skip overlays / popups. */
+function wireUiZoom(window: BrowserWindow): void {
+  const contents = window.webContents
+  const apply = (): void => {
+    if (window.isDestroyed() || contents.isDestroyed()) return
+    if (screenshotController?.isOverlay(window)) return
+    applyUiZoomFactor(contents, settingsStore.get().uiZoom)
+  }
+  apply()
+  if (uiZoomWired.has(contents)) return
+  uiZoomWired.add(contents)
+  contents.on('did-finish-load', apply)
+}
+
 /** One renderer bundle serves both windows; `view` picks which one to mount. */
 function loadRenderer(window: BrowserWindow, query: Record<string, string> = {}): void {
   // Always stamp theme so index.html can paint the matching wash before CSS.
@@ -3158,6 +3234,7 @@ function loadRenderer(window: BrowserWindow, query: Record<string, string> = {})
   // Session / preview / token stay opaque.
   const useClear = IS_MAC && (!query.view || query.view === 'settings')
   primeRendererShell(window, { clear: useClear })
+  wireUiZoom(window)
   try {
     if (useClear) {
       // createWindow calls loadRenderer before `mainWindow = …` is assigned.
@@ -5219,6 +5296,172 @@ function warmProviderAccountWindow(): void {
   loadRenderer(providerAccountWindow, { view: 'provider-account', conversationId: '_' })
 }
 
+function currentRemoteFolderPayload(): RemoteFolderViewPayload | null {
+  const pick = remoteFolderPick
+  if (!pick) return null
+  const settings = settingsStore.get()
+  const host = decorateHosts(hostRegistry.list()).find((row) => row.id === pick.machineId)
+  const home = isLocalMachine(pick.machineId)
+    ? app.getPath('home')
+    : host?.home || daemonAttach.homeOf(pick.machineId) || ''
+  return {
+    conversationId: pick.conversationId,
+    machineId: pick.machineId,
+    purpose: pick.purpose,
+    hostName: host?.name ?? pick.machineId,
+    home,
+    recents: recentsForMachine(settings.recentWorkspaceDirectories, pick.machineId).slice(0, 8),
+    fileViewMode: settings.fileViewMode ?? 'tree',
+    theme: settings.theme,
+    locale: currentLocale()
+  }
+}
+
+function sendRemoteFolderPayload(): void {
+  const payload = currentRemoteFolderPayload()
+  if (!payload || !remoteFolderWindow || remoteFolderWindow.isDestroyed()) return
+  safeSend(remoteFolderWindow.webContents, IPC.remoteFolderView, payload)
+}
+
+function placeRemoteFolderDialog(win: BrowserWindow, parent: BrowserWindow): void {
+  const width = REMOTE_FOLDER_WINDOW_WIDTH
+  const height = REMOTE_FOLDER_WINDOW_HEIGHT
+  let area = screen.getPrimaryDisplay().workArea
+  try {
+    area = screen.getDisplayMatching(parent.getBounds()).workArea
+  } catch {
+    // keep primary
+  }
+  const { x, y } = remoteFolderWindowPosition({
+    width,
+    height,
+    parent: parent.getBounds(),
+    workArea: area
+  })
+  win.setBounds({ x, y, width, height })
+}
+
+function settleRemoteFolder(path: string | null): void {
+  if (remoteFolderSettled) return
+  remoteFolderSettled = true
+  const pick = remoteFolderPick
+  const parent = remoteFolderParent
+  remoteFolderPick = null
+  remoteFolderParent = null
+  const win = remoteFolderWindow
+  if (win && !win.isDestroyed()) {
+    win.close()
+  }
+  if (pick && parent && !parent.isDestroyed()) {
+    const result: RemoteFolderPickResult = { ...pick, path }
+    safeSend(parent.webContents, IPC.remoteFolderChosen, result)
+  }
+}
+
+function openRemoteFolderWindow(sender: Electron.WebContents, raw: unknown): void {
+  const request = parseRemoteFolderPickRequest(raw)
+  if (!request) return
+
+  const parent = BrowserWindow.fromWebContents(sender) ?? mainWindow
+  if (!parent || parent.isDestroyed()) return
+
+  hideTokenUsageWindow()
+  hideProviderAccountWindow()
+
+  remoteFolderSettled = false
+  remoteFolderPick = request
+  remoteFolderParent = parent
+
+  if (
+    remoteFolderWindow &&
+    !remoteFolderWindow.isDestroyed() &&
+    remoteFolderWindow.getParentWindow()?.id === parent.id
+  ) {
+    try {
+      remoteFolderWindow.setBackgroundColor(windowBackground())
+    } catch {
+      // ignore
+    }
+    placeRemoteFolderDialog(remoteFolderWindow, parent)
+    sendRemoteFolderPayload()
+    if (!remoteFolderWindow.isVisible()) remoteFolderWindow.show()
+    remoteFolderWindow.focus()
+    return
+  }
+
+  if (remoteFolderWindow && !remoteFolderWindow.isDestroyed()) {
+    remoteFolderWindow.destroy()
+    remoteFolderWindow = null
+  }
+
+  const bg = windowBackground()
+  remoteFolderWindow = new BrowserWindow({
+    width: REMOTE_FOLDER_WINDOW_WIDTH,
+    height: REMOTE_FOLDER_WINDOW_HEIGHT,
+    minWidth: REMOTE_FOLDER_WINDOW_MIN_WIDTH,
+    minHeight: REMOTE_FOLDER_WINDOW_MIN_HEIGHT,
+    show: false,
+    parent,
+    modal: true,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    title: t('hosts.pickTitle', { name: request.machineId }),
+    icon: loadAppIcon(),
+    backgroundColor: bg,
+    ...chrome(TOOLBAR_HEIGHT),
+    webPreferences: rendererPrefs()
+  })
+  applyTrafficLights(remoteFolderWindow)
+  if (!IS_MAC) {
+    remoteFolderWindow.setMenu(null)
+    remoteFolderWindow.setMenuBarVisibility(false)
+    remoteFolderWindow.setAutoHideMenuBar(true)
+  }
+
+  try {
+    remoteFolderWindow.setBackgroundColor(bg)
+  } catch {
+    // ignore
+  }
+
+  placeRemoteFolderDialog(remoteFolderWindow, parent)
+
+  remoteFolderWindow.on('closed', () => {
+    remoteFolderWindow = null
+    if (!remoteFolderSettled) settleRemoteFolder(null)
+  })
+
+  wireExternalLinks(remoteFolderWindow.webContents)
+
+  if (!app.isPackaged) {
+    remoteFolderWindow.webContents.on('console-message', (event) => {
+      console.log(`[remote-folder:${event.level}] ${event.message}`)
+    })
+  }
+
+  remoteFolderWindow.webContents.once('did-finish-load', () => {
+    sendRemoteFolderPayload()
+  })
+  remoteFolderWindow.once('ready-to-show', () => {
+    if (!remoteFolderWindow || remoteFolderWindow.isDestroyed()) return
+    sendRemoteFolderPayload()
+    const titleHost = currentRemoteFolderPayload()?.hostName ?? request.machineId
+    remoteFolderWindow.setTitle(t('hosts.pickTitle', { name: titleHost }))
+    remoteFolderWindow.show()
+    remoteFolderWindow.focus()
+  })
+
+  loadRenderer(remoteFolderWindow, { view: 'remote-folder' })
+}
+
+function chooseRemoteFolderFromPicker(sender: Electron.WebContents, path: unknown): void {
+  if (!remoteFolderWindow || remoteFolderWindow.isDestroyed()) return
+  if (sender.id !== remoteFolderWindow.webContents.id) return
+  settleRemoteFolder(typeof path === 'string' && path.trim() ? path : null)
+}
+
 type SwarmHistoryAnchor = { x: number; y: number; width: number; height: number }
 
 let swarmHistoryConversationId: string | null = null
@@ -6763,6 +7006,9 @@ function registerIpc(): void {
       if (patch.windowVibrancyEnabled !== undefined) {
         syncVibrancyShellWindows()
       }
+      if (patch.uiZoom !== undefined) {
+        applyUiZoomToAllWindows()
+      }
       if (
         patch.displayCurrency !== undefined &&
         patch.displayCurrency !== previous.displayCurrency &&
@@ -6784,6 +7030,7 @@ function registerIpc(): void {
       registerGlobalHotkey(next.globalHotkey)
       rebuildAppChrome()
       syncVibrancyShellWindows()
+      applyUiZoomToAllWindows()
       syncSleepBlocker()
       updateService.setPolicy(next.autoUpdatePolicy)
     },
@@ -7695,6 +7942,9 @@ return c as text`
     openProviderAccount: openProviderAccountWindow,
     providerAccountView: currentProviderAccountPayload,
     fitProviderAccount: fitProviderAccountWindow,
+    openRemoteFolder: openRemoteFolderWindow,
+    remoteFolderView: currentRemoteFolderPayload,
+    chooseRemoteFolder: chooseRemoteFolderFromPicker,
     openSwarmHistory: popupSwarmHistoryMenu,
     relaunch: () => {
       app.relaunch()

@@ -16,6 +16,7 @@ const FilePreviewWindow = lazy(() => import('./FilePreviewWindow'))
 const AppClipWindow = lazy(() => import('./AppClipWindow'))
 const TokenUsageWindow = lazy(() => import('./TokenUsageWindow'))
 const ProviderAccountWindow = lazy(() => import('./ProviderAccountWindow'))
+const RemoteFolderWindow = lazy(() => import('./RemoteFolderWindow'))
 
 // The window controls sit on opposite ends on macOS and Windows, and the
 // stylesheet has to leave room for whichever end that is before first paint.
@@ -47,6 +48,7 @@ function Root(): React.JSX.Element {
   if (view === 'provider-account' && conversationId) {
     return <ProviderAccountWindow conversationId={conversationId} />
   }
+  if (view === 'remote-folder') return <RemoteFolderWindow />
   return <App />
 }
 

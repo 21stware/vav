@@ -1,10 +1,42 @@
 import { useCallback, useRef, useState, type DragEvent } from 'react'
+import {
+  peekInAppFileDrag,
+  takeInAppFileDrag,
+  VAV_FILE_PATHS_TYPE
+} from './inAppFileDrag'
 import { imageSizeByPath } from './pasteImages'
 import { useSessionStore } from '../state/sessionStore'
 
+function parseVavFilePaths(raw: string): string[] {
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter((path): path is string => typeof path === 'string' && path.trim().length > 0)
+  } catch {
+    return []
+  }
+}
+
+export function collectConversationDropPaths(data: DataTransfer | null): {
+  paths: string[]
+  sizes: Record<string, number>
+} {
+  const inApp = takeInAppFileDrag()
+  if (inApp.length) return { paths: inApp, sizes: {} }
+  if (data) {
+    const custom = parseVavFilePaths(data.getData(VAV_FILE_PATHS_TYPE))
+    if (custom.length) return { paths: custom, sizes: {} }
+  }
+  return imageSizeByPath([...(data?.files ?? [])])
+}
+
 function dragHasFiles(data: DataTransfer | null): boolean {
+  if (peekInAppFileDrag().length > 0) return true
   if (!data) return false
-  for (const type of data.types) if (type === 'Files') return true
+  if ((data.files?.length ?? 0) > 0) return true
+  for (const type of data.types) {
+    if (type === 'Files' || type === VAV_FILE_PATHS_TYPE) return true
+  }
   return false
 }
 
@@ -70,7 +102,7 @@ export function useConversationFileDrop(
       reset()
       if (!enabled || !conversationId || !dragHasFiles(event.dataTransfer)) return
       event.preventDefault()
-      const { paths, sizes } = imageSizeByPath([...event.dataTransfer.files])
+      const { paths, sizes } = collectConversationDropPaths(event.dataTransfer)
       if (paths.length) {
         useSessionStore.getState().addAttachments(conversationId, paths, { sizes })
       }

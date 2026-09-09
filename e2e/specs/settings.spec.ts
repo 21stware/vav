@@ -78,6 +78,24 @@ test('screenshot keep-front toggle persists on change', async () => {
   }
 })
 
+test('appearance zoom persists on change', async () => {
+  const harness = await launchWorkbench()
+  try {
+    const settings = await openSettingsWindow(harness, 'appearance')
+    const slider = settings.locator('[data-testid="settings-ui-zoom"]')
+    await expect(slider).toHaveValue('100')
+    await slider.evaluate((el) => {
+      const input = el as HTMLInputElement
+      input.value = '125'
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+      input.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+    await expect.poll(() => readUserSetting(harness.userData, 'uiZoom')).toBe(1.25)
+  } finally {
+    await harness.dispose()
+  }
+})
+
 test('appearance toggle persists on change', async () => {
   const harness = await launchWorkbench()
   try {

@@ -32,6 +32,8 @@ static int vav_screen_tune_window(uint64_t view_bits) {
     window.animationBehavior = NSWindowAnimationBehaviorNone;
     window.hasShadow = NO;
     window.excludedFromWindowsMenu = YES;
+    /* Chromium cursor rects on the capture bitmap reset the crosshair to arrow. */
+    [window disableCursorRects];
     window.styleMask |= NSWindowStyleMaskNonactivatingPanel;
     window.collectionBehavior |=
         NSWindowCollectionBehaviorIgnoresCycle | NSWindowCollectionBehaviorStationary;
@@ -137,6 +139,17 @@ static int vav_screen_set_cursor(int32_t kind) {
   }
 }
 
+/** `orderOut:` honors animationBehavior; None matches Cmd+H (no fade/zoom). */
+static int vav_screen_set_animation(uint64_t view_bits, int32_t none) {
+  @autoreleasepool {
+    NSWindow *window = windowFromHandle(view_bits);
+    if (!window) return 1;
+    window.animationBehavior =
+        none ? NSWindowAnimationBehaviorNone : NSWindowAnimationBehaviorDefault;
+    return 0;
+  }
+}
+
 static napi_value JsTune(napi_env env, napi_callback_info info) {
   size_t argc = 1;
   napi_value args[1];
@@ -169,16 +182,41 @@ static napi_value JsSetCursor(napi_env env, napi_callback_info info) {
   return out;
 }
 
+static napi_value JsSetAnimation(napi_env env, napi_callback_info info) {
+  size_t argc = 2;
+  napi_value args[2];
+  napi_get_cb_info(env, info, &argc, args, NULL, NULL);
+  void *data = NULL;
+  size_t size = 0;
+  napi_get_buffer_info(env, args[0], &data, &size);
+  uint64_t bits = 0;
+  if (data && size >= 8) memcpy(&bits, data, 8);
+  else if (data && size >= 4) {
+    uint32_t value = 0;
+    memcpy(&value, data, 4);
+    bits = value;
+  }
+  int32_t none = 0;
+  napi_get_value_int32(env, args[1], &none);
+  int rc = vav_screen_set_animation(bits, none);
+  napi_value out;
+  napi_create_int32(env, rc, &out);
+  return out;
+}
+
 static napi_value Init(napi_env env, napi_value exports) {
   napi_value capture;
   napi_value tune;
   napi_value setCursor;
+  napi_value setAnimation;
   napi_create_function(env, "capture", NAPI_AUTO_LENGTH, JsCapture, NULL, &capture);
   napi_create_function(env, "tune", NAPI_AUTO_LENGTH, JsTune, NULL, &tune);
   napi_create_function(env, "setCursor", NAPI_AUTO_LENGTH, JsSetCursor, NULL, &setCursor);
+  napi_create_function(env, "setAnimation", NAPI_AUTO_LENGTH, JsSetAnimation, NULL, &setAnimation);
   napi_set_named_property(env, exports, "capture", capture);
   napi_set_named_property(env, exports, "tune", tune);
   napi_set_named_property(env, exports, "setCursor", setCursor);
+  napi_set_named_property(env, exports, "setAnimation", setAnimation);
   return exports;
 }
 

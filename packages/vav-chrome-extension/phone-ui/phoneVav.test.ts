@@ -450,6 +450,30 @@ describe('phone files listing', () => {
     assert.ok(calls.some((call) => call.method === 'git.status'))
   })
 
+  it('reads git log over the daemon plane', async () => {
+    installWindow()
+    const transport = mockTransport()
+    const calls: Array<{ method: string; params?: unknown }> = []
+    transport.daemon = {
+      ready: async () => true,
+      hello: async () => true,
+      request: async (method, params) => {
+        calls.push({ method, params })
+        if (method === 'git.log') {
+          return { ok: true, data: { commits: [{ sha: 'abc', shortSha: 'abc', subject: 'seed', author: 'e2e', date: 1 }] } }
+        }
+        return { ok: false, error: 'unused' }
+      },
+      onStream: () => () => undefined
+    }
+    const { api } = installPhoneVav(transport)
+    const log = await api.git.log('/tmp/ws')
+    assert.equal(log.ok, true)
+    if (!log.ok) return
+    assert.equal(log.data.commits[0]?.subject, 'seed')
+    assert.ok(calls.some((call) => call.method === 'git.log'))
+  })
+
   it('lists plugins over the daemon plane', async () => {
     installWindow()
     const transport = mockTransport()

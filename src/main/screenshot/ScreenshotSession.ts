@@ -15,7 +15,13 @@ import { writeClip, writeClipBytes } from '../fs/clipStore'
 import { currentLocale } from '../i18n'
 import { IPC, type ScreenshotInitPayload } from '@shared/ipc'
 import type { AppLocale } from '@shared/types'
-import { captureMacDisplays, setMacCursor, tuneMacOverlay } from './macNative'
+import { nativeCaptureExcludePid } from './hideForCapture'
+import {
+  captureMacDisplays,
+  setMacCursor,
+  setMacWindowAnimation,
+  tuneMacOverlay
+} from './macNative'
 
 export type ScreenshotResult =
   | { ok: true; path: string }
@@ -59,8 +65,6 @@ function isEscapeInput(input: Electron.Input): boolean {
   if (input.control || input.meta || input.alt) return false
   return input.key === 'Escape' || input.key === 'Esc' || input.code === 'Escape'
 }
-
-const HIDE_SETTLE_MS = 80
 
 export type CaptureScreenshotOptions = {
   hideWindows?: boolean
@@ -165,11 +169,12 @@ async function captureFallback(
 }
 
 function captureDisplays(
-  displays: Electron.Display[]
+  displays: Electron.Display[],
+  excludePid = 0
 ): { display: Electron.Display; path: string }[] | null {
   if (process.platform !== 'darwin') return null
   const outDir = mkdtempSync(join(tmpdir(), 'vav-screen-'))
-  const shots = captureMacDisplays(0, outDir)
+  const shots = captureMacDisplays(excludePid, outDir)
   if (!shots?.length) return null
   const captures: { display: Electron.Display; path: string }[] = []
   for (const shot of shots) {
@@ -263,8 +268,8 @@ export function createScreenshotController(host: ScreenshotHost): {
     setMacCursor(kind)
     const js =
       kind === 'crosshair'
-        ? `document.documentElement.classList.add('is-screenshotting');document.querySelector('.screenshot-root')?.classList.remove('is-done')`
-        : `document.documentElement.classList.remove('is-screenshotting');document.querySelector('.screenshot-root')?.classList.add('is-done')`
+        ? `document.documentElement.classList.add('is-screenshotting');document.documentElement.classList.remove('has-crop');document.querySelector('.screenshot-root')?.classList.remove('is-done')`
+        : `document.documentElement.classList.remove('is-screenshotting','has-crop');document.querySelector('.screenshot-root')?.classList.add('is-done')`
     for (const win of BrowserWindow.getAllWindows()) {
       if (win.isDestroyed() || win.webContents.isDestroyed()) continue
       void win.webContents.executeJavaScript(js).catch(() => undefined)
@@ -285,6 +290,9 @@ export function createScreenshotController(host: ScreenshotHost): {
       if (win.isDestroyed() || isPooled(win)) continue
       if (!win.isVisible()) continue
       hidden.push(win)
+      // `win.hide()` → `orderOut:` (can fade). Cmd+H is `app.hide()`, which
+      // would unhide every window when the overlay panel is shown.
+      setMacWindowAnimation(win, 'none')
       try {
         win.hide()
       } catch {
@@ -297,6 +305,7 @@ export function createScreenshotController(host: ScreenshotHost): {
   const restoreAppWindows = (hidden: BrowserWindow[]): void => {
     for (const win of hidden) {
       if (win.isDestroyed()) continue
+      setMacWindowAnimation(win, 'default')
       try {
         win.showInactive()
       } catch {
@@ -349,6 +358,7 @@ export function createScreenshotController(host: ScreenshotHost): {
     } catch {
       // ignore
     }
+    setMacCursor('crosshair')
     if (!win.isVisible()) {
       try {
         win.showInactive()
@@ -626,8 +636,6 @@ export function createScreenshotController(host: ScreenshotHost): {
           try {
             if (hideWindows) {
               pending.concealed = concealAppWindows()
-              await new Promise<void>((wait) => setTimeout(wait, HIDE_SETTLE_MS))
-              if (!pending) return
               if (pending.dismissed) {
                 settle({ ok: false, cancelled: true })
                 return
@@ -643,7 +651,7 @@ export function createScreenshotController(host: ScreenshotHost): {
 
             const displays = screen.getAllDisplays()
             const captures =
-              captureDisplays(displays) ??
+              captureDisplays(displays, nativeCaptureExcludePid(hideWindows, process.pid)) ??
               (process.platform === 'darwin' ? null : await captureFallback(displays))
             if (!captures?.length) {
               settle({ ok: false, error: 'denied' })

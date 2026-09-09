@@ -16,6 +16,7 @@ type NativeAddon = {
   capture(excludePid: number, outDir: string): number
   tune(handle: Buffer): number
   setCursor(kind: number): number
+  setAnimation?(handle: Buffer, none: number): number
 }
 
 let native: NativeAddon | null | undefined
@@ -62,7 +63,7 @@ function loadNative(): NativeAddon | null {
   }
 }
 
-/** Disable AppKit zoom, drop the shadow, and keep the overlay out of the Window menu. */
+/** Disable AppKit zoom, drop the shadow, skip cursor rects, and keep the overlay out of the Window menu. */
 export function tuneMacOverlay(win: BrowserWindow): boolean {
   const addon = loadNative()
   if (!addon) return false
@@ -70,6 +71,18 @@ export function tuneMacOverlay(win: BrowserWindow): boolean {
     return addon.tune(win.getNativeWindowHandle()) === 0
   } catch (err) {
     console.error('[screenshot] tune window failed', err)
+    return false
+  }
+}
+
+/** Kill `orderOut:` fade/zoom so per-window hide matches Cmd+H. */
+export function setMacWindowAnimation(win: BrowserWindow, kind: 'none' | 'default'): boolean {
+  const addon = loadNative()
+  if (!addon?.setAnimation) return false
+  try {
+    return addon.setAnimation(win.getNativeWindowHandle(), kind === 'none' ? 1 : 0) === 0
+  } catch (err) {
+    console.error('[screenshot] set animation failed', err)
     return false
   }
 }
@@ -86,7 +99,7 @@ export function setMacCursor(kind: 'crosshair' | 'default'): boolean {
   }
 }
 
-/** Capture every display as-is (app windows stay on screen and in the shot). */
+/** Capture every display. Pass a pid to omit that process's windows from the composite. */
 export function captureMacDisplays(excludePid: number, outDir: string): MacDisplayCapture[] | null {
   const addon = loadNative()
   if (!addon) return null

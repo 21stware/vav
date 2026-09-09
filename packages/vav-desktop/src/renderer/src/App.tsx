@@ -18,6 +18,7 @@ import { SessionDetail } from './components/SessionDetail'
 import { useTerminalAppearance } from './lib/useTerminalAppearance'
 import { WorkspaceView } from './components/WorkspaceView'
 import { FileSessionView } from './components/FileSessionView'
+import { ScheduleEditor } from './components/ScheduleEditor'
 import { AppToast } from './components/AppToast'
 import { RemoteFolderPicker } from './components/RemoteFolderPicker'
 import { UpdateCorner } from './components/UpdateCorner'
@@ -38,6 +39,8 @@ import {
 import { useT } from './i18n/useT'
 import { useAttentionSeen } from './lib/useAttentionSeen'
 import { installSwarmHistoryBridge } from './lib/swarmHistoryBridge'
+import { conversationFitsListMode } from './lib/sidebarList'
+import { isTimerDefinition } from '@shared/sessionKind'
 
 type LaunchPhase = 'checking' | 'keychain' | 'booting' | 'ready' | 'no-preload'
 
@@ -235,13 +238,46 @@ export default function App(): React.JSX.Element {
   )
 }
 
+function CategoryEmpty({
+  title,
+  description
+}: {
+  title: string
+  description: string
+}): React.JSX.Element {
+  const sidebarVisible = useSessionStore((s) => s.sidebarVisible)
+  const floating = useSidebarFloatMode()
+  const showShellLeading = !(sidebarVisible && !floating)
+  return (
+    <main className="detail category-empty" data-testid="session-detail">
+      <header
+        className={`terminal-host-chrome agent-mode-chrome${showShellLeading ? ' has-shell-leading' : ''}`}
+      >
+        <div className="agent-mode-chrome-row">
+          {showShellLeading ? (
+            <div className="agent-mode-shell-leading">
+              <ShellLeadingControls />
+            </div>
+          ) : null}
+          <span className="spacer" />
+        </div>
+      </header>
+      <EmptyState title={title} description={description} />
+    </main>
+  )
+}
+
 function DetailSlot(): React.JSX.Element {
+  const t = useT()
+  const listMode = useSessionStore((s) => s.sidebarListMode)
   const activeConversation = useSessionStore((s) =>
     s.conversations.find((c) => c.id === s.activeId)
   )
+  const fits =
+    !!activeConversation && conversationFitsListMode(activeConversation, listMode)
 
-  // File-bound sessions: file canvas + agent (list lives in sidebar File sessions).
-  if (activeConversation?.fileId) {
+  // File-bound sessions: file canvas + agent (list lives in sidebar File).
+  if (activeConversation && fits && activeConversation.fileId) {
     return (
       <FileSessionView
         conversationId={activeConversation.id}
@@ -249,14 +285,45 @@ function DetailSlot(): React.JSX.Element {
       />
     )
   }
+  // Scheduled: always the create/edit form. Timer runs keep the session surface.
+  if (listMode === 'timers') {
+    if (activeConversation && fits && !isTimerDefinition(activeConversation)) {
+      const wd = activeConversation.workingDirectory
+      return (
+        <WorkspaceView
+          conversationId={activeConversation.id}
+          workdir={wd && !wd.startsWith('__') ? wd : null}
+        />
+      )
+    }
+    return (
+      <ScheduleEditor conversationId={activeConversation && fits ? activeConversation.id : null} />
+    )
+  }
   // Session surface + optional right file preview (session state).
   // Workspace groups only aggregate/pin in the sidebar — no group selection.
-  if (activeConversation) {
+  if (activeConversation && fits) {
     const wd = activeConversation.workingDirectory
     return (
       <WorkspaceView
         conversationId={activeConversation.id}
         workdir={wd && !wd.startsWith('__') ? wd : null}
+      />
+    )
+  }
+  if (listMode === 'fileSessions') {
+    return (
+      <CategoryEmpty
+        title={t('sidebar.fileSessionsEmptyTitle')}
+        description={t('sidebar.fileSessionsEmptyDesc')}
+      />
+    )
+  }
+  if (listMode === 'archive') {
+    return (
+      <CategoryEmpty
+        title={t('sidebar.archiveEmptyTitle')}
+        description={t('sidebar.archiveEmptyDesc')}
       />
     )
   }

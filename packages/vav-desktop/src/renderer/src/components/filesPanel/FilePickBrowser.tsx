@@ -3,6 +3,7 @@ import type { FileEntry, FileViewMode } from '@shared/types'
 import { useT, tt } from '../../i18n/useT'
 import { filterFileEntries } from '../../lib/remoteFolderPick'
 import { InlineAlert } from '../ui'
+import { FolderEmptyState } from './FolderEmpty'
 
 export type FilePickDirs = Record<string, FileEntry[]>
 
@@ -139,12 +140,7 @@ function PickTreeLevel({
 
   if (entries.length === 0) {
     return (
-      <div
-        className="muted tiny"
-        style={{ paddingLeft: level * 14 + 22, height: 24, lineHeight: '24px' }}
-      >
-        {tt('files.emptyFolder')}
-      </div>
+      <FolderEmptyState compact={level > 0} padLeft={level > 0 ? level * 14 + 22 : undefined} />
     )
   }
 
@@ -343,9 +339,7 @@ function PickColumnBrowser({
                 )
               })}
             {!error && !loading && dirs[dir] && entries.length === 0 && (
-              <div className="muted tiny" style={{ padding: 8 }}>
-                {tt('files.emptyFolder')}
-              </div>
+              <FolderEmptyState />
             )}
           </div>
         )

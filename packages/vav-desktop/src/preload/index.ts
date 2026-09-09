@@ -8,6 +8,9 @@ import {
   type SettingsView,
   type SettingsViewPayload,
   type ProviderAccountViewPayload,
+  type RemoteFolderPickRequest,
+  type RemoteFolderPickResult,
+  type RemoteFolderViewPayload,
   type SwarmHistoryResumeEvent,
   type TokenUsageViewPayload,
   type ScreenshotInitPayload,
@@ -300,15 +303,37 @@ const api: VavApi = {
       ipcRenderer.invoke(IPC.gitShowBase64, cwd, path, ref, conversationId),
     init: (cwd: string, conversationId?: string) =>
       ipcRenderer.invoke(IPC.gitInit, cwd, conversationId),
-    createBranch: (cwd: string, name: string, opts?: { checkout?: boolean; conversationId?: string }) =>
-      ipcRenderer.invoke(IPC.gitCreateBranch, cwd, name, opts),
+    log: (cwd: string, opts?: { limit?: number; conversationId?: string }) =>
+      ipcRenderer.invoke(IPC.gitLog, cwd, opts),
+    branches: (cwd: string, conversationId?: string) =>
+      ipcRenderer.invoke(IPC.gitBranches, cwd, conversationId),
+    stashes: (cwd: string, conversationId?: string) =>
+      ipcRenderer.invoke(IPC.gitStashes, cwd, conversationId),
+    patch: (cwd: string, spec: string, conversationId?: string) =>
+      ipcRenderer.invoke(IPC.gitPatch, cwd, spec, conversationId),
+    createBranch: (
+      cwd: string,
+      name: string,
+      opts?: { checkout?: boolean; startPoint?: string; conversationId?: string }
+    ) => ipcRenderer.invoke(IPC.gitCreateBranch, cwd, name, opts),
     checkoutBranch: (cwd: string, name: string, conversationId?: string) =>
       ipcRenderer.invoke(IPC.gitCheckoutBranch, cwd, name, conversationId),
+    deleteBranch: (cwd: string, name: string, conversationId?: string) =>
+      ipcRenderer.invoke(IPC.gitDeleteBranch, cwd, name, conversationId),
     createWorktree: (
       cwd: string,
       options: { path: string; newBranch?: string; branch?: string },
       conversationId?: string
-    ) => ipcRenderer.invoke(IPC.gitCreateWorktree, cwd, options, conversationId)
+    ) => ipcRenderer.invoke(IPC.gitCreateWorktree, cwd, options, conversationId),
+    stashPush: (cwd: string, opts?: { message?: string; conversationId?: string }) =>
+      ipcRenderer.invoke(IPC.gitStashPush, cwd, opts),
+    stashApply: (
+      cwd: string,
+      index: number,
+      opts?: { pop?: boolean; conversationId?: string }
+    ) => ipcRenderer.invoke(IPC.gitStashApply, cwd, index, opts),
+    stashDrop: (cwd: string, index: number, conversationId?: string) =>
+      ipcRenderer.invoke(IPC.gitStashDrop, cwd, index, conversationId)
   },
 
   cloudflare: {
@@ -515,6 +540,14 @@ const api: VavApi = {
     onProviderAccountView: (handler) =>
       subscribe<ProviderAccountViewPayload>(IPC.providerAccountView, handler),
     fitProviderAccount: (height) => ipcRenderer.invoke(IPC.providerAccountFit, height),
+    openRemoteFolderPicker: (request: RemoteFolderPickRequest) =>
+      ipcRenderer.invoke(IPC.windowOpenRemoteFolder, request),
+    getRemoteFolderView: () => ipcRenderer.invoke(IPC.remoteFolderGetView),
+    onRemoteFolderView: (handler) =>
+      subscribe<RemoteFolderViewPayload>(IPC.remoteFolderView, handler),
+    chooseRemoteFolder: (path) => ipcRenderer.invoke(IPC.remoteFolderChoose, path),
+    onRemoteFolderChosen: (handler) =>
+      subscribe<RemoteFolderPickResult>(IPC.remoteFolderChosen, handler),
     openSwarmHistory: (conversationId, anchor) =>
       ipcRenderer.invoke(IPC.windowOpenSwarmHistory, conversationId, anchor),
     onSwarmHistoryResume: (handler) =>

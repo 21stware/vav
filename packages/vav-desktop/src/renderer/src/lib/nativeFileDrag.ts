@@ -1,5 +1,10 @@
 import type { DragEvent } from 'react'
 import { isLocalMachine } from '@shared/workspaceHost'
+import {
+  beginInAppFileDrag,
+  clearInAppFileDrag,
+  VAV_FILE_PATHS_TYPE
+} from './inAppFileDrag'
 import { useSessionStore } from '../state/sessionStore'
 
 /** Native file drag/copy/Get Info only work for files on this machine. */
@@ -21,30 +26,52 @@ export function nativeOsFileActionsAvailable(): boolean {
 /**
  * Spread onto a Files-row / preview title so a drag leaves the window as a
  * real OS file (`webContents.startDrag`), not a Chromium HTML ghost.
+ *
+ * Files also record an in-app path so dropping on the conversation pins a
+ * composer attachment even when `startDrag` hides HTML5 `Files` data.
  */
-export function nativeFileDragProps(path: string): {
+export function nativeFileDragProps(
+  path: string,
+  opts?: { isDirectory?: boolean }
+): {
   draggable: boolean
   'data-native-file-drag'?: 'true'
   onDragStart: (event: DragEvent) => void
+  onDragEnd: () => void
   onPointerDown: () => void
 } {
-  const enabled =
-    Boolean(path) &&
+  const hasPath = Boolean(path)
+  const native =
+    hasPath &&
     sessionAllowsNativeFileDrag() &&
     typeof window.vav?.files?.startDrag === 'function'
+  const inApp = hasPath && !opts?.isDirectory
 
   return {
-    draggable: enabled,
-    ...(enabled ? { 'data-native-file-drag': 'true' as const } : {}),
+    draggable: native || inApp,
+    ...(native ? { 'data-native-file-drag': 'true' as const } : {}),
     onPointerDown: () => {
-      if (!enabled) return
-      void window.vav.files.prefetchDragIcon?.(path)
+      if (native) void window.vav.files.prefetchDragIcon?.(path)
     },
     onDragStart: (event) => {
-      if (!enabled) return
-      event.preventDefault()
-      event.stopPropagation()
-      window.vav.files.startDrag([path])
+      if (!hasPath) return
+      if (inApp) beginInAppFileDrag([path])
+      if (native) {
+        event.preventDefault()
+        event.stopPropagation()
+        window.vav.files.startDrag([path])
+        return
+      }
+      if (!inApp) {
+        event.preventDefault()
+        return
+      }
+      event.dataTransfer.setData(VAV_FILE_PATHS_TYPE, JSON.stringify([path]))
+      event.dataTransfer.setData('text/plain', path)
+      event.dataTransfer.effectAllowed = 'copy'
+    },
+    onDragEnd: () => {
+      clearInAppFileDrag()
     }
   }
 }

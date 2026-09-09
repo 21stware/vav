@@ -133,12 +133,22 @@ export function installCompactionsBridge(): () => void {
  */
 export function installWindowBridge(): () => void {
   const onChanged = window.vav?.conversations?.onChanged
-  if (!onChanged) return noopOff()
-  return onChanged((list) => {
-    useSessionStore.setState((state) => ({
-      conversations: mergeConversationList(state.conversations, list)
-    }))
-  })
+  const offChanged = onChanged
+    ? onChanged((list) => {
+        useSessionStore.setState((state) => ({
+          conversations: mergeConversationList(state.conversations, list)
+        }))
+      })
+    : noopOff()
+  const offFolder = window.vav?.window?.onRemoteFolderChosen
+    ? window.vav.window.onRemoteFolderChosen((result) => {
+        void useSessionStore.getState().applyRemoteFolderPick(result)
+      })
+    : noopOff()
+  return () => {
+    offChanged()
+    offFolder()
+  }
 }
 
 export function installActivityBridge(): () => void {

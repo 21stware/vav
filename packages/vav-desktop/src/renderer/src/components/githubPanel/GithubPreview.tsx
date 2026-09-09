@@ -74,11 +74,10 @@ export function GithubPullPreview({
         </span>
         <Button
           icon={<SafariIcon size={14} />}
-          size="sm"
           title={t('github.openOnGithub')}
           onClick={() => window.open(item.url, '_blank', 'noopener,noreferrer')}
         />
-        <Button icon={<X size={14} />} size="sm" title={t('common.close')} onClick={onClose} />
+        <Button icon={<X size={14} />} title={t('common.close')} onClick={onClose} />
       </header>
       <div className="github-detail-pane">
         <PullDetail
@@ -153,11 +152,10 @@ export function GithubActionPreview({
         </span>
         <Button
           icon={<SafariIcon size={14} />}
-          size="sm"
           title={t('github.openOnGithub')}
           onClick={() => window.open(shown.htmlUrl, '_blank', 'noopener,noreferrer')}
         />
-        <Button icon={<X size={14} />} size="sm" title={t('common.close')} onClick={onClose} />
+        <Button icon={<X size={14} />} title={t('common.close')} onClick={onClose} />
       </header>
       <div className="github-detail-pane">
         <ActionDetail
@@ -188,13 +186,12 @@ export function GithubSitePreview({
         <span className="github-preview-title">{t('github.sitePages')}</span>
         <Button
           icon={<SafariIcon size={14} />}
-          size="sm"
           title={liveUrl ? t('github.openSite') : t('github.openPagesSettings')}
           onClick={() =>
             window.open(liveUrl || site.settingsUrl, '_blank', 'noopener,noreferrer')
           }
         />
-        <Button icon={<X size={14} />} size="sm" title={t('common.close')} onClick={onClose} />
+        <Button icon={<X size={14} />} title={t('common.close')} onClick={onClose} />
       </header>
       <div className="github-detail-pane">
         <SitePane site={site} loading={false} error={null} code={undefined} showOpen={false} />
@@ -220,11 +217,10 @@ export function GithubReleasePreview({
         </span>
         <Button
           icon={<SafariIcon size={14} />}
-          size="sm"
           title={t('github.openOnGithub')}
           onClick={() => window.open(release.htmlUrl, '_blank', 'noopener,noreferrer')}
         />
-        <Button icon={<X size={14} />} size="sm" title={t('common.close')} onClick={onClose} />
+        <Button icon={<X size={14} />} title={t('common.close')} onClick={onClose} />
       </header>
       <div className="github-detail-pane">
         <ReleaseDetail release={release} showOpen={false} />

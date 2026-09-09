@@ -145,7 +145,6 @@ export function SupabaseFunctionPreview({
         {selected?.localPath ? (
           <Button
             icon={<FileCode size={14} />}
-            size="sm"
             title={t('supabase.openSource')}
             onClick={() => openFileInSessionPreview(selected.localPath!)}
           />
@@ -153,12 +152,11 @@ export function SupabaseFunctionPreview({
         {dash ? (
           <Button
             icon={<ExternalLink size={14} />}
-            size="sm"
             title={t('supabase.openDashboard')}
             onClick={() => window.open(dash, '_blank', 'noopener,noreferrer')}
           />
         ) : null}
-        <Button icon={<X size={14} />} size="sm" title={t('common.close')} onClick={onClose} />
+        <Button icon={<X size={14} />} title={t('common.close')} onClick={onClose} />
       </header>
       <div className="github-detail-pane">
         <ProjectPane status={status} selected={selected} showOpen={false} />

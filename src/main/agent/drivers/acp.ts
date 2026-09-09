@@ -8,6 +8,7 @@ import {
 import {
   ACP_CLIENT_CAPABILITIES,
   ACP_PROTOCOL_VERSION,
+  GROK_ACP_CLIENT_CAPABILITIES,
   acpFormContentFromAnswers,
   applyGoalSlash,
   goalUsesRpc,
@@ -190,7 +191,8 @@ function splitGrokExtraArgs(extra: string[]): {
 }
 
 function grokInvokeArgs(
-  options?: Pick<DriverStartOptions, 'model' | 'thinkingLevel' | 'extraArgs'>
+  options?: Pick<DriverStartOptions, 'model' | 'thinkingLevel' | 'extraArgs'>,
+  approvalMode?: ApprovalMode
 ): string[] {
   const split = splitGrokExtraArgs(options?.extraArgs ?? [])
   const agentMid: string[] = []
@@ -201,6 +203,12 @@ function grokInvokeArgs(
   const effort = options?.thinkingLevel ? grokEffortId(options.thinkingLevel) : null
   if (effort && !hasArgvFlag(split.agent, '--reasoning-effort', '--effort')) {
     agentMid.push('--reasoning-effort', effort)
+  }
+  if (
+    (approvalMode === 'bypass' || approvalMode === 'auto') &&
+    !hasArgvFlag(split.agent, '--always-approve', '--yolo')
+  ) {
+    agentMid.push('--always-approve')
   }
   return [...split.global, 'agent', ...agentMid, ...split.agent, 'stdio', ...split.stdio]
 }
@@ -216,7 +224,7 @@ export function acpInvokeArgs(
   approvalMode: ApprovalMode,
   options?: Pick<DriverStartOptions, 'model' | 'thinkingLevel' | 'fast' | 'extraArgs'>
 ): string[] {
-  if (kind === 'grok') return grokInvokeArgs(options)
+  if (kind === 'grok') return grokInvokeArgs(options, approvalMode)
   const extra = filterAcpExtraArgs(kind, options?.extraArgs ?? [])
   const args = [...acpArgs(kind, approvalMode)]
   if (kind === 'cursor' && !hasArgvFlag(extra, '--model', '-m')) {
@@ -402,19 +410,24 @@ export function wireAcp(
     return wantedModel?.trim() || null
   }
 
-  const createSession = async (): Promise<unknown> => {
+  const sessionNewParams = (modelId: string | null): Record<string, unknown> => {
     const params: Record<string, unknown> = {
       cwd: options.cwd,
       mcpServers: []
     }
-    const modelId = bootModelId()
     if (modelId) params.modelId = modelId
+    if (kind === 'grok' && autoApprove) params._meta = { yoloMode: true }
+    return params
+  }
+
+  const createSession = async (): Promise<unknown> => {
+    const modelId = bootModelId()
     try {
-      return await request('session/new', params)
+      return await request('session/new', sessionNewParams(modelId))
     } catch (err) {
       // Official ACP session/new has no modelId. Retry plain if the host rejects it.
       if (modelId && rpcErrorCode(err) === RpcErrorCode.invalidParams) {
-        return await request('session/new', { cwd: options.cwd, mcpServers: [] })
+        return await request('session/new', sessionNewParams(null))
       }
       throw err
     }
@@ -577,7 +590,7 @@ export function wireAcp(
     const init = asRecord(
       await request('initialize', {
         protocolVersion: ACP_PROTOCOL_VERSION,
-        clientCapabilities: ACP_CLIENT_CAPABILITIES,
+        clientCapabilities: kind === 'grok' ? GROK_ACP_CLIENT_CAPABILITIES : ACP_CLIENT_CAPABILITIES,
         clientInfo: { name: 'vav', version: '1.0.0' }
       })
     )
@@ -586,6 +599,10 @@ export function wireAcp(
     promptCapabilities = parseAcpPromptCapabilities(
       caps?.promptCapabilities ?? caps?.prompt_capabilities
     )
+    // Grok 4 is vision-capable and `session/prompt` accepts Image blocks, but
+    // grok-build's initialize only advertises `embeddedContext`. Without this,
+    // attachments stay resource_link / text and the model never sees pixels.
+    if (kind === 'grok') promptCapabilities = { ...promptCapabilities, image: true }
     canLogout = asRecord(caps?.auth)?.logout != null || caps?.logout === true
     const authMethods = parseAcpAuthMethods(init?.authMethods ?? init?.auth_methods)
     advertisedGoal = parseAcpGoalCapability(dig(init, '_meta.goal'))

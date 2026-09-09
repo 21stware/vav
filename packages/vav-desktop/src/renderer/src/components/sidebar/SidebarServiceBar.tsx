@@ -52,8 +52,7 @@ export function SidebarServiceBar({
         onSelect: () => void window.vav.hosts.forget(machineId)
       })
     }
-    // Session-management actions (file sessions / timers / archived / import)
-    // belong to the active service, not a separate fixed button.
+    // Import belongs to the active service, not a separate fixed button.
     if (sessionMenuItems.length) {
       items.push({ label: '', divider: true }, ...sessionMenuItems)
     }
@@ -92,13 +91,13 @@ export function SidebarServiceBar({
               else switchService(service.id)
             }}
           >
-            <Icon size={13} aria-hidden />
-            <span className="sidebar-service-label-clip">
-              <span className="sidebar-service-label">{service.name}</span>
+            <Icon size={14} aria-hidden />
+            <span className="sidebar-service-label-clip" aria-hidden="true">
+              <span className="sidebar-service-label-inner">
+                <span className="sidebar-service-label">{service.name}</span>
+                <ChevronDown className="sidebar-foot-connect-chevron" size={11} aria-hidden />
+              </span>
             </span>
-            {expanded ? (
-              <ChevronDown className="sidebar-foot-connect-chevron" size={11} aria-hidden />
-            ) : null}
           </button>
         )
       })}

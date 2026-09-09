@@ -192,6 +192,15 @@ export function cropCursor(hit: CropHit | null): string {
   }
 }
 
+/** Crosshair while drawing the crop; arrow once the toolbar is up. */
+export function screenshotSessionCursor(opts: {
+  hasUsableCrop: boolean
+  creating: boolean
+}): 'crosshair' | 'default' {
+  if (!opts.hasUsableCrop || opts.creating) return 'crosshair'
+  return 'default'
+}
+
 export type MarkResizeHandle = CropHandle | 'start' | 'end'
 export type MarkHit = MarkResizeHandle | 'move'
 

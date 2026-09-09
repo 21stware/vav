@@ -4,6 +4,9 @@ import {
   acpSessionFromControls,
   chatMessagesFromRemoteThread,
   conversationFromRemoteSession,
+  conversationListPatchFromRemoteSession,
+  desktopRemoteSessionApply,
+  isSparseRemoteConversation,
   favoriteIdsFromRemoteSessions,
   messageBlockFromRemote,
   turnEventsFromRemoteTurn,
@@ -11,6 +14,119 @@ import {
 } from './remoteDesktop.ts'
 
 describe('remoteDesktop (phone → desktop session model)', () => {
+  it('treats a sessions list row as sparse — no model, no thread, no tokens', () => {
+    assert.equal(
+      isSparseRemoteConversation({ model: '', messages: [], tokensUsed: 0, tokenLimit: 0 }),
+      true
+    )
+    assert.equal(isSparseRemoteConversation({ model: 'unknown', messages: [] }), true)
+    assert.equal(
+      isSparseRemoteConversation({ model: 'grok-4.6', messages: [], tokensUsed: 0, tokenLimit: 0 }),
+      false
+    )
+  })
+
+  it('patches pin/title from a sessions row without inventing model or host', () => {
+    const patch = conversationListPatchFromRemoteSession({
+      id: 's1',
+      title: 'Renamed',
+      dirLabel: '~/vav',
+      status: 'idle',
+      surface: 'vav',
+      updatedAt: 20,
+      workdir: '/tmp/vav',
+      pinned: true,
+      pinTime: 19
+    })
+    assert.equal(patch.title, 'Renamed')
+    assert.equal(patch.pinned, true)
+    assert.equal(patch.workingDirectory, '/tmp/vav')
+    assert.equal(patch.model, undefined)
+    assert.equal(patch.cliHost, undefined)
+  })
+
+  it('keeps the live model when a sessions broadcast lands after configure', () => {
+    const result = desktopRemoteSessionApply(
+      {
+        id: 's1',
+        title: 'One',
+        dirLabel: '~/vav',
+        status: 'idle',
+        surface: 'cli',
+        updatedAt: 20,
+        pinned: true,
+        pinTime: 19
+      },
+      {
+        existing: { model: 'grok-4.6', cliHost: 'cursor', agentBinaryName: 'cursor' },
+        existingIsLocal: false,
+        adoptAsLocal: false
+      }
+    )
+    assert.equal(result.kind, 'patch')
+    if (result.kind !== 'patch') return
+    assert.equal(result.patch.model, undefined)
+    assert.equal(result.patch.cliHost, undefined)
+    assert.equal(result.patch.pinned, true)
+  })
+
+  it('does not project a paired-remote list row onto a local workbench id', () => {
+    const result = desktopRemoteSessionApply(
+      {
+        id: 's1',
+        title: 'Host',
+        dirLabel: '',
+        status: 'idle',
+        surface: 'vav',
+        updatedAt: 1
+      },
+      {
+        existing: { model: 'grok-4.6', cliHost: 'cursor', agentBinaryName: 'cursor' },
+        existingIsLocal: true,
+        adoptAsLocal: false
+      }
+    )
+    assert.equal(result.kind, 'skip')
+  })
+
+  it('still seeds model from controls when minting a new remote row', () => {
+    const result = desktopRemoteSessionApply(
+      {
+        id: 's1',
+        title: 'One',
+        dirLabel: '~/vav',
+        status: 'idle',
+        surface: 'cli',
+        updatedAt: 20
+      },
+      {
+        controls: {
+          type: 'controls',
+          conversationId: 's1',
+          agentLocked: true,
+          agent: 'cursor',
+          agents: [],
+          model: 'grok-4.6',
+          models: [{ id: 'grok-4.6', label: 'Grok 4.6' }],
+          thinking: null,
+          thinkingLevels: [],
+          mode: null,
+          modes: [],
+          approval: 'auto',
+          approvals: [],
+          fast: false,
+          workingDirectory: '/tmp',
+          dirLabel: 'tmp',
+          temporary: true
+        }
+      }
+    )
+    assert.equal(result.kind, 'adopt')
+    if (result.kind !== 'adopt') return
+    assert.equal(result.meta.model, 'grok-4.6')
+    assert.equal(result.meta.cliHost, 'cursor')
+  })
+
   it('maps a phone session row onto ConversationMeta the sidebar already paints', () => {
     const meta = conversationFromRemoteSession(
       {
