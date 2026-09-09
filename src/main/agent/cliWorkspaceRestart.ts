@@ -4,13 +4,23 @@
  * Drivers bind cwd at spawn. The next turn starts a fresh session in the
  * new tree; {@link CliAgentHost} hands the stored transcript across so the
  * conversation continues.
+ *
+ * An in-flight spawn is only replaced when its bound cwd actually moved.
+ * Same-path re-asserts (Files watch, session bind, vav-server setWorkspace)
+ * must not cancel the handshake — that was sealing empty
+ * "This turn was cancelled" leaves on the first Cursor prompt.
  */
 export function shouldReplaceCliRuntime(
   runtimeCwd: string | undefined,
   wantedCwd: string,
-  starting: boolean
+  starting: boolean,
+  previousCwd?: string | null
 ): boolean {
-  return runtimeCwd !== wantedCwd || starting
+  const boundCwd = runtimeCwd ?? (starting ? previousCwd ?? undefined : undefined)
+  if (boundCwd != null && boundCwd === wantedCwd) return false
+  if (boundCwd != null) return true
+  if (previousCwd != null && previousCwd === wantedCwd) return false
+  return true
 }
 
 /**

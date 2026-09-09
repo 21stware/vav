@@ -219,8 +219,7 @@ export function applySessionTurnEvent(
         if (
           event.message.blocks.length === 0 &&
           !event.message.changeSetId &&
-          !event.message.errorText &&
-          !event.message.cancelled
+          !event.message.errorText
         ) {
           return { conversations, liveUsage }
         }

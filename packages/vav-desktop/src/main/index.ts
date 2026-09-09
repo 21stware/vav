@@ -216,10 +216,12 @@ import {
   applyWindowVibrancy as applyVibrancyPaint,
   chromeOptions,
   clearWindowVibrancy as clearVibrancyPaint,
+  coverWindowVibrancy as coverVibrancyPaint,
   overlayColors as overlayColorsForTheme,
   primeRendererShell as primeShellPaint,
   TOOLBAR_HEIGHT,
   trafficLightOrigin,
+  VIBRANCY_RESTORE_MS,
   windowBackgroundColor,
   windowThemeNameFromDark
 } from '@main/window/shellPaint'
@@ -2627,6 +2629,10 @@ function applyWindowVibrancy(win: BrowserWindow): void {
   applyVibrancyPaint(win, nativeTheme.shouldUseDarkColors)
 }
 
+function coverWindowVibrancy(win: BrowserWindow): void {
+  coverVibrancyPaint(win, nativeTheme.shouldUseDarkColors)
+}
+
 function clearWindowVibrancy(win: BrowserWindow): void {
   clearVibrancyPaint(win, nativeTheme.shouldUseDarkColors)
 }
@@ -2673,18 +2679,22 @@ function refreshWindowVibrancy(win: BrowserWindow): void {
   applyTrafficLights(win)
 }
 
-function scheduleVibrancyRefresh(win: BrowserWindow): void {
+function scheduleVibrancyRefresh(win: BrowserWindow, opts?: { cover?: boolean }): void {
   if (!IS_MAC || win.isDestroyed() || !isVibrancyShellWindow(win)) return
   const prev = vibrancyRefreshTimers.get(win)
   if (prev) clearTimeout(prev)
-  // AppKit finishes restore compositing a tick after the `restore` event.
+  // Miniaturize/hide drops NSVisualEffectView. Cover with the opaque wash
+  // immediately so restore cannot flash the desktop through the 01-alpha
+  // window; re-assert glass after AppKit finishes compositing.
+  // Theme changes must not cover — that would flash a solid plate.
+  if (opts?.cover && isVibrancyEnabled()) coverWindowVibrancy(win)
   vibrancyRefreshTimers.set(
     win,
     setTimeout(() => {
       vibrancyRefreshTimers.delete(win)
       if (win.isDestroyed() || win.isMinimized()) return
       refreshWindowVibrancy(win)
-    }, 32)
+    }, VIBRANCY_RESTORE_MS)
   )
 }
 
@@ -2693,20 +2703,22 @@ function wireVibrancyRefresh(win: BrowserWindow): void {
   if (!IS_MAC) return
   win.on('minimize', () => {
     vibrancyNeedsRefresh.add(win)
+    if (isVibrancyEnabled()) coverWindowVibrancy(win)
   })
   win.on('hide', () => {
     vibrancyNeedsRefresh.add(win)
+    if (isVibrancyEnabled()) coverWindowVibrancy(win)
   })
   win.on('restore', () => {
     if (win.isDestroyed()) return
     vibrancyNeedsRefresh.delete(win)
-    scheduleVibrancyRefresh(win)
+    scheduleVibrancyRefresh(win, { cover: true })
   })
   win.on('show', () => {
     if (win.isDestroyed() || win.isMinimized()) return
     if (!vibrancyNeedsRefresh.has(win)) return
     vibrancyNeedsRefresh.delete(win)
-    scheduleVibrancyRefresh(win)
+    scheduleVibrancyRefresh(win, { cover: true })
   })
 }
 
@@ -2977,12 +2989,14 @@ async function revealBrowserWindow(win: BrowserWindow): Promise<void> {
   const wasMinimized = win.isMinimized()
   try {
     if (!isVibrancyShellWindow(win)) win.setBackgroundColor(windowBackground())
-    // Minimized: `restore` re-asserts glass. Do not apply while miniaturized
-    // (that is what used to leave the sidebar as a hole).
-    else if (!wasMinimized && vibrancyNeedsRefresh.has(win)) {
+    // Minimized: opaque cover now, `restore` re-asserts glass. Do not apply
+    // vibrancy while miniaturized (that used to leave the sidebar as a hole).
+    else if (wasMinimized) {
+      if (isVibrancyEnabled()) coverWindowVibrancy(win)
+    } else if (vibrancyNeedsRefresh.has(win)) {
       vibrancyNeedsRefresh.delete(win)
-      scheduleVibrancyRefresh(win)
-    } else if (!wasMinimized) {
+      scheduleVibrancyRefresh(win, { cover: true })
+    } else {
       syncWindowMaterial(win)
     }
   } catch {

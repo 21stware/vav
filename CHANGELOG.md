@@ -4,6 +4,10 @@ User-facing changes by release. Unreleased work lives at the top until the next 
 
 ## Unreleased
 
+## 1.22.1
+
+Restoring a minimized macOS window no longer flashes a transparent hole before the glass comes back — the native fill stays opaque until the system material is composited again. A first Cursor (or other CLI) prompt no longer seals as “This turn was cancelled” when a same-folder workspace re-assert interrupts the handshake, or when a leftover Stop poisons the next send. Empty cancelled turns stay out of the transcript.
+
 ## 1.22.0
 
 Artifacts are opt-in: only files the agent marks with `<!-- vav-artifact -->` or `artifact: true` on `fs_write` appear in the Files tray Artifacts tab (the tools panel shows a count). Ordinary source edits and Change Review files stay out. Screenshot Esc cancels even before the overlay is up. Sidebar hide keeps the column mounted, and macOS glass is re-asserted without tearing the native layer down. Removing the last VAV API key no longer resurrects a DeepSeek row from the leftover `api` slot.

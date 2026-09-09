@@ -11,13 +11,24 @@ describe('shouldReplaceCliRuntime', () => {
     assert.equal(shouldReplaceCliRuntime('/a', '/b', false), true)
   })
 
-  it('replaces a spawn still in flight (cwd may already be stale)', () => {
-    assert.equal(shouldReplaceCliRuntime('/a', '/a', true), true)
+  it('keeps an in-flight spawn whose bound cwd still matches', () => {
+    assert.equal(shouldReplaceCliRuntime('/a', '/a', true), false)
+    assert.equal(shouldReplaceCliRuntime(undefined, '/a', true, '/a'), false)
+  })
+
+  it('replaces an in-flight spawn when the conversation root moved', () => {
+    assert.equal(shouldReplaceCliRuntime('/a', '/b', true), true)
+    assert.equal(shouldReplaceCliRuntime(undefined, '/b', true, '/a'), true)
     assert.equal(shouldReplaceCliRuntime(undefined, '/b', true), true)
+  })
+
+  it('does not drop a resume cursor on a same-path re-assert with no process', () => {
+    assert.equal(shouldReplaceCliRuntime(undefined, '/a', false, '/a'), false)
   })
 
   it('replaces when there is no live process (fresh session in the new cwd)', () => {
     assert.equal(shouldReplaceCliRuntime(undefined, '/b', false), true)
+    assert.equal(shouldReplaceCliRuntime(undefined, '/b', false, '/a'), true)
   })
 })
 

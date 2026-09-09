@@ -728,7 +728,9 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
     const previous = conversation.workingDirectory
     conversations.updateMeta(conversationId, { workingDirectory: next })
     agent.setWorkingDirectory(conversationId, next)
-    if (cli?.owns(conversationId)) cli.setWorkingDirectory(conversationId, next, previous)
+    if (cli?.owns(conversationId) && previous !== next) {
+      cli.setWorkingDirectory(conversationId, next, previous)
+    }
     files.watchRoot(conversationId, next)
     if (next) settings.rememberWorkspaceDirectory(next, tmp)
     const controls = listControls(conversationId)

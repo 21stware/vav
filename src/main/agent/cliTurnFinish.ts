@@ -24,6 +24,14 @@ export function consumePendingCancel(
   return true
 }
 
+/**
+ * Stop with no live turn and no in-flight spawn is a no-op. Queueing it
+ * poisons the next Send as an empty "This turn was cancelled".
+ */
+export function shouldKeepQueuedCancel(opts: { hasTurn: boolean; starting?: boolean }): boolean {
+  return opts.hasTurn || opts.starting === true
+}
+
 /** CLI transcripts join text blocks with a blank line and trim the result. */
 export function cliAssistantContent(blocks: MessageBlock[]): string {
   return blocks

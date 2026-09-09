@@ -104,9 +104,30 @@ export function primeRendererShell(
   win.webContents.once('dom-ready', inject)
 }
 
+/**
+ * AppKit finishes deminiaturize compositing a tick after Electron `restore`.
+ * Cover with an opaque wash immediately, then re-assert glass after this delay.
+ */
+export const VIBRANCY_RESTORE_MS = 32
+
+/**
+ * Opaque native fill while NSVisualEffectView is stale (minimize / hide).
+ * The vibrancy window is `transparent` with a 01-alpha wash — without this,
+ * restore shows the desktop until glass composites again.
+ */
+export function coverWindowVibrancy(win: BrowserWindow, dark: boolean): void {
+  if (process.platform !== 'darwin' || win.isDestroyed()) return
+  try {
+    win.setBackgroundColor(windowBackgroundColor(dark))
+  } catch {
+    // ignore
+  }
+}
+
 export function applyWindowVibrancy(win: BrowserWindow, dark: boolean): void {
   if (process.platform !== 'darwin' || win.isDestroyed()) return
   try {
+    // Color first so vibrancy wins; punching 01 after setVibrancy can drop glass.
     win.setBackgroundColor(windowBackgroundColor(dark, '01'))
     win.setVibrancy('under-window', { animationDuration: 0 })
   } catch {

@@ -1,6 +1,6 @@
 {
   "name": "@21stware/vav-server",
-  "version": "1.22.0",
+  "version": "1.22.1",
   "description": "Headless VAV runtime (vav-server). Hosts sessions, keys, files, PTY multiplexing, model/ACP connections, and agent turns. Pair from desktop, iOS Remote, the web UI, or the Chrome extension.",
   "license": "PolyForm-Noncommercial-1.0.0",
   "author": "Oboo Cheng",

@@ -844,6 +844,8 @@ export class AgentRuntime {
       if (t.pending.size === 0 && t.phase !== 'awaiting-user' && t.phase !== 'working') continue
       stopTurn(id, t)
     }
+    // Idle Stop must not poison the next Send.
+    this.pendingCancels.delete(conversationId)
   }
 
   cancelAll(): void {

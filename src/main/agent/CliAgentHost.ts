@@ -89,6 +89,7 @@ import {
   type DriverEvent
 } from './drivers'
 import { shouldAutoAcceptChangeSet } from './toolApproval'
+import { shouldPersistAssistantTurn } from './agentTurnFinish'
 import { shouldReplaceCliRuntime, spawnResumeCursor } from './cliWorkspaceRestart'
 import {
   bumpSpawnGeneration,
@@ -109,6 +110,7 @@ import {
   clearCliTurnDraft,
   cliAssistantMessage,
   consumePendingCancel,
+  shouldKeepQueuedCancel,
   shouldSettleAsCancelled,
   stripLeakedStreamErrorFromTurn
 } from './cliTurnFinish'
@@ -454,9 +456,16 @@ export class CliAgentHost {
   }
 
   cancel(conversationId: string): void {
-    this.pendingCancels.add(conversationId)
-    this.invalidateInFlightSpawn(conversationId)
     const turn = this.turns.get(conversationId)
+    if (
+      shouldKeepQueuedCancel({
+        hasTurn: !!turn,
+        starting: this.starting.has(conversationId)
+      })
+    ) {
+      this.pendingCancels.add(conversationId)
+    }
+    this.invalidateInFlightSpawn(conversationId)
     const runtime = this.runtimes.get(conversationId)
     if (turn) {
       turn.cancelled = true
@@ -673,7 +682,14 @@ export class CliAgentHost {
   ): void {
     const wanted = cwd || homedir()
     const runtime = this.runtimes.get(conversationId)
-    if (!shouldReplaceCliRuntime(runtime?.cwd, wanted, this.starting.has(conversationId))) {
+    if (
+      !shouldReplaceCliRuntime(
+        runtime?.cwd,
+        wanted,
+        this.starting.has(conversationId),
+        previousCwd
+      )
+    ) {
       return
     }
 
@@ -1800,7 +1816,9 @@ export class CliAgentHost {
       .get(conversationId)
       ?.messages.find((m) => m.id === message.id)
     if (existing) this.deps.conversations.replaceMessage(conversationId, message)
-    else this.deps.conversations.appendMessage(conversationId, message)
+    else if (shouldPersistAssistantTurn(message)) {
+      this.deps.conversations.appendMessage(conversationId, message)
+    }
     this.applyEstimatedContextFill(conversationId, turn)
     this.deps.conversations.flush()
 

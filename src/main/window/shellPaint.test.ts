@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import {
+  VIBRANCY_RESTORE_MS,
   WINDOW_BG_DARK,
   WINDOW_BG_LIGHT,
   chromeOptions,
@@ -17,6 +18,12 @@ describe('windowBackgroundColor', () => {
     assert.equal(windowBackgroundColor(true, '01'), `${WINDOW_BG_DARK}01`)
     assert.equal(windowThemeNameFromDark(true), 'dark')
     assert.equal(windowThemeNameFromDark(false), 'light')
+  })
+
+  it('keeps the restore cover opaque so deminiaturize cannot flash the desktop', () => {
+    assert.equal(windowBackgroundColor(true).length, 7)
+    assert.equal(windowBackgroundColor(false).length, 7)
+    assert.equal(VIBRANCY_RESTORE_MS, 32)
   })
 })
 

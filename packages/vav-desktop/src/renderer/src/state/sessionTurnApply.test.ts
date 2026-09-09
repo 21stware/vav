@@ -172,6 +172,23 @@ describe('applySessionTurnEvent recovery chrome', () => {
     assert.equal(ctx.get().errorBanner, null)
   })
 
+  it('end does not persist an empty cancelled leaf', () => {
+    const ctx = apply({ type: 'start', conversationId: ID })
+    apply(
+      {
+        type: 'end',
+        conversationId: ID,
+        message: assistant({ content: '', cancelled: true }),
+        tokensUsed: 0,
+        cancelled: true
+      },
+      ctx
+    )
+    assert.deepEqual(ctx.get().turns[ID], IDLE_TURN)
+    assert.equal(getProjection(ID).getSnapshot().active, false)
+    assert.equal(ctx.get().messages[ID], undefined)
+  })
+
   it('end without message.errorText raises a technical banner', () => {
     const ctx = apply({ type: 'start', conversationId: ID })
     apply(

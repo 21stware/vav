@@ -7,6 +7,7 @@ import {
   cliAssistantMessage,
   clearCliTurnDraft,
   consumePendingCancel,
+  shouldKeepQueuedCancel,
   shouldSettleAsCancelled,
   stripLeakedStreamErrorFromTurn
 } from './cliTurnFinish.ts'
@@ -41,6 +42,18 @@ describe('consumePendingCancel', () => {
     assert.equal(consumePendingCancel(pending, 'c1', turn), false)
     assert.equal(turn.cancelled, false)
     assert.equal(pending.has('other'), true)
+  })
+})
+
+describe('shouldKeepQueuedCancel', () => {
+  it('keeps Stop for a live turn or an in-flight spawn', () => {
+    assert.equal(shouldKeepQueuedCancel({ hasTurn: true }), true)
+    assert.equal(shouldKeepQueuedCancel({ hasTurn: false, starting: true }), true)
+  })
+
+  it('drops Stop when the conversation is idle', () => {
+    assert.equal(shouldKeepQueuedCancel({ hasTurn: false }), false)
+    assert.equal(shouldKeepQueuedCancel({ hasTurn: false, starting: false }), false)
   })
 })
 
