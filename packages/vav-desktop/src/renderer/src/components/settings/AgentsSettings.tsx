@@ -987,8 +987,8 @@ export function AgentsSettings(): React.JSX.Element {
                   accounts={agentProfiles}
                   endpoint={selectedVendor?.vendor.endpoint}
                   onProfileChanged={(next) => {
-                    setAccountGroupsLocal((groups) =>
-                      groups.map((group) =>
+                    setAccountGroupsLocal((prev) =>
+                      (prev ?? accountGroups).map((group) =>
                         group.agentId === 'vav' ? { ...group, accounts: next } : group
                       )
                     )
@@ -1019,8 +1019,8 @@ export function AgentsSettings(): React.JSX.Element {
                   agentId={selected.id}
                   accounts={agentProfiles}
                   onProfileChanged={(next) => {
-                    setAccountGroupsLocal((groups) =>
-                      groups.map((group) =>
+                    setAccountGroupsLocal((prev) =>
+                      (prev ?? accountGroups).map((group) =>
                         group.agentId === selected.id ? { ...group, accounts: next } : group
                       )
                     )
