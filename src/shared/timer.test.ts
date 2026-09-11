@@ -2,6 +2,7 @@ import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   coerceTimerSchedule,
+  coerceTimerWorkdirPolicy,
   cronMatches,
   formatTimerSchedule,
   formatTimerStamp,
@@ -39,6 +40,15 @@ describe('nextTimerRunAt', () => {
     const d = new Date(nextCron!)
     assert.equal(d.getHours(), 11)
     assert.equal(d.getMinutes(), 0)
+  })
+})
+
+describe('coerceTimerWorkdirPolicy', () => {
+  it('keeps mint, sticky, and source', () => {
+    assert.equal(coerceTimerWorkdirPolicy('mint'), 'mint')
+    assert.equal(coerceTimerWorkdirPolicy('sticky'), 'sticky')
+    assert.equal(coerceTimerWorkdirPolicy('source'), 'source')
+    assert.equal(coerceTimerWorkdirPolicy('other'), 'mint')
   })
 })
 

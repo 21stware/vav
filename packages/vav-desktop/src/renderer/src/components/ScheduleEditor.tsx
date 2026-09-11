@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Play } from 'lucide-react'
 import type { TimerJob } from '@shared/timer'
+import { recentsForMachine, normalizeMachineId } from '@shared/workspaceHost'
 import {
   clampEveryHours,
   clampHour,
@@ -17,10 +18,31 @@ import {
 import { useSessionStore } from '../state/sessionStore'
 import { useT } from '../i18n/useT'
 import { useSidebarFloatMode } from '../lib/sidebarLayout'
-import { relativeTime } from '../lib/format'
+import { isTemporaryWorkspace, relativeTime } from '../lib/format'
+import { basename } from '../lib/path'
 import { ShellLeadingControls } from './ShellLeadingControls'
 import { Composer } from './Composer'
 import { Button, Toggle } from './ui'
+
+const WORKSPACE_MINT = 'mint'
+const WORKSPACE_STICKY = 'sticky'
+const WORKSPACE_PICK = '__pick__'
+
+function workspaceSelectValue(job: TimerJob | null, tmp: string): string {
+  if (!job) return WORKSPACE_MINT
+  if (job.workdirPolicy === 'mint') return WORKSPACE_MINT
+  if (job.workdirPolicy === 'sticky') return WORKSPACE_STICKY
+  if (job.sourceWorkdir && !isTemporaryWorkspace(job.sourceWorkdir, tmp)) {
+    return `dir:${job.sourceWorkdir}`
+  }
+  if (job.workdirPolicy === 'source' && job.sourceWorkdir) return WORKSPACE_STICKY
+  return WORKSPACE_MINT
+}
+
+function folderOptionLabel(path: string, all: string[]): string {
+  const name = basename(path)
+  return all.filter((entry) => basename(entry) === name).length > 1 ? path : name
+}
 
 function onceInputValue(at: number): string {
   const date = new Date(at)
@@ -64,6 +86,11 @@ export function ScheduleEditor({
   const ensureScheduledConversation = useSessionStore((s) => s.ensureScheduledConversation)
   const showToast = useSessionStore((s) => s.showToast)
   const sidebarVisible = useSessionStore((s) => s.sidebarVisible)
+  const tmp = useSessionStore((s) => s.tmp)
+  const recentDirs = useSessionStore((s) => s.settings.recentWorkspaceDirectories)
+  const windowMachineId = useSessionStore((s) => s.windowMachineId)
+  const setWorkingDirectory = useSessionStore((s) => s.setWorkingDirectory)
+  const pickWorkingDirectory = useSessionStore((s) => s.pickWorkingDirectory)
   const sidebarFloating = useSidebarFloatMode()
   const showShellLeading = !(sidebarVisible && !sidebarFloating)
   const [job, setJob] = useState<TimerJob | null>(null)
@@ -92,7 +119,8 @@ export function ScheduleEditor({
         active.dataset.testid === 'timer-hourly' ||
         active.dataset.testid === 'timer-time' ||
         active.dataset.testid === 'timer-once' ||
-        active.dataset.testid === 'timer-month-day')
+        active.dataset.testid === 'timer-month-day' ||
+        active.dataset.testid === 'timer-workspace')
     if (!promptFocused) setPrompt(next.prompt)
     if (!scheduleFocused) setVisual(visualFromSchedule(next.schedule))
     return next
@@ -114,6 +142,8 @@ export function ScheduleEditor({
     prompt?: string
     visual?: VisualSchedule
     enabled?: boolean
+    workdirPolicy?: TimerJob['workdirPolicy']
+    sourceWorkdir?: string | null
   }): Promise<TimerJob | null> => {
     const current = job
     if (!current) return null
@@ -130,7 +160,8 @@ export function ScheduleEditor({
         prompt: nextPrompt,
         schedule,
         enabled,
-        sourceWorkdir: conversation?.workingDirectory
+        ...(patch.workdirPolicy !== undefined ? { workdirPolicy: patch.workdirPolicy } : {}),
+        ...(patch.sourceWorkdir !== undefined ? { sourceWorkdir: patch.sourceWorkdir } : {})
       })
       if (updated) setJob(updated)
       return updated
@@ -142,6 +173,39 @@ export function ScheduleEditor({
       })
       return null
     }
+  }
+
+  const applySourceFolder = async (path: string): Promise<void> => {
+    if (conversationId) await setWorkingDirectory(conversationId, path)
+    await persist({ workdirPolicy: 'source', sourceWorkdir: path })
+  }
+
+  const pickWorkspace = async (): Promise<void> => {
+    if (!conversationId) return
+    const before = useSessionStore
+      .getState()
+      .conversations.find((row) => row.id === conversationId)?.workingDirectory
+    await pickWorkingDirectory(conversationId)
+    const next = useSessionStore
+      .getState()
+      .conversations.find((row) => row.id === conversationId)?.workingDirectory
+    if (next && next !== before) await persist({ workdirPolicy: 'source', sourceWorkdir: next })
+  }
+
+  const setWorkspace = (value: string): void => {
+    if (value === WORKSPACE_PICK) {
+      void pickWorkspace()
+      return
+    }
+    if (value === WORKSPACE_MINT) {
+      void persist({ workdirPolicy: 'mint', sourceWorkdir: null })
+      return
+    }
+    if (value === WORKSPACE_STICKY) {
+      void persist({ workdirPolicy: 'sticky', sourceWorkdir: null })
+      return
+    }
+    if (value.startsWith('dir:')) void applySourceFolder(value.slice(4))
   }
 
   const setMode = (mode: VisualSchedule['mode']): void => {
@@ -178,6 +242,15 @@ export function ScheduleEditor({
     { mode: 'monthly', label: t('timer.repeatMonthly') }
   ]
 
+  const machineId = normalizeMachineId(conversation?.machineId ?? windowMachineId)
+  const recents = recentsForMachine(recentDirs, machineId)
+  const workspaceValue = workspaceSelectValue(job, tmp)
+  const selectedPath = workspaceValue.startsWith('dir:') ? workspaceValue.slice(4) : null
+  const folderPaths = [
+    ...(selectedPath && !recents.some((ref) => ref.path === selectedPath) ? [selectedPath] : []),
+    ...recents.map((ref) => ref.path)
+  ]
+
   return (
     <main className="detail" data-testid="schedule-editor">
       <header
@@ -190,22 +263,6 @@ export function ScheduleEditor({
             </div>
           ) : null}
           <span className="spacer" />
-          <Toggle
-            checked={job?.enabled ?? false}
-            title={t('timer.enabled')}
-            testId="timer-enabled"
-            onChange={(enabled) => void persist({ enabled, prompt })}
-          />
-          <span className="schedule-editor-enable-label">{t('timer.enabled')}</span>
-          <Button
-            icon={<Play size={13} />}
-            label={t('timer.runNow')}
-            size="sm"
-            variant="secondary"
-            disabled={busy || !job}
-            testId="timer-run-now"
-            onClick={() => void runNow()}
-          />
         </div>
       </header>
 
@@ -316,6 +373,30 @@ export function ScheduleEditor({
               ) : null}
             </div>
 
+            <label className="schedule-editor-field schedule-editor-field-workspace">
+              <span>{t('timer.workspace')}</span>
+              <select
+                className="text-field"
+                data-testid="timer-workspace"
+                aria-label={t('timer.workspace')}
+                value={workspaceValue}
+                onChange={(event) => setWorkspace(event.currentTarget.value)}
+              >
+                <option value={WORKSPACE_MINT}>{t('timer.workspaceMint')}</option>
+                <option value={WORKSPACE_STICKY}>{t('timer.workspaceSticky')}</option>
+                <option value={WORKSPACE_PICK}>{t('tools.pickOtherDir')}</option>
+                {folderPaths.length > 0 ? (
+                  <optgroup label={t('tools.recentDirs')}>
+                    {folderPaths.map((path) => (
+                      <option key={path} value={`dir:${path}`}>
+                        {folderOptionLabel(path, folderPaths)}
+                      </option>
+                    ))}
+                  </optgroup>
+                ) : null}
+              </select>
+            </label>
+
             {visual.mode === 'weekly' ? (
               <div className="schedule-editor-weekdays" role="group" aria-label={t('timer.repeatWeekly')}>
                 {visualWeekdays().map((day) => {
@@ -357,6 +438,25 @@ export function ScheduleEditor({
             onChange={setPrompt}
             onCommit={(next) => void persist({ prompt: next })}
           />
+          <div className="schedule-editor-actions">
+            <Toggle
+              checked={job?.enabled ?? false}
+              title={t('timer.enabled')}
+              testId="timer-enabled"
+              onChange={(enabled) => void persist({ enabled, prompt })}
+            />
+            <span className="schedule-editor-enable-label">{t('timer.enabled')}</span>
+            <span className="spacer" />
+            <Button
+              icon={<Play size={13} />}
+              label={t('timer.runNow')}
+              size="sm"
+              variant="secondary"
+              disabled={busy || !job}
+              testId="timer-run-now"
+              onClick={() => void runNow()}
+            />
+          </div>
         </div>
       </div>
     </main>

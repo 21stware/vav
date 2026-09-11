@@ -4282,25 +4282,25 @@
 }
 
 /*
- * Star / pin hit targets on session rows. Both slots stay in the flex row
- * at all times so toggling favorite or pin never shifts the other control
- * when hover reveals the sibling (mis-clicks pin thinking it is star).
- * Hidden slots use opacity + pointer-events, not display:none.
- * Group headers keep the old hover-only pin (short labels, no star sibling).
+ * Idle rows keep both slots out of flow so the title sits flush with the
+ * status dots. Hover, or either control already on, mounts *both* slots:
+ * the unlit sibling stays invisible but keeps its width, so lighting one
+ * then hovering the other never shifts the lit glyph.
  */
 .conv-group-header .conv-group-pin-hit {
+  display: none;
   width: 22px;
-  opacity: 0;
 }
 
 .conv-star-hit,
 .conv-pin-hit {
-  display: inline-flex;
+  display: none;
   align-items: center;
   justify-content: center;
   width: 18px;
   height: 18px;
   flex: 0 0 18px;
+  margin-right: -2px;
   border: 0;
   border-radius: 5px;
   background: transparent;
@@ -4312,8 +4312,19 @@
 }
 
 .conv-group-header:hover .conv-group-pin-hit,
+.conv-group-header .conv-group-pin-hit.pinned,
+.conv-row:hover .conv-star-hit,
 .conv-row:hover .conv-pin-hit,
-.conv-row:hover .conv-star-hit {
+.conv-row:has(.conv-star-hit.favorited) .conv-star-hit,
+.conv-row:has(.conv-star-hit.favorited) .conv-pin-hit,
+.conv-row:has(.conv-pin-hit.pinned) .conv-star-hit,
+.conv-row:has(.conv-pin-hit.pinned) .conv-pin-hit {
+  display: inline-flex;
+}
+
+.conv-group-header:hover .conv-group-pin-hit,
+.conv-row:hover .conv-star-hit,
+.conv-row:hover .conv-pin-hit {
   opacity: 0.55;
   pointer-events: auto;
 }
@@ -4357,11 +4368,6 @@
 .conv-row.multi .conv-pin-hit:hover {
   background: color-mix(in srgb, var(--accent-text) 12%, transparent);
   color: inherit;
-}
-
-.conv-star-hit,
-.conv-pin-hit {
-  margin-right: -2px;
 }
 
 .conv-star-hit.favorited {

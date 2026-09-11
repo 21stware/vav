@@ -393,6 +393,11 @@ export interface ConversationMeta {
    */
   resultUnseen?: boolean
   /**
+   * Tone of the last unseen finish. `failed` covers cancel and abnormal exit.
+   * Cleared when the result is viewed. Missing on older sessions → treat as ok.
+   */
+  resultKind?: 'ok' | 'failed'
+  /**
    * Settings → Accounts profile stamped when the session was created.
    * Switching the current account does not rewrite in-flight sessions.
    */

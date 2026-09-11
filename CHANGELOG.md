@@ -4,6 +4,12 @@ User-facing changes by release. Unreleased work lives at the top until the next 
 
 ## Unreleased
 
+## 1.24.0
+
+Scheduled tasks pick a workspace: a new temp folder each run, one sticky temp folder for the job, or a recent / chosen folder. New timers default to a fresh temp folder instead of the definition conversation's directory. Deleting a scheduled task drops its run sessions with it.
+
+The sidebar and tray LED now tell cancel and abnormal exit apart from Done — yellow while running, green when finished unseen, red when stopped. The first finish wins, so a later idle PTY does not flip the light. Switching sidebar categories dismisses the workdir menu so it cannot stick open. Theme changes no longer tear glass down (traffic lights stay put). Session row star and pin stay out of the title until hover.
+
 ## 1.23.0
 
 The sidebar switches Task / File / Scheduled / Archived with the same chip accordion as services. The Git tray has Workspace, Commits, Local, Origin, and Stashes — checkout, create a branch from a commit, and stash apply / pop / drop without leaving the workbench. Chrome / web and `vav-board` speak those same `git.log` / `git.branches` / `git.stashes` verbs. Appearance and the View menu zoom the whole UI from 75% to 150%. Remote folder pick opens a dedicated window. Files drag onto the conversation pin as composer attachments. Screenshot can omit VAV from the native capture. Empty folders show a real empty state. Composer attachments and file context share one chip row; the prompt keeps a stable three-row floor.

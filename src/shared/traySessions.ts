@@ -4,7 +4,7 @@
  */
 
 export type TrayPaneKind = 'agent' | 'chat' | 'bash'
-export type TrayPaneStatus = 'running' | 'done'
+export type TrayPaneStatus = 'running' | 'done' | 'failed'
 
 const KIND_RANK: Record<TrayPaneKind, number> = {
   chat: 0,
@@ -67,9 +67,14 @@ export function traySessionLabel(pane: TrayPane): string {
 export function trayStatusRowLabel(
   title: string,
   status: TrayPaneStatus,
-  words: { running: string; done: string }
+  words: { running: string; done: string; failed?: string }
 ): string {
-  const word = status === 'done' ? words.done : words.running
+  const word =
+    status === 'failed'
+      ? (words.failed ?? words.done)
+      : status === 'done'
+        ? words.done
+        : words.running
   return `${word} · ${title}`
 }
 
@@ -98,7 +103,7 @@ export function mergeLiveAndUnseenTrayPanes(live: TrayPane[], unseen: TrayPane[]
     const key = trayPaneKey(pane)
     if (keys.has(key)) continue
     keys.add(key)
-    extra.push({ ...pane, status: 'done' })
+    extra.push({ ...pane, status: pane.status === 'failed' ? 'failed' : 'done' })
   }
   return [...live.map((pane) => ({ ...pane, status: pane.status ?? 'running' })), ...extra]
 }
@@ -112,6 +117,7 @@ export function collapseTrayActivity(
     const status = pane.status ?? 'running'
     const prev = byId.get(pane.conversationId)
     if (!prev || status === 'running') byId.set(pane.conversationId, status)
+    else if (prev === 'done' && status === 'failed') byId.set(pane.conversationId, status)
   }
   return [...byId.entries()].map(([conversationId, status]) => ({ conversationId, status }))
 }
@@ -256,8 +262,8 @@ export function groupTrayPanes(panes: TrayPane[]): TrayPaneGroup[] {
   return order.map((dirKey) => {
     const list = buckets.get(dirKey) ?? []
     list.sort((a, b) => {
-      const aDone = a.status === 'done' ? 1 : 0
-      const bDone = b.status === 'done' ? 1 : 0
+      const aDone = a.status === 'done' || a.status === 'failed' ? 1 : 0
+      const bDone = b.status === 'done' || b.status === 'failed' ? 1 : 0
       if (aDone !== bDone) return aDone - bDone
       const aRank = KIND_RANK[a.kind] ?? 10
       const bRank = KIND_RANK[b.kind] ?? 10

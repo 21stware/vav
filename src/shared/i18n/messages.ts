@@ -130,12 +130,14 @@ export const zhCN = {
   'tray.done': '完成 ({count})',
   'tray.runningTag': '运行中',
   'tray.doneTag': '完成',
+  'tray.failedTag': '异常退出',
   'tray.sessions': '会话 ({count})',
   'tray.open': '打开 VAV',
   'tray.defaultTag': '默认',
   'tray.setDefault': '设为默认服务',
   'activity.running': '运行中',
   'activity.done': '完成',
+  'activity.failed': '异常退出',
   'notify.awaitingAnswer': '{title} · 等待回答',
   'notify.requestConfirm': '{title} · 请求确认',
   'notify.awaitingApproval': '{title} · 待批准',
@@ -1577,6 +1579,9 @@ export const zhCN = {
   'timer.runDone': '已完成',
   'timer.runFailed': '失败',
   'timer.runSkipped': '已跳过',
+  'timer.workspace': '工作目录',
+  'timer.workspaceMint': '每次运行使用新的临时文件夹',
+  'timer.workspaceSticky': '此定时任务使用固定临时文件夹',
 
   // —— notifications extras ——
   'notifications.unauthorized': '未授权',
@@ -2448,6 +2453,7 @@ export const zhCN = {
   // —— sidebar badge ——
   'sidebar.badge.backgroundRunning': '后台运行',
   'sidebar.badge.done': '已完成',
+  'sidebar.badge.failed': '异常退出',
   'sidebar.badge.terminalRunning': '终端有命令在运行'
 } as const
 
@@ -2573,12 +2579,14 @@ export const en: Record<MessageKey, string> = {
   'tray.done': 'Done ({count})',
   'tray.runningTag': 'Running',
   'tray.doneTag': 'Done',
+  'tray.failedTag': 'Stopped',
   'tray.sessions': 'Sessions ({count})',
   'tray.open': 'Open VAV',
   'tray.defaultTag': 'Default',
   'tray.setDefault': 'Set as default service',
   'activity.running': 'Running',
   'activity.done': 'Done',
+  'activity.failed': 'Stopped',
   'notify.awaitingAnswer': '{title} · Awaiting answer',
   'notify.requestConfirm': '{title} · Confirmation needed',
   'notify.awaitingApproval': '{title} · Awaiting approval',
@@ -4030,6 +4038,9 @@ export const en: Record<MessageKey, string> = {
   'timer.runDone': 'Done',
   'timer.runFailed': 'Failed',
   'timer.runSkipped': 'Skipped',
+  'timer.workspace': 'Workspace',
+  'timer.workspaceMint': 'New temp folder every run',
+  'timer.workspaceSticky': 'Temp folder for this scheduled task',
 
   'notifications.unauthorized': 'Not authorized',
   'notifications.enabledHint':
@@ -4913,6 +4924,7 @@ export const en: Record<MessageKey, string> = {
 
   'sidebar.badge.backgroundRunning': 'Running in background',
   'sidebar.badge.done': 'Done',
+  'sidebar.badge.failed': 'Stopped',
   'sidebar.badge.terminalRunning': 'A terminal command is running'
 }
 

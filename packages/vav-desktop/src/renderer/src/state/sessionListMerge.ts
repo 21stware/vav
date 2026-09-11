@@ -18,6 +18,31 @@ function isHiddenSidebarSession(row: {
   return !!row.fileId || row.sessionKind === 'timer'
 }
 
+/** Deleted file / timer rows. listMeta omits them, so merge must not resurrect. */
+const droppedHiddenIds = new Set<string>()
+
+export function rememberDroppedConversationIds(ids: readonly string[]): void {
+  for (const id of ids) {
+    if (id) droppedHiddenIds.add(id)
+  }
+}
+
+export function forgetDroppedConversationIds(ids: readonly string[]): void {
+  for (const id of ids) droppedHiddenIds.delete(id)
+}
+
+export function isDroppedConversationId(id: string): boolean {
+  return droppedHiddenIds.has(id)
+}
+
+function retainOmittedHiddenSession(row: {
+  id: string
+  fileId?: string | null
+  sessionKind?: import('@shared/sessionKind.ts').SessionKind | null
+}): boolean {
+  return isHiddenSidebarSession(row) && !droppedHiddenIds.has(row.id)
+}
+
 export type ConversationListItem = {
   id: string
   updatedAt: number
@@ -140,9 +165,21 @@ export function upsertConversationMeta<C extends { id: string }>(
   conversations: C[],
   meta: C
 ): C[] {
+  if (droppedHiddenIds.has(meta.id)) return conversations.filter((c) => c.id !== meta.id)
   return conversations.some((c) => c.id === meta.id)
     ? conversations.map((c) => (c.id === meta.id ? { ...c, ...meta } : c))
     : [meta, ...conversations]
+}
+
+/** Drop timer rows that are no longer on disk; keep workspace / file sessions. */
+export function replaceTimerSessions<C extends ConversationListItem>(
+  conversations: C[],
+  sessions: C[]
+): C[] {
+  const live = new Set(sessions.filter((row) => !droppedHiddenIds.has(row.id)).map((row) => row.id))
+  let next = conversations.filter((row) => row.sessionKind !== 'timer' || live.has(row.id))
+  for (const session of sessions) next = upsertConversationMeta(next, session)
+  return next
 }
 
 export function mergeConversationList<T extends ConversationListItem>(
@@ -189,7 +226,7 @@ export function mergeConversationList<T extends ConversationListItem>(
       if (n) {
         result.push(n)
         seen.add(n.id)
-      } else if (isHiddenSidebarSession(p)) {
+      } else if (retainOmittedHiddenSession(p)) {
         result.push(p)
         seen.add(p.id)
       }
@@ -200,7 +237,7 @@ export function mergeConversationList<T extends ConversationListItem>(
     return result
   }
 
-  const fileSessions = prev.filter((c) => isHiddenSidebarSession(c) && !nextById.has(c.id))
+  const fileSessions = prev.filter((c) => retainOmittedHiddenSession(c) && !nextById.has(c.id))
   const sorted = [...next].sort((a, b) => {
     const d = b.updatedAt - a.updatedAt
     if (d !== 0) return d

@@ -28,13 +28,17 @@ import { FilesPanel } from './FilesPanel'
 import { TerminalPanel } from './TerminalPanel'
 import { bashGroupChips } from '../lib/bashTabGroups'
 import { focusBashPane, getUiFocusScope, resolveUiFocusScope } from '../lib/uiFocus'
+import { createMenuNonceGate } from '../lib/menuNonce'
 import { menuAnchor, showMenu, type MenuItem } from '../lib/nativeMenu'
 import { workspaceSwitchMenuItems } from '../lib/workspaceSwitchMenu'
-import { fileManagerLabel, keys } from '../lib/platform'
+import { fileManagerLabel, IS_MAC, keys } from '../lib/platform'
+import { isTerminalProductModifier } from '../lib/terminalKeys'
 import { allowWorkdirSwitch as workdirSwitchAllowed, isSwarmSurfaceActive } from '../lib/workdirSwitch'
 import { useT } from '../i18n/useT'
 import { Button, Chip } from './ui'
 import { useInstallRunStore } from '../state/installRunStore'
+
+const consumeWorkspaceMenuNonce = createMenuNonceGate()
 
 /**
  * The tools tray in the bottom dock (below the composer).
@@ -114,7 +118,6 @@ export function ToolsPanel({
   const headerTabsRef = useRef<HTMLDivElement>(null)
   /** Height before the last snap-to-70%. Restored on a second double-click. */
   const restoreHeightRef = useRef<{ id: string; height: number } | null>(null)
-  const seenMenuNonce = useRef(0)
   /** Path chip glyph: git branch when the workdir is a repository. */
   const [workdirIsGit, setWorkdirIsGit] = useState(false)
 
@@ -161,11 +164,16 @@ export function ToolsPanel({
     }
   }, [workdir, gitRepoEpoch])
 
-  // Session / workdir switches must dismiss the path-chip native menu (⌘⇧O /
-  // context menu). AppKit does not always close it when only the renderer swaps.
+  const sidebarListMode = useSessionStore((s) => s.sidebarListMode)
+  // Session / workdir / category switches must dismiss the path-chip native
+  // menu (⌘⇧O / context menu). AppKit does not always close it when only the
+  // renderer swaps — and unmounting SessionDetail used to leave it stuck.
   useEffect(() => {
-    void window.vav.window.closePopupMenu?.()
-  }, [activeId, workdir])
+    void window.vav?.window?.closePopupMenu?.()
+    return () => {
+      void window.vav?.window?.closePopupMenu?.()
+    }
+  }, [activeId, workdir, sidebarListMode])
   const pathRevealed = useSessionStore((s) => s.workdirPathRevealed[s.activeId] === true)
   // File session: show "Enclosed dir" until user switches workdir (like Temporary → Workspace).
   const useEnclosedLabel =
@@ -369,8 +377,7 @@ export function ToolsPanel({
 
   // ⌘⇧O and the app menu bump a nonce; open the same native menu as the capsule action.
   useEffect(() => {
-    if (workspaceMenuNonce === 0 || workspaceMenuNonce === seenMenuNonce.current) return
-    seenMenuNonce.current = workspaceMenuNonce
+    if (!consumeWorkspaceMenuNonce(workspaceMenuNonce)) return
     if (!allowWorkdirSwitch) return
     openWorkspaceMenu(pathChipRef.current)
   }, [workspaceMenuNonce, openWorkspaceMenu, allowWorkdirSwitch])
@@ -497,7 +504,7 @@ export function ToolsPanel({
   // ⌘D / ⌘⇧D — split only when the bash surface owns keyboard focus.
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
-      if (!(event.metaKey || event.ctrlKey) || event.altKey) return
+      if (!isTerminalProductModifier(event, IS_MAC)) return
       const key = event.key.toLowerCase()
       if (key !== 'd') return
       const live = resolveUiFocusScope(document.activeElement)

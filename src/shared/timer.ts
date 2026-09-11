@@ -1,8 +1,9 @@
 /**
  * Scheduled tasks. The user writes the prompt in the definition conversation
- * (right panel) and sets the period there. Each fire mints a timestamped
- * workspace and a run conversation under that schedule — never in the main
- * project list. Jobs live in ~/.vav-server so a running vav-server can fire them.
+ * (right panel) and sets the period there. Each fire uses the job workspace
+ * (new temp, sticky temp, or a chosen folder) and a run conversation under
+ * that schedule — never in the main project list. Jobs live in ~/.vav-server
+ * so a running vav-server can fire them.
  */
 import type { ConnectorId } from './connector.ts'
 
@@ -23,7 +24,12 @@ export interface TimerJob {
   enabled: boolean
   /** Conversation where the user writes the task and sets the schedule. */
   conversationId: string | null
-  workdirPolicy: 'mint' | 'source'
+  /**
+   * `mint` — new temp folder every run.
+   * `sticky` — one temp folder reused for this job.
+   * `source` — `sourceWorkdir` (picked or recent folder).
+   */
+  workdirPolicy: 'mint' | 'sticky' | 'source'
   sourceWorkdir: string | null
   connectorIds: ConnectorId[]
   createdAt: number
@@ -51,7 +57,7 @@ export interface TimerJobInput {
   schedule: TimerSchedule
   enabled?: boolean
   conversationId?: string | null
-  workdirPolicy?: 'mint' | 'source'
+  workdirPolicy?: 'mint' | 'sticky' | 'source'
   sourceWorkdir?: string | null
   connectorIds?: ConnectorId[]
 }
@@ -152,4 +158,9 @@ export function coerceTimerSchedule(raw: unknown): TimerSchedule | null {
     return { kind: 'once', at: row.at }
   }
   return null
+}
+
+export function coerceTimerWorkdirPolicy(raw: unknown): TimerJob['workdirPolicy'] {
+  if (raw === 'source' || raw === 'sticky' || raw === 'mint') return raw
+  return 'mint'
 }

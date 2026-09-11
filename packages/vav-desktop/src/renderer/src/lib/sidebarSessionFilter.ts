@@ -80,5 +80,20 @@ export function isSessionUnread(opts: {
 }): boolean {
   const awaiting = !!opts.awaitingToolCallId
   const running = !!opts.isRunning && !awaiting
-  return (!awaiting && !running && opts.activity === 'done') || opts.resultUnseen === true
+  return (
+    (!awaiting && !running && (opts.activity === 'done' || opts.activity === 'failed')) ||
+    opts.resultUnseen === true
+  )
+}
+
+/** Sidebar LED after awaiting / running — unseen finish tone. */
+export function sessionUnreadBadge(
+  awaiting: boolean,
+  running: boolean,
+  activity: string | undefined
+): 'awaiting' | 'running' | 'done' | 'failed' | null {
+  if (awaiting) return 'awaiting'
+  if (running) return 'running'
+  if (activity === 'done' || activity === 'failed') return activity
+  return null
 }

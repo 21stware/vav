@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronDown, ChevronRight, Pin, Star } from 'lucide-react'
 import type { ConversationMeta } from '@shared/types'
 import type { TimerJob, TimerRun } from '@shared/timer'
 import { useSessionStore } from '../../state/sessionStore'
-import { upsertConversationMeta } from '../../state/sessionListMerge'
+import { isDroppedConversationId, replaceTimerSessions } from '../../state/sessionListMerge'
 import { timerListConversationIds, timerScheduleLabel, timerSessionsForJob } from '../../lib/timerSessions'
 import { flattenSessionTitle, adjacentRunClass } from '../../lib/sidebarList'
 import { relativeTime, middleTruncate } from '../../lib/format'
@@ -40,30 +40,33 @@ export function TimerJobsPanel(): React.JSX.Element {
   const [jobs, setJobs] = useState<TimerJob[]>([])
   const [runs, setRuns] = useState<TimerRun[]>([])
   const [archivedOpen, setArchivedOpen] = useState<Set<string>>(() => new Set())
+  const refreshGen = useRef(0)
   const weekday = (day: number): string => t(`timer.weekday.${day}` as 'timer.weekday.0')
 
   const hydrateSessions = useCallback(async (): Promise<void> => {
     if (!window.vav?.timers?.listSessions) return
     const sessions = await window.vav.timers.listSessions()
-    useSessionStore.setState((state) => {
-      let next = state.conversations
-      for (const session of sessions) next = upsertConversationMeta(next, session)
-      return { conversations: next }
-    })
+    useSessionStore.setState((state) => ({
+      conversations: replaceTimerSessions(state.conversations, sessions)
+    }))
   }, [])
 
   const refresh = useCallback(async (): Promise<void> => {
     if (!window.vav?.timers) return
+    const gen = ++refreshGen.current
     try {
       const [nextJobs, nextRuns] = await Promise.all([
         window.vav.timers.listJobs(),
         window.vav.timers.listRuns()
       ])
+      if (gen !== refreshGen.current) return
       setJobs(nextJobs)
       setRuns(nextRuns)
       await hydrateSessions()
+      if (gen !== refreshGen.current) return
       if (nextJobs.length === 0) void createScheduledConversation()
     } catch {
+      if (gen !== refreshGen.current) return
       setJobs([])
       setRuns([])
     }
@@ -76,9 +79,19 @@ export function TimerJobsPanel(): React.JSX.Element {
     })
   }, [refresh])
 
-  const orderedIds = useMemo(
-    () => timerListConversationIds(jobs, conversations),
+  const visibleJobs = useMemo(
+    () =>
+      jobs.filter((job) => {
+        if (!job.conversationId) return true
+        if (conversations.some((row) => row.id === job.conversationId)) return true
+        return !isDroppedConversationId(job.conversationId)
+      }),
     [jobs, conversations]
+  )
+
+  const orderedIds = useMemo(
+    () => timerListConversationIds(visibleJobs, conversations),
+    [visibleJobs, conversations]
   )
 
   const openJob = async (job: TimerJob): Promise<void> => {
@@ -90,11 +103,18 @@ export function TimerJobsPanel(): React.JSX.Element {
   }
 
   const removeJob = async (job: TimerJob): Promise<void> => {
-    if (job.conversationId) {
+    if (job.conversationId && conversations.some((row) => row.id === job.conversationId)) {
       requestDelete([job.conversationId])
       return
     }
     await window.vav.timers?.removeJob(job.id)
+    if (job.conversationId) {
+      try {
+        await window.vav.conversations.remove([job.conversationId])
+      } catch {
+        // Conversation may already be gone.
+      }
+    }
     await refresh()
   }
 
@@ -278,7 +298,7 @@ export function TimerJobsPanel(): React.JSX.Element {
 
   return (
     <div className="timer-jobs" data-testid="timer-jobs">
-      {jobs.map((job) => {
+      {visibleJobs.map((job) => {
         const definition = job.conversationId
           ? conversations.find((row) => row.id === job.conversationId)
           : undefined

@@ -23,12 +23,15 @@ import { catalogRowForModel } from '@shared/hostModelCodec'
 import { agentModelHostKey } from '@shared/agentModels'
 import { useSessionStore } from '../state/sessionStore'
 import { useT } from '../i18n/useT'
+import { createMenuNonceGate } from '../lib/menuNonce'
 import { menuAnchorIfVisible, showMenu, type MenuItem } from '../lib/nativeMenu'
 import {
   menuIconKeyForMode,
   warmMenuIcons,
   type LucideMenuIconKey
 } from '../lib/menuIcons'
+
+const consumeApprovalMenuNonce = createMenuNonceGate()
 
 const LEVEL_KEYS: Record<ThinkingLevel, MessageKey> = {
   off: 'composer.thinkingLevel.off',
@@ -87,7 +90,6 @@ export function SessionRunPicker({
   const approvalMenuNonce = useSessionStore((s) => s.approvalMenuNonce)
   const approvalConversationId = useSessionStore((s) => s.approvalConversationId)
   const approvalRef = useRef<HTMLButtonElement>(null)
-  const seenApprovalMenuNonce = useRef(0)
 
   const catalog = useSessionStore((s) => s.agentModelCatalog)
   const showThinking = sessionShowsThinking(conversation?.cliHost, conversation?.model)
@@ -173,9 +175,9 @@ export function SessionRunPicker({
   }, [])
 
   useEffect(() => {
-    if (approvalMenuNonce === 0 || approvalMenuNonce === seenApprovalMenuNonce.current) return
+    if (approvalMenuNonce === 0) return
     if (approvalConversationId && approvalConversationId !== conversationId) return
-    seenApprovalMenuNonce.current = approvalMenuNonce
+    if (!consumeApprovalMenuNonce(approvalMenuNonce)) return
     openMenu(approvalItems, approvalRef.current)
   }, [approvalConversationId, approvalItems, approvalMenuNonce, conversationId, openMenu])
 

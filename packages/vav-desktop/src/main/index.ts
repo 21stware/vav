@@ -392,6 +392,7 @@ import {
   argvRequestsCliOpen,
   parseCliWorkdir,
   parseOpenPathsFromArgv,
+  refreshInstalledCliLauncher,
   resolveExistingDirectory,
   classifyOpenPaths,
   setCliPreferredLocation,
@@ -456,8 +457,15 @@ installProcessErrorGuards()
 // the menu bar reads "VAV" instead of "Electron").
 pinUserDataPath()
 applyBranding()
+// Take the Chromium / userData lock before stores construct. A second
+// `open -n` instance that reaches ready fights SingletonLock and can quit
+// the primary. Fail the lock → leave immediately, no before-quit flush.
+const singleInstance = isE2eRuntime() || app.requestSingleInstanceLock()
+if (!singleInstance) {
+  app.quit()
+}
 // Dev: quit if `npm run dev` / electron-vite dies (prevents orphan VAV).
-installDevParentWatchdog()
+if (singleInstance) installDevParentWatchdog()
 
 // Local-file scheme for in-window PDF (and other) previews. Must be registered
 // before ready so Chromium treats it as a privileged, streamable origin.
@@ -962,10 +970,15 @@ function trayPaneFromBashSession(session: PtySessionMeta): TrayPane | null {
   })
 }
 
-function persistResultUnseen(conversationId: string, unseen: boolean): void {
+function persistResultUnseen(
+  conversationId: string,
+  unseen: boolean,
+  resultKind?: 'ok' | 'failed'
+): void {
   persistTrayResultUnseen({
     conversationId,
     unseen,
+    resultKind,
     getConversation: (id) => conversationStore.get(id),
     updateMeta: (id, patch) => conversationStore.updateMeta(id, patch),
     broadcast: () => broadcast(IPC.convChanged, conversationStore.listMeta())
@@ -979,7 +992,13 @@ function applyUnseenResult(pane: TrayPane): void {
     ephemeral: ephemeralConversations.has(pane.conversationId),
     isForeground: notifications.isConversationForeground(pane.conversationId)
   })
-  if (result.persist !== undefined) persistResultUnseen(pane.conversationId, result.persist)
+  if (result.persist !== undefined) {
+    persistResultUnseen(
+      pane.conversationId,
+      result.persist,
+      result.persist ? (pane.status === 'failed' ? 'failed' : 'ok') : undefined
+    )
+  }
   if (result.notifyComplete) notifications.noteUnseenComplete(pane.conversationId)
 }
 
@@ -1064,8 +1083,12 @@ function handlePtyStatusForTray(
   ptyPrimed.add(tabId)
   // Terminal has Running only — never a Done row after the command ends.
   if (record && pane && pane.kind !== 'bash') {
+    const alreadyFinished = agentTurnFinished.has(tabId)
     agentTurnFinished.add(tabId)
-    markResultUnseen(pane)
+    markResultUnseen({
+      ...pane,
+      status: status === 'exited' && !alreadyFinished ? 'failed' : 'done'
+    })
   } else refreshTraySessions()
   if (status === 'exited') {
     ptyPrimed.delete(tabId)
@@ -1142,7 +1165,10 @@ function refreshTraySessions(): void {
       }
       const pane = trayPaneFromConversation(conversation.id, 'chat')
       if (pane) {
-        unseenResults.set(trayPaneKey(pane), { ...pane, status: 'done' })
+        unseenResults.set(trayPaneKey(pane), {
+          ...pane,
+          status: conversation.resultKind === 'failed' ? 'failed' : 'done'
+        })
         notifications.noteUnseenComplete(conversation.id)
       }
     }
@@ -1157,7 +1183,7 @@ function refreshTraySessions(): void {
       )
     )
     const runningCount = panes.filter((pane) => pane.status === 'running').length
-    const doneCount = panes.filter((pane) => pane.status === 'done').length
+    const doneCount = panes.filter((pane) => pane.status === 'done' || pane.status === 'failed').length
     notifications.updateRunningSessions(
       panes.map((pane) => ({
         conversationId: pane.conversationId,
@@ -1179,7 +1205,7 @@ function refreshTraySessions(): void {
     broadcast(IPC.activityChanged, collapseTrayActivity(panes))
     remoteSessionStatus.clear()
     for (const pane of panes) {
-      const status = pane.status === 'done' ? 'done' : 'running'
+      const status = pane.status === 'running' ? 'running' : 'done'
       // A conversation with any running pane counts as running.
       if (remoteSessionStatus.get(pane.conversationId) === 'running') continue
       remoteSessionStatus.set(pane.conversationId, status)
@@ -1306,8 +1332,12 @@ function handleAgentEvent(event: TurnEvent): void {
     timerScheduler?.onTurnEnd(event.conversationId, Boolean(event.error) && !event.cancelled)
     activeTurns.delete(event.conversationId)
     const pane = trayPaneFromConversation(event.conversationId, 'chat')
-    if (pane) markResultUnseen(pane)
-    else refreshTraySessions()
+    if (pane) {
+      markResultUnseen({
+        ...pane,
+        status: event.cancelled || event.error ? 'failed' : 'done'
+      })
+    } else refreshTraySessions()
     pushTokenUsageIfOpen(event.conversationId)
     if (turnCompleteNotifyAction(event.cancelled, event.error) === 'complete') {
       const body = event.message.content || t('notify.turnComplete')
@@ -1429,7 +1459,9 @@ function syncScheduledJobFromConversation(
   timerStore.updateJob(job.id, {
     title: nextTitle || job.title,
     prompt: nextPrompt !== undefined ? nextPrompt : job.prompt,
-    sourceWorkdir: patch.sourceWorkdir !== undefined ? patch.sourceWorkdir : job.sourceWorkdir
+    ...(patch.sourceWorkdir !== undefined
+      ? { workdirPolicy: 'source' as const, sourceWorkdir: patch.sourceWorkdir }
+      : {})
   })
   broadcast(IPC.timersChanged, null)
 }
@@ -1980,8 +2012,8 @@ const daemonAttach = new DaemonAttachService({
         schedule: { kind: 'cron', expr: '0 9 * * *' },
         enabled: false,
         conversationId: conversation.id,
-        workdirPolicy: 'source',
-        sourceWorkdir: conversation.workingDirectory
+        workdirPolicy: 'mint',
+        sourceWorkdir: null
       })
       conversationStore.updateMeta(conversation.id, { timerJobId: job.id, sessionKind: 'timer' })
       return { job, conversation: conversationToMeta(conversationStore.get(conversation.id) ?? conversation) }
@@ -2210,8 +2242,12 @@ function emitDesktopControlEvents(events: TurnEvent[]): void {
     if (event.type === 'end') {
       activeTurns.delete(event.conversationId)
       const pane = trayPaneFromConversation(event.conversationId, 'chat')
-      if (pane) markResultUnseen(pane)
-      else refreshTraySessions()
+      if (pane) {
+        markResultUnseen({
+          ...pane,
+          status: event.cancelled || event.error ? 'failed' : 'done'
+        })
+      } else refreshTraySessions()
     }
   }
 }
@@ -2765,7 +2801,7 @@ function wireVibrancyRefresh(win: BrowserWindow): void {
   })
 }
 
-/** Apply or clear glass on main + Settings (create, toggle, theme repaint). */
+/** Apply or clear glass on main + Settings (create, vibrancy toggle). */
 function syncVibrancyShellWindows(): void {
   if (!IS_MAC) return
   if (mainWindow && !mainWindow.isDestroyed()) syncWindowMaterial(mainWindow)
@@ -2817,16 +2853,27 @@ function chrome(
   }) as Electron.BrowserWindowConstructorOptions
 }
 
-/** The system chrome does not follow `nativeTheme` on its own once overridden. */
+/**
+ * Theme flip. Companion windows get a new solid fill; vibrancy shells do not
+ * re-apply glass or re-pin traffic lights — `setVibrancy` / `setWindowButtonPosition`
+ * reset hiddenInset buttons to the default origin (flush to the title-bar top)
+ * for a frame, which reads as the gutter collapsing then snapping back.
+ * `under-window` material follows the window NSAppearance from `nativeTheme`.
+ */
 function repaintChrome(): void {
   const background = windowBackground()
   // Dock tile follows system/app light·dark (icon.png vs icon-dark.png).
   applyDockIcon()
   for (const window of BrowserWindow.getAllWindows()) {
     if (window.isDestroyed()) continue
-    // Main + Settings: respect the vibrancy toggle (do not force solid chrome).
     if (isVibrancyShellWindow(window)) {
-      syncWindowMaterial(window)
+      if (!isVibrancyEnabled()) {
+        try {
+          window.setBackgroundColor(background)
+        } catch {
+          // ignore
+        }
+      }
       continue
     }
     window.setBackgroundColor(background)
@@ -6152,17 +6199,8 @@ function registerGlobalHotkey(accelerator: string): boolean {
   return toggleOk
 }
 
-/** Last source we applied — skip a no-op so launch does not flash glass. */
-let appliedThemeSource: AppSettings['theme'] | null = null
-
 function applyTheme(theme: AppSettings['theme']): void {
-  const changed = appliedThemeSource !== theme
-  appliedThemeSource = theme
   nativeTheme.themeSource = theme
-  // NSVisualEffectView keeps the previous appearance unless glass is torn down.
-  if (!changed || !IS_MAC) return
-  if (mainWindow && !mainWindow.isDestroyed()) scheduleVibrancyRefresh(mainWindow)
-  if (settingsWindow && !settingsWindow.isDestroyed()) scheduleVibrancyRefresh(settingsWindow)
 }
 
 /** Last hex we broadcast — avoid spam on focus re-samples. */
@@ -8187,14 +8225,7 @@ async function seedSmokeChangeReview(): Promise<void> {
 // Lifecycle
 // ---------------------------------------------------------------------------
 
-const singleInstance = isE2eRuntime() || app.requestSingleInstanceLock()
-if (!singleInstance) {
-  // Straight out, with no listeners attached. A second instance exists only to
-  // hand focus to the first one; it has loaded nothing and so has nothing to
-  // save, and the teardown below would write its empty stores over the real
-  // ones on the way out.
-  app.quit()
-} else {
+if (singleInstance) {
   app.on('second-instance', (_event, argv) => {
     if (argvRequestsCliOpen(argv)) {
       openFromCli(parseCliWorkdir(argv))
@@ -8581,6 +8612,13 @@ if (!singleInstance) {
     // Heartbeat + focus checks; launch poll is delayed so first paint stays free.
     updateService.start(currentSettings().autoUpdatePolicy)
 
+    if (!isE2eRuntime()) {
+      try {
+        refreshInstalledCliLauncher()
+      } catch {
+        // non-fatal
+      }
+    }
     // Finder → Services → “Open Directory in VAV” (folders only).
     // Defer so first paint is not blocked by osacompile.
     if (IS_MAC && !isE2eRuntime()) {

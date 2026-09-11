@@ -31,6 +31,7 @@ import { isAgentPickerLocked } from '../lib/agentPickerLock'
 import { useAccountGroups, vavAccountsOf } from '../lib/accountGroups'
 import { useSessionStore } from '../state/sessionStore'
 import { useT } from '../i18n/useT'
+import { createMenuNonceGate } from '../lib/menuNonce'
 import { menuAnchorIfVisible, showMenu, type MenuItem } from '../lib/nativeMenu'
 import { warmMenuIcons } from '../lib/menuIcons'
 import { formatTokens } from '../lib/format'
@@ -38,6 +39,7 @@ import { AgentBrandMark } from './AgentBrandMark'
 import { CONTEXT_RING_SIZE, contextRingPath } from '../lib/contextRingPath'
 
 const CONTEXT_RING_TRACK = contextRingPath({ close: true })
+const consumeModelPickerNonce = createMenuNonceGate()
 const CONTEXT_RING_FILL = contextRingPath({ close: false })
 
 type HostOption = {
@@ -183,7 +185,6 @@ export function AgentModelPicker({
   const rootRef = useRef<HTMLDivElement>(null)
   const hostRef = useRef<HTMLButtonElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
-  const seenMenuNonce = useRef(0)
   const conversationRef = useRef(conversationId)
   const playedRef = useRef(locked)
   const motionRef = useRef<SplitMotion | null>(null)
@@ -563,9 +564,9 @@ export function AgentModelPicker({
   )
 
   useEffect(() => {
-    if (modelPickerMenuNonce === 0 || modelPickerMenuNonce === seenMenuNonce.current) return
+    if (modelPickerMenuNonce === 0) return
     if (modelPickerConversationId && modelPickerConversationId !== conversationId) return
-    seenMenuNonce.current = modelPickerMenuNonce
+    if (!consumeModelPickerNonce(modelPickerMenuNonce)) return
     if (!conversation) return
     openMenu(locked ? triggerRef.current : rootRef.current)
   }, [modelPickerMenuNonce, modelPickerConversationId, conversationId, openMenu, conversation, locked])

@@ -82,8 +82,43 @@ describe('persistTrayResultUnseen', () => {
       }),
       true
     )
-    assert.deepEqual(patch, { resultUnseen: true })
+    assert.deepEqual(patch, { resultUnseen: true, resultKind: 'ok' })
     assert.equal(broadcasts, 1)
+  })
+
+  it('keeps the first unseen kind and records a failed finish', () => {
+    let patch: { resultUnseen: boolean; resultKind?: string } | null = null
+    const conversation = { resultUnseen: false as boolean, resultKind: undefined as string | undefined }
+    assert.equal(
+      persistTrayResultUnseen({
+        conversationId: 'c1',
+        unseen: true,
+        resultKind: 'failed',
+        getConversation: () => conversation,
+        updateMeta: (_id, next) => {
+          patch = next
+          conversation.resultUnseen = next.resultUnseen
+          conversation.resultKind = next.resultKind
+        },
+        broadcast: () => {}
+      }),
+      true
+    )
+    assert.deepEqual(patch, { resultUnseen: true, resultKind: 'failed' })
+    assert.equal(
+      persistTrayResultUnseen({
+        conversationId: 'c1',
+        unseen: true,
+        resultKind: 'ok',
+        getConversation: () => conversation,
+        updateMeta: (_id, next) => {
+          patch = next
+        },
+        broadcast: () => {}
+      }),
+      false
+    )
+    assert.deepEqual(patch, { resultUnseen: true, resultKind: 'failed' })
   })
 })
 

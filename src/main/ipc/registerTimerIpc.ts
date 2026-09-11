@@ -43,8 +43,8 @@ export function registerTimerIpc(
       schedule: { kind: 'cron', expr: '0 9 * * *' },
       enabled: false,
       conversationId: conversation.id,
-      workdirPolicy: 'source',
-      sourceWorkdir: conversation.workingDirectory
+      workdirPolicy: 'mint',
+      sourceWorkdir: null
     })
     conversations.updateMeta(conversation.id, { timerJobId: job.id, sessionKind: 'timer' })
     host.publishConversations()

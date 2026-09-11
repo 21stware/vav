@@ -5,7 +5,8 @@ import {
   encodeSidebarSessionFilter,
   isSessionRunning,
   isSessionUnread,
-  parseSidebarSessionFilter
+  parseSidebarSessionFilter,
+  sessionUnreadBadge
 } from './sidebarSessionFilter.ts'
 import type { ConversationMeta } from '@shared/types'
 
@@ -103,6 +104,7 @@ describe('isSessionRunning', () => {
 describe('isSessionUnread', () => {
   it('marks idle-after-done, not an awaiting tool card', () => {
     assert.equal(isSessionUnread({ activity: 'done' }), true)
+    assert.equal(isSessionUnread({ activity: 'failed' }), true)
     assert.equal(
       isSessionUnread({ awaitingToolCallId: 't1', isRunning: true, activity: 'done' }),
       false
@@ -113,5 +115,15 @@ describe('isSessionUnread', () => {
   it('keeps a sticky resultUnseen badge even while running', () => {
     assert.equal(isSessionUnread({ isRunning: true, resultUnseen: true }), true)
     assert.equal(isSessionUnread({ activity: 'idle', resultUnseen: false }), false)
+  })
+})
+
+describe('sessionUnreadBadge', () => {
+  it('prefers awaiting, then running, then unseen finish tone', () => {
+    assert.equal(sessionUnreadBadge(true, true, 'done'), 'awaiting')
+    assert.equal(sessionUnreadBadge(false, true, 'done'), 'running')
+    assert.equal(sessionUnreadBadge(false, false, 'done'), 'done')
+    assert.equal(sessionUnreadBadge(false, false, 'failed'), 'failed')
+    assert.equal(sessionUnreadBadge(false, false, 'idle'), null)
   })
 })

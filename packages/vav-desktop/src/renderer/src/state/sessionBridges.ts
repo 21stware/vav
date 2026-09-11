@@ -155,7 +155,7 @@ export function installActivityBridge(): () => void {
   const onActivity = window.vav?.conversations?.onActivity
   if (!onActivity) return noopOff()
   return onActivity((rows) => {
-    const activityById: Record<string, 'running' | 'done'> = {}
+    const activityById: Record<string, 'running' | 'done' | 'failed'> = {}
     for (const row of rows) activityById[row.conversationId] = row.status
     useSessionStore.setState({ activityById })
   })

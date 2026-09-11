@@ -201,6 +201,9 @@ export class ConversationStore {
       conversation.swarmLayout = sanitizeSwarmLayout(conversation.swarmLayout)
       conversation.swarmLayoutFull = sanitizeSwarmLayout(conversation.swarmLayoutFull)
       if (typeof conversation.resultUnseen !== 'boolean') conversation.resultUnseen = false
+      if (conversation.resultKind !== 'ok' && conversation.resultKind !== 'failed') {
+        conversation.resultKind = undefined
+      }
       if (!Array.isArray(conversation.compactions)) conversation.compactions = []
       if (!conversation.hostTranscripts || typeof conversation.hostTranscripts !== 'object') {
         conversation.hostTranscripts = {}

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { mergeConversationList, nextConversationSelection, patchConversationById, isArchivedConversation, regenerateActiveLeaf, canMutateActiveSession, compactRefusalReason, genericErrorBanner, shouldSkipSessionDeleteConfirm, fallbackConversationIdAfterDelete, sessionDeleteDialogCopy, prependConversationIfMissing, upsertConversationMeta, listedConversationIdsForSelect, fileSessionHydrateOnDemandPatch, deleteMessageHydratePatch, renameConversationPatch, type ConversationListItem } from './sessionListMerge.ts'
+import { mergeConversationList, nextConversationSelection, patchConversationById, isArchivedConversation, regenerateActiveLeaf, canMutateActiveSession, compactRefusalReason, genericErrorBanner, shouldSkipSessionDeleteConfirm, fallbackConversationIdAfterDelete, sessionDeleteDialogCopy, prependConversationIfMissing, upsertConversationMeta, listedConversationIdsForSelect, fileSessionHydrateOnDemandPatch, deleteMessageHydratePatch, renameConversationPatch, rememberDroppedConversationIds, forgetDroppedConversationIds, replaceTimerSessions, type ConversationListItem } from './sessionListMerge.ts'
 
 function row(
   partial: Partial<ConversationListItem> & { id: string }
@@ -28,6 +28,20 @@ describe('mergeConversationList', () => {
     )
   })
 
+  it('does not resurrect a deleted timer when the broadcast omits it', () => {
+    rememberDroppedConversationIds(['timer'])
+    const prev = [
+      row({ id: 'live', updatedAt: 2 }),
+      row({ id: 'timer', updatedAt: 1, sessionKind: 'timer' })
+    ]
+    const next = [row({ id: 'live', updatedAt: 2 })]
+    assert.deepEqual(
+      mergeConversationList(prev, next).map((c) => c.id),
+      ['live']
+    )
+    forgetDroppedConversationIds(['timer'])
+  })
+
   it('keeps previous order when only titles change', () => {
     const prev = [row({ id: 'a', updatedAt: 2 }), row({ id: 'b', updatedAt: 1 })]
     const next = [row({ id: 'b', updatedAt: 1 }), row({ id: 'a', updatedAt: 2 })]
@@ -48,6 +62,20 @@ describe('mergeConversationList', () => {
       mergeConversationList(prev, next).map((c) => c.id),
       ['new', 'old', 'file', 'timer']
     )
+  })
+
+  it('drops a deleted timer when recency sort runs', () => {
+    rememberDroppedConversationIds(['timer'])
+    const prev = [
+      row({ id: 'old', updatedAt: 3 }),
+      row({ id: 'timer', updatedAt: 0, sessionKind: 'timer' })
+    ]
+    const next = [row({ id: 'old', updatedAt: 4 }), row({ id: 'new', updatedAt: 5 })]
+    assert.deepEqual(
+      mergeConversationList(prev, next).map((c) => c.id),
+      ['new', 'old']
+    )
+    forgetDroppedConversationIds(['timer'])
   })
 })
 
@@ -222,6 +250,33 @@ describe('sessionDeleteDialogCopy', () => {
   })
 })
 
+describe('replaceTimerSessions', () => {
+  it('drops timer rows that are no longer in the live list', () => {
+    const rows = [
+      row({ id: 'live' }),
+      row({ id: 'gone', sessionKind: 'timer' }),
+      row({ id: 'keep', sessionKind: 'timer' })
+    ]
+    const live = [row({ id: 'keep', sessionKind: 'timer', updatedAt: 9 })]
+    assert.deepEqual(
+      replaceTimerSessions(rows, live).map((c) => c.id),
+      ['live', 'keep']
+    )
+    assert.equal(replaceTimerSessions(rows, live).find((c) => c.id === 'keep')?.updatedAt, 9)
+  })
+
+  it('does not upsert a dropped timer back into the list', () => {
+    rememberDroppedConversationIds(['gone'])
+    const rows = [row({ id: 'live' })]
+    const live = [row({ id: 'gone', sessionKind: 'timer' })]
+    assert.deepEqual(
+      replaceTimerSessions(rows, live).map((c) => c.id),
+      ['live']
+    )
+    forgetDroppedConversationIds(['gone'])
+  })
+})
+
 describe('prependConversationIfMissing / upsertConversationMeta', () => {
   it('prepends a new id and merges an existing one', () => {
     const a = row({ id: 'a', updatedAt: 1 })
@@ -237,6 +292,14 @@ describe('prependConversationIfMissing / upsertConversationMeta', () => {
       upsertConversationMeta([a], b).map((c) => c.id),
       ['b', 'a']
     )
+    rememberDroppedConversationIds(['ghost'])
+    assert.deepEqual(
+      upsertConversationMeta([a, row({ id: 'ghost', sessionKind: 'timer' })], row({ id: 'ghost', sessionKind: 'timer' })).map(
+        (c) => c.id
+      ),
+      ['a']
+    )
+    forgetDroppedConversationIds(['ghost'])
   })
 })
 

@@ -98,6 +98,14 @@ describe('collapseTrayActivity', () => {
     ])
     assert.deepEqual(rows, [{ conversationId: 'c1', status: 'running' }])
   })
+
+  it('failed unread lifts over a done finish on the same conversation', () => {
+    const rows = collapseTrayActivity([
+      { conversationId: 'c1', status: 'done' },
+      { conversationId: 'c1', status: 'failed' }
+    ])
+    assert.deepEqual(rows, [{ conversationId: 'c1', status: 'failed' }])
+  })
 })
 
 describe('mergeLiveAndUnseenTrayPanes', () => {
@@ -128,6 +136,10 @@ describe('tray labels', () => {
     assert.equal(traySessionLabel(agent), 'Hello')
     assert.equal(trayStatusRowLabel('Hello', 'running', { running: 'Running', done: 'Done' }), 'Running · Hello')
     assert.equal(trayStatusRowLabel('Hello', 'done', { running: 'Running', done: 'Done' }), 'Done · Hello')
+    assert.equal(
+      trayStatusRowLabel('Hello', 'failed', { running: 'Running', done: 'Done', failed: 'Stopped' }),
+      'Stopped · Hello'
+    )
     assert.equal(trayIndentedLabel('Hello'), '\u2003\u2003Hello')
   })
 

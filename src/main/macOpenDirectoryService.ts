@@ -3,8 +3,8 @@
  *
  * Electron cannot implement Cocoa NSService providers, so we install a small
  * AppleScript applet into ~/Library/Services that shells out to a helper script.
- * The helper reuses the same `--vav-workdir=` handoff as the `vav <dir>` CLI
- * (second-instance / cold-start openWorkspaceSession).
+ * The helper opens the folder with the app (`open -a App <dir>`) so a running
+ * instance gets `open-file` instead of a second Chromium (`open -n --args`).
  */
 import { app } from 'electron'
 import { execFileSync } from 'node:child_process'
@@ -20,9 +20,10 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { APP_NAME } from './brand'
 import { packagedAppBundlePath } from './cli'
+import { packagedMacOpenDirectoryHelper, shSingleQuote } from './macAppOpen.ts'
 
 /** Bump to reinstall when the service recipe changes. */
-const SERVICE_VERSION = 2
+const SERVICE_VERSION = 3
 const SERVICE_BASENAME = 'Open Directory in VAV'
 const MARKER_NAME = `open-dir-service-v${SERVICE_VERSION}`
 
@@ -46,26 +47,13 @@ function helperScriptPath(): string {
   return join(supportDir(), 'open-directory-in-vav.sh')
 }
 
-function shSingleQuote(s: string): string {
-  return `'${s.replace(/'/g, `'\\''`)}'`
-}
-
 /** Write the launcher the AppleScript service invokes (one path arg). */
 function writeHelperScript(): string {
   mkdirSync(supportDir(), { recursive: true })
   const helper = helperScriptPath()
   let body: string
   if (app.isPackaged && process.platform === 'darwin') {
-    const bundle = packagedAppBundlePath()
-    body = [
-      '#!/bin/sh',
-      'set -e',
-      'f="$1"',
-      '[ -n "$f" ] || exit 0',
-      '[ -d "$f" ] || exit 0',
-      `exec /usr/bin/open -na ${shSingleQuote(bundle)} --args --vav-workdir="$f"`,
-      ''
-    ].join('\n')
+    body = packagedMacOpenDirectoryHelper(packagedAppBundlePath())
   } else {
     body = [
       '#!/bin/sh',

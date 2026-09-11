@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { isBareShiftEnter, isTerminalPasteChord, KITTY_SHIFT_ENTER } from './terminalKeys.ts'
+import {
+  isBareShiftEnter,
+  isTerminalPasteChord,
+  isTerminalProductModifier,
+  KITTY_SHIFT_ENTER,
+  shouldCopyInsteadOfInterrupt,
+  TERMINAL_C0,
+  terminalC0ForChord
+} from './terminalKeys.ts'
 
 function key(partial: Partial<Parameters<typeof isBareShiftEnter>[0]>) {
   return {
@@ -57,5 +65,39 @@ describe('isBareShiftEnter', () => {
 
   it('exports the Kitty CSI-u sequence Claude / Codex expect', () => {
     assert.equal(KITTY_SHIFT_ENTER, '\x1b[13;2u')
+  })
+})
+
+describe('isTerminalProductModifier', () => {
+  it('uses ⌘ on Mac and Ctrl elsewhere', () => {
+    assert.equal(isTerminalProductModifier(key({ metaKey: true }), true), true)
+    assert.equal(isTerminalProductModifier(key({ ctrlKey: true }), true), false)
+    assert.equal(isTerminalProductModifier(key({ ctrlKey: true }), false), true)
+    assert.equal(isTerminalProductModifier(key({ metaKey: true }), false), false)
+  })
+})
+
+describe('terminalC0ForChord', () => {
+  it('sends ETX for Ctrl+C so Kitty CSI-u cannot swallow interrupt', () => {
+    assert.equal(terminalC0ForChord(key({ key: 'c', ctrlKey: true }), true), TERMINAL_C0.etx)
+    assert.equal(terminalC0ForChord(key({ key: 'c', ctrlKey: true }), false), TERMINAL_C0.etx)
+    assert.equal(terminalC0ForChord(key({ key: 'c', ctrlKey: true, metaKey: true }), true), null)
+  })
+
+  it('keeps Ctrl+D as EOF on Mac and leaves it to the split chord elsewhere', () => {
+    assert.equal(terminalC0ForChord(key({ key: 'd', ctrlKey: true }), true), TERMINAL_C0.eot)
+    assert.equal(terminalC0ForChord(key({ key: 'd', ctrlKey: true }), false), null)
+  })
+
+  it('maps Ctrl+Z and Ctrl+\\ to stop / quit', () => {
+    assert.equal(terminalC0ForChord(key({ key: 'z', ctrlKey: true }), true), TERMINAL_C0.sub)
+    assert.equal(terminalC0ForChord(key({ key: '\\', code: 'Backslash', ctrlKey: true }), true), TERMINAL_C0.fs)
+  })
+
+  it('copies a selection on Win/Linux Ctrl+C instead of interrupting', () => {
+    const ev = key({ key: 'c', ctrlKey: true })
+    assert.equal(shouldCopyInsteadOfInterrupt(ev, true, false), true)
+    assert.equal(shouldCopyInsteadOfInterrupt(ev, false, false), false)
+    assert.equal(shouldCopyInsteadOfInterrupt(ev, true, true), false)
   })
 })

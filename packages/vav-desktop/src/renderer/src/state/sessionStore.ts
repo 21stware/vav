@@ -15,7 +15,7 @@ import { DEFAULT_CLI_AGENTS, DEFAULT_SETTINGS } from '@shared/types'
 import type { WorkspaceHostInfo } from '@shared/workspaceHost'
 import type { IncomingController } from '@shared/daemonProtocol'
 import type { RemoteControlStatus } from '@shared/remoteControl'
-import { mergeConversationList, nextConversationSelection, isArchivedConversation, regenerateActiveLeaf, canMutateActiveSession, compactRefusalReason, genericErrorBanner, patchConversationById, shouldSkipSessionDeleteConfirm, fallbackConversationIdAfterDelete, sessionDeleteDialogCopy, prependConversationIfMissing, listedConversationIdsForSelect, fileSessionHydrateOnDemandPatch, deleteMessageHydratePatch, renameConversationPatch } from './sessionListMerge'
+import { mergeConversationList, nextConversationSelection, isArchivedConversation, regenerateActiveLeaf, canMutateActiveSession, compactRefusalReason, genericErrorBanner, patchConversationById, shouldSkipSessionDeleteConfirm, fallbackConversationIdAfterDelete, sessionDeleteDialogCopy, prependConversationIfMissing, listedConversationIdsForSelect, fileSessionHydrateOnDemandPatch, deleteMessageHydratePatch, renameConversationPatch, rememberDroppedConversationIds, isDroppedConversationId } from './sessionListMerge'
 import {
   activeToolsFields,
   collapsedFileSessionTools,
@@ -231,7 +231,7 @@ interface SessionState {
    */
   detachedConversationIds: string[]
   /** Tray-identical Running / Done per conversation — drives the window LED. */
-  activityById: Record<string, 'running' | 'done'>
+  activityById: Record<string, 'running' | 'done' | 'failed'>
   sidebarQuery: string
   /** Session-list filter field is open (toolbar button, not persisted). */
   sidebarSearchOpen: boolean
@@ -717,7 +717,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   selectedIds: [],
   /** Conversation ids with an open companion window (PTY exclusive there). */
   detachedConversationIds: [] as string[],
-  activityById: {} as Record<string, 'running' | 'done'>,
+  activityById: {} as Record<string, 'running' | 'done' | 'failed'>,
   sidebarQuery: '',
   sidebarSearchOpen: false,
   renamingId: null,
@@ -955,6 +955,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   async selectConversation(id, options) {
     const { selectedIds, activeId, conversations } = get()
+    if (isDroppedConversationId(id)) return
     let target = conversations.find((c) => c.id === id)
     // File-preview sessions are hidden from listMeta — hydrate on demand.
     if (!target) {
@@ -1318,18 +1319,41 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
       const applyRemove = async (toRemove: string[]): Promise<void> => {
         if (toRemove.length === 0) return
-        const defs = get().conversations.filter(
-          (row) => toRemove.includes(row.id) && isTimerDefinition(row) && row.timerJobId
-        )
-        for (const row of defs) {
-          if (!row.timerJobId || !window.vav?.timers?.removeJob) continue
+        const jobIds = new Set<string>()
+        for (const id of toRemove) {
+          const row = get().conversations.find((item) => item.id === id)
+          if (row?.timerJobId) jobIds.add(row.timerJobId)
+          if (!window.vav?.timers?.getJobForConversation) continue
           try {
-            await window.vav.timers.removeJob(row.timerJobId)
+            const job = await window.vav.timers.getJobForConversation(id)
+            if (job) jobIds.add(job.id)
           } catch {
-            // Job may already be gone; still drop the definition conversation.
+            // Job lookup is best-effort; conversation remove still proceeds.
           }
         }
-        const { removed, conversations: next } = await window.vav.conversations.remove(toRemove)
+        if (window.vav?.timers?.removeJob) {
+          for (const jobId of jobIds) {
+            try {
+              await window.vav.timers.removeJob(jobId)
+            } catch {
+              // Job may already be gone; still drop the definition conversation.
+            }
+          }
+        }
+        const runIds = get()
+          .conversations.filter(
+            (row) =>
+              row.sessionKind === 'timer' &&
+              !!row.timerRunId &&
+              !!row.timerJobId &&
+              jobIds.has(row.timerJobId)
+          )
+          .map((row) => row.id)
+        const { removed, conversations: next } = await window.vav.conversations.remove([
+          ...toRemove,
+          ...runIds
+        ])
+        rememberDroppedConversationIds(removed)
         for (const id of removed) {
           disposeProjection(id)
           useWorkspaceStore.getState().disposeConversation(id)
@@ -2532,6 +2556,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const { sidebarListMode } = get()
     if (sidebarListMode === mode) return
     set({ sidebarListMode: mode, sidebarQuery: '', sidebarSearchOpen: false })
+    // AppKit leaves the workdir / path-chip menu up when only the renderer swaps.
+    void window.vav?.window?.closePopupMenu?.()
     if (mode === 'timers') get().ensureScheduledConversation()
   },
 

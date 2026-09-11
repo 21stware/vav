@@ -46,6 +46,24 @@ describe('TimerStore', () => {
     assert.equal(timers.getJobForConversation('conv-def')?.id, job.id)
   })
 
+  it('persists mint, sticky, and source workspace policies', () => {
+    const timers = store()
+    const job = timers.createJob({
+      title: 'Workspace',
+      prompt: 'Check',
+      schedule: { kind: 'interval', everyMs: 60_000 },
+      workdirPolicy: 'sticky'
+    })
+    assert.equal(job.workdirPolicy, 'sticky')
+    assert.equal(timers.updateJob(job.id, { workdirPolicy: 'mint' })?.workdirPolicy, 'mint')
+    const sourced = timers.updateJob(job.id, {
+      workdirPolicy: 'source',
+      sourceWorkdir: '/proj/app'
+    })
+    assert.equal(sourced?.workdirPolicy, 'source')
+    assert.equal(sourced?.sourceWorkdir, '/proj/app')
+  })
+
   it('marks due jobs and finishes a run', () => {
     const timers = store()
     const now = 1_000_000

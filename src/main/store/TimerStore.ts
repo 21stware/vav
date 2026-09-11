@@ -3,6 +3,7 @@ import { dirname, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import {
   coerceTimerSchedule,
+  coerceTimerWorkdirPolicy,
   nextTimerRunAt,
   type TimerJob,
   type TimerJobInput,
@@ -35,7 +36,7 @@ function coerceJob(raw: unknown, now: number): TimerJob | null {
     schedule,
     enabled: row.enabled !== false,
     conversationId: typeof row.conversationId === 'string' && row.conversationId.trim() ? row.conversationId : null,
-    workdirPolicy: row.workdirPolicy === 'source' ? 'source' : 'mint',
+    workdirPolicy: coerceTimerWorkdirPolicy(row.workdirPolicy),
     sourceWorkdir: typeof row.sourceWorkdir === 'string' ? row.sourceWorkdir : null,
     connectorIds: connectorIds as ConnectorId[],
     createdAt,
@@ -130,7 +131,7 @@ export class TimerStore {
       schedule,
       enabled: input.enabled !== false,
       conversationId: input.conversationId?.trim() || null,
-      workdirPolicy: input.workdirPolicy === 'source' ? 'source' : 'mint',
+      workdirPolicy: coerceTimerWorkdirPolicy(input.workdirPolicy),
       sourceWorkdir: input.sourceWorkdir ?? null,
       connectorIds: (input.connectorIds ?? []).filter(isConnectorId),
       createdAt: now,
@@ -158,7 +159,7 @@ export class TimerStore {
       job.schedule = schedule
     }
     if (typeof patch.enabled === 'boolean') job.enabled = patch.enabled
-    if (patch.workdirPolicy === 'mint' || patch.workdirPolicy === 'source') {
+    if (patch.workdirPolicy === 'mint' || patch.workdirPolicy === 'sticky' || patch.workdirPolicy === 'source') {
       job.workdirPolicy = patch.workdirPolicy
     }
     if (patch.sourceWorkdir !== undefined) job.sourceWorkdir = patch.sourceWorkdir

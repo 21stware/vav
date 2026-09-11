@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync } from 'node:fs'
+import { mkdirSync, mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { ConversationStore } from '../store/ConversationStore.ts'
@@ -59,5 +59,44 @@ describe('TimerScheduler', () => {
     )
     await live.scheduler.tick(now)
     assert.equal(live.ran.length, 1)
+  })
+
+  it('reuses a sticky workspace and a source folder, and mints a new one each run', () => {
+    const { store, scheduler } = harness()
+    const sticky = store.createJob({
+      title: 'Sticky',
+      prompt: 'Write a note',
+      schedule: { kind: 'interval', everyMs: 60_000 },
+      workdirPolicy: 'sticky'
+    })
+    const first = scheduler.fire(sticky, 1_000)
+    const second = scheduler.fire(sticky, 2_000)
+    assert.ok(first && second)
+    const stickyRuns = store.listRuns(sticky.id)
+    assert.equal(stickyRuns[0]?.workdir, stickyRuns[1]?.workdir)
+
+    const sourceDir = join(store.listRuns(sticky.id)[0]!.workdir, '..', 'picked')
+    mkdirSync(sourceDir, { recursive: true })
+    const sourced = store.createJob({
+      title: 'Source',
+      prompt: 'Write a note',
+      schedule: { kind: 'interval', everyMs: 60_000 },
+      workdirPolicy: 'source',
+      sourceWorkdir: sourceDir
+    })
+    const sourcedRun = scheduler.fire(sourced, 3_000)
+    assert.ok(sourcedRun)
+    assert.equal(store.listRuns(sourced.id)[0]?.workdir, sourceDir)
+
+    const minted = store.createJob({
+      title: 'Mint',
+      prompt: 'Write a note',
+      schedule: { kind: 'interval', everyMs: 60_000 },
+      workdirPolicy: 'mint'
+    })
+    scheduler.fire(minted, 4_000)
+    scheduler.fire(minted, 5_000)
+    const mintedRuns = store.listRuns(minted.id)
+    assert.notEqual(mintedRuns[0]?.workdir, mintedRuns[1]?.workdir)
   })
 })

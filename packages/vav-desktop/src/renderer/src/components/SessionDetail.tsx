@@ -49,7 +49,8 @@ import { useConversationFileDrop } from '../lib/useConversationFileDrop'
 import { parkTerminal } from '../lib/terminalRegistry'
 import { useT } from '../i18n/useT'
 import { workspaceChromeLabel } from '../lib/format'
-import { keys } from '../lib/platform'
+import { IS_MAC, keys } from '../lib/platform'
+import { isTerminalProductModifier } from '../lib/terminalKeys'
 import { useSidebarFloatMode } from '../lib/sidebarLayout'
 import { isCompanionSessionShell } from '../lib/windowKind'
 
@@ -388,8 +389,7 @@ export function SessionDetail({
   useEffect(() => {
     if (!threadSplit && isVavMode) return
     const onKey = (event: KeyboardEvent): void => {
-      const meta = event.metaKey || event.ctrlKey
-      if (!meta || event.altKey) return
+      if (!isTerminalProductModifier(event, IS_MAC)) return
 
       const paneDir = arrowKeyToPaneDirection(event.key)
       if (paneDir && threadSplit && swarmMulti) {

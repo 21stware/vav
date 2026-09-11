@@ -1,7 +1,10 @@
 import { trayPaneKey, type TrayPane } from '../../shared/traySessions.ts'
 
+export type ResultUnseenKind = 'ok' | 'failed'
+
 export type TrayUnseenConversation = {
   resultUnseen?: boolean
+  resultKind?: ResultUnseenKind
   archived?: boolean
 }
 
@@ -21,13 +24,24 @@ export function deleteUnseenForConversation(
 export function persistTrayResultUnseen(opts: {
   conversationId: string
   unseen: boolean
+  resultKind?: ResultUnseenKind
   getConversation: (id: string) => TrayUnseenConversation | null | undefined
-  updateMeta: (id: string, patch: { resultUnseen: boolean }) => void
+  updateMeta: (id: string, patch: { resultUnseen: boolean; resultKind?: ResultUnseenKind }) => void
   broadcast: () => void
 }): boolean {
   const conversation = opts.getConversation(opts.conversationId)
-  if (!conversation || conversation.resultUnseen === opts.unseen) return false
-  opts.updateMeta(opts.conversationId, { resultUnseen: opts.unseen })
+  if (!conversation) return false
+  // First unseen finish wins — later PTY idle / exit must not flip the LED.
+  if (opts.unseen) {
+    if (conversation.resultUnseen) return false
+    opts.updateMeta(opts.conversationId, {
+      resultUnseen: true,
+      resultKind: opts.resultKind ?? 'ok'
+    })
+  } else {
+    if (!conversation.resultUnseen && conversation.resultKind == null) return false
+    opts.updateMeta(opts.conversationId, { resultUnseen: false, resultKind: undefined })
+  }
   opts.broadcast()
   return true
 }
@@ -44,7 +58,13 @@ export function applyUnseenResultToMap(opts: {
     deleteUnseenForConversation(opts.unseen, opts.pane.conversationId)
     return { persist: false, notifyComplete: false }
   }
-  opts.unseen.set(trayPaneKey(opts.pane), opts.pane)
+  const key = trayPaneKey(opts.pane)
+  if (!opts.unseen.has(key)) {
+    opts.unseen.set(key, {
+      ...opts.pane,
+      status: opts.pane.status === 'failed' ? 'failed' : 'done'
+    })
+  }
   return { persist: true, notifyComplete: true }
 }
 

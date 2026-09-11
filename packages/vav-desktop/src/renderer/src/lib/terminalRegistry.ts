@@ -5,7 +5,14 @@ import { WebLinksAddon } from '@xterm/addon-web-links'
 import { registerTerminalSink } from '../state/workspaceStore'
 import { IS_MAC } from './platform'
 import { publishTerminalRegistry } from './terminalRegistryHandle'
-import { isBareShiftEnter, isTerminalPasteChord, KITTY_SHIFT_ENTER } from './terminalKeys'
+import {
+  isBareShiftEnter,
+  isTerminalPasteChord,
+  isTerminalProductModifier,
+  KITTY_SHIFT_ENTER,
+  shouldCopyInsteadOfInterrupt,
+  terminalC0ForChord
+} from './terminalKeys'
 import { scrollbackForSurface } from './terminalFit'
 import {
   caretScrollTargetFromEvent,
@@ -302,13 +309,17 @@ export function acquireTerminal(options: {
   let replaying =
     options.paintPaused !== true && typeof window.vav.pty.replay === 'function'
 
+  const writePty = (data: string): void => {
+    window.vav.pty.write(options.tabId, data)
+  }
+
   term.onData((data) => {
     // Replay of a TUI snapshot re-parses DA / OSC 11 / pixel queries. Answering
     // those into the live PTY looks like stray keystrokes (and can clobber color).
     if (replaying) return
-    window.vav.pty.write(options.tabId, data)
+    writePty(data)
   })
-  installKittyKeyboardFallback(term, (data) => window.vav.pty.write(options.tabId, data), () => replaying)
+  installKittyKeyboardFallback(term, writePty, () => replaying)
   // Only the focused window drives PTY geometry. Background windows still
   // receive the stream, but must not stomp cols/rows (causes TUI ghost frames).
   //
@@ -457,13 +468,28 @@ export function acquireTerminal(options: {
       void pasteClipboardIntoTerminal(term)
       return false
     }
-    const meta = ev.metaKey || ev.ctrlKey
-    if (!meta && !(ev.ctrlKey && !ev.metaKey)) return true
+    // Kitty encodes Ctrl+C as CSI-u once a TUI enables the protocol. Write the
+    // C0 byte ourselves (and skip the replay gate) so a running turn can die
+    // and the same session stay reusable.
+    const c0 = terminalC0ForChord(ev, IS_MAC)
+    if (c0) {
+      ev.preventDefault()
+      if (shouldCopyInsteadOfInterrupt(ev, term.hasSelection(), IS_MAC)) {
+        const text = term.getSelection()
+        if (text) void navigator.clipboard.writeText(text)
+        term.clearSelection()
+        return false
+      }
+      writePty(c0)
+      return false
+    }
     // Control+` (tools bash) — never send backtick to the shell with Ctrl held.
     if (ev.ctrlKey && !ev.metaKey && !ev.altKey && !ev.shiftKey && (ev.key === '`' || ev.code === 'Backquote')) {
       return false
     }
-    if (!meta || ev.altKey) return true
+    // Product accelerators only — ⌘ on Mac, Ctrl elsewhere. Ctrl+K / Ctrl+D
+    // must still reach the PTY on Mac (readline / EOF).
+    if (!isTerminalProductModifier(ev, IS_MAC)) return true
     const key = ev.key.toLowerCase()
     // Cmd/Ctrl + Shift + letter product shortcuts
     if (ev.shiftKey && (key === 'e' || key === 'h' || key === 't' || key === 'o' || key === 'g' || key === 'd')) {
@@ -551,10 +577,15 @@ export function acquireTerminal(options: {
     void window.vav.pty
       .replay(options.tabId)
       .then((buf) => {
-        if (entries.get(id) !== entry || entry.paintPaused || entry.parked) return
-        if (buf) term.write(buf)
-        replaying = false
-        flushLiveQueue()
+        try {
+          if (entries.get(id) !== entry || entry.paintPaused || entry.parked) return
+          if (buf) term.write(buf)
+          flushLiveQueue()
+        } finally {
+          // Park / pause during replay used to leave this latched, which
+          // dropped every later keystroke (including Ctrl+C) for the session.
+          if (entries.get(id) === entry) replaying = false
+        }
       })
       .catch(() => {
         if (entries.get(id) !== entry) return
@@ -617,20 +648,23 @@ export function acquireTerminal(options: {
     void window.vav.pty
       .replay(options.tabId)
       .then((buf) => {
-        if (entries.get(id) !== entry || entry.paintPaused || entry.parked) return
-        if (buf) term.write(buf)
-        replaying = false
-        flushLiveQueue()
-        requestAnimationFrame(() => {
-          if (entries.get(id) !== entry || entry.paintPaused) return
-          if (!document.hasFocus()) return
-          try {
-            fit.fit()
-            window.vav.pty.resize(options.tabId, term.cols, term.rows, true)
-          } catch {
-            // ignore
-          }
-        })
+        try {
+          if (entries.get(id) !== entry || entry.paintPaused || entry.parked) return
+          if (buf) term.write(buf)
+          flushLiveQueue()
+          requestAnimationFrame(() => {
+            if (entries.get(id) !== entry || entry.paintPaused) return
+            if (!document.hasFocus()) return
+            try {
+              fit.fit()
+              window.vav.pty.resize(options.tabId, term.cols, term.rows, true)
+            } catch {
+              // ignore
+            }
+          })
+        } finally {
+          if (entries.get(id) === entry) replaying = false
+        }
       })
       .catch(() => {
         if (entries.get(id) !== entry) return

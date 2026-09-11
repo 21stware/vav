@@ -5,7 +5,7 @@ import { textOf } from '../agent/agentMessage'
 import { threadPath } from '@shared/thread'
 import type { ConversationStore } from '../store/ConversationStore'
 import type { TimerStore } from '../store/TimerStore'
-import { mintTimerWorkdir } from './mintTimerWorkdir'
+import { resolveTimerWorkdir } from './mintTimerWorkdir'
 
 export type TimerSchedulerDeps = {
   store: TimerStore
@@ -90,10 +90,7 @@ export class TimerScheduler {
 
   fire(job: TimerJob, now = this.deps.now?.() ?? Date.now()): { conversationId: string; runId: string } | null {
     if (!job.prompt.trim()) return null
-    const workdir =
-      job.workdirPolicy === 'source' && job.sourceWorkdir && existsSync(job.sourceWorkdir)
-        ? job.sourceWorkdir
-        : mintTimerWorkdir(this.deps.tmp, job.id, now)
+    const workdir = resolveTimerWorkdir(job, this.deps.tmp, now)
     writeFileSync(
       join(workdir, TIMER_BRIEF_FILE),
       `# ${job.title}\n\n${job.prompt.trim()}\n`,

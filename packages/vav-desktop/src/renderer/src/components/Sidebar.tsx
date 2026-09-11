@@ -20,6 +20,7 @@ import {
   encodeSidebarSessionFilter,
   isSessionRunning as sessionTurnIsRunning,
   isSessionUnread as sessionTurnIsUnread,
+  sessionUnreadBadge,
   isSidebarSessionFilterEnabled,
   parseSidebarSessionFilter,
   type SidebarSessionFilter
@@ -1086,7 +1087,11 @@ export function Sidebar({
             const runClass = selectionRunClass(conversation.id)
             const awaiting = !!turn?.awaitingToolCallId
             const running = !!turn?.isRunning && !awaiting
-            const doneUnseen = !awaiting && !running && activityById[conversation.id] === 'done'
+            const unreadBadge = sessionUnreadBadge(
+              awaiting,
+              running,
+              activityById[conversation.id]
+            )
             const agentLabel = agentTypeLabel(conversation, cliAgents)
             const subtitle = conversationSubtitle({
               conversation,
@@ -1248,10 +1253,10 @@ export function Sidebar({
                     <TerminalIcon size={11} aria-hidden />
                   </span>
                 )}
-                {awaiting && (
+                {unreadBadge === 'awaiting' && (
                   <span className="conv-badge awaiting" title={t('sidebar.awaitingAnswer')} />
                 )}
-                {running && (
+                {unreadBadge === 'running' && (
                   <span
                     className="conv-badge running"
                     title={
@@ -1259,8 +1264,11 @@ export function Sidebar({
                     }
                   />
                 )}
-                {doneUnseen && (
+                {unreadBadge === 'done' && (
                   <span className="conv-badge done" title={t('sidebar.badge.done')} />
+                )}
+                {unreadBadge === 'failed' && (
+                  <span className="conv-badge failed" title={t('sidebar.badge.failed')} />
                 )}
               </div>
             )
@@ -1494,8 +1502,11 @@ export function Sidebar({
               const turn = turns[row.sessionId]
               const awaiting = !!turn?.awaitingToolCallId
               const running = !!turn?.isRunning && !awaiting
-              const doneUnseen =
-                !awaiting && !running && activityById[row.sessionId] === 'done'
+              const unreadBadge = sessionUnreadBadge(
+                awaiting,
+                running,
+                activityById[row.sessionId]
+              )
               return (
                 <button
                   type="button"
@@ -1570,10 +1581,10 @@ export function Sidebar({
                       ? `${pathLabel} · ${statusLabel}`
                       : `${pathLabel} · ${relativeTime(row.updatedAt)}`}
                   </span>
-                  {awaiting && (
+                  {unreadBadge === 'awaiting' && (
                     <span className="conv-badge awaiting" title={t('sidebar.awaitingAnswer')} />
                   )}
-                  {running && (
+                  {unreadBadge === 'running' && (
                     <span
                       className="conv-badge running"
                       title={
@@ -1581,8 +1592,11 @@ export function Sidebar({
                       }
                     />
                   )}
-                  {doneUnseen && (
+                  {unreadBadge === 'done' && (
                     <span className="conv-badge done" title={t('sidebar.badge.done')} />
+                  )}
+                  {unreadBadge === 'failed' && (
+                    <span className="conv-badge failed" title={t('sidebar.badge.failed')} />
                   )}
                 </button>
               )

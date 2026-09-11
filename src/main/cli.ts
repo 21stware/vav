@@ -14,6 +14,7 @@ import { homedir } from 'node:os'
 import { dirname, isAbsolute, join, resolve as resolvePath } from 'node:path'
 import { promisify } from 'node:util'
 import { APP_CLI_NAME } from './brand'
+import { packagedMacCliLauncher } from './macAppOpen.ts'
 import { CLI_BIN_NAMES, DAEMON_BIN_NAMES, nodeBinLauncherScript, resolveNodeBinSpec } from './cli/cliBins'
 import { t } from './i18n'
 
@@ -152,46 +153,29 @@ export function resolveExistingDirectory(input: string | null | undefined): stri
   return null
 }
 
+const CLI_LAUNCHER_HELP = [
+  'case "$1" in',
+  '  -h|--help)',
+  '    cat <<\'EOF\'',
+  CLI_HELP + 'EOF',
+  '    exit 0',
+  '    ;;',
+  'esac'
+]
+
+// Resolve "." / relative paths in the *shell* cwd before handing off to the GUI app.
+const CLI_LAUNCHER_RESOLVE_TARGET = [
+  'TARGET="$1"',
+  'case "$TARGET" in',
+  '  .) TARGET="$(pwd -P)" ;;',
+  '  /*) TARGET="$(cd "$TARGET" 2>/dev/null && pwd -P || echo "$TARGET")" ;;',
+  '  *) TARGET="$(cd "$TARGET" 2>/dev/null && pwd -P || echo "$TARGET")" ;;',
+  'esac'
+]
+
 function launcherScript(): string {
-  const helpBlock = [
-    'case "$1" in',
-    '  -h|--help)',
-    '    cat <<\'EOF\'',
-    CLI_HELP + 'EOF',
-    '    exit 0',
-    '    ;;',
-    'esac'
-  ]
-
-  // Resolve "." / relative paths in the *shell* cwd before handing off to the GUI app.
-  // Use a single argv token (`--vav-workdir=…`) so Chromium cannot swallow the path
-  // as a separate flag value.
-  const resolveTarget = [
-    'TARGET="$1"',
-    'case "$TARGET" in',
-    '  .) TARGET="$(pwd -P)" ;;',
-    '  /*) TARGET="$(cd "$TARGET" 2>/dev/null && pwd -P || echo "$TARGET")" ;;',
-    '  *) TARGET="$(cd "$TARGET" 2>/dev/null && pwd -P || echo "$TARGET")" ;;',
-    'esac'
-  ]
-
   if (app.isPackaged && process.platform === 'darwin') {
-    // `open -n` always starts a process so requestSingleInstanceLock can forward argv
-    // to the running instance (plain `open` often just activates and drops --args).
-    const bundle = packagedAppBundlePath()
-    return [
-      '#!/bin/sh',
-      'set -e',
-      `APP=${JSON.stringify(bundle)}`,
-      ...helpBlock,
-      'if [ "$#" -eq 0 ]; then',
-      '  open -n "$APP"',
-      '  exit 0',
-      'fi',
-      ...resolveTarget,
-      'open -n "$APP" --args --vav-workdir="$TARGET"',
-      ''
-    ].join('\n')
+    return packagedMacCliLauncher(packagedAppBundlePath(), CLI_HELP)
   }
 
   if (app.isPackaged) {
@@ -200,12 +184,12 @@ function launcherScript(): string {
       '#!/bin/sh',
       'set -e',
       `BIN=${JSON.stringify(bin)}`,
-      ...helpBlock,
+      ...CLI_LAUNCHER_HELP,
       'if [ "$#" -eq 0 ]; then',
       '  nohup "$BIN" >/dev/null 2>&1 &',
       '  exit 0',
       'fi',
-      ...resolveTarget,
+      ...CLI_LAUNCHER_RESOLVE_TARGET,
       'nohup "$BIN" --vav-workdir="$TARGET" >/dev/null 2>&1 &',
       ''
     ].join('\n')
@@ -218,12 +202,12 @@ function launcherScript(): string {
     'set -e',
     `ELECTRON=${JSON.stringify(electron)}`,
     `APP=${JSON.stringify(appPath)}`,
-    ...helpBlock,
+    ...CLI_LAUNCHER_HELP,
     'if [ "$#" -eq 0 ]; then',
     '  nohup "$ELECTRON" "$APP" >/dev/null 2>&1 &',
     '  exit 0',
     'fi',
-    ...resolveTarget,
+    ...CLI_LAUNCHER_RESOLVE_TARGET,
     // `--` keeps Electron/Chromium from treating our flag as a Chromium switch.
     'nohup "$ELECTRON" "$APP" -- --vav-workdir="$TARGET" >/dev/null 2>&1 &',
     ''
@@ -373,6 +357,21 @@ function writeLauncher(location: CliInstallLocation, previousPath: string | null
     installedAt: Date.now()
   })
   return target
+}
+
+/** Rewrite an already-installed `vav` shim so older `open -n` copies do not linger. */
+export function refreshInstalledCliLauncher(): void {
+  if (process.platform === 'win32') return
+  const meta = readMeta()
+  if (!meta.path || !existsSync(meta.path)) return
+  const next = launcherScript()
+  try {
+    if (readFileSync(meta.path, 'utf8') === next) return
+  } catch {
+    // rewrite
+  }
+  writeFileSync(meta.path, next, { encoding: 'utf8', mode: 0o755 })
+  chmodSync(meta.path, 0o755)
 }
 
 export async function installCli(): Promise<CliStatus> {
