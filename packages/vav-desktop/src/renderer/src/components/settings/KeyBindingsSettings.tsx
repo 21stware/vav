@@ -26,9 +26,30 @@ const GROUP_ORDER: KeyBindingGroupId[] = [
   'chrome',
   'find',
   'terminal',
+  'swarm',
   'focus',
   'files'
 ]
+
+function bindingMatchesQuery(
+  query: string,
+  def: KeyBindingDef,
+  label: string,
+  groupLabel: string,
+  accelerator: string
+): boolean {
+  if (!query) return true
+  const haystack = [
+    def.id,
+    label,
+    groupLabel,
+    accelerator,
+    prettyAccelerator(accelerator, PLATFORM)
+  ]
+    .join(' ')
+    .toLowerCase()
+  return haystack.includes(query)
+}
 
 function KeyRow({
   label,
@@ -64,6 +85,7 @@ export function KeyBindingsSettings(): React.JSX.Element {
 
   const [recordingId, setRecordingId] = useState<KeyBindingId | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [search, setSearch] = useState('')
 
   const bindings = useMemo(
     () => resolveKeyBindings(settings.keyBindings),
@@ -71,9 +93,19 @@ export function KeyBindingsSettings(): React.JSX.Element {
   )
 
   const groups = useMemo(() => {
+    const query = search.trim().toLowerCase()
     const map = new Map<KeyBindingGroupId, KeyBindingDef[]>()
     for (const def of KEY_BINDING_DEFS) {
       if (def.macOnly && !IS_MAC) continue
+      const groupLabel = t(KEY_BINDING_GROUP_LABEL[def.group])
+      const label = t(def.labelKey)
+      const accelerator =
+        def.kind === 'accelerator'
+          ? bindings[def.id as AcceleratorKeyBindingId]
+          : def.kind === 'globalHotkey'
+            ? settings.globalHotkey
+            : def.defaultAccelerator
+      if (!bindingMatchesQuery(query, def, label, groupLabel, accelerator)) continue
       const list = map.get(def.group) ?? []
       list.push(def)
       map.set(def.group, list)
@@ -81,7 +113,7 @@ export function KeyBindingsSettings(): React.JSX.Element {
     return GROUP_ORDER.map((id) => ({ id, defs: map.get(id) ?? [] })).filter(
       (g) => g.defs.length > 0
     )
-  }, [])
+  }, [bindings, search, settings.globalHotkey, t])
 
   useEffect(() => {
     if (!recordingId || recordingId === 'sendKey' || recordingId === 'quickLook') return
@@ -191,7 +223,22 @@ export function KeyBindingsSettings(): React.JSX.Element {
         />
       </div>
 
+      <input
+        className="text-field keybind-search"
+        data-testid="settings-keybind-search"
+        type="search"
+        value={search}
+        placeholder={t('common.search')}
+        onChange={(event) => setSearch(event.target.value)}
+      />
+
       {error && <InlineAlert kind="warning" message={error} />}
+
+      {groups.length === 0 ? (
+        <div className="keybind-empty" data-testid="settings-keybind-empty">
+          {t('keybindings.emptySearch')}
+        </div>
+      ) : null}
 
       {groups.map(({ id, defs }) => (
         <section key={id} className="keybind-group">

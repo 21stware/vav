@@ -1,7 +1,7 @@
 {
   "name": "vav",
   "productName": "VAV",
-  "version": "1.25.1",
+  "version": "1.26.0",
   "description": "Local-first agent workbench: open files, ask and edit beside them, and run VAV or Claude/Codex in the same thread — with a real terminal on the side.",
   "license": "PolyForm-Noncommercial-1.0.0",
   "author": "Oboo Cheng",
@@ -49,9 +49,11 @@
   },
   "dependencies": {
     "@aiden0z/pptx-renderer": "^1.2.4",
+    "@clickhouse/client": "^1.23.1",
     "@duckdb/node-api": "^1.5.5-r.3",
     "@earendil-works/pi-agent-core": "^0.82.1",
     "@earendil-works/pi-ai": "^0.82.1",
+    "@google-cloud/bigquery": "^9.0.3",
     "@mozilla/readability": "^0.6.0",
     "@viz-js/viz": "^3.28.0",
     "@xterm/addon-fit": "^0.12.0-beta.287",
@@ -70,6 +72,7 @@
     "lucide-react": "^0.545.0",
     "markdown-it": "^14.3.0",
     "mermaid": "^11.16.0",
+    "mysql2": "^3.24.4",
     "node-pty": "^1.1.0",
     "pdfjs-dist": "^6.1.200",
     "pg": "^8.23.0",

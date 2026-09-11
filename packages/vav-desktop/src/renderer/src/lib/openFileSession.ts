@@ -3,6 +3,7 @@ import { tt } from '../i18n/useT'
 import { useSessionStore } from '../state/sessionStore'
 import type { FileSessionSelectHint } from '../state/sessionListMerge'
 import { dirname } from './path'
+import { normalizeMachineId } from '@shared/workspaceHost'
 
 export function fileSessionSelectHint(
   row: Pick<
@@ -16,7 +17,37 @@ export function fileSessionSelectHint(
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     tokensUsed: row.tokensUsed,
-    workingDirectory: dirname(row.path) || null
+    workingDirectory: dirname(row.path) || null,
+    machineId: normalizeMachineId(useSessionStore.getState().windowMachineId)
+  }
+}
+
+/** Open or create a file session for `path` and show it in the File category. */
+export async function openFileSessionFromPath(path: string): Promise<string | null> {
+  const { selectConversation, showToast } = useSessionStore.getState()
+  try {
+    const state = await window.vav.fileSessions.open(path)
+    if (!state?.activeSessionId) return null
+    const hint: FileSessionSelectHint = {
+      fileId: state.fileId,
+      title: state.sessions.find((s) => s.id === state.activeSessionId)?.title || 'New session',
+      workingDirectory: dirname(path) || null,
+      machineId: normalizeMachineId(useSessionStore.getState().windowMachineId)
+    }
+    void window.vav.window.openFilePreview(path, {
+      origin: 'session',
+      conversationId: state.activeSessionId,
+      surface: 'file'
+    })
+    void selectConversation(state.activeSessionId, { fileSession: hint })
+    return state.activeSessionId
+  } catch (err) {
+    showToast({
+      kind: 'error',
+      title: tt('preview.openFailed'),
+      description: String(err)
+    })
+    return null
   }
 }
 
@@ -24,37 +55,10 @@ export function fileSessionSelectHint(
 export async function openPickedFileSessions(): Promise<string | null> {
   const picked = await window.vav.files.pickAttachments()
   if (!picked.ok || picked.paths.length === 0) return null
-  const { selectConversation, showToast } = useSessionStore.getState()
   let lastId: string | null = null
-  let lastHint: FileSessionSelectHint | undefined
   for (const path of picked.paths) {
-    let conversationId: string | undefined
-    try {
-      const state = await window.vav.fileSessions.open(path)
-      if (state?.activeSessionId) {
-        conversationId = state.activeSessionId
-        lastId = state.activeSessionId
-        lastHint = {
-          fileId: state.fileId,
-          title: state.sessions.find((s) => s.id === state.activeSessionId)?.title || 'New session',
-          workingDirectory: dirname(path) || null
-        }
-      }
-    } catch (err) {
-      showToast({
-        kind: 'error',
-        title: tt('preview.openFailed'),
-        description: String(err)
-      })
-      continue
-    }
-    void window.vav.window.openFilePreview(path, {
-      origin: 'session',
-      conversationId,
-      surface: 'file'
-    })
+    lastId = (await openFileSessionFromPath(path)) ?? lastId
   }
-  if (lastId) void selectConversation(lastId, lastHint ? { fileSession: lastHint } : undefined)
   return lastId
 }
 
@@ -64,13 +68,20 @@ export function openExistingFileSession(
   conversationId: string,
   hint?: FileSessionSelectHint
 ): void {
-  void window.vav.window.openFilePreview(path, {
-    origin: 'session',
-    conversationId,
-    surface: 'file'
-  })
-  void useSessionStore.getState().selectConversation(
-    conversationId,
-    hint ? { fileSession: hint } : undefined
-  )
+  void (async () => {
+    try {
+      await window.vav.fileSessions.open(path)
+    } catch {
+      // Preview still tries; open() also seeds the host conversation row.
+    }
+    void window.vav.window.openFilePreview(path, {
+      origin: 'session',
+      conversationId,
+      surface: 'file'
+    })
+    void useSessionStore.getState().selectConversation(
+      conversationId,
+      hint ? { fileSession: hint } : undefined
+    )
+  })()
 }

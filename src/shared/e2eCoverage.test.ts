@@ -353,7 +353,8 @@ const BEHAVIOR = {
       'screenshotKeepWindowFront',
       'segment-mod-enter',
       'settings-auto-update-policy',
-      'settings-about-update-checking'
+      'settings-about-update-checking',
+      'settings-about-update-cancel'
     ]
   },
   '产品矩阵行为覆盖': {
@@ -607,6 +608,8 @@ describe('e2e feature coverage', () => {
     const session = readFileSync(join(root, 'e2e/specs/session.spec.ts'), 'utf8')
     assert.match(session, /launchWorkbench/)
     assert.match(session, /settings-nav-connect/)
+    assert.match(session, /file-source-select/)
+    assert.match(session, /back-to-file-list/)
     const boot = readFileSync(join(root, 'e2e/specs/boot.spec.ts'), 'utf8')
     assert.match(boot, /launchWorkbench/)
     const sidebarMenu = readFileSync(join(root, 'e2e/specs/sidebar-menu.spec.ts'), 'utf8')
@@ -666,6 +669,11 @@ describe('e2e feature coverage', () => {
     assert.match(daemon, /fileSessions\?: DaemonFileSessionCatalog/)
     assert.match(desktop, /fileSessions\.open/)
     assert.match(desktop, /host\.remote/)
+    assert.match(desktop, /remoteOnly/)
+    assert.match(desktop, /rememberRemoteSessions/)
+    const remoteDaemon = readFileSync(join(root, 'e2e/specs/remote-daemon.spec.ts'), 'utf8')
+    assert.match(remoteDaemon, /file-source-select/)
+    assert.match(remoteDaemon, /remote-folder-entry-remote-only\.md/)
     const timers = readFileSync(join(root, 'src/main/ipc/registerTimerIpc.ts'), 'utf8')
     assert.match(timers, /timers\.listJobs/)
     assert.match(timers, /host\.remote/)
@@ -706,6 +714,7 @@ describe('e2e feature coverage', () => {
     assert.match(desktopMain, /shouldRestoreInProcessPty/)
     assert.match(desktopMain, /getInfoOnMachine/)
     assert.match(desktopMain, /copyAsFileOnMachine/)
+    assert.match(desktopMain, /rememberRemoteFileSessions/)
     assert.match(desktopMain, /conversationFromRemoteSession/)
     assert.match(desktopMain, /applyConversationPersist/)
     assert.match(desktopMain, /setShouldPersist/)

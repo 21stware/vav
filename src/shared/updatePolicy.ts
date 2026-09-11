@@ -83,3 +83,15 @@ export function nextUpdateFollowUp(
   if (phase === 'ready' && shouldAutoInstall(policy)) return 'install'
   return 'none'
 }
+
+/** True when electron-updater (or our token) aborted an in-flight download. */
+export function isUpdateCancellationError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false
+  const name = 'name' in err ? String(err.name) : ''
+  const message = 'message' in err ? String(err.message) : ''
+  return name === 'CancellationError' || /cancell?ed/i.test(message)
+}
+
+export function canCancelUpdateDownload(phase: UpdatePhase): boolean {
+  return phase === 'downloading'
+}

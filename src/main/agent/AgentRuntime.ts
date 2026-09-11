@@ -110,6 +110,7 @@ import type { SecretStore } from '../store/SecretStore'
 import type { FileService } from '../fs/FileService'
 import type { DocumentRetrievalService } from '../retrieval/DocumentRetrievalService'
 import type { DuckDbService } from '../fs/DuckDbService'
+import { DB_DRIVER_DEFAULTS, dbConnectionTitle } from '@shared/dbConnection'
 import type { PostgresService } from '../fs/PostgresService'
 import type { WebSearchService } from '../web/WebSearchService'
 import type { WebFetchService } from '../web/WebFetchService'
@@ -729,7 +730,20 @@ export class AgentRuntime {
                   : null,
                 skillCatalog: this.deps.skills?.catalogForPrompt() ?? null,
                 pluginContext: turn.pluginContext || null,
-                dbSession: conversation.sessionKind === 'db'
+                dbSession: conversation.sessionKind === 'db',
+                dbDriver: (() => {
+                  const id = conversation.dbConnectionId?.trim()
+                  if (!id || !this.deps.postgres) return undefined
+                  const driver = this.deps.postgres.connection(id)?.driver
+                  return driver ? DB_DRIVER_DEFAULTS[driver].label : undefined
+                })(),
+                dbTitle: (() => {
+                  const id = conversation.dbConnectionId?.trim()
+                  if (!id || !this.deps.postgres) return null
+                  const row = this.deps.postgres.connection(id)
+                  return row ? dbConnectionTitle(row) : null
+                })(),
+                dbTable: conversation.focusedDbTable ?? null
               }),
               messages: history,
               tools: this.toolsFor(conversation, turn)

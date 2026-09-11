@@ -4,6 +4,14 @@ User-facing changes by release. Unreleased work lives at the top until the next 
 
 ## Unreleased
 
+## 1.26.0
+
+MySQL, ClickHouse, BigQuery, and DuckDB join PostgreSQL as first-class database connections (SQL Server stays coming soon). Paste a connection URL instead of filling in host, port, and credentials one field at a time — the password is stripped from the URL and kept in the vault. BigQuery connects by project, dataset, and location. PostgreSQL schema inspect lists tables and columns without a per-table `COUNT(*)`, so a large or permission-restricted catalog no longer stalls the whole read.
+
+A new Swarm keybinding group splits panes: split the active pane right or down and move focus left, right, up, or down between panes. The Settings key bindings list is searchable, with an empty state when nothing matches.
+
+The File sidebar category browses the active window machine's files with the same tree / column chrome as the session Files tray — rooted at that host's home, with a files-source switcher and Back to file list to return.
+
 ## 1.25.1
 
 Turning the display off no longer quits VAV — including `npm run dev`. A leftover ShipIt background item from a finished update is cleared on launch.

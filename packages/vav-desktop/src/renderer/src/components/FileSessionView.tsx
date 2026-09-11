@@ -6,7 +6,7 @@ import { useT } from '../i18n/useT'
 import { basename } from '../lib/path'
 import { useSidebarFloatMode } from '../lib/sidebarLayout'
 import { reportFileSessionAgentOpen } from '../lib/useWindowMinSize'
-import { EmptyState } from './ui'
+import { Button, EmptyState } from './ui'
 import { SessionDetail } from './SessionDetail'
 import { ShellLeadingControls } from './ShellLeadingControls'
 
@@ -28,8 +28,9 @@ function loadAgentWidth(): number {
 
 /**
  * Main-shell surface for a file-bound session: file canvas + agent chat.
- * Session list lives only in the sidebar — no nested “Open chat” title bar
- * (one AgentModeChrome row, aligned with the file header).
+ * Back to file list returns to Recent files / This Mac. Session rows also
+ * live in the sidebar — no nested “Open chat” title bar (one AgentModeChrome
+ * row, aligned with the file header).
  */
 export function FileSessionView({
   conversationId,
@@ -51,9 +52,19 @@ export function FileSessionView({
   agentWidthRef.current = agentWidth
 
   const sidebarVisible = useSessionStore((s) => s.sidebarVisible)
+  const showFileList = useSessionStore((s) => s.showFileList)
   const sidebarFloating = useSidebarFloatMode()
   const showShellLeading = !(sidebarVisible && !sidebarFloating)
   const shellLeading = showShellLeading ? <ShellLeadingControls /> : null
+  const backToFileList = (
+    <Button
+      variant="secondary"
+      size="sm"
+      testId="back-to-file-list"
+      label={t('sidebar.backToFileList')}
+      onClick={showFileList}
+    />
+  )
 
   useEffect(() => {
     reportFileSessionAgentOpen(agentOpen, agentWidth)
@@ -113,6 +124,7 @@ export function FileSessionView({
         {shellLeading ? (
           <div className="file-viewer-shell-leading">{shellLeading}</div>
         ) : null}
+        {backToFileList}
         <span
           className="file-viewer-name titlebar-no-drag"
           title={resolved?.path ?? undefined}
@@ -143,6 +155,7 @@ export function FileSessionView({
               agentPanelOpen={agentOpen}
               onToggleAgentPanel={() => setAgentOpen((v) => !v)}
               shellLeading={shellLeading}
+              onBackToFileList={showFileList}
             />
           </Suspense>
         ) : (

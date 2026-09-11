@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const sidecarDir = join(root, 'sidecar', 'tailcatbridge')
-const outDir = join(root, 'ios', 'VAVRemote', 'Frameworks')
+const outDir = join(root, 'packages', 'vav-ios', 'VAVRemote', 'Frameworks')
 const out = join(outDir, 'Tcmobile.xcframework')
 
 function run(cmd, args, opts = {}) {

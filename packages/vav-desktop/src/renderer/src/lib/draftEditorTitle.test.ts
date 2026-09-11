@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { isDraftDbTitle, isDraftScheduledTitle } from './draftEditorTitle.ts'
+import { isDraftDbConnection, isDraftDbTitle, isDraftScheduledTitle } from './draftEditorTitle.ts'
 
 describe('draft editor titles', () => {
   it('treats empty, current, and legacy scheduled titles as drafts', () => {
@@ -19,5 +19,30 @@ describe('draft editor titles', () => {
     assert.equal(isDraftDbTitle('Database', 'Untitled-db-connection'), true)
     assert.equal(isDraftDbTitle('数据库连接', 'Untitled-db-connection'), true)
     assert.equal(isDraftDbTitle('Prod replica', 'Untitled-db-connection'), false)
+  })
+
+  it('hides empty untitled db connections minted for the create form', () => {
+    const untitled = 'Untitled-db-connection'
+    assert.equal(
+      isDraftDbConnection(
+        { title: untitled, database: '', user: '', lastStatus: null },
+        untitled
+      ),
+      true
+    )
+    assert.equal(
+      isDraftDbConnection(
+        { title: untitled, database: 'app', user: '', lastStatus: null },
+        untitled
+      ),
+      false
+    )
+    assert.equal(
+      isDraftDbConnection(
+        { title: untitled, database: '', user: '', lastStatus: 'ok' },
+        untitled
+      ),
+      false
+    )
   })
 })

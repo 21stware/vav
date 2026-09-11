@@ -1128,10 +1128,10 @@ function refreshTraySessions(): void {
   try {
     const live: TrayPane[] = []
 
-    for (const id of activeTurns.keys()) {
+    for (const [id, phase] of activeTurns) {
       if (ephemeralConversations.has(id)) continue
       const pane = trayPaneFromConversation(id, 'chat')
-      if (pane) live.push({ ...pane, status: 'running' })
+      if (pane) live.push({ ...pane, status: phase === 'paused' ? 'pending' : 'running' })
     }
 
     for (const s of ptyManager.listCliAgentSessions()) {
@@ -1209,7 +1209,9 @@ function refreshTraySessions(): void {
         })
       )
     )
-    const runningCount = panes.filter((pane) => pane.status === 'running').length
+    const runningCount = panes.filter(
+      (pane) => pane.status === 'running' || pane.status === 'pending'
+    ).length
     const doneCount = panes.filter((pane) => pane.status === 'done' || pane.status === 'failed').length
     notifications.updateRunningSessions(
       panes.map((pane) => ({
@@ -1232,7 +1234,7 @@ function refreshTraySessions(): void {
     broadcast(IPC.activityChanged, collapseTrayActivity(panes))
     remoteSessionStatus.clear()
     for (const pane of panes) {
-      const status = pane.status === 'running' ? 'running' : 'done'
+      const status = pane.status === 'done' || pane.status === 'failed' ? 'done' : 'running'
       // A conversation with any running pane counts as running.
       if (remoteSessionStatus.get(pane.conversationId) === 'running') continue
       remoteSessionStatus.set(pane.conversationId, status)
@@ -2159,6 +2161,44 @@ function activeSettingsClient(): { request: (method: string, params?: unknown) =
   const id = mainShellMachineId
   if (isLocalMachine(id)) return daemonAttach.localShellClient() ?? null
   return daemonAttach.clientOf(id) ?? null
+}
+
+function fileSessionDirname(path: string): string {
+  const i = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
+  return i > 0 ? path.slice(0, i) : path
+}
+
+/**
+ * File IO is routed by conversation.machineId. Remote file-session rows live
+ * on the paired daemon; keep a matching Electron row so inspect/read hit
+ * that host instead of this computer's disk.
+ */
+function rememberRemoteFileSessions(
+  rows: Array<{ sessionId: string; fileId: string; path: string; title: string }>
+): void {
+  const machineId = mainShellMachineId
+  if (isLocalMachine(machineId)) return
+  const model = settingsStore.get().defaultModel
+  for (const row of rows) {
+    const workdir = fileSessionDirname(row.path)
+    const existing = conversationStore.get(row.sessionId)
+    if (existing) {
+      conversationStore.updateMeta(existing.id, {
+        fileId: row.fileId,
+        machineId,
+        sessionKind: 'file',
+        workingDirectory: workdir,
+        title: row.title || existing.title
+      })
+      continue
+    }
+    conversationStore.create(workdir, model, {
+      id: row.sessionId,
+      fileId: row.fileId,
+      machineId,
+      title: row.title || 'New session'
+    })
+  }
 }
 
 /** Local chats persist on spawned vav-server only — Electron `conversations/` is a cache. */
@@ -7966,7 +8006,9 @@ return c as text`
     defaultModel: () => settingsStore.get().defaultModel,
     defaultApprovalMode: () => settingsStore.get().defaultApprovalMode ?? 'auto',
     defaultThinkingLevel: () => settingsStore.get().defaultThinkingLevel,
-    remote: () => daemonAttach.localShellClient() ?? null,
+    remote: () => activeSettingsClient(),
+    remoteOnly: () => !isLocalMachine(mainShellMachineId),
+    rememberRemoteSessions: rememberRemoteFileSessions,
     setReadOnly: (sessionId, readOnly) => {
       conversationStore.updateMeta(sessionId, { fileReadOnly: readOnly })
       broadcast(IPC.fileSessionReadOnlyChanged, { sessionId, readOnly })
@@ -8138,6 +8180,7 @@ return c as text`
     updatesGet: () => updateService.getState(),
     updatesCheck: () => updateService.check(),
     updatesOpenDownload: () => updateService.openDownload(),
+    updatesCancelDownload: () => updateService.cancelDownload(),
     updatesInstall: () => {
       updateService.install()
     }

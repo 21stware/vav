@@ -275,6 +275,8 @@ function CategoryEmpty({
 function DetailSlot(): React.JSX.Element {
   const t = useT()
   const listMode = useSessionStore((s) => s.sidebarListMode)
+  const scheduledCreating = useSessionStore((s) => s.scheduledCreating)
+  const dbCreating = useSessionStore((s) => s.dbCreating)
   const activeConversation = useSessionStore((s) =>
     s.conversations.find((c) => c.id === s.activeId)
   )
@@ -290,9 +292,9 @@ function DetailSlot(): React.JSX.Element {
       />
     )
   }
-  // Scheduled: always the create/edit form. Timer runs keep the session surface.
+  // Scheduled: empty create form, selected-task config, or a run's agent log.
   if (listMode === 'timers') {
-    if (activeConversation && fits && !isTimerDefinition(activeConversation)) {
+    if (!scheduledCreating && activeConversation && fits && !isTimerDefinition(activeConversation)) {
       const wd = activeConversation.workingDirectory
       return (
         <WorkspaceView
@@ -302,11 +304,15 @@ function DetailSlot(): React.JSX.Element {
       )
     }
     return (
-      <ScheduleEditor conversationId={activeConversation && fits ? activeConversation.id : null} />
+      <ScheduleEditor
+        conversationId={
+          scheduledCreating || !activeConversation || !fits ? null : activeConversation.id
+        }
+      />
     )
   }
   if (listMode === 'databases') {
-    if (activeConversation && fits) {
+    if (!dbCreating && activeConversation && fits) {
       const wd = activeConversation.workingDirectory
       return (
         <WorkspaceView
@@ -315,9 +321,7 @@ function DetailSlot(): React.JSX.Element {
         />
       )
     }
-    return (
-      <DbConnectEditor conversationId={null} />
-    )
+    return <DbConnectEditor conversationId={null} />
   }
   // Session surface + optional right file preview (session state).
   // Workspace groups only aggregate/pin in the sidebar — no group selection.

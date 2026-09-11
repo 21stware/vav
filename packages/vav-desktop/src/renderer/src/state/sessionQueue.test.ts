@@ -15,6 +15,8 @@ import {
   updateQueuedMessagePatch,
   removeQueuedMessagePatch,
   isEmptyComposerSend,
+  hasUnsentComposerDraft,
+  unsentComposerIds,
   mergeComposerFilePaths,
   mergePreviewAndCommentRefs,
   MESSAGE_QUEUE_MAX,
@@ -96,6 +98,20 @@ describe('composer send helpers', () => {
     assert.equal(isEmptyComposerSend('', ['/a.png'], [], []), false)
     assert.equal(isEmptyComposerSend('', [], [{ id: 'r' }], []), false)
     assert.equal(isEmptyComposerSend('', [], [], [{ ref: { id: 'c' } }]), false)
+    assert.equal(hasUnsentComposerDraft({ text: ' hi ' }), true)
+    assert.equal(hasUnsentComposerDraft({ attachments: ['/a.png'] }), true)
+    assert.equal(hasUnsentComposerDraft({ quote: { messageId: 'm', summary: 'q', role: 'user' } }), true)
+    assert.equal(hasUnsentComposerDraft({ text: '  ', attachments: [] }), false)
+    assert.deepEqual(
+      unsentComposerIds({
+        drafts: { a: 'hello', b: '' },
+        attachments: { c: ['/x'] },
+        quotes: {},
+        previewRefs: {},
+        commentCards: {}
+      }),
+      ['a', 'c']
+    )
   })
 
   it('lets commented refs replace chips with the same id', () => {

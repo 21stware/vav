@@ -206,6 +206,7 @@ export class ConversationStore {
         conversation.cliPaneBindings = {}
       }
       if (conversation.focusedFilePath === undefined) conversation.focusedFilePath = null
+      if (conversation.focusedDbTable === undefined) conversation.focusedDbTable = null
       if (conversation.accountId === undefined) conversation.accountId = null
       if (conversation.swarmParentId === undefined) conversation.swarmParentId = null
       conversation.swarmLayout = sanitizeSwarmLayout(conversation.swarmLayout)
@@ -373,6 +374,7 @@ export class ConversationStore {
       acpSession: null,
       cliPaneBindings: {},
       focusedFilePath: null,
+      focusedDbTable: null,
       resultUnseen: false,
       accountId: options?.accountId ?? null,
       swarmParentId: options?.swarmParentId ?? null,
@@ -447,6 +449,7 @@ export class ConversationStore {
     // Native session ids belong to the source machine / live TUI — do not reuse.
     imported.cliPaneBindings = {}
     if (imported.focusedFilePath === undefined) imported.focusedFilePath = null
+    if (imported.focusedDbTable === undefined) imported.focusedDbTable = null
     imported.resultUnseen = false
     imported.swarmParentId = null
     imported.swarmLayout = sanitizeSwarmLayout(imported.swarmLayout)
@@ -604,6 +607,7 @@ export class ConversationStore {
       acpSession: cloned.acpSession ?? null,
       cliPaneBindings: {},
       focusedFilePath: cloned.focusedFilePath ?? null,
+      focusedDbTable: cloned.focusedDbTable ?? null,
       resultUnseen: false,
       accountId: cloned.accountId ?? null,
       swarmParentId: cloned.swarmParentId ?? null,
@@ -808,7 +812,7 @@ export class ConversationStore {
     conversation.messages.push(message)
     conversation.activeLeafId = message.id
     conversation.updatedAt = Date.now()
-    this.applyAutoTitle(conversation)
+    if (conversation.sessionKind !== 'db') this.applyAutoTitle(conversation)
     this.markDirty(id)
   }
 

@@ -1433,6 +1433,7 @@ export function installPhoneVav(transport: PhoneTransport): PhoneVavHandle {
         return { conversations: conversationsOf(), hostChanged: true, transcript: null }
       },
       setFocusedFile: async () => conversationsOf(),
+      setFocusedDbTable: async () => conversationsOf(),
       setWorkingDirectory: async (id: string, path: string) => {
         send({ type: 'workspace', conversationId: id, path })
         return conversationsOf()

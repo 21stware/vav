@@ -43,14 +43,67 @@ export type FileSessionsIpcRemote = {
   request: (method: string, params?: unknown) => Promise<unknown>
 }
 
+export type RemoteFileSessionSeed = {
+  sessionId: string
+  fileId: string
+  path: string
+  title: string
+}
+
 export type FileSessionsIpcHost = {
   defaultModel: () => string
   defaultApprovalMode: () => ApprovalMode
   defaultThinkingLevel: () => string | undefined
   setReadOnly: (sessionId: string, readOnly: boolean) => void
   onSessionsDeleted: (ids: string[]) => void
-  /** Spawned loopback vav-server — File Preview talks to the same index Chrome uses. */
+  /**
+   * Active window's daemon. Local loopback vav-server, or the paired remote
+   * the main shell is currently showing.
+   */
   remote?: () => FileSessionsIpcRemote | null
+  /**
+   * Paired remote window: never fall back to this computer's file-session
+   * index when the host client is missing.
+   */
+  remoteOnly?: () => boolean
+  /** Keep Electron conversation rows so file IO routes to that host. */
+  rememberRemoteSessions?: (rows: RemoteFileSessionSeed[]) => void
+}
+
+function asRemoteState(value: unknown): {
+  fileId?: string
+  activeSessionId?: string
+  sessions?: Array<{ id?: string; title?: string }>
+} | null {
+  if (!value || typeof value !== 'object') return null
+  return value as {
+    fileId?: string
+    activeSessionId?: string
+    sessions?: Array<{ id?: string; title?: string }>
+  }
+}
+
+function asListRows(value: unknown): RemoteFileSessionSeed[] {
+  if (!Array.isArray(value)) return []
+  const out: RemoteFileSessionSeed[] = []
+  for (const row of value) {
+    if (!row || typeof row !== 'object') continue
+    const rec = row as {
+      sessionId?: unknown
+      fileId?: unknown
+      path?: unknown
+      title?: unknown
+    }
+    if (typeof rec.sessionId !== 'string' || typeof rec.fileId !== 'string') continue
+    if (typeof rec.path !== 'string') continue
+    out.push({
+      sessionId: rec.sessionId,
+      fileId: rec.fileId,
+      path: rec.path,
+      title: typeof rec.title === 'string' ? rec.title : 'New session'
+    })
+  }
+  return out
 }
 
 /** File-preview multi-session store — hidden from the main sidebar. */
@@ -66,11 +119,26 @@ export function registerFileSessionsIpc(
   ]
 
   const remote = (): FileSessionsIpcRemote | null => host.remote?.() ?? null
+  const remoteOnly = (): boolean => host.remoteOnly?.() === true
+  const remember = (rows: RemoteFileSessionSeed[]): void => {
+    if (rows.length) host.rememberRemoteSessions?.(rows)
+  }
+  const rememberOpened = (path: string, value: unknown): unknown => {
+    const state = asRemoteState(value)
+    if (state?.fileId && state.activeSessionId) {
+      const title =
+        state.sessions?.find((row) => row.id === state.activeSessionId)?.title?.trim() ||
+        'New session'
+      remember([{ sessionId: state.activeSessionId, fileId: state.fileId, path, title }])
+    }
+    return value
+  }
 
   ipcMain.handle(IPC.fileSessionsOpen, async (_event, path: string) => {
     if (!isFileSessionEligible(path)) return null
     const client = remote()
-    if (client) return client.request('fileSessions.open', { path })
+    if (client) return rememberOpened(path, await client.request('fileSessions.open', { path }))
+    if (remoteOnly()) return null
     const [model, approval, thinking] = defaults()
     const opened = await store.open(path, model, approval, thinking)
     return toFileSessionsState(opened.fileId, opened.activeSessionId, opened.sessions)
@@ -79,7 +147,8 @@ export function registerFileSessionsIpc(
   ipcMain.handle(IPC.fileSessionsCreate, async (_event, path: string) => {
     if (!isFileSessionEligible(path)) return null
     const client = remote()
-    if (client) return client.request('fileSessions.create', { path })
+    if (client) return rememberOpened(path, await client.request('fileSessions.create', { path }))
+    if (remoteOnly()) return null
     const [model, approval, thinking] = defaults()
     const created = await store.createSession(path, model, approval, thinking)
     return toFileSessionsState(created.fileId, created.activeSessionId, created.sessions)
@@ -88,6 +157,7 @@ export function registerFileSessionsIpc(
   ipcMain.handle(IPC.fileSessionsSetActive, async (_event, fileId: string, sessionId: string) => {
     const client = remote()
     if (client) return client.request('fileSessions.setActive', { fileId, sessionId })
+    if (remoteOnly()) return null
     const sessions = store.setActive(fileId, sessionId)
     if (!sessions) return null
     return toFileSessionsState(fileId, sessionId, sessions)
@@ -96,18 +166,25 @@ export function registerFileSessionsIpc(
   ipcMain.handle(IPC.fileSessionsList, async (_event, fileId: string) => {
     const client = remote()
     if (client) return client.request('fileSessions.list', { fileId })
+    if (remoteOnly()) return null
     const listed = store.list(fileId)
     if (!listed) return null
     return toFileSessionsState(fileId, listed.activeSessionId, listed.sessions)
   })
   ipcMain.handle(IPC.fileSessionsListAll, async () => {
     const client = remote()
-    if (client) return client.request('fileSessions.listAll')
+    if (client) {
+      const listed = await client.request('fileSessions.listAll')
+      remember(asListRows(listed))
+      return listed
+    }
+    if (remoteOnly()) return []
     return store.listAll()
   })
   ipcMain.handle(IPC.fileSessionsResolve, async (_event, fileId: string) => {
     const client = remote()
     if (client) return client.request('fileSessions.resolve', { fileId })
+    if (remoteOnly()) return null
     return store.resolve(fileId)
   })
   ipcMain.handle(IPC.fileSessionsForceDelete, async (_event, fileId: string, sessionIds: string[]) => {
@@ -119,13 +196,14 @@ export function registerFileSessionsIpc(
       host.onSessionsDeleted(result?.removed ?? sessionIds)
       return result
     }
+    if (remoteOnly()) return { ok: true, removed: [] }
     return store.forceDelete(fileId, sessionIds)
   })
 
   ipcMain.handle(IPC.fileSessionsSetReadOnly, async (_event, sessionId: string, readOnly: boolean) => {
     const client = remote()
     if (client) await client.request('fileSessions.setReadOnly', { sessionId, readOnly })
-    host.setReadOnly(sessionId, readOnly)
+    if (!remoteOnly() || client) host.setReadOnly(sessionId, readOnly)
   })
 
   ipcMain.handle(
@@ -133,6 +211,7 @@ export function registerFileSessionsIpc(
     async (_event, fileId: string, sessionId: string, title: string) => {
       const client = remote()
       if (client) return client.request('fileSessions.rename', { fileId, sessionId, title })
+      if (remoteOnly()) return null
       const sessions = store.rename(fileId, sessionId, title)
       if (!sessions) return null
       const listed = store.list(fileId)
@@ -162,6 +241,7 @@ export function registerFileSessionsIpc(
         sessions: result.sessions
       }
     }
+    if (remoteOnly()) return null
     const result = store.deleteSessions(fileId, sessionIds)
     if (!result) return null
     host.onSessionsDeleted(result.removed)

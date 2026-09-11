@@ -119,9 +119,10 @@ describe('isSessionUnread', () => {
 })
 
 describe('sessionUnreadBadge', () => {
-  it('prefers awaiting, then running, then unseen finish tone', () => {
+  it('prefers pending, skips a running LED, then unseen finish tone', () => {
     assert.equal(sessionUnreadBadge(true, true, 'done'), 'awaiting')
-    assert.equal(sessionUnreadBadge(false, true, 'done'), 'running')
+    assert.equal(sessionUnreadBadge(false, false, 'pending'), 'awaiting')
+    assert.equal(sessionUnreadBadge(false, true, 'done'), null)
     assert.equal(sessionUnreadBadge(false, false, 'done'), 'done')
     assert.equal(sessionUnreadBadge(false, false, 'failed'), 'failed')
     assert.equal(sessionUnreadBadge(false, false, 'idle'), null)

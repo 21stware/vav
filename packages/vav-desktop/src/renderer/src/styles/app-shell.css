@@ -242,6 +242,9 @@ html[data-summoning] .tools-body {
   .change-review,
   .inline-review,
   .update-corner,
+  .db-preview-swap,
+  .db-connect-body:not(.is-embedded) .db-connect-card,
+  .schedule-editor-body .schedule-editor-card,
   .agents-add-menu {
     transform: none !important;
   }
@@ -1802,8 +1805,15 @@ kbd {
   display: block;
 }
 
+/* Archived runs stay inside the task tree: indent the toggle to the run column
+ * so the group reads as nested under the schedule, not as a top-level sibling. */
+.timer-jobs .timer-archived-toggle {
+  padding-left: 18px;
+}
+
 /* Sessions nest under their workspace label. */
-.conv-group.is-workspace .conv-row {
+.conv-group.is-workspace .conv-row,
+.conv-group.is-database .conv-row {
   padding-left: 22px;
 }
 
@@ -2141,6 +2151,36 @@ kbd {
   white-space: nowrap;
 }
 
+.conv-subtitle-text.is-running {
+  display: inline-block;
+  max-width: 100%;
+  background: linear-gradient(
+    90deg,
+    var(--text-tertiary) 0%,
+    var(--text-secondary) 40%,
+    var(--text) 50%,
+    var(--text-secondary) 60%,
+    var(--text-tertiary) 100%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: shimmer 1.4s linear infinite;
+}
+
+.conv-edited {
+  flex: 0 0 auto;
+  color: var(--accent-text);
+}
+
+.conv-row.selected .conv-edited,
+.conv-row.multi .conv-edited,
+.file-session-item.is-active .conv-edited,
+.file-session-item.multi .conv-edited {
+  color: var(--accent-text);
+}
+
 .conv-row.selected .conv-subtitle,
 .conv-row.multi .conv-subtitle {
   color: color-mix(in srgb, var(--text-tertiary) 55%, var(--accent-text));
@@ -2152,11 +2192,6 @@ kbd {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-}
-
-.conv-badge.running {
-  background: var(--warning);
-  animation: pulse 1.4s ease-in-out infinite;
 }
 
 .conv-badge.done {
@@ -2184,6 +2219,12 @@ kbd {
   color: currentColor;
 }
 
+@keyframes shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+
 @keyframes pulse {
   0%,
   100% {
@@ -2195,9 +2236,12 @@ kbd {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .conv-badge.running {
+  .conv-subtitle-text.is-running {
     animation: none;
-    opacity: 0.85;
+    color: var(--text-secondary);
+    background: none;
+    -webkit-background-clip: unset;
+    background-clip: unset;
   }
 }
 
@@ -5755,6 +5799,7 @@ mark {
   font-size: 0.9em;
 }
 
+:root[data-reduce-motion='true'] .conv-subtitle-text.is-running,
 :root[data-reduce-motion='true'] .stream-status-shimmer {
   animation: none;
   color: var(--text-secondary);
@@ -5769,6 +5814,7 @@ mark {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .conv-subtitle-text.is-running,
   .stream-status-shimmer,
   .usage-shimmer {
     animation: none;
@@ -6997,6 +7043,11 @@ mark {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--success) 22%, transparent);
 }
 
+.activity-dot.is-pending {
+  background: var(--warning);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--warning) 22%, transparent);
+}
+
 .activity-dot.is-running {
   background: var(--warning);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--warning) 22%, transparent);
@@ -7149,6 +7200,35 @@ mark {
   font-weight: 500;
   color: var(--text-secondary);
   font-variant-numeric: tabular-nums;
+}
+
+.update-corner-cancel {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  margin: -2px -4px -2px 0;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: default;
+  transition:
+    background 100ms ease,
+    color 100ms ease,
+    transform 80ms var(--ease-out);
+}
+
+.update-corner-cancel:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.update-corner-cancel:active {
+  transform: scale(0.94);
 }
 
 .update-corner-track {
@@ -7502,12 +7582,17 @@ mark {
 }
 
 .file-session-item-title,
-.file-session-item-sub {
+.file-session-item-sub,
+.file-session-item .conv-subtitle {
   /* Text must not take the first click (I-beam / partial select). */
   pointer-events: none;
   user-select: none;
   -webkit-user-select: none;
   cursor: default;
+}
+
+.file-session-item-title,
+.file-session-item-sub {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -7569,6 +7654,33 @@ mark {
   text-align: center;
 }
 
+.file-source-select {
+  flex: 0 1 188px;
+  width: 188px;
+  max-width: min(188px, 42vw);
+}
+
+.file-source-select .font-select-field,
+.file-source-select .text-field.font-select-field {
+  height: 26px;
+  padding: 0 26px 0 10px;
+  font-size: 12.5px;
+}
+
+.file-source-select .font-select-chevron {
+  right: 8px;
+}
+
+.file-mac-browser {
+  flex: 1;
+  min-height: 0;
+  padding: 8px 12px 12px;
+}
+
+.detail > .file-mac-browser .files-browser {
+  min-height: 220px;
+}
+
 .file-session-item-title {
   grid-column: 1;
   grid-row: 1;
@@ -7578,7 +7690,8 @@ mark {
   color: var(--text);
 }
 
-.file-session-item-sub {
+.file-session-item-sub,
+.file-session-item .conv-subtitle {
   grid-column: 1;
   grid-row: 2;
   font-size: 10.5px;
@@ -7598,17 +7711,39 @@ mark {
   font-weight: 500;
 }
 
-.file-session-item.is-missing .file-session-item-sub {
+.file-session-item.is-missing .file-session-item-sub,
+.file-session-item.is-missing .conv-subtitle {
   color: color-mix(in srgb, var(--danger) 55%, var(--text-tertiary));
 }
 
 .file-session-item.is-active .file-session-item-sub,
-.file-session-item.multi .file-session-item-sub {
+.file-session-item.multi .file-session-item-sub,
+.file-session-item.is-active .conv-subtitle,
+.file-session-item.multi .conv-subtitle {
   color: color-mix(in srgb, var(--text-tertiary) 55%, var(--accent-text));
 }
 
-.file-session-item.is-active.is-missing .file-session-item-sub {
+.file-session-item.is-active.is-missing .file-session-item-sub,
+.file-session-item.is-active.is-missing .conv-subtitle {
   color: color-mix(in srgb, var(--danger) 45%, var(--accent-text));
+}
+
+.db-connect-embedded {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.db-connect-body.is-embedded {
+  justify-content: flex-start;
+  padding-top: 16px;
+}
+
+.db-connect-body.is-embedded::before,
+.db-connect-body.is-embedded::after {
+  content: none;
 }
 
 .db-connect-body,
@@ -7655,6 +7790,48 @@ mark {
   flex-direction: column;
   gap: 16px;
   -webkit-app-region: no-drag;
+}
+
+/* Landing surfaces (fresh DB connection / new scheduled task) rise in like the
+   keychain gate and empty states, instead of snapping. The embedded DB editor
+   is left out — its entrance is owned by `.db-preview-swap` in the workbench. */
+.db-connect-body:not(.is-embedded) .db-connect-card,
+.schedule-editor-body .schedule-editor-card {
+  opacity: 1;
+  transform: translateY(0);
+  transition:
+    opacity var(--dur-pop) var(--ease-out),
+    transform var(--dur-pop) var(--ease-out);
+}
+
+@starting-style {
+  .db-connect-body:not(.is-embedded) .db-connect-card,
+  .schedule-editor-body .schedule-editor-card {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+/* Workbench DB preview swaps between connect / table / error / loading. Keyed on
+   the mode (not the table), so bridging a mode change never re-fades the table
+   data the user is reading. */
+.db-preview-swap {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  opacity: 1;
+  transform: translateY(0);
+  transition:
+    opacity var(--dur-pop) var(--ease-out),
+    transform var(--dur-pop) var(--ease-out);
+}
+
+@starting-style {
+  .db-preview-swap {
+    opacity: 0;
+    transform: translateY(4px);
+  }
 }
 
 .db-connect-card input,

@@ -31,8 +31,8 @@ import { focusBashPane, getUiFocusScope, resolveUiFocusScope } from '../lib/uiFo
 import { createMenuNonceGate } from '../lib/menuNonce'
 import { menuAnchor, showMenu, type MenuItem } from '../lib/nativeMenu'
 import { workspaceSwitchMenuItems } from '../lib/workspaceSwitchMenu'
-import { fileManagerLabel, IS_MAC, keys } from '../lib/platform'
-import { isTerminalProductModifier } from '../lib/terminalKeys'
+import { matchingKeyBindingId, resolveKeyBindings } from '@shared/keyBindings'
+import { fileManagerLabel, keys, PLATFORM } from '../lib/platform'
 import { allowWorkdirSwitch as workdirSwitchAllowed, isSwarmSurfaceActive } from '../lib/workdirSwitch'
 import { useT } from '../i18n/useT'
 import { Button, Chip } from './ui'
@@ -521,12 +521,15 @@ export function ToolsPanel({
     })()
   }
 
-  // ⌘D / ⌘⇧D — split only when the bash surface owns keyboard focus.
+  // Split the focused bash pane (defaults ⌘D / ⌘⇧D).
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
-      if (!isTerminalProductModifier(event, IS_MAC)) return
-      const key = event.key.toLowerCase()
-      if (key !== 'd') return
+      const bindings = resolveKeyBindings(useSessionStore.getState().settings.keyBindings)
+      const hit = matchingKeyBindingId(event, bindings, PLATFORM, [
+        'splitPaneRight',
+        'splitPaneDown'
+      ])
+      if (!hit) return
       const live = resolveUiFocusScope(document.activeElement)
       if (live !== 'bash' && getUiFocusScope() !== 'bash') return
       if (useSessionStore.getState().panelSegment !== 'terminal') return
@@ -536,7 +539,7 @@ export function ToolsPanel({
       event.preventDefault()
       event.stopPropagation()
       void (async () => {
-        const tabId = await splitBash(id, 80, 24, event.shiftKey ? 'column' : 'row')
+        const tabId = await splitBash(id, 80, 24, hit === 'splitPaneDown' ? 'column' : 'row')
         if (tabId) focusBashPane(tabId)
       })()
     }

@@ -2,13 +2,14 @@ import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { Unicode11Addon } from '@xterm/addon-unicode11'
 import { WebLinksAddon } from '@xterm/addon-web-links'
+import { matchingKeyBindingId, resolveKeyBindings } from '@shared/keyBindings'
 import { registerTerminalSink } from '../state/workspaceStore'
-import { IS_MAC } from './platform'
+import { useSessionStore } from '../state/sessionStore'
+import { IS_MAC, PLATFORM } from './platform'
 import { publishTerminalRegistry } from './terminalRegistryHandle'
 import {
   isBareShiftEnter,
   isTerminalPasteChord,
-  isTerminalProductModifier,
   KITTY_SHIFT_ENTER,
   shouldCopyInsteadOfInterrupt,
   terminalC0ForChord
@@ -483,35 +484,9 @@ export function acquireTerminal(options: {
       writePty(c0)
       return false
     }
-    // Control+` (tools bash) — never send backtick to the shell with Ctrl held.
-    if (ev.ctrlKey && !ev.metaKey && !ev.altKey && !ev.shiftKey && (ev.key === '`' || ev.code === 'Backquote')) {
-      return false
-    }
-    // Product accelerators only — ⌘ on Mac, Ctrl elsewhere. Ctrl+K / Ctrl+D
-    // must still reach the PTY on Mac (readline / EOF).
-    if (!isTerminalProductModifier(ev, IS_MAC)) return true
-    const key = ev.key.toLowerCase()
-    // Cmd/Ctrl + Shift + letter product shortcuts
-    if (ev.shiftKey && (key === 'e' || key === 'h' || key === 't' || key === 'o' || key === 'g' || key === 'd')) {
-      return false
-    }
-    // Cmd/Ctrl + letter / digit product shortcuts (incl. ⌘W context-close)
-    if (
-      !ev.shiftKey &&
-      (key === 'n' ||
-        key === 'k' ||
-        key === 'i' ||
-        key === 'f' ||
-        key === 'g' ||
-        key === 't' ||
-        key === 'd' ||
-        key === 'w' ||
-        key === ',' ||
-        /^[1-9]$/.test(key) ||
-        key === 'enter')
-    ) {
-      return false
-    }
+    // Remapped product accelerators (split, pane focus, chrome) stay out of the PTY.
+    const bindings = resolveKeyBindings(useSessionStore.getState().settings.keyBindings)
+    if (matchingKeyBindingId(ev, bindings, PLATFORM)) return false
     return true
   })
 

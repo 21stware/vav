@@ -1,6 +1,8 @@
 import type { ConversationMeta } from '@shared/types'
 import type { TimerSchedule } from '@shared/timer'
 import { visualFromSchedule } from '@shared/cronUi'
+import { isDraftScheduledTitle } from './draftEditorTitle'
+import { getResolvedLocale } from '../i18n/useT'
 
 function sortTimerSessions(a: ConversationMeta, b: ConversationMeta): number {
   if (a.pinned !== b.pinned) return a.pinned ? -1 : 1
@@ -20,6 +22,29 @@ export function timerSessionsForJob(
 ): { live: ConversationMeta[]; archived: ConversationMeta[] } {
   const rows = conversations.filter(
     (row) => row.sessionKind === 'timer' && row.timerJobId === jobId && !!row.timerRunId
+  )
+  return {
+    live: rows.filter((row) => !row.archived).sort(sortTimerSessions),
+    archived: rows.filter((row) => row.archived).sort(sortTimerSessions)
+  }
+}
+
+/**
+ * Fired run conversations whose schedule (job) no longer exists — the job file
+ * was wiped, or the run was mirrored from a store the desktop no longer reads.
+ * Without this they render as top-level siblings ("并列") because no parent row
+ * claims them; grouping them keeps the tree honest and the runs reachable.
+ */
+export function orphanTimerSessions(
+  conversations: ConversationMeta[],
+  jobIds: Iterable<string>
+): { live: ConversationMeta[]; archived: ConversationMeta[] } {
+  const known = new Set(jobIds)
+  const rows = conversations.filter(
+    (row) =>
+      row.sessionKind === 'timer' &&
+      !!row.timerRunId &&
+      (!row.timerJobId || !known.has(row.timerJobId))
   )
   return {
     live: rows.filter((row) => !row.archived).sort(sortTimerSessions),
@@ -55,5 +80,58 @@ export function timerListConversationIds(
     const { live } = timerSessionsForJob(conversations, job.id)
     for (const row of live) ids.push(row.id)
   }
+  // Orphaned runs (no surviving job) list last so keyboard range-select reaches them.
+  const { live: orphanLive } = orphanTimerSessions(
+    conversations,
+    jobs.map((job) => job.id)
+  )
+  for (const row of orphanLive) ids.push(row.id)
   return ids
+}
+
+/** Empty untitled job that only exists because the create form used to mint a row first. */
+export function isDraftTimerJob(
+  job: { title: string; prompt: string; enabled: boolean },
+  untitled: string
+): boolean {
+  return !job.enabled && !job.prompt.trim() && isDraftScheduledTitle(job.title, untitled)
+}
+
+export type TimerBracketKind = 'first' | 'mid' | 'last'
+
+/**
+ * The task → run tree in the sidebar. A schedule (task) is the parent row; its
+ * fired runs are bracketed children so the relationship reads as nested, not as
+ * side-by-side siblings. The collapsed archived toggle is a group header — not a
+ * bracketed row — so it never continues the trunk: the last live / unmatched run
+ * is the tree end when archived runs are hidden.
+ */
+export function timerTreeBrackets(counts: {
+  live: number
+  unmatched: number
+  /** Archived runs currently visible (0 when the archived group is collapsed). */
+  archivedShown: number
+}): {
+  hasTree: boolean
+  bracketRowCount: number
+  /** Bracket for the child at a flat index across live → unmatched → archived. */
+  bracketAt: (index: number) => TimerBracketKind
+} {
+  const bracketRowCount = counts.live + counts.unmatched + counts.archivedShown
+  return {
+    hasTree: bracketRowCount > 0,
+    bracketRowCount,
+    bracketAt: (index: number): TimerBracketKind =>
+      index === bracketRowCount - 1 ? 'last' : 'mid'
+  }
+}
+
+/** Sidebar child label: the run's clock time, not the parent task name. */
+export function timerRunTimeLabel(timestamp: number): string {
+  return new Date(timestamp).toLocaleString(getResolvedLocale(), {
+    month: 'numeric',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  })
 }

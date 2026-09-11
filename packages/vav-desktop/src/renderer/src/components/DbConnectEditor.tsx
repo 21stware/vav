@@ -6,11 +6,22 @@ import {
   DB_DRIVERS,
   DB_DRIVER_IMPLEMENTED,
   clampDbPort,
-  defaultDbPort
+  dbDriverFormKind,
+  dbDriverUsesAuth,
+  dbDriverUsesSsl,
+  dbConnectionTitle,
+  dbUrlPlaceholder,
+  defaultDbPort,
+  formatDbUrl,
+  parseDbUrl,
+  setDbUrlSsl
 } from '@shared/dbConnection'
+import { isDefaultSessionTitle } from '@shared/i18n'
+import { seedEmptyConversationPatch } from '../state/sessionBootstrap'
 import { useSessionStore } from '../state/sessionStore'
+import type { MessageKey } from '@shared/i18n'
 import { useT } from '../i18n/useT'
-import { isDraftDbTitle } from '../lib/draftEditorTitle'
+import { isDraftDbConnection, isDraftDbTitle } from '../lib/draftEditorTitle'
 import { useSidebarFloatMode } from '../lib/sidebarLayout'
 import { ShellLeadingControls } from './ShellLeadingControls'
 import { Button, Toggle } from './ui'
@@ -19,16 +30,18 @@ const DRIVERS: DbDriver[] = [...DB_DRIVERS]
 
 export function DbConnectEditor({
   conversationId,
-  onConnected
+  onConnected,
+  embedded = false
 }: {
   conversationId: string | null
   onConnected?: () => void
+  /** Form only — used inside the DB workspace preview next to Agent. */
+  embedded?: boolean
 }): React.JSX.Element {
   const t = useT()
   const conversation = useSessionStore((s) =>
     conversationId ? s.conversations.find((row) => row.id === conversationId) : undefined
   )
-  const ensureDbConversation = useSessionStore((s) => s.ensureDbConversation)
   const selectConversation = useSessionStore((s) => s.selectConversation)
   const renameConversation = useSessionStore((s) => s.renameConversation)
   const showToast = useSessionStore((s) => s.showToast)
@@ -44,14 +57,27 @@ export function DbConnectEditor({
   const [user, setUser] = useState('')
   const [password, setPassword] = useState('')
   const [ssl, setSsl] = useState(false)
+  const [useUrl, setUseUrl] = useState(false)
+  const [url, setUrl] = useState('')
   const [title, setTitle] = useState('')
   const [busy, setBusy] = useState<'connect' | 'test' | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [testedOk, setTestedOk] = useState(false)
 
   useEffect(() => {
-    if (!conversationId) ensureDbConversation()
-  }, [conversationId, ensureDbConversation])
+    if (conversationId) return
+    setConnection(null)
+    setDriver('postgres')
+    setHost('localhost')
+    setPort(String(defaultDbPort('postgres')))
+    setDatabase('')
+    setUser('')
+    setPassword('')
+    setSsl(false)
+    setTitle('')
+    setError(null)
+    setTestedOk(false)
+  }, [conversationId])
 
   const load = useCallback(async (): Promise<DbConnection | null> => {
     if (!conversationId || !window.vav?.db?.getForConversation) {
@@ -73,6 +99,8 @@ export function DbConnectEditor({
     if (field !== 'db-database') setDatabase(next.database)
     if (field !== 'db-user') setUser(next.user)
     if (field !== 'db-ssl') setSsl(next.ssl)
+    if (field !== 'db-use-url') setUseUrl(next.useUrl)
+    if (field !== 'db-url') setUrl(next.url)
     return next
   }, [conversationId])
 
@@ -87,6 +115,39 @@ export function DbConnectEditor({
     document.querySelector<HTMLInputElement>('[data-testid="db-host"]')?.focus()
   }, [])
 
+  const resolveConnection = async (): Promise<DbConnection | null> => {
+    if (connection) return connection
+    if (!window.vav?.db) {
+      setError(t('db.createFailed'))
+      return null
+    }
+    if (conversationId && window.vav.db.ensureForConversation) {
+      const ensured = await window.vav.db.ensureForConversation(conversationId)
+      if (ensured) {
+        setConnection(ensured)
+        return ensured
+      }
+    }
+    const untitled = t('db.untitled')
+    const existing = window.vav.db.list ? await window.vav.db.list() : []
+    const draft = existing.find((row) => isDraftDbConnection(row, untitled) && row.conversationId)
+    if (draft) {
+      setConnection(draft)
+      return draft
+    }
+    if (!window.vav.db.create) {
+      setError(t('db.createFailed'))
+      return null
+    }
+    const result = await window.vav.db.create()
+    useSessionStore.setState((state) => ({
+      ...seedEmptyConversationPatch(state, result.conversation),
+      sidebarListMode: 'databases'
+    }))
+    setConnection(result.connection)
+    return result.connection
+  }
+
   const persist = async (
     patch: {
       title?: string
@@ -96,18 +157,25 @@ export function DbConnectEditor({
       database?: string
       user?: string
       ssl?: boolean
+      useUrl?: boolean
+      url?: string
       password?: string
     },
     current = connection
   ): Promise<DbConnection | null> => {
-    if (!current) return null
+    const row = current ?? (await resolveConnection())
+    if (!row) {
+      setError(t('db.createFailed'))
+      return null
+    }
     setTestedOk(false)
     if (!window.vav?.db?.update) {
       setError(t('db.saveFailed'))
       return null
     }
     try {
-      const updated = await window.vav.db.update(current.id, {
+      const nextUseUrl = patch.useUrl ?? useUrl
+      const updated = await window.vav.db.update(row.id, {
         title: patch.title ?? title,
         driver: patch.driver ?? driver,
         host: patch.host ?? host,
@@ -115,6 +183,8 @@ export function DbConnectEditor({
         database: patch.database ?? database,
         user: patch.user ?? user,
         ssl: patch.ssl ?? ssl,
+        useUrl: nextUseUrl,
+        ...(nextUseUrl || patch.url !== undefined ? { url: patch.url ?? url } : {}),
         ...(patch.password !== undefined ? { password: patch.password } : {})
       })
       if (updated) setConnection(updated)
@@ -131,29 +201,11 @@ export function DbConnectEditor({
     }
   }
 
-  const resolveConnection = async (): Promise<DbConnection | null> => {
-    if (connection) return connection
-    if (!window.vav?.db) {
-      setError(t('db.createFailed'))
-      return null
-    }
-    if (conversationId && window.vav.db.ensureForConversation) {
-      const ensured = await window.vav.db.ensureForConversation(conversationId)
-      if (ensured) {
-        setConnection(ensured)
-        return ensured
-      }
-    }
-    if (!window.vav.db.create) {
-      setError(t('db.createFailed'))
-      return null
-    }
-    const result = await window.vav.db.create()
-    setConnection(result.connection)
-    return result.connection
-  }
-
   const saveCurrent = async (): Promise<DbConnection | null> => {
+    if (useUrl && !parseDbUrl(url, driver)) {
+      setError(t('db.urlInvalid'))
+      return null
+    }
     const current = await resolveConnection()
     if (!current) {
       setError(t('db.createFailed'))
@@ -169,11 +221,12 @@ export function DbConnectEditor({
       setError((prev) => prev ?? t('db.saveFailed'))
       return null
     }
-    const sessionId = saved.conversationId ?? conversationId
-    if (title.trim() && sessionId && title.trim() !== conversation?.title) {
-      await renameConversation(sessionId, title.trim())
-    }
-    return saved
+      const sessionId = saved.conversationId ?? conversationId
+      const named = title.trim()
+      if (named && sessionId && !isDraftDbTitle(named, t('db.untitled')) && named !== conversation?.title) {
+        await renameConversation(sessionId, named)
+      }
+      return saved
   }
 
   const connect = async (): Promise<void> => {
@@ -184,12 +237,32 @@ export function DbConnectEditor({
     try {
       const saved = await saveCurrent()
       if (!saved) return
+      let opened = saved
       if (window.vav.db.open) {
-        const opened = await window.vav.db.open(saved.id)
-        if (opened) setConnection(opened)
+        const next = await window.vav.db.open(saved.id)
+        if (!next) {
+          setError(t('db.connectFailed'))
+          return
+        }
+        opened = next
+        setConnection(next)
       }
       setPassword('')
-      const sessionId = saved.conversationId ?? conversationId
+      const sessionId = opened.conversationId ?? conversationId
+      const untitled = t('db.untitled')
+      const display = dbConnectionTitle({
+        ...opened,
+        title: isDraftDbTitle(title, untitled) ? '' : title
+      })
+      if (isDraftDbTitle(title, untitled) || !title.trim()) {
+        setTitle(display)
+        if (isDraftDbTitle(opened.title, untitled) || isDefaultSessionTitle(opened.title)) {
+          await persist({ title: '' }, opened)
+        }
+        if (sessionId && display && display !== conversation?.title) {
+          await renameConversation(sessionId, display)
+        }
+      }
       if (sessionId && sessionId !== conversationId) {
         await selectConversation(sessionId)
       }
@@ -199,7 +272,7 @@ export function DbConnectEditor({
       setError(description)
       showToast({
         kind: 'error',
-        title: t('db.saveFailed'),
+        title: t('db.connectFailed'),
         description
       })
     } finally {
@@ -239,22 +312,8 @@ export function DbConnectEditor({
   }
 
 
-  return (
-    <main className="detail" data-testid="db-connect-editor">
-      <header
-        className={`terminal-host-chrome agent-mode-chrome${showShellLeading ? ' has-shell-leading' : ''}`}
-      >
-        <div className="agent-mode-chrome-row">
-          {showShellLeading ? (
-            <div className="agent-mode-shell-leading">
-              <ShellLeadingControls />
-            </div>
-          ) : null}
-          <span className="spacer" />
-        </div>
-      </header>
-
-      <div className="db-connect-body">
+  const body = (
+      <div className={`db-connect-body${embedded ? ' is-embedded' : ''}`}>
         <form className="db-connect-card" onSubmit={onSubmit}>
           <div className="db-connect-intro">
             <input
@@ -267,13 +326,16 @@ export function DbConnectEditor({
               autoComplete="off"
               spellCheck={false}
               aria-label={t('db.name')}
-              onChange={(event) => setTitle(event.currentTarget.value)}
+              onChange={(event) => {
+                const next = event.currentTarget.value
+                setTitle(next)
+                void persist({ title: next })
+              }}
               onFocus={(event) => {
                 if (isDraftDbTitle(event.currentTarget.value, t('db.untitled'))) {
                   event.currentTarget.select()
                 }
               }}
-              onBlur={() => void persist({ title })}
             />
           </div>
 
@@ -292,7 +354,18 @@ export function DbConnectEditor({
                     setDriver(next)
                     const nextPort = String(defaultDbPort(next))
                     setPort(nextPort)
-                    void persist({ driver: next, port: defaultDbPort(next) })
+                    if (dbDriverFormKind(next) !== 'server') {
+                      setHost('')
+                      setSsl(false)
+                    } else if (!host.trim()) {
+                      setHost('localhost')
+                    }
+                    void persist({
+                      driver: next,
+                      port: defaultDbPort(next),
+                      host: dbDriverFormKind(next) === 'server' ? host || 'localhost' : '',
+                      ssl: dbDriverUsesSsl(next) ? ssl : false
+                    })
                   }}
                 >
                   {DRIVERS.map((item) => (
@@ -311,96 +384,139 @@ export function DbConnectEditor({
               </div>
             </label>
 
-            <div className="db-connect-row">
-              <label className="settings-field">
-                <span>{t('db.host')}</span>
-                <input
-                  className="text-field"
-                  data-testid="db-host"
-                  value={host}
-                  autoComplete="off"
-                  spellCheck={false}
-                  onChange={(event) => setHost(event.currentTarget.value)}
-                  onBlur={() => void persist({ host })}
-                />
-              </label>
-              <label className="settings-field">
-                <span>{t('db.port')}</span>
-                <input
-                  className="text-field"
-                  data-testid="db-port"
-                  inputMode="numeric"
-                  autoComplete="off"
-                  spellCheck={false}
-                  value={port}
-                  onChange={(event) => {
-                    const next = event.currentTarget.value
-                    if (next === '' || /^\d{1,5}$/.test(next)) setPort(next)
-                  }}
-                  onBlur={() => {
-                    const next = String(clampDbPort(Number(port) || 0, driver))
-                    setPort(next)
-                    void persist({ port: Number(next) })
-                  }}
-                />
-              </label>
-            </div>
-
-            <label className="settings-field">
-              <span>{t('db.database')}</span>
-              <input
-                className="text-field"
-                data-testid="db-database"
-                value={database}
-                autoComplete="off"
-                spellCheck={false}
-                onChange={(event) => setDatabase(event.currentTarget.value)}
-                onBlur={() => void persist({ database })}
-              />
-            </label>
-
-            <div className="db-connect-row db-connect-row-split">
-              <label className="settings-field">
-                <span>{t('db.user')}</span>
-                <input
-                  className="text-field"
-                  data-testid="db-user"
-                  value={user}
-                  autoComplete="off"
-                  spellCheck={false}
-                  onChange={(event) => setUser(event.currentTarget.value)}
-                  onBlur={() => void persist({ user })}
-                />
-              </label>
-              <label className="settings-field">
-                <span>{t('db.password')}</span>
-                <input
-                  className="text-field"
-                  data-testid="db-password"
-                  type="password"
-                  value={password}
-                  autoComplete="new-password"
-                  placeholder={connection?.hasPassword ? t('db.passwordKept') : ''}
-                  onChange={(event) => setPassword(event.currentTarget.value)}
-                  onBlur={() => {
-                    if (password) void persist({ password })
-                  }}
-                />
-              </label>
-            </div>
-
             <label className="settings-field row">
-              <span>{t('db.ssl')}</span>
+              <span>{t('db.useUrl')}</span>
               <Toggle
-                checked={ssl}
-                title={t('db.ssl')}
-                testId="db-ssl"
+                checked={useUrl}
+                title={t('db.useUrl')}
+                testId="db-use-url"
                 onChange={(next) => {
-                  setSsl(next)
-                  void persist({ ssl: next })
+                  setUseUrl(next)
+                  if (next) {
+                    const nextUrl =
+                      url.trim() ||
+                      formatDbUrl({
+                        driver,
+                        host,
+                        port: Number(port) || defaultDbPort(driver),
+                        database,
+                        user,
+                        ssl
+                      })
+                    setUrl(nextUrl)
+                    void persist({ useUrl: true, url: nextUrl }).then(() => {
+                      document.querySelector<HTMLInputElement>('[data-testid="db-url"]')?.focus()
+                    })
+                    return
+                  }
+                  const parsed = parseDbUrl(url, driver)
+                  if (parsed) {
+                    setHost(parsed.host)
+                    setPort(String(parsed.port))
+                    setDatabase(parsed.database)
+                    setUser(parsed.user)
+                    setSsl(parsed.ssl)
+                    void persist({
+                      useUrl: false,
+                      host: parsed.host,
+                      port: parsed.port,
+                      database: parsed.database,
+                      user: parsed.user,
+                      ssl: parsed.ssl
+                    })
+                  } else {
+                    void persist({ useUrl: false })
+                  }
+                  requestAnimationFrame(() => {
+                    document
+                      .querySelector<HTMLInputElement>(
+                        driver === 'duckdb' ? '[data-testid="db-database"]' : '[data-testid="db-host"]'
+                      )
+                      ?.focus()
+                  })
                 }}
               />
             </label>
+
+            {useUrl ? (
+              <label className="settings-field">
+                <span>{t('db.url')}</span>
+                <input
+                  className="text-field"
+                  data-testid="db-url"
+                  value={url}
+                  autoComplete="off"
+                  spellCheck={false}
+                  placeholder={dbUrlPlaceholder(driver)}
+                  onChange={(event) => {
+                    const next = event.currentTarget.value
+                    setUrl(next)
+                    const parsed = parseDbUrl(next, driver)
+                    if (parsed) {
+                      setHost(parsed.host)
+                      setPort(String(parsed.port))
+                      setDatabase(parsed.database)
+                      setUser(parsed.user)
+                      setSsl(parsed.ssl)
+                    }
+                    void persist({ url: next, useUrl: true })
+                  }}
+                />
+              </label>
+            ) : (
+              <DbFields
+                driver={driver}
+                host={host}
+                port={port}
+                database={database}
+                user={user}
+                password={password}
+                hasPassword={connection?.hasPassword === true}
+                t={t}
+                onHost={(next) => {
+                  setHost(next)
+                  void persist({ host: next })
+                }}
+                onPort={(next) => {
+                  if (next !== '' && !/^\d{1,5}$/.test(next)) return
+                  setPort(next)
+                  if (next) void persist({ port: clampDbPort(Number(next) || 0, driver) })
+                }}
+                onDatabase={(next) => {
+                  setDatabase(next)
+                  void persist({ database: next })
+                }}
+                onUser={(next) => {
+                  setUser(next)
+                  void persist({ user: next })
+                }}
+                onPassword={(next) => {
+                  setPassword(next)
+                  if (next) void persist({ password: next })
+                }}
+              />
+            )}
+
+            {dbDriverUsesSsl(driver) ? (
+              <label className="settings-field row">
+                <span>{t('db.ssl')}</span>
+                <Toggle
+                  checked={ssl}
+                  title={t('db.ssl')}
+                  testId="db-ssl"
+                  onChange={(next) => {
+                    setSsl(next)
+                    if (useUrl) {
+                      const nextUrl = setDbUrlSsl(url, next, driver)
+                      setUrl(nextUrl)
+                      void persist({ ssl: next, url: nextUrl, useUrl: true })
+                      return
+                    }
+                    void persist({ ssl: next })
+                  }}
+                />
+              </label>
+            ) : null}
           </div>
 
           <div className="db-connect-actions">
@@ -433,6 +549,166 @@ export function DbConnectEditor({
           ) : null}
         </form>
       </div>
+  )
+
+  if (embedded) {
+    return (
+      <div className="db-connect-embedded" data-testid="db-connect-editor">
+        {body}
+      </div>
+    )
+  }
+
+  return (
+    <main className="detail" data-testid="db-connect-editor">
+      <header
+        className={`terminal-host-chrome agent-mode-chrome${showShellLeading ? ' has-shell-leading' : ''}`}
+      >
+        <div className="agent-mode-chrome-row">
+          {showShellLeading ? (
+            <div className="agent-mode-shell-leading">
+              <ShellLeadingControls />
+            </div>
+          ) : null}
+          <span className="spacer" />
+        </div>
+      </header>
+      {body}
     </main>
+  )
+}
+
+function DbFields({
+  driver,
+  host,
+  port,
+  database,
+  user,
+  password,
+  hasPassword,
+  t,
+  onHost,
+  onPort,
+  onDatabase,
+  onUser,
+  onPassword
+}: {
+  driver: DbDriver
+  host: string
+  port: string
+  database: string
+  user: string
+  password: string
+  hasPassword: boolean
+  t: (key: MessageKey) => string
+  onHost: (next: string) => void
+  onPort: (next: string) => void
+  onDatabase: (next: string) => void
+  onUser: (next: string) => void
+  onPassword: (next: string) => void
+}): React.JSX.Element {
+  const kind = dbDriverFormKind(driver)
+  const pickFile = async (): Promise<void> => {
+    const picked = await window.vav.files?.pickAttachments()
+    if (!picked || !('ok' in picked) || !picked.ok || !picked.paths[0]) return
+    onDatabase(picked.paths[0])
+  }
+
+  return (
+    <>
+      {kind === 'server' ? (
+        <div className="db-connect-row">
+          <label className="settings-field">
+            <span>{t('db.host')}</span>
+            <input
+              className="text-field"
+              data-testid="db-host"
+              value={host}
+              autoComplete="off"
+              spellCheck={false}
+              onChange={(event) => onHost(event.currentTarget.value)}
+            />
+          </label>
+          <label className="settings-field">
+            <span>{t('db.port')}</span>
+            <input
+              className="text-field"
+              data-testid="db-port"
+              inputMode="numeric"
+              autoComplete="off"
+              spellCheck={false}
+              value={port}
+              onChange={(event) => onPort(event.currentTarget.value)}
+            />
+          </label>
+        </div>
+      ) : kind === 'cloud' ? (
+        <label className="settings-field">
+          <span>{t('db.location')}</span>
+          <input
+            className="text-field"
+            data-testid="db-host"
+            value={host}
+            autoComplete="off"
+            spellCheck={false}
+            placeholder="US"
+            onChange={(event) => onHost(event.currentTarget.value)}
+          />
+        </label>
+      ) : null}
+
+      <label className="settings-field">
+        <span>
+          {kind === 'file' ? t('db.file') : kind === 'cloud' ? t('db.project') : t('db.database')}
+        </span>
+        <div className={kind === 'file' ? 'db-connect-row' : undefined}>
+          <input
+            className="text-field"
+            data-testid="db-database"
+            value={database}
+            autoComplete="off"
+            spellCheck={false}
+            placeholder={kind === 'file' ? '/path/to/file.duckdb' : ''}
+            onChange={(event) => onDatabase(event.currentTarget.value)}
+          />
+          {kind === 'file' ? (
+            <Button
+              label={t('db.browse')}
+              variant="secondary"
+              testId="db-browse"
+              onClick={() => void pickFile()}
+            />
+          ) : null}
+        </div>
+      </label>
+
+      {dbDriverUsesAuth(driver) ? (
+        <div className="db-connect-row db-connect-row-split">
+          <label className="settings-field">
+            <span>{kind === 'cloud' ? t('db.dataset') : t('db.user')}</span>
+            <input
+              className="text-field"
+              data-testid="db-user"
+              value={user}
+              autoComplete="off"
+              spellCheck={false}
+              onChange={(event) => onUser(event.currentTarget.value)}
+            />
+          </label>
+          <label className="settings-field">
+            <span>{kind === 'cloud' ? t('db.credentials') : t('db.password')}</span>
+            <input
+              className="text-field"
+              data-testid="db-password"
+              type="password"
+              value={password}
+              autoComplete="new-password"
+              placeholder={hasPassword ? t('db.passwordKept') : ''}
+              onChange={(event) => onPassword(event.currentTarget.value)}
+            />
+          </label>
+        </div>
+      ) : null}
+    </>
   )
 }

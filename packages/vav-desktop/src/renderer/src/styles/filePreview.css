@@ -566,6 +566,10 @@
   flex: 0 1 auto;
 }
 
+.file-viewer-lead > .btn {
+  flex: 0 0 auto;
+}
+
 .file-viewer-chrome {
   display: flex;
   align-items: center;
@@ -2686,6 +2690,10 @@
   background: var(--bg-content);
 }
 
+.sqlite-root.hide-nav {
+  flex: 1;
+}
+
 .sqlite-panel {
   flex: 1;
   min-height: 0;
@@ -2718,6 +2726,101 @@
   flex: 1;
   min-height: 0;
   overflow: auto;
+}
+
+.sqlite-sheet-wrap:not(.sqlite-sheet-skeleton-wrap) {
+  opacity: 1;
+  transition: opacity 160ms cubic-bezier(0.23, 1, 0.32, 1);
+
+  @starting-style {
+    opacity: 0;
+  }
+}
+
+.sqlite-sheet-skeleton {
+  table-layout: fixed;
+  width: 100%;
+}
+
+.sqlite-sheet-skeleton th:nth-child(2),
+.sqlite-sheet-skeleton td:nth-child(2) {
+  width: 11em;
+}
+
+.sqlite-sheet-skeleton th:nth-child(3),
+.sqlite-sheet-skeleton td:nth-child(3) {
+  width: 8em;
+}
+
+.sqlite-sheet-skeleton th:nth-child(4),
+.sqlite-sheet-skeleton td:nth-child(4) {
+  width: 13em;
+}
+
+.sqlite-sheet-skeleton th:nth-child(5),
+.sqlite-sheet-skeleton td:nth-child(5) {
+  width: 7em;
+}
+
+.sqlite-sheet-skeleton th:nth-child(6),
+.sqlite-sheet-skeleton td:nth-child(6) {
+  width: 10em;
+}
+
+.sqlite-sheet-skeleton th:nth-child(7),
+.sqlite-sheet-skeleton td:nth-child(7) {
+  width: 9em;
+}
+
+.sqlite-skel-bar {
+  display: block;
+  height: 8px;
+  border-radius: 4px;
+  background: linear-gradient(90deg, var(--bg-sunken), var(--bg-hover), var(--bg-sunken));
+  background-size: 200% 100%;
+  animation: shimmer 1.2s linear infinite;
+}
+
+.sqlite-skel-bar-head {
+  width: 52%;
+  height: 7px;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--text-tertiary) 12%, var(--bg-sunken)),
+    color-mix(in srgb, var(--text-tertiary) 22%, var(--bg-sunken)),
+    color-mix(in srgb, var(--text-tertiary) 12%, var(--bg-sunken))
+  );
+  background-size: 200% 100%;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sqlite-sheet-wrap:not(.sqlite-sheet-skeleton-wrap) {
+    transition: none;
+  }
+
+  .sqlite-skel-bar,
+  .sqlite-skel-bar-head {
+    animation: none;
+    background: var(--bg-sunken);
+  }
+
+  .sqlite-skel-bar-head {
+    background: color-mix(in srgb, var(--text-tertiary) 14%, var(--bg-sunken));
+  }
+}
+
+:root[data-reduce-motion='true'] .sqlite-sheet-wrap:not(.sqlite-sheet-skeleton-wrap) {
+  transition: none;
+}
+
+:root[data-reduce-motion='true'] .sqlite-skel-bar,
+:root[data-reduce-motion='true'] .sqlite-skel-bar-head {
+  animation: none;
+  background: var(--bg-sunken);
+}
+
+:root[data-reduce-motion='true'] .sqlite-skel-bar-head {
+  background: color-mix(in srgb, var(--text-tertiary) 14%, var(--bg-sunken));
 }
 
 .sqlite-root.selecting .structured-doc-nav-item {

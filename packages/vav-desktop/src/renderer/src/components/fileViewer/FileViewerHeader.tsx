@@ -35,7 +35,8 @@ export function FileViewerHeader({
   openInMainPanel,
   revealFailed,
   agentToggle,
-  onClose
+  onClose,
+  onBackToFileList
 }: {
   embedded: boolean
   shellLeading?: ReactNode
@@ -57,6 +58,7 @@ export function FileViewerHeader({
   revealFailed: (err: Error) => void
   agentToggle: ReactNode | null
   onClose?: (() => void) | null
+  onBackToFileList?: (() => void) | null
 }): React.JSX.Element {
   const t = useT()
   const noDrag = embedded ? '' : ' titlebar-no-drag'
@@ -69,6 +71,16 @@ export function FileViewerHeader({
           <div className={`file-viewer-shell-leading${noDrag}`}>
             {shellLeading}
           </div>
+        ) : null}
+        {onBackToFileList ? (
+          <Button
+            variant="secondary"
+            size="sm"
+            className={noDrag.trim() || undefined}
+            testId="back-to-file-list"
+            label={t('sidebar.backToFileList')}
+            onClick={onBackToFileList}
+          />
         ) : null}
         <span
           className={`file-viewer-name${noDrag}`}

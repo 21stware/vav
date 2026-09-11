@@ -1,6 +1,7 @@
 import type { IpcMain } from 'electron'
 import { IPC } from '@shared/ipc'
-import type { DbConnectionInput } from '@shared/dbConnection'
+import { dbConnectionTitle, type DbConnectionInput } from '@shared/dbConnection'
+import { isDefaultSessionTitle } from '@shared/i18n'
 import { conversationToMeta } from '../store/conversationMeta'
 import type { DbConnectionStore } from '../store/DbConnectionStore'
 import type { PostgresService } from '../fs/PostgresService'
@@ -24,7 +25,7 @@ export function registerDbIpc(
   ipcMain.handle(IPC.dbCreate, async () => {
     const conversation = host.createDefinitionConversation()
     const connection = store.create({
-      title: conversation.title,
+      title: '',
       conversationId: conversation.id
     })
     conversations.updateMeta(conversation.id, {
@@ -47,7 +48,7 @@ export function registerDbIpc(
     const conversation = conversations.get(id)
     if (!conversation) return null
     const connection = store.create({
-      title: conversation.title,
+      title: '',
       conversationId: id
     })
     conversations.updateMeta(id, {
@@ -82,8 +83,20 @@ export function registerDbIpc(
     return result
   })
   ipcMain.handle(IPC.dbOpen, async (_event, id: string) => {
-    const connection = store.markStatus(id, 'ok', null)
-    if (connection) broadcast()
+    const result = await postgres.test(id)
+    broadcast()
+    if (!result.ok) {
+      throw new Error(result.error || 'Connect failed')
+    }
+    const connection = store.get(id) ?? null
+    if (connection?.conversationId) {
+      const conversation = conversations.get(connection.conversationId)
+      const display = dbConnectionTitle(connection)
+      if (conversation && (isDefaultSessionTitle(conversation.title) || !conversation.title.trim())) {
+        conversations.updateMeta(connection.conversationId, { title: display })
+        host.publishConversations()
+      }
+    }
     return connection
   })
   ipcMain.handle(IPC.dbSchema, async (_event, id: string) => postgres.schema(id))

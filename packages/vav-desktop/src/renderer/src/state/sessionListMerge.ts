@@ -100,6 +100,7 @@ export type FileSessionSelectHint = {
   updatedAt?: number
   tokensUsed?: number
   workingDirectory?: string | null
+  machineId?: string | null
 }
 
 /**
@@ -128,6 +129,7 @@ export function fileSessionHintToMeta(
   approvalMode: 'auto'
   fileId: string
   sessionKind: 'file'
+  machineId?: string
 } {
   const now = Date.now()
   return {
@@ -147,7 +149,8 @@ export function fileSessionHintToMeta(
     archivedAt: null,
     approvalMode: 'auto',
     fileId: hint.fileId,
-    sessionKind: 'file'
+    sessionKind: 'file',
+    ...(hint.machineId ? { machineId: hint.machineId } : {})
   }
 }
 

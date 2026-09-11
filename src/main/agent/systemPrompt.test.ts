@@ -41,6 +41,40 @@ describe('buildSystemPrompt', () => {
     assert.match(pdf, /load_skill\("pdf"\)/)
   })
 
+  it('names the live database dialect', () => {
+    const prompt = buildSystemPrompt('/w', 'zsh', {
+      platform: 'darwin',
+      dbSession: true,
+      dbDriver: 'ClickHouse'
+    })
+    assert.match(prompt, /live ClickHouse database/)
+    assert.match(prompt, /sql_query/)
+  })
+
+  it('names the open table so "this table" is grounded', () => {
+    const prompt = buildSystemPrompt('/w', 'zsh', {
+      platform: 'darwin',
+      dbSession: true,
+      dbDriver: 'PostgreSQL',
+      dbTitle: 'pfmegrnargs@hh-pgsql-public.ebi.ac.uk',
+      dbTable: 'rnacen.xref'
+    })
+    assert.match(prompt, /pfmegrnargs@hh-pgsql-public\.ebi\.ac\.uk/)
+    assert.match(prompt, /rnacen\.xref/)
+    assert.match(prompt, /this table/)
+  })
+
+  it('says settings are in view when no table is open', () => {
+    const prompt = buildSystemPrompt('/w', 'zsh', {
+      platform: 'darwin',
+      dbSession: true,
+      dbDriver: 'PostgreSQL',
+      dbTitle: 'pfmegrnargs@host'
+    })
+    assert.match(prompt, /connection's settings/)
+    assert.doesNotMatch(prompt, /viewing table/)
+  })
+
   it('lists session secret names without values', () => {
     const prompt = buildSystemPrompt('/w', 'zsh', {
       platform: 'darwin',

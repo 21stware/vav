@@ -106,6 +106,23 @@ describe('collapseTrayActivity', () => {
     ])
     assert.deepEqual(rows, [{ conversationId: 'c1', status: 'failed' }])
   })
+
+  it('pending lifts over done, and running lifts over pending', () => {
+    assert.deepEqual(
+      collapseTrayActivity([
+        { conversationId: 'c1', status: 'done' },
+        { conversationId: 'c1', status: 'pending' }
+      ]),
+      [{ conversationId: 'c1', status: 'pending' }]
+    )
+    assert.deepEqual(
+      collapseTrayActivity([
+        { conversationId: 'c1', status: 'pending' },
+        { conversationId: 'c1', status: 'running' }
+      ]),
+      [{ conversationId: 'c1', status: 'running' }]
+    )
+  })
 })
 
 describe('mergeLiveAndUnseenTrayPanes', () => {
@@ -135,6 +152,10 @@ describe('tray labels', () => {
     )
     assert.equal(traySessionLabel(agent), 'Hello')
     assert.equal(trayStatusRowLabel('Hello', 'running', { running: 'Running', done: 'Done' }), 'Running · Hello')
+    assert.equal(
+      trayStatusRowLabel('Hello', 'pending', { pending: 'Pending', running: 'Running', done: 'Done' }),
+      'Pending · Hello'
+    )
     assert.equal(trayStatusRowLabel('Hello', 'done', { running: 'Running', done: 'Done' }), 'Done · Hello')
     assert.equal(
       trayStatusRowLabel('Hello', 'failed', { running: 'Running', done: 'Done', failed: 'Stopped' }),

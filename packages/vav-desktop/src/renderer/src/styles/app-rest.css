@@ -4994,6 +4994,18 @@ html:has(.remote-folder-window) #root {
   color: var(--text-secondary);
 }
 
+.keybind-search {
+  width: 100%;
+  max-width: 360px;
+}
+
+.keybind-empty {
+  margin: 8px 0 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-tertiary);
+}
+
 .keybind-group {
   display: flex;
   flex-direction: column;

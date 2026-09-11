@@ -94,7 +94,8 @@ export function FileViewer({
   onToggleAgentPanel,
   onPickBlock,
   shellLeading = null,
-  onClose = null
+  onClose = null,
+  onBackToFileList = null
 }: {
   path: string
   origin?: 'dock' | 'session'
@@ -113,6 +114,8 @@ export function FileViewer({
   shellLeading?: ReactNode
   /** Embedded side preview: close control in the header trailing edge. */
   onClose?: (() => void) | null
+  /** File category canvas in the main window: return to Recent files / This Mac. */
+  onBackToFileList?: (() => void) | null
 }): React.JSX.Element {
   const t = useT()
   const [filePath, setFilePath] = useState(initialPath)
@@ -1784,6 +1787,7 @@ export function FileViewer({
       }
       agentToggle={(embedded && onToggleAgentPanel) || !embedded ? agentToggle : null}
       onClose={onClose}
+      onBackToFileList={onBackToFileList}
     />
   )
 

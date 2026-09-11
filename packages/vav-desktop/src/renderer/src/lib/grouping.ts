@@ -1,3 +1,6 @@
+import { dbConnectionTitle, type DbConnection } from '@shared/dbConnection'
+import { isDefaultSessionTitle } from '@shared/i18n'
+import { isDraftDbTitle } from './draftEditorTitle'
 import {
   conversationProviderId,
   displayNameForCliHost,
@@ -27,7 +30,9 @@ export interface ConversationGroup {
    */
   label: string
   /** Visual cue on the group header; omitted for time buckets. */
-  kind?: 'workspace' | 'time' | 'provider'
+  kind?: 'workspace' | 'time' | 'provider' | 'database'
+  /** Live connection id when kind is database. */
+  connectionId?: string
   /** Provider id when kind is provider. */
   providerId?: string
   /**
@@ -266,6 +271,50 @@ export function flatten(
   })
 }
 
+/** Sidebar / agent label: user title if they named it, else `database@host`. */
+export function stableDatabaseTitle(
+  row: Pick<DbConnection, 'title' | 'database' | 'host' | 'driver' | 'user'>,
+  untitled: string
+): string {
+  const custom = row.title.trim()
+  if (custom && !isDraftDbTitle(custom, untitled) && !isDefaultSessionTitle(custom)) {
+    return custom
+  }
+  return dbConnectionTitle({ ...row, title: '' })
+}
+
+/** Connected DBs must appear even when listMeta omitted the session row. */
+export function mergeConnectedDbConversations(
+  conversations: ConversationMeta[],
+  connections: readonly DbConnection[]
+): ConversationMeta[] {
+  const extra: ConversationMeta[] = []
+  for (const row of connections) {
+    if (row.lastStatus !== 'ok' || !row.conversationId) continue
+    if (conversations.some((conversation) => conversation.id === row.conversationId)) continue
+    extra.push({
+      id: row.conversationId,
+      title: dbConnectionTitle(row),
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+      workingDirectory: null,
+      model: '',
+      tokensUsed: 0,
+      tokenLimit: 0,
+      pinned: false,
+      pinTime: null,
+      duplicateSourceId: null,
+      duplicateSourceTitle: null,
+      archived: false,
+      archivedAt: null,
+      approvalMode: 'auto',
+      sessionKind: 'db',
+      dbConnectionId: row.id
+    })
+  }
+  return extra.length ? [...conversations, ...extra] : conversations
+}
+
 /** Archive bucket, or live rows grouped after machine/search/filter + swarm-parent keep. */
 export function listedSidebarGroups(
   conversations: ConversationMeta[],
@@ -273,6 +322,7 @@ export function listedSidebarGroups(
     fileSessionsView: boolean
     archiveView: boolean
     databasesView?: boolean
+    excludeIds?: ReadonlySet<string>
     query: string
     windowMachineId: string | null | undefined
     sessionFilter: SidebarSessionFilter
@@ -283,17 +333,44 @@ export function listedSidebarGroups(
     groupingMode: SidebarGroupingMode
     tmp: string
     pinnedWorkspaces: readonly string[]
+    /** Table names by connection id — used to keep a DB group visible while searching. */
+    dbTableNames?: Record<string, string[]>
+    /** Conversation id → live connection id when meta omitted `dbConnectionId`. */
+    dbConnectionIds?: Record<string, string>
+    /** Conversation id → stable connection title (never the auto-titled chat). */
+    dbTitles?: Record<string, string>
+    /** Only connected DBs appear in the list. Missing/empty = none. */
+    connectedConversationIds?: ReadonlySet<string>
   }
 ): ConversationGroup[] {
   if (opts.fileSessionsView) return []
   const needle = opts.query.trim().toLowerCase()
   if (opts.databasesView) {
+    const connected = opts.connectedConversationIds ?? new Set<string>()
     const rows = conversations
       .filter((c) => sessionKindOf(c) === 'db' && !c.archived)
+      .filter((c) => connected.has(c.id))
+      .filter((c) => !opts.excludeIds?.has(c.id))
       .filter((c) => conversationOnMachine(c, opts.windowMachineId))
-      .filter((c) => !needle || c.title.toLowerCase().includes(needle))
-      .sort((a, b) => b.updatedAt - a.updatedAt)
-    return [{ key: 'databases', label: '', conversations: rows }]
+      .filter((c) => {
+        if (!needle) return true
+        if (c.title.toLowerCase().includes(needle)) return true
+        if ((opts.dbTitles?.[c.id] ?? '').toLowerCase().includes(needle)) return true
+        const connectionId = c.dbConnectionId ?? opts.dbConnectionIds?.[c.id]
+        const tables = connectionId ? (opts.dbTableNames?.[connectionId] ?? []) : []
+        return tables.some((name) => name.toLowerCase().includes(needle))
+      })
+    const pinned = rows.filter((c) => c.pinned).sort(byPinTimeDesc)
+    const rest = rows.filter((c) => !c.pinned).sort(byUpdatedDesc)
+    const toGroup = (conversation: ConversationMeta, isPinned: boolean): ConversationGroup => ({
+      key: `db:${conversation.id}`,
+      label: opts.dbTitles?.[conversation.id] || conversation.title,
+      kind: 'database',
+      connectionId: conversation.dbConnectionId ?? opts.dbConnectionIds?.[conversation.id],
+      pinned: isPinned || undefined,
+      conversations: [conversation]
+    })
+    return [...pinned.map((row) => toGroup(row, true)), ...rest.map((row) => toGroup(row, false))]
   }
   // File-bound sessions live only under “File sessions” — never in workspace
   // groups. listMeta already omits them; the store still hydrates them for

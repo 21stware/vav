@@ -78,7 +78,7 @@ export function registerConversationMetaIpc(
   store: ConversationMetaIpcStore,
   host: ConversationMetaIpcHost
 ): void {
-  ipcMain.handle(IPC.convList, () => store.listMeta())
+  ipcMain.handle(IPC.convList, () => store.listClientMeta())
   ipcMain.handle(IPC.convGet, async (_event, id: string) => {
     if (store.hydrateMissingHostUsage(id)) host.publish()
     const local = store.get(id)

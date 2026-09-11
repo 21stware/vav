@@ -15,10 +15,12 @@ import {
   visualWeekdays,
   type VisualSchedule
 } from '@shared/cronUi'
+import { seedEmptyConversationPatch } from '../state/sessionBootstrap'
 import { useSessionStore } from '../state/sessionStore'
 import { useT } from '../i18n/useT'
 import { useSidebarFloatMode } from '../lib/sidebarLayout'
 import { isDraftScheduledTitle } from '../lib/draftEditorTitle'
+import { isDraftTimerJob } from '../lib/timerSessions'
 import { isTemporaryWorkspace, relativeTime } from '../lib/format'
 import { basename } from '../lib/path'
 import { ShellLeadingControls } from './ShellLeadingControls'
@@ -29,14 +31,17 @@ const WORKSPACE_MINT = 'mint'
 const WORKSPACE_STICKY = 'sticky'
 const WORKSPACE_PICK = '__pick__'
 
-function workspaceSelectValue(job: TimerJob | null, tmp: string): string {
-  if (!job) return WORKSPACE_MINT
-  if (job.workdirPolicy === 'mint') return WORKSPACE_MINT
-  if (job.workdirPolicy === 'sticky') return WORKSPACE_STICKY
-  if (job.sourceWorkdir && !isTemporaryWorkspace(job.sourceWorkdir, tmp)) {
-    return `dir:${job.sourceWorkdir}`
+function workspaceSelectValue(
+  policy: TimerJob['workdirPolicy'] | undefined,
+  sourceWorkdir: string | null | undefined,
+  tmp: string
+): string {
+  if (!policy || policy === 'mint') return WORKSPACE_MINT
+  if (policy === 'sticky') return WORKSPACE_STICKY
+  if (sourceWorkdir && !isTemporaryWorkspace(sourceWorkdir, tmp)) {
+    return `dir:${sourceWorkdir}`
   }
-  if (job.workdirPolicy === 'source' && job.sourceWorkdir) return WORKSPACE_STICKY
+  if (policy === 'source' && sourceWorkdir) return WORKSPACE_STICKY
   return WORKSPACE_MINT
 }
 
@@ -84,7 +89,6 @@ export function ScheduleEditor({
   const conversation = useSessionStore((s) =>
     conversationId ? s.conversations.find((row) => row.id === conversationId) : undefined
   )
-  const ensureScheduledConversation = useSessionStore((s) => s.ensureScheduledConversation)
   const renameConversation = useSessionStore((s) => s.renameConversation)
   const showToast = useSessionStore((s) => s.showToast)
   const sidebarVisible = useSessionStore((s) => s.sidebarVisible)
@@ -99,11 +103,10 @@ export function ScheduleEditor({
   const [title, setTitle] = useState('')
   const [prompt, setPrompt] = useState('')
   const [visual, setVisual] = useState<VisualSchedule>(defaultVisualSchedule)
+  const [workdirPolicy, setWorkdirPolicy] = useState<TimerJob['workdirPolicy']>('mint')
+  const [sourceWorkdir, setSourceWorkdir] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
-
-  useEffect(() => {
-    if (!conversationId) ensureScheduledConversation()
-  }, [conversationId, ensureScheduledConversation])
+  const creating = !conversationId
 
   const loadJob = useCallback(async (): Promise<TimerJob | null> => {
     if (!conversationId || !window.vav?.timers?.getJobForConversation) {
@@ -128,8 +131,22 @@ export function ScheduleEditor({
         active.dataset.testid === 'timer-workspace')
     if (!titleFocused) setTitle(next.title)
     if (!promptFocused) setPrompt(next.prompt)
-    if (!scheduleFocused) setVisual(visualFromSchedule(next.schedule))
+    if (!scheduleFocused) {
+      setVisual(visualFromSchedule(next.schedule))
+      setWorkdirPolicy(next.workdirPolicy)
+      setSourceWorkdir(next.sourceWorkdir)
+    }
     return next
+  }, [conversationId])
+
+  useEffect(() => {
+    if (conversationId) return
+    setJob(null)
+    setTitle('')
+    setPrompt('')
+    setVisual(defaultVisualSchedule())
+    setWorkdirPolicy('mint')
+    setSourceWorkdir(null)
   }, [conversationId])
 
   useEffect(() => {
@@ -142,7 +159,7 @@ export function ScheduleEditor({
   useEffect(() => {
     const field = document.querySelector<HTMLTextAreaElement>('[data-testid="timer-prompt"]')
     field?.focus()
-  }, [])
+  }, [conversationId])
 
   const persist = async (patch: {
     prompt?: string
@@ -182,12 +199,21 @@ export function ScheduleEditor({
   }
 
   const applySourceFolder = async (path: string): Promise<void> => {
+    setWorkdirPolicy('source')
+    setSourceWorkdir(path)
     if (conversationId) await setWorkingDirectory(conversationId, path)
     await persist({ workdirPolicy: 'source', sourceWorkdir: path })
   }
 
   const pickWorkspace = async (): Promise<void> => {
-    if (!conversationId) return
+    if (!conversationId) {
+      const path = await window.vav.settings?.pickDirectory()
+      if (path) {
+        setWorkdirPolicy('source')
+        setSourceWorkdir(path)
+      }
+      return
+    }
     const before = useSessionStore
       .getState()
       .conversations.find((row) => row.id === conversationId)?.workingDirectory
@@ -195,7 +221,7 @@ export function ScheduleEditor({
     const next = useSessionStore
       .getState()
       .conversations.find((row) => row.id === conversationId)?.workingDirectory
-    if (next && next !== before) await persist({ workdirPolicy: 'source', sourceWorkdir: next })
+    if (next && next !== before) await applySourceFolder(next)
   }
 
   const setWorkspace = (value: string): void => {
@@ -204,10 +230,14 @@ export function ScheduleEditor({
       return
     }
     if (value === WORKSPACE_MINT) {
+      setWorkdirPolicy('mint')
+      setSourceWorkdir(null)
       void persist({ workdirPolicy: 'mint', sourceWorkdir: null })
       return
     }
     if (value === WORKSPACE_STICKY) {
+      setWorkdirPolicy('sticky')
+      setSourceWorkdir(null)
       void persist({ workdirPolicy: 'sticky', sourceWorkdir: null })
       return
     }
@@ -228,36 +258,98 @@ export function ScheduleEditor({
     }
   }
 
-  const create = async (): Promise<void> => {
-    if (!job) return
-    if (!prompt.trim() && !job.prompt.trim()) {
+  const commitCreate = async (enabled: boolean): Promise<TimerJob | null> => {
+    if (!prompt.trim()) {
       showToast({ kind: 'error', title: t('timer.promptRequired') })
+      return null
+    }
+    if (!window.vav?.timers?.createScheduled || !window.vav.timers.updateJob) return null
+    const untitled = t('timer.untitled')
+    const jobs = window.vav.timers.listJobs ? await window.vav.timers.listJobs() : []
+    const draft = jobs.find((row) => isDraftTimerJob(row, untitled) && row.conversationId)
+    let current = draft ?? null
+    let nextConversationId = draft?.conversationId ?? null
+    if (!current) {
+      const result = await window.vav.timers.createScheduled()
+      useSessionStore.setState((state) => ({
+        ...seedEmptyConversationPatch(state, result.conversation),
+        sidebarListMode: 'timers'
+      }))
+      current = result.job
+      nextConversationId = result.conversation.id
+    }
+    const updated = await window.vav.timers.updateJob(current.id, {
+      title: title.trim() || untitled,
+      prompt: prompt.trim(),
+      schedule: scheduleFromVisual(visual),
+      enabled,
+      workdirPolicy,
+      sourceWorkdir
+    })
+    if (updated) setJob(updated)
+    if (nextConversationId) {
+      if (title.trim() && title.trim() !== untitled) {
+        await renameConversation(nextConversationId, title.trim())
+      }
+      if (workdirPolicy === 'source' && sourceWorkdir) {
+        await setWorkingDirectory(nextConversationId, sourceWorkdir)
+      }
+      await useSessionStore.getState().selectConversation(nextConversationId)
+    }
+    return updated
+  }
+
+  const create = async (): Promise<void> => {
+    if (job) {
+      if (!prompt.trim() && !job.prompt.trim()) {
+        showToast({ kind: 'error', title: t('timer.promptRequired') })
+        return
+      }
+      setBusy(true)
+      try {
+        await commitTitle()
+        await persist({ prompt, enabled: true })
+      } finally {
+        setBusy(false)
+      }
       return
     }
     setBusy(true)
     try {
-      await commitTitle()
-      await persist({ prompt, enabled: true })
+      await commitCreate(true)
+    } catch (err) {
+      showToast({
+        kind: 'error',
+        title: t('timer.createFailed'),
+        description: err instanceof Error ? err.message : String(err)
+      })
     } finally {
       setBusy(false)
     }
   }
 
   const runNow = async (): Promise<void> => {
-    if (!job) return
-    if (!prompt.trim() && !job.prompt.trim()) {
+    if (!prompt.trim() && !job?.prompt.trim()) {
       showToast({ kind: 'error', title: t('timer.promptRequired') })
       return
     }
     setBusy(true)
     try {
-      await persist({ prompt })
-      const result = await window.vav.timers.runNow(job.id)
+      const current = job ?? (await commitCreate(false))
+      if (!current) return
+      if (job) await persist({ prompt })
+      const result = await window.vav.timers.runNow(current.id)
       if (result?.conversationId) {
         await useSessionStore.getState().selectConversation(result.conversationId)
         return
       }
       showToast({ kind: 'info', title: t('timer.runBusy') })
+    } catch (err) {
+      showToast({
+        kind: 'error',
+        title: t('timer.createFailed'),
+        description: err instanceof Error ? err.message : String(err)
+      })
     } finally {
       setBusy(false)
     }
@@ -273,7 +365,11 @@ export function ScheduleEditor({
 
   const machineId = normalizeMachineId(conversation?.machineId ?? windowMachineId)
   const recents = recentsForMachine(recentDirs, machineId)
-  const workspaceValue = workspaceSelectValue(job, tmp)
+  const workspaceValue = workspaceSelectValue(
+    job?.workdirPolicy ?? workdirPolicy,
+    job?.sourceWorkdir ?? sourceWorkdir,
+    tmp
+  )
   const selectedPath = workspaceValue.startsWith('dir:') ? workspaceValue.slice(4) : null
   const folderPaths = [
     ...(selectedPath && !recents.some((ref) => ref.path === selectedPath) ? [selectedPath] : []),
@@ -516,29 +612,33 @@ export function ScheduleEditor({
             onCommit={(next) => void persist({ prompt: next })}
           />
 
-          <label className="settings-field row">
-            <span>{t('timer.enabled')}</span>
-            <Toggle
-              checked={job?.enabled ?? false}
-              title={t('timer.enabled')}
-              testId="timer-enabled"
-              onChange={(enabled) => void persist({ enabled, prompt })}
-            />
-          </label>
+          {creating ? null : (
+            <label className="settings-field row">
+              <span>{t('timer.enabled')}</span>
+              <Toggle
+                checked={job?.enabled ?? false}
+                title={t('timer.enabled')}
+                testId="timer-enabled"
+                onChange={(enabled) => void persist({ enabled, prompt })}
+              />
+            </label>
+          )}
 
           <div className="schedule-editor-actions">
-            <Button
-              label={t('timer.create')}
-              variant="primary"
-              disabled={busy || !job}
-              testId="timer-create"
-              onClick={() => void create()}
-            />
+            {creating ? (
+              <Button
+                label={t('timer.create')}
+                variant="primary"
+                disabled={busy}
+                testId="timer-create"
+                onClick={() => void create()}
+              />
+            ) : null}
             <Button
               icon={<Play size={13} />}
               label={t('timer.runNow')}
-              variant="secondary"
-              disabled={busy || !job}
+              variant={creating ? 'secondary' : 'primary'}
+              disabled={busy}
               testId="timer-run-now"
               onClick={() => void runNow()}
             />

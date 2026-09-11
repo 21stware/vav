@@ -143,6 +143,8 @@ const api: VavApi = {
     ) => ipcRenderer.invoke(IPC.convSetSwarmLayout, id, layout, full),
     setFocusedFile: (id: string, path: string | null) =>
       ipcRenderer.invoke(IPC.convSetFocusedFile, id, path),
+    setFocusedDbTable: (id: string, table: string | null) =>
+      ipcRenderer.invoke(IPC.convSetFocusedDbTable, id, table),
     accountQuota: (id: string, host?: import('@shared/types').CliHostKind | null) =>
       ipcRenderer.invoke(IPC.convAccountQuota, id, host),
     setWorkingDirectory: (id: string, path: string, machineId?: string | null) =>
@@ -663,6 +665,7 @@ const api: VavApi = {
     getState: () => ipcRenderer.invoke(IPC.updatesGet),
     check: () => ipcRenderer.invoke(IPC.updatesCheck),
     openDownload: () => ipcRenderer.invoke(IPC.updatesOpenDownload),
+    cancelDownload: () => ipcRenderer.invoke(IPC.updatesCancelDownload),
     install: () => ipcRenderer.invoke(IPC.updatesInstall),
     onChanged: (handler) => subscribe(IPC.updatesChanged, handler)
   },

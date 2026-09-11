@@ -24,7 +24,8 @@ export function FilePickBrowser({
   onSelect,
   onToggleExpand,
   onEnterDir,
-  onColumnPath
+  onColumnPath,
+  onOpenFile
 }: {
   root: string
   dirs: FilePickDirs
@@ -39,6 +40,7 @@ export function FilePickBrowser({
   onToggleExpand: (path: string) => void
   onEnterDir: (path: string) => void
   onColumnPath: (next: string[]) => void
+  onOpenFile?: (path: string) => void
 }): React.JSX.Element {
   const t = useT()
   const rootError = dirErrors[root]
@@ -68,6 +70,7 @@ export function FilePickBrowser({
             onSelect={onSelect}
             onToggleExpand={onToggleExpand}
             onEnterDir={onEnterDir}
+            onOpenFile={onOpenFile}
           />
         </div>
       ) : (
@@ -82,6 +85,7 @@ export function FilePickBrowser({
           onSelect={onSelect}
           onEnterDir={onEnterDir}
           onColumnPath={onColumnPath}
+          onOpenFile={onOpenFile}
         />
       )}
     </div>
@@ -99,7 +103,8 @@ function PickTreeLevel({
   filter,
   onSelect,
   onToggleExpand,
-  onEnterDir
+  onEnterDir,
+  onOpenFile
 }: {
   path: string
   level: number
@@ -112,6 +117,7 @@ function PickTreeLevel({
   onSelect: (entry: FileEntry | null) => void
   onToggleExpand: (path: string) => void
   onEnterDir: (path: string) => void
+  onOpenFile?: (path: string) => void
 }): React.JSX.Element {
   const t = useT()
   const error = dirErrors[path]
@@ -160,6 +166,7 @@ function PickTreeLevel({
           onSelect={onSelect}
           onToggleExpand={onToggleExpand}
           onEnterDir={onEnterDir}
+          onOpenFile={onOpenFile}
         />
       ))}
     </>
@@ -177,7 +184,8 @@ function PickTreeRow({
   filter,
   onSelect,
   onToggleExpand,
-  onEnterDir
+  onEnterDir,
+  onOpenFile
 }: {
   entry: FileEntry
   level: number
@@ -190,6 +198,7 @@ function PickTreeRow({
   onSelect: (entry: FileEntry | null) => void
   onToggleExpand: (path: string) => void
   onEnterDir: (path: string) => void
+  onOpenFile?: (path: string) => void
 }): React.JSX.Element {
   const open = expanded.includes(entry.path)
   const selected = selectedPath === entry.path
@@ -211,6 +220,7 @@ function PickTreeRow({
         }}
         onDoubleClick={() => {
           if (entry.isDirectory) onEnterDir(entry.path)
+          else onOpenFile?.(entry.path)
         }}
       >
         <span className="disclosure" aria-hidden>
@@ -242,6 +252,7 @@ function PickTreeRow({
           onSelect={onSelect}
           onToggleExpand={onToggleExpand}
           onEnterDir={onEnterDir}
+          onOpenFile={onOpenFile}
         />
       )}
     </>
@@ -258,7 +269,8 @@ function PickColumnBrowser({
   filter,
   onSelect,
   onEnterDir,
-  onColumnPath
+  onColumnPath,
+  onOpenFile
 }: {
   root: string
   dirs: FilePickDirs
@@ -270,6 +282,7 @@ function PickColumnBrowser({
   onSelect: (entry: FileEntry | null) => void
   onEnterDir: (path: string) => void
   onColumnPath: (next: string[]) => void
+  onOpenFile?: (path: string) => void
 }): React.JSX.Element {
   const t = useT()
   const columns = [root, ...columnPath]
@@ -319,6 +332,7 @@ function PickColumnBrowser({
                     }}
                     onDoubleClick={() => {
                       if (entry.isDirectory) onEnterDir(entry.path)
+                      else onOpenFile?.(entry.path)
                     }}
                   >
                     {entry.isDirectory ? (

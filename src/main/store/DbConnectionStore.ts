@@ -4,13 +4,21 @@ import { randomUUID } from 'node:crypto'
 import {
   clampDbPort,
   dbConnectionTitle,
+  dbDriverFormKind,
   defaultDbConnectionInput,
+  defaultDbPort,
   isDbDriver,
+  parseDbUrl,
   type DbConnection,
   type DbConnectionInput,
   type DbConnectionStatus,
   type DbDriver
 } from '../../shared/dbConnection.ts'
+
+function sanitizeStoredUrl(raw: string, driver?: DbDriver): string {
+  const parsed = parseDbUrl(raw, driver)
+  return parsed ? parsed.url : raw.trim()
+}
 
 export type DbPasswordVault = {
   get(id: string): string | null
@@ -39,6 +47,8 @@ function coerceConnection(raw: unknown): DbConnection | null {
     database: typeof row.database === 'string' ? row.database : '',
     user: typeof row.user === 'string' ? row.user : '',
     ssl: row.ssl === true,
+    useUrl: row.useUrl === true,
+    url: sanitizeStoredUrl(typeof row.url === 'string' ? row.url : '', driver),
     hasPassword: false,
     createdAt,
     updatedAt: typeof row.updatedAt === 'number' ? row.updatedAt : createdAt,
@@ -60,6 +70,7 @@ export class DbConnectionStore {
 
   load(): void {
     this.rows = this.readList()
+    for (const row of this.rows) this.adoptUrlPassword(row)
   }
 
   list(): DbConnection[] {
@@ -85,16 +96,19 @@ export class DbConnectionStore {
   create(input: DbConnectionInput = {}, now = Date.now()): DbConnection {
     const defaults = defaultDbConnectionInput()
     const driver = isDbDriver(input.driver) ? input.driver : defaults.driver
+    const server = dbDriverFormKind(driver) === 'server'
     const row: DbConnection = {
       id: randomUUID(),
       title: (input.title ?? '').trim(),
       conversationId: input.conversationId?.trim() || null,
       driver,
-      host: (input.host ?? defaults.host).trim(),
-      port: clampDbPort(input.port ?? defaults.port, driver),
+      host: (input.host ?? (server ? defaults.host : '')).trim(),
+      port: clampDbPort(input.port ?? defaultDbPort(driver), driver),
       database: (input.database ?? '').trim(),
       user: (input.user ?? '').trim(),
       ssl: input.ssl === true,
+      useUrl: input.useUrl === true,
+      url: '',
       hasPassword: false,
       createdAt: now,
       updatedAt: now,
@@ -102,6 +116,7 @@ export class DbConnectionStore {
       lastStatus: null,
       lastError: null
     }
+    this.applyUrl(row, input.url, input.password)
     if (typeof input.password === 'string' && input.password.length > 0) {
       this.vault.set(row.id, input.password)
     }
@@ -126,6 +141,8 @@ export class DbConnectionStore {
     if (typeof patch.database === 'string') row.database = patch.database.trim()
     if (typeof patch.user === 'string') row.user = patch.user.trim()
     if (typeof patch.ssl === 'boolean') row.ssl = patch.ssl
+    if (typeof patch.useUrl === 'boolean') row.useUrl = patch.useUrl
+    this.applyUrl(row, patch.url, patch.password)
     if (typeof patch.password === 'string') {
       if (patch.password.length > 0) this.vault.set(row.id, patch.password)
       else this.vault.clear(row.id)
@@ -167,6 +184,30 @@ export class DbConnectionStore {
 
   displayTitle(row: DbConnection): string {
     return dbConnectionTitle(row)
+  }
+
+  private applyUrl(row: DbConnection, raw: string | undefined, password: string | undefined): void {
+    if (typeof raw !== 'string') return
+    const parsed = parseDbUrl(raw, row.driver)
+    if (!parsed) {
+      row.url = raw.trim()
+      return
+    }
+    row.url = parsed.url
+    if (parsed.password && password === undefined) this.vault.set(row.id, parsed.password)
+    if (!row.useUrl) return
+    row.host = parsed.host
+    row.port = parsed.port
+    row.database = parsed.database
+    row.user = parsed.user
+    row.ssl = parsed.ssl
+  }
+
+  private adoptUrlPassword(row: DbConnection): void {
+    const parsed = parseDbUrl(row.url, row.driver)
+    if (!parsed) return
+    row.url = parsed.url
+    if (parsed.password && !this.vault.get(row.id)) this.vault.set(row.id, parsed.password)
   }
 
   private publicRow(row: DbConnection): DbConnection {

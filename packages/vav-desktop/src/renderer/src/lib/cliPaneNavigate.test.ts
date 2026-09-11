@@ -65,7 +65,7 @@ describe('findNeighborPane', () => {
   })
 
   it('falls back to reading order when a direction has no spatial neighbor', () => {
-    // Vertical stack — Cmd+Right has no pane to the right; step to next below.
+    // Vertical stack — ⌘⇧→ has no pane to the right; step to next below.
     const panes: PaneRect[] = [
       { tabId: 'a', left: 0, top: 0, right: 200, bottom: 100 },
       { tabId: 'b', left: 0, top: 100, right: 200, bottom: 200 }

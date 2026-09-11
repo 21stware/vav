@@ -5,16 +5,21 @@ import type { TimerJob, TimerRun } from '@shared/timer'
 import { useSessionStore } from '../../state/sessionStore'
 import { isDroppedConversationId, replaceTimerSessions } from '../../state/sessionListMerge'
 import {
+  isDraftTimerJob,
+  orphanTimerSessions,
   sortTimerJobs,
   timerListConversationIds,
+  timerRunTimeLabel,
   timerScheduleLabel,
-  timerSessionsForJob
+  timerSessionsForJob,
+  timerTreeBrackets
 } from '../../lib/timerSessions'
 import { flattenSessionTitle, adjacentRunClass } from '../../lib/sidebarList'
 import { relativeTime, middleTruncate } from '../../lib/format'
 import { showMenu, type MenuItem } from '../../lib/nativeMenu'
 import { lucideMenuIcon } from '../../lib/menuIcons'
 import { useT } from '../../i18n/useT'
+import { EmptyState } from '../ui'
 import { RenameField } from './RenameField'
 import { ConvBracket, type SwarmBracketKind } from './ConvBracket'
 
@@ -27,7 +32,6 @@ function runStatusLabel(status: TimerRun['status'], t: ReturnType<typeof useT>):
 
 export function TimerJobsPanel(): React.JSX.Element {
   const t = useT()
-  const createScheduledConversation = useSessionStore((s) => s.createScheduledConversation)
   const selectConversation = useSessionStore((s) => s.selectConversation)
   const requestDelete = useSessionStore((s) => s.requestDelete)
   const beginRename = useSessionStore((s) => s.beginRename)
@@ -38,13 +42,18 @@ export function TimerJobsPanel(): React.JSX.Element {
   const showToast = useSessionStore((s) => s.showToast)
   const conversations = useSessionStore((s) => s.conversations)
   const activeId = useSessionStore((s) => s.activeId)
+  const scheduledCreating = useSessionStore((s) => s.scheduledCreating)
   const selectedIds = useSessionStore((s) => s.selectedIds)
+  const query = useSessionStore((s) => s.sidebarQuery)
+  const createScheduledConversation = useSessionStore((s) => s.createScheduledConversation)
+  const setSidebarQuery = useSessionStore((s) => s.setSidebarQuery)
   const favoriteIds = useSessionStore((s) => s.settings.favoriteConversationIds)
   const renamingId = useSessionStore((s) => s.renamingId)
   const favoriteSet = useMemo(() => new Set(favoriteIds ?? []), [favoriteIds])
   const [jobs, setJobs] = useState<TimerJob[]>([])
   const [runs, setRuns] = useState<TimerRun[]>([])
   const [archivedOpen, setArchivedOpen] = useState<Set<string>>(() => new Set())
+  const [orphanOpen, setOrphanOpen] = useState(false)
   const refreshGen = useRef(0)
   const weekday = (day: number): string => t(`timer.weekday.${day}` as 'timer.weekday.0')
 
@@ -69,13 +78,25 @@ export function TimerJobsPanel(): React.JSX.Element {
       setRuns(nextRuns)
       await hydrateSessions()
       if (gen !== refreshGen.current) return
-      if (nextJobs.length === 0) void createScheduledConversation()
+      const untitled = t('timer.untitled')
+      const state = useSessionStore.getState()
+      if (state.sidebarListMode !== 'timers') return
+      const activeJob = nextJobs.find((job) => job.conversationId === state.activeId)
+      if (!activeJob || !isDraftTimerJob(activeJob, untitled)) return
+      const committed = nextJobs.find(
+        (job) => !isDraftTimerJob(job, untitled) && job.conversationId
+      )
+      if (committed?.conversationId) {
+        void state.selectConversation(committed.conversationId)
+        return
+      }
+      if (!state.scheduledCreating) useSessionStore.setState({ scheduledCreating: true })
     } catch {
       if (gen !== refreshGen.current) return
       setJobs([])
       setRuns([])
     }
-  }, [createScheduledConversation, hydrateSessions])
+  }, [hydrateSessions, t])
 
   useEffect(() => {
     void refresh()
@@ -84,22 +105,43 @@ export function TimerJobsPanel(): React.JSX.Element {
     })
   }, [refresh])
 
+  const untitled = t('timer.untitled')
+  const searching = query.trim().length > 0
   const visibleJobs = useMemo(
     () =>
       sortTimerJobs(
         jobs.filter((job) => {
+          if (isDraftTimerJob(job, untitled)) return false
+          const definition = job.conversationId
+            ? conversations.find((row) => row.id === job.conversationId)
+            : undefined
+          if (definition?.archived) return false
+          if (searching) {
+            const title = (definition?.title || job.title).toLowerCase()
+            if (!title.includes(query.trim().toLowerCase())) return false
+          }
           if (!job.conversationId) return true
           if (conversations.some((row) => row.id === job.conversationId)) return true
           return !isDroppedConversationId(job.conversationId)
         })
       ),
-    [jobs, conversations]
+    [jobs, conversations, untitled, query, searching]
   )
 
   const orderedIds = useMemo(
     () => timerListConversationIds(visibleJobs, conversations),
     [visibleJobs, conversations]
   )
+
+  // Runs whose schedule was deleted (or lives in a store we no longer read) have
+  // no parent row — group them instead of letting them float as top-level rows.
+  // Matched against every known job id, not just the visible ones, so a run under
+  // an archived / filtered task is not misread as orphaned.
+  const orphans = useMemo(
+    () => orphanTimerSessions(conversations, jobs.map((job) => job.id)),
+    [conversations, jobs]
+  )
+  const orphanSessions = searching ? [] : [...orphans.live, ...orphans.archived]
 
   const openJob = async (job: TimerJob): Promise<void> => {
     if (job.conversationId) {
@@ -210,16 +252,14 @@ export function TimerJobsPanel(): React.JSX.Element {
     run: TimerRun | undefined,
     swarmBracket?: SwarmBracketKind
   ): React.JSX.Element => {
-    const isActive = conversation.id === activeId
+    const isActive = !scheduledCreating && conversation.id === activeId
     const isMultiSelected = selectedIds.length > 1 && selectedIds.includes(conversation.id)
     const index = orderedIds.indexOf(conversation.id)
     const prevMulti = index > 0 && selectedIds.includes(orderedIds[index - 1]!)
     const nextMulti = index >= 0 && index < orderedIds.length - 1 && selectedIds.includes(orderedIds[index + 1]!)
     const runClass = isMultiSelected ? adjacentRunClass(prevMulti, nextMulti) : ''
-    const title = flattenSessionTitle(conversation.title)
-    const sub = run
-      ? `${runStatusLabel(run.status, t)} · ${relativeTime(run.startedAt)}`
-      : relativeTime(conversation.timerRunAt ?? conversation.updatedAt)
+    const title = timerRunTimeLabel(run?.startedAt ?? conversation.timerRunAt ?? conversation.updatedAt)
+    const sub = run ? runStatusLabel(run.status, t) : relativeTime(conversation.timerRunAt ?? conversation.updatedAt)
     return (
       <div
         key={conversation.id}
@@ -305,6 +345,31 @@ export function TimerJobsPanel(): React.JSX.Element {
 
   return (
     <div className="timer-jobs" data-testid="timer-jobs">
+      {visibleJobs.length === 0 && searching ? (
+        <EmptyState title={t('sidebar.noMatchTitle')} description={t('sidebar.noMatchDesc')}>
+          <button
+            className="btn secondary"
+            title={t('sidebar.clearFilter')}
+            onClick={() => setSidebarQuery('')}
+          >
+            {t('sidebar.clearFilter')}
+          </button>
+        </EmptyState>
+      ) : null}
+      {visibleJobs.length === 0 && !searching ? (
+        <EmptyState
+          title={t('sidebar.timersEmptyTitle')}
+          description={t('sidebar.timersEmptyDesc')}
+        >
+          <button
+            className="btn secondary"
+            title={t('timer.new')}
+            onClick={() => void createScheduledConversation()}
+          >
+            {t('timer.new')}
+          </button>
+        </EmptyState>
+      ) : null}
       {visibleJobs.map((job) => {
         const definition = job.conversationId
           ? conversations.find((row) => row.id === job.conversationId)
@@ -314,10 +379,27 @@ export function TimerJobsPanel(): React.JSX.Element {
         const unmatched = jobRuns.filter(
           (run) => !conversations.some((row) => row.id === run.conversationId)
         )
-        const jobActive = job.conversationId === activeId
+        const jobActive = !scheduledCreating && job.conversationId === activeId
+        const jobMulti =
+          !!job.conversationId &&
+          selectedIds.length > 1 &&
+          selectedIds.includes(job.conversationId)
+        const jobIndex = job.conversationId ? orderedIds.indexOf(job.conversationId) : -1
+        const jobPrevMulti =
+          jobIndex > 0 && selectedIds.includes(orderedIds[jobIndex - 1]!)
+        const jobNextMulti =
+          jobIndex >= 0 &&
+          jobIndex < orderedIds.length - 1 &&
+          selectedIds.includes(orderedIds[jobIndex + 1]!)
+        const jobRunClass = jobMulti ? adjacentRunClass(jobPrevMulti, jobNextMulti) : ''
         const showArchived = archivedOpen.has(job.id)
-        const hasTree =
-          live.length + unmatched.length > 0 || (showArchived && archived.length > 0)
+        // Draw the task → run tree from a single source of truth so the runs read
+        // as nested children, not as side-by-side siblings of the task.
+        const { hasTree, bracketAt } = timerTreeBrackets({
+          live: live.length,
+          unmatched: unmatched.length,
+          archivedShown: showArchived ? archived.length : 0
+        })
         const title = flattenSessionTitle(definition?.title || job.title)
         const sub = [
           timerScheduleLabel(job.schedule, weekday),
@@ -330,8 +412,9 @@ export function TimerJobsPanel(): React.JSX.Element {
           <div key={job.id} data-testid={`timer-job-${job.id}`}>
             <div
               className={`conv-row${jobActive ? ' selected' : ''}${
-                hasTree ? ' is-swarm-item is-swarm-parent' : ''
-              }`}
+                jobMulti ? ` multi ${jobRunClass}` : ''
+              }${hasTree ? ' is-swarm-item is-swarm-parent' : ''}`}
+              data-testid="timer-job-row"
               data-conversation-id={job.conversationId ?? undefined}
               title={title}
               onClick={(event) => {
@@ -419,9 +502,7 @@ export function TimerJobsPanel(): React.JSX.Element {
               renderSession(
                 row,
                 jobRuns.find((run) => run.conversationId === row.id),
-                index === live.length - 1 && unmatched.length === 0 && archived.length === 0
-                  ? 'last'
-                  : 'mid'
+                bracketAt(index)
               )
             )}
             {unmatched.map((run, index) => (
@@ -431,16 +512,12 @@ export function TimerJobsPanel(): React.JSX.Element {
                 data-conversation-id={run.conversationId}
                 onClick={() => void selectConversation(run.conversationId)}
               >
-                <ConvBracket
-                  kind={
-                    index === unmatched.length - 1 && archived.length === 0 ? 'last' : 'mid'
-                  }
-                />
+                <ConvBracket kind={bracketAt(live.length + index)} />
                 <span className="conv-text">
-                  <span className="conv-title">{runStatusLabel(run.status, t)}</span>
+                  <span className="conv-title">{timerRunTimeLabel(run.startedAt)}</span>
                   <span className="conv-subtitle">
                     <span className="conv-subtitle-text">
-                      {relativeTime(run.startedAt)}
+                      {runStatusLabel(run.status, t)}
                       {run.error ? ` · ${run.error}` : ''}
                     </span>
                   </span>
@@ -451,7 +528,7 @@ export function TimerJobsPanel(): React.JSX.Element {
               <>
                 <button
                   type="button"
-                  className="conv-group-header interactive"
+                  className="conv-group-header interactive timer-archived-toggle"
                   onClick={() => {
                     setArchivedOpen((prev) => {
                       const next = new Set(prev)
@@ -470,7 +547,11 @@ export function TimerJobsPanel(): React.JSX.Element {
                 </button>
                 {showArchived
                   ? archived.map((row, index) =>
-                      renderSession(row, undefined, index === archived.length - 1 ? 'last' : 'mid')
+                      renderSession(
+                        row,
+                        jobRuns.find((run) => run.conversationId === row.id),
+                        bracketAt(live.length + unmatched.length + index)
+                      )
                     )
                   : null}
               </>
@@ -478,6 +559,32 @@ export function TimerJobsPanel(): React.JSX.Element {
           </div>
         )
       })}
+      {orphanSessions.length > 0 ? (
+        <div data-testid="timer-orphan-group">
+          <button
+            type="button"
+            className="conv-group-header interactive"
+            data-testid="timer-orphan-toggle"
+            onClick={() => setOrphanOpen((prev) => !prev)}
+          >
+            {orphanOpen ? (
+              <ChevronDown size={11} aria-hidden />
+            ) : (
+              <ChevronRight size={11} aria-hidden />
+            )}
+            {t('sidebar.timersOrphanCount', { count: orphanSessions.length })}
+          </button>
+          {orphanOpen
+            ? orphanSessions.map((row, index) =>
+                renderSession(
+                  row,
+                  runs.find((run) => run.conversationId === row.id),
+                  index === orphanSessions.length - 1 ? 'last' : 'mid'
+                )
+              )
+            : null}
+        </div>
+      ) : null}
     </div>
   )
 }

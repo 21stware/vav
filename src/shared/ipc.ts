@@ -957,6 +957,8 @@ export interface VavApi {
     }>
     /** Workspace preview focus — carried into agent context. */
     setFocusedFile(id: string, path: string | null): Promise<ConversationMeta[]>
+    /** Live-DB table focus — carried into agent context. */
+    setFocusedDbTable(id: string, table: string | null): Promise<ConversationMeta[]>
     setWorkingDirectory(id: string, path: string, machineId?: string | null): Promise<ConversationMeta[]>
     pickWorkingDirectory(id: string): Promise<ConversationMeta[] | null>
     /** Mint a new Temporary Workspace folder and switch this session to it. */
@@ -1450,7 +1452,7 @@ export interface VavApi {
     ): Promise<import('./dbConnection').DbConnection | null>
     remove(id: string): Promise<boolean>
     test(id: string): Promise<{ ok: boolean; error?: string }>
-    /** Mark the connection ready without probing the server. */
+    /** Probe the server, then mark the connection ready. Throws if connect fails. */
     open(id: string): Promise<import('./dbConnection').DbConnection | null>
     schema(id: string): Promise<SqliteDatabaseInfo | { error: string }>
     queryTable(
@@ -1866,6 +1868,8 @@ export interface VavApi {
     check(): Promise<UpdateState>
     /** Download update in-app (packaged) or open the release asset (dev). */
     openDownload(): Promise<UpdateState>
+    /** Abort an in-flight download so the user can retry. */
+    cancelDownload(): Promise<UpdateState>
     /** Apply a downloaded update and relaunch. */
     install(): Promise<void>
     onChanged(handler: (state: UpdateState) => void): () => void
@@ -2064,6 +2068,7 @@ export const IPC = {
   convSetCliHost: 'vav:conv:set-cli-host',
   convSetSwarmLayout: 'vav:conv:set-swarm-layout',
   convSetFocusedFile: 'vav:conv:set-focused-file',
+  convSetFocusedDbTable: 'vav:conv:set-focused-db-table',
   convSetWorkdir: 'vav:conv:set-workdir',
   convPickWorkdir: 'vav:conv:pick-workdir',
   convUseTempWorkdir: 'vav:conv:use-temp-workdir',
@@ -2343,6 +2348,7 @@ export const IPC = {
   updatesGet: 'vav:updates:get',
   updatesCheck: 'vav:updates:check',
   updatesOpenDownload: 'vav:updates:open-download',
+  updatesCancelDownload: 'vav:updates:cancel-download',
   updatesInstall: 'vav:updates:install',
   updatesChanged: 'vav:updates:changed',
   hapticsTap: 'vav:haptics:tap',

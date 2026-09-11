@@ -198,7 +198,10 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
       if (next) hub.pushControls(next)
     }
     if (event.type === 'end') {
-      timerScheduler?.onTurnEnd(event.conversationId, false)
+      timerScheduler?.onTurnEnd(
+        event.conversationId,
+        Boolean(event.error) && !event.cancelled
+      )
       flushSends()
     }
   }

@@ -117,6 +117,18 @@ describe('sidebarList', () => {
       }),
       null
     )
+    assert.deepEqual(
+      conversationSubtitle({
+        conversation: live,
+        turn: { awaitingToolCallId: 't1', isRunning: true },
+        isActive: false,
+        tmp: '/tmp',
+        t,
+        agentLabel: null,
+        ...format
+      }),
+      { kind: 'status', text: t('sidebar.awaitingAnswer') }
+    )
   })
 })
 
@@ -279,6 +291,23 @@ describe('sidebar list mode', () => {
     assert.equal(nextConversationForListMode(rows, 'timers', 'live', 'local'), 'job')
     assert.equal(nextConversationForListMode(rows, 'timers', 'run', 'local'), 'run')
     assert.equal(nextConversationForListMode(rows, 'timers', null, 'local'), 'job')
+    assert.equal(
+      nextConversationForListMode(
+        [
+          conv({
+            id: 'draft',
+            title: 'Untitled-scheduled-task',
+            sessionKind: 'timer',
+            updatedAt: 20
+          }),
+          conv({ id: 'named', title: 'Nightly', sessionKind: 'timer', updatedAt: 4 })
+        ],
+        'timers',
+        'live',
+        'local'
+      ),
+      'named'
+    )
     assert.equal(nextConversationForListMode(rows, 'databases', 'live', 'local'), 'db')
     assert.equal(
       nextConversationForListMode(

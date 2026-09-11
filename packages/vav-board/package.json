@@ -1,6 +1,6 @@
 {
   "name": "@21stware/vav-board",
-  "version": "1.25.1",
+  "version": "1.26.0",
   "description": "Herdr-style control board for a running vav-server. Sessions, workspaces, agents, files, and PTY panes.",
   "license": "PolyForm-Noncommercial-1.0.0",
   "author": "Oboo Cheng",

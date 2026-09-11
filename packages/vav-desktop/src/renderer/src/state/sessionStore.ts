@@ -11,6 +11,7 @@ import type {
   TokenSnapshot,
   TurnErrorKind
 } from '@shared/types'
+import type { SqliteDatabaseInfo } from '@shared/ipc'
 import { DEFAULT_CLI_AGENTS, DEFAULT_SETTINGS } from '@shared/types'
 import type { WorkspaceHostInfo } from '@shared/workspaceHost'
 import type { IncomingController } from '@shared/daemonProtocol'
@@ -104,7 +105,7 @@ import {
   mergeImageAttachments
 } from '@shared/agentImageInput'
 import { tt } from '../i18n/useT'
-import { isDraftDbTitle, isDraftScheduledTitle } from '../lib/draftEditorTitle'
+import { isDraftScheduledTitle } from '../lib/draftEditorTitle'
 import { isTemporaryWorkspace } from '../lib/format'
 import { conversationFitsListMode, nextConversationForListMode } from '../lib/sidebarList'
 import { isTimerDefinition } from '@shared/sessionKind'
@@ -193,6 +194,27 @@ interface SessionState {
    * jump to File sessions without local Sidebar state.
    */
   sidebarListMode: SidebarListMode
+  /**
+   * File category main pane: Recent files vs This Mac. Survives opening a
+   * file so Back to file list can restore the same source.
+   */
+  filesSource: 'recent' | 'thisMac'
+  /**
+   * Scheduled category: the create form is up and is not a left-list row.
+   * Selecting a task or a run clears this.
+   */
+  scheduledCreating: boolean
+  /**
+   * Database category: the create form is up and is not a left-list row.
+   * Selecting a connection or a table clears this.
+   */
+  dbCreating: boolean
+  /** Selected table inside the active database session. Null = connection info. */
+  activeDbTable: string | null
+  /** Cached live-DB schema by connection id. */
+  dbSchemas: Record<string, SqliteDatabaseInfo | { error: string }>
+  setActiveDbTable(table: string | null): void
+  setDbSchema(connectionId: string, info: SqliteDatabaseInfo | { error: string }): void
   /** Active conversation's tools tray (mirrored from toolsLayouts[activeId]). */
   toolsCollapsed: boolean
   panelSegment: 'files' | 'terminal'
@@ -234,7 +256,7 @@ interface SessionState {
    */
   detachedConversationIds: string[]
   /** Tray-identical Running / Done per conversation — drives the window LED. */
-  activityById: Record<string, 'running' | 'done' | 'failed'>
+  activityById: Record<string, 'pending' | 'running' | 'done' | 'failed'>
   sidebarQuery: string
   /** Request focus on the always-visible list search field (not persisted). */
   sidebarSearchOpen: boolean
@@ -421,6 +443,8 @@ interface SessionState {
        * conversations.get misses (body lives on spawned vav-server).
        */
       fileSession?: FileSessionSelectHint
+      /** Database category: open this table, or null for connection info. */
+      dbTable?: string | null
     }
   ): Promise<void>
   /**
@@ -452,11 +476,11 @@ interface SessionState {
      */
     openIn?: 'here' | 'detached' | 'none'
   }): Promise<string | void>
-  /** New scheduled task: configure in the current window's right panel. */
+  /** New scheduled task: open the create form. Does not mint a sidebar row. */
   createScheduledConversation(): Promise<void>
   /**
-   * Scheduled category: keep an editor open. Reuse a timer row when one exists,
-   * otherwise mint the same draft as "New scheduled task".
+   * Scheduled category: keep a task selected when one exists, otherwise the
+   * empty-state create form. Never mints a draft row.
    */
   ensureScheduledConversation(): void
   /** New database connection: configure in the current window's right panel. */
@@ -544,6 +568,8 @@ interface SessionState {
   ): Promise<void>
   /** Workspace preview focus — built-in VAV agent system / open-file context. */
   setFocusedFile(id: string, path: string | null): Promise<void>
+  /** Live-DB table focus — built-in VAV agent system context. */
+  setFocusedDbTable(id: string, table: string | null): Promise<void>
   /**
    * Attach (or replace) leftover open-file context for a conversation.
    * Syncs focusedFilePath for the built-in agent. Does not paste into CLI TUIs.
@@ -655,11 +681,15 @@ interface SessionState {
 
   checkForUpdates(): Promise<void>
   downloadUpdate(): Promise<void>
+  cancelUpdateDownload(): Promise<void>
   installUpdate(): Promise<void>
 
   toggleSidebar(): void
   setSidebarVisible(visible: boolean): void
   setSidebarListMode(mode: SidebarListMode): void
+  setFilesSource(source: 'recent' | 'thisMac'): void
+  /** Leave the file canvas and show Recent files / This Mac again. */
+  showFileList(): void
   /** Switch Task / File / Scheduled / Archived and clear the list search. */
   activateSidebarListMode(mode: SidebarListMode): void
   toggleToolsPanel(): void
@@ -701,14 +731,14 @@ const sessionToolsLayouts = loadSessionToolsMap()
 /** Cancels overlapping Workspace View enters (fast sidebar clicks / HMR remounts). */
 let workspaceSelectGen = 0
 const hydrationGen = new Map<string, number>()
-/** Coalesce overlapping "new scheduled task" calls (category open + empty list). */
-let scheduledCreateInflight: Promise<void> | null = null
-/** Coalesce overlapping "new database" calls (category open + empty list). */
-let dbCreateInflight: Promise<void> | null = null
-
 export const useSessionStore = create<SessionState>((set, get) => ({
   sidebarVisible: globalLayout.sidebarVisible,
   sidebarListMode: 'main',
+  filesSource: 'recent',
+  scheduledCreating: false,
+  dbCreating: false,
+  activeDbTable: null,
+  dbSchemas: {},
   toolsLayouts: sessionToolsLayouts,
   // Until a conversation is selected, show the default (collapsed) tray.
   ...activeToolsFields(DEFAULT_SESSION_TOOLS),
@@ -735,7 +765,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   selectedIds: [],
   /** Conversation ids with an open companion window (PTY exclusive there). */
   detachedConversationIds: [] as string[],
-  activityById: {} as Record<string, 'running' | 'done' | 'failed'>,
+  activityById: {} as Record<string, 'pending' | 'running' | 'done' | 'failed'>,
   sidebarQuery: '',
   sidebarSearchOpen: false,
   renamingId: null,
@@ -1040,16 +1070,28 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       saveSessionToolsMap(toolsLayoutsPatch)
     }
     // Paint the new session immediately — hydrate in parallel below.
+    const nextDbTable =
+      options && 'dbTable' in options
+        ? (options.dbTable ?? null)
+        : id === activeId
+          ? get().activeDbTable
+          : (target?.focusedDbTable ?? null)
     set({
       activeId: id,
       selectedIds: nextSelection,
       activeGroupId: null,
+      scheduledCreating: false,
+      dbCreating: false,
+      activeDbTable: nextDbTable,
       sessionPreview: { kind: 'file' },
       ...(toolsLayoutsPatch ? { toolsLayouts: toolsLayoutsPatch } : {}),
       ...activeToolsFields(sessionTools)
     })
 
     const conversation = get().conversations.find((c) => c.id === id)
+    if ((conversation?.focusedDbTable ?? null) !== nextDbTable) {
+      void get().setFocusedDbTable(id, nextDbTable)
+    }
     const cached = !!get().messages[id]
     const applyStatus = (status: Awaited<ReturnType<typeof window.vav.agent.status>>): void => {
       if (get().activeId !== id) return
@@ -1154,49 +1196,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   async createScheduledConversation() {
-    if (scheduledCreateInflight) return scheduledCreateInflight
-    const run = (async () => {
-      if (!window.vav?.timers?.createScheduled) return
-      try {
-        const untitled = tt('timer.untitled')
-        const jobs = window.vav.timers.listJobs ? await window.vav.timers.listJobs() : []
-        const draft = jobs.find(
-          (job) =>
-            !job.enabled &&
-            !job.prompt.trim() &&
-            isDraftScheduledTitle(job.title, untitled) &&
-            !!job.conversationId
-        )
-        if (draft?.conversationId) {
-          set({ sidebarListMode: 'timers' })
-          await get().selectConversation(draft.conversationId)
-          get().focusComposer()
-          return
-        }
-        const result = await window.vav.timers.createScheduled()
-        set((state) => ({
-          ...seedEmptyConversationPatch(state, result.conversation),
-          sidebarListMode: 'timers'
-        }))
-        await get().selectConversation(result.conversation.id)
-        get().focusComposer()
-      } catch (err) {
-        get().showToast({
-          kind: 'error',
-          title: tt('timer.createFailed'),
-          description: err instanceof Error ? err.message : String(err)
-        })
-      }
-    })()
-    scheduledCreateInflight = run
-    try {
-      await run
-    } finally {
-      if (scheduledCreateInflight === run) scheduledCreateInflight = null
-    }
+    set({ sidebarListMode: 'timers', scheduledCreating: true, selectedIds: [] })
+    get().focusComposer()
   },
 
   ensureScheduledConversation() {
+    if (get().scheduledCreating) return
     const { conversations, activeId, windowMachineId } = get()
     const machineId = normalizeMachineId(windowMachineId)
     const current = conversations.find((row) => row.id === activeId)
@@ -1206,52 +1211,32 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       if (nextId !== activeId) void get().selectConversation(nextId)
       return
     }
-    void get().createScheduledConversation()
+    set({ scheduledCreating: true })
   },
 
   async createDbConversation() {
-    if (dbCreateInflight) return dbCreateInflight
-    const run = (async () => {
-      if (!window.vav?.db?.create) return
-      try {
-        const untitled = tt('db.untitled')
-        const connections = window.vav.db.list ? await window.vav.db.list() : []
-        const draft = connections.find(
-          (row) =>
-            row.lastStatus !== 'ok' &&
-            !row.database.trim() &&
-            !row.user.trim() &&
-            isDraftDbTitle(row.title, untitled) &&
-            !!row.conversationId
-        )
-        if (draft?.conversationId) {
-          set({ sidebarListMode: 'databases' })
-          await get().selectConversation(draft.conversationId)
-          return
-        }
-        const result = await window.vav.db.create()
-        set((state) => ({
-          ...seedEmptyConversationPatch(state, result.conversation),
-          sidebarListMode: 'databases'
-        }))
-        await get().selectConversation(result.conversation.id)
-      } catch (err) {
-        get().showToast({
-          kind: 'error',
-          title: tt('db.createFailed'),
-          description: err instanceof Error ? err.message : String(err)
-        })
-      }
-    })()
-    dbCreateInflight = run
-    try {
-      await run
-    } finally {
-      if (dbCreateInflight === run) dbCreateInflight = null
-    }
+    set({
+      sidebarListMode: 'databases',
+      dbCreating: true,
+      selectedIds: [],
+      activeDbTable: null
+    })
+  },
+
+  setActiveDbTable(table) {
+    set({ activeDbTable: table, dbCreating: false })
+    const id = get().activeId
+    if (id) void get().setFocusedDbTable(id, table)
+  },
+
+  setDbSchema(connectionId, info) {
+    const id = connectionId.trim()
+    if (!id) return
+    set((state) => ({ dbSchemas: { ...state.dbSchemas, [id]: info } }))
   },
 
   ensureDbConversation() {
+    if (get().dbCreating) return
     const { conversations, activeId, windowMachineId } = get()
     const machineId = normalizeMachineId(windowMachineId)
     const current = conversations.find((row) => row.id === activeId)
@@ -1261,7 +1246,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       if (nextId !== activeId) void get().selectConversation(nextId)
       return
     }
-    void get().createDbConversation()
+    set({ dbCreating: true })
   },
 
   async splitSwarmPane(axis = 'row') {
@@ -1504,15 +1489,30 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         if (departingSet.has(get().activeId)) {
           const fallback =
             get().sidebarListMode === 'timers'
-              ? next.find((c) => c.sessionKind === 'timer' && !c.archived && !departingSet.has(c.id))
-                ?.id ?? fallbackConversationIdAfterDelete(next.filter((c) => !departingSet.has(c.id)))
+              ? next.find(
+                  (c) =>
+                    c.sessionKind === 'timer' &&
+                    !c.archived &&
+                    !c.timerRunId &&
+                    !departingSet.has(c.id) &&
+                    !isDraftScheduledTitle(c.title, tt('timer.untitled'))
+                )?.id ??
+                next.find((c) => c.sessionKind === 'timer' && !c.archived && !departingSet.has(c.id))
+                  ?.id ??
+                null
               : get().sidebarListMode === 'databases'
                 ? next.find((c) => c.sessionKind === 'db' && !c.archived && !departingSet.has(c.id))
                   ?.id ?? fallbackConversationIdAfterDelete(next.filter((c) => !departingSet.has(c.id)))
                 : fallbackConversationIdAfterDelete(next.filter((c) => !departingSet.has(c.id)))
           if (fallback) await get().selectConversation(fallback)
           else {
-            set({ activeId: '', selectedIds: [], activeGroupId: null })
+            set({
+              activeId: '',
+              selectedIds: [],
+              activeGroupId: null,
+              scheduledCreating: get().sidebarListMode === 'timers',
+              dbCreating: get().sidebarListMode === 'databases'
+            })
           }
         }
       }
@@ -1999,6 +1999,20 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     }))
     try {
       await window.vav.conversations.setFocusedFile(id, path)
+    } catch {
+      // keep local patch; main may be unavailable
+    }
+  },
+
+  async setFocusedDbTable(id, table) {
+    const next = table?.trim() || null
+    const current = get().conversations.find((c) => c.id === id)
+    if (current && (current.focusedDbTable ?? null) === next) return
+    set((state) => ({
+      conversations: patchConversationById(state.conversations, id, { focusedDbTable: next })
+    }))
+    try {
+      await window.vav.conversations.setFocusedDbTable(id, next)
     } catch {
       // keep local patch; main may be unavailable
     }
@@ -2709,6 +2723,13 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     set({ updateState: state })
   },
 
+  async cancelUpdateDownload() {
+    const cancel = window.vav.updates.cancelDownload
+    if (!cancel) return
+    const state = await cancel()
+    set({ updateState: state })
+  },
+
   async installUpdate() {
     await window.vav.updates.install()
   },
@@ -2733,10 +2754,28 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     set({ sidebarListMode: mode })
   },
 
+  setFilesSource(source) {
+    set({ filesSource: source })
+  },
+
+  showFileList() {
+    set({
+      sidebarListMode: 'fileSessions',
+      activeId: '',
+      selectedIds: []
+    })
+  },
+
   activateSidebarListMode(mode) {
     const { sidebarListMode } = get()
     if (sidebarListMode === mode) return
-    set({ sidebarListMode: mode, sidebarQuery: '', sidebarSearchOpen: false })
+    set({
+      sidebarListMode: mode,
+      sidebarQuery: '',
+      sidebarSearchOpen: false,
+      scheduledCreating: mode === 'timers' ? get().scheduledCreating : false,
+      dbCreating: mode === 'databases' ? get().dbCreating : false
+    })
     // AppKit leaves the workdir / path-chip menu up when only the renderer swaps.
     void window.vav?.window?.closePopupMenu?.()
     if (mode === 'timers') get().ensureScheduledConversation()

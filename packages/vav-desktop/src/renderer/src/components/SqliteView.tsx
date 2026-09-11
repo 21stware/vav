@@ -13,8 +13,69 @@ import { handleClickPickMouseDown, type ClickPickPointer } from '../lib/clickPic
 import { useSheetVirtualWindow } from '../lib/useSheetVirtualWindow'
 import { useT } from '../i18n/useT'
 
-/** Match SqliteService MAX_LIMIT — one IPC round-trip fills a chunk. */
-const CHUNK = 500
+/** One IPC fills a painted window; keep this near the virtual overscan. */
+const CHUNK = 80
+const SKELETON_COLS = 6
+const SKELETON_ROWS = 18
+const SKELETON_BAR_PCT = [
+  [70, 46, 82, 38, 64, 54],
+  [52, 78, 44, 68, 40, 72],
+  [64, 36, 76, 58, 48, 62],
+  [44, 70, 52, 80, 36, 58]
+] as const
+
+function SqliteSheetSkeleton({
+  label,
+  columns
+}: {
+  label: string
+  columns?: string[]
+}): React.JSX.Element {
+  const heads = columns?.length ? columns : Array.from({ length: SKELETON_COLS }, () => '')
+  const colCount = heads.length
+  return (
+    <div
+      className="sqlite-sheet-wrap sqlite-sheet-skeleton-wrap"
+      data-testid="db-table-skeleton"
+      aria-busy="true"
+      aria-label={label}
+    >
+      <table className="csv-sheet sqlite-sheet sqlite-sheet-skeleton">
+        <thead>
+          <tr>
+            <th className="csv-sheet-gutter csv-sheet-corner">#</th>
+            {heads.map((name, index) => (
+              <th key={`${name || 'col'}-${index}`} className="csv-sheet-colhead">
+                {name ? (
+                  <span className="csv-sheet-col-label">{name}</span>
+                ) : (
+                  <span className="sqlite-skel-bar sqlite-skel-bar-head" />
+                )}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {Array.from({ length: SKELETON_ROWS }, (_, row) => (
+            <tr key={row}>
+              <th className="csv-sheet-gutter">{row + 1}</th>
+              {Array.from({ length: colCount }, (_, col) => (
+                <td key={col}>
+                  <span
+                    className="sqlite-skel-bar"
+                    style={{
+                      width: `${SKELETON_BAR_PCT[row % SKELETON_BAR_PCT.length][col % SKELETON_COLS]}%`
+                    }}
+                  />
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
 
 function dbRowId(table: string, absRow: number): string {
   return `db-row-${table}-${absRow}`
@@ -38,7 +99,9 @@ export function SqliteView({
   selecting,
   selectedIds,
   onSelect,
-  query
+  query,
+  activeTable,
+  hideNav
 }: {
   path: string
   info: SqliteDatabaseInfo
@@ -51,10 +114,14 @@ export function SqliteView({
   ) => void
   /** Override table paging — live PG connections use this instead of a file path. */
   query?: (table: string, offset: number, limit: number) => Promise<SqliteQueryResult>
+  /** Controlled table — sidebar DB groups drive this. */
+  activeTable?: string
+  /** Hide the in-preview table list when tables live in the sidebar. */
+  hideNav?: boolean
 }): React.JSX.Element {
   const t = useT()
   const tables = info.tables
-  const [active, setActive] = useState(tables[0]?.name ?? '')
+  const [active, setActive] = useState(activeTable || tables[0]?.name || '')
   const [columns, setColumns] = useState<string[]>(() => tables[0]?.columns ?? [])
   const [total, setTotal] = useState(() => tables[0]?.rowCount ?? 0)
   /** Chunk index → rows for that [chunk*CHUNK, (chunk+1)*CHUNK) window. */
@@ -63,6 +130,10 @@ export function SqliteView({
   chunksRef.current = chunks
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  /** Column headers known — paint the real sheet chrome with skeleton rows. */
+  const [headerReady, setHeaderReady] = useState(false)
+  /** First data page for the current table. */
+  const [ready, setReady] = useState(false)
   const inflightRef = useRef<Set<number>>(new Set())
   const totalRef = useRef(total)
   totalRef.current = total
@@ -84,8 +155,9 @@ export function SqliteView({
   } = useSheetVirtualWindow(wrapRef, total, `${path}\0${active}`)
 
   useEffect(() => {
-    if (!active && tables[0]) setActive(tables[0].name)
-  }, [tables, active])
+    if (activeTable && activeTable !== active) setActive(activeTable)
+    else if (!active && tables[0]) setActive(tables[0].name)
+  }, [tables, active, activeTable])
 
   // Table switch: drop cache and jump to top.
   useEffect(() => {
@@ -97,6 +169,8 @@ export function SqliteView({
     setColumns(activeMeta?.columns ?? [])
     setTotal(activeMeta?.rowCount ?? 0)
     setLoading(false)
+    setHeaderReady((activeMeta?.columns.length ?? 0) > 0)
+    setReady(false)
     resetScroll()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [active, path])
@@ -115,7 +189,10 @@ export function SqliteView({
         if (knownTotal > 0 && c * CHUNK >= knownTotal) continue
         needed.push(c)
       }
-      if (needed.length === 0) return
+      if (needed.length === 0) {
+        if (chunksRef.current.size > 0 || knownTotal === 0) setReady(true)
+        return
+      }
 
       // Cap concurrent IPCs during a fling — rest will refill on next scroll tick.
       const batch = needed.slice(0, 2)
@@ -154,6 +231,7 @@ export function SqliteView({
       } finally {
         if (gen === genRef.current) {
           setLoading(inflightRef.current.size > 0)
+          setReady(true)
         }
       }
     },
@@ -162,7 +240,39 @@ export function SqliteView({
 
   useEffect(() => {
     if (!active) return
-    void ensureChunks(active, rowStart, rowEnd)
+    let cancelled = false
+    const gen = genRef.current
+    const describe = async (): Promise<void> => {
+      if ((activeMeta?.columns.length ?? 0) > 0) {
+        setHeaderReady(true)
+        return
+      }
+      try {
+        const result = query
+          ? await query(active, 0, 0)
+          : await window.vav.files.dbQuery(path, active, 0, 0)
+        if (cancelled || gen !== genRef.current) return
+        if (result.columns.length) setColumns(result.columns)
+        if (result.total > 0) setTotal(result.total)
+        if (result.error) setError(result.error)
+        setHeaderReady(true)
+      } catch (err) {
+        if (cancelled || gen !== genRef.current) return
+        setError((err as Error).message)
+        setHeaderReady(true)
+      }
+    }
+    void describe()
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active, path, query])
+
+  useEffect(() => {
+    if (!active) return
+    const end = rowEnd > rowStart ? rowEnd : rowStart + 1
+    void ensureChunks(active, rowStart, end)
   }, [active, rowStart, rowEnd, ensureChunks])
 
   // Keep the selected row visible when selection jumps from outside.
@@ -276,47 +386,49 @@ export function SqliteView({
   }
 
   return (
-    <div className={`sqlite-root${selecting ? ' selecting' : ''}`}>
-      <nav className="structured-doc-nav">
-        <div className="structured-doc-nav-scroll">
-          {tables.map((tb) => (
-            <button
-              key={tb.name}
-              type="button"
-              className={`structured-doc-nav-item${tb.name === active ? ' active' : ''}${
-                selected.has(`db-table-${tb.name}`) ? ' selected' : ''
-              }`}
-              title={tb.name}
-              onClick={() => setActive(tb.name)}
-              onMouseDown={
-                selecting
-                  ? (e) => {
-                      if (tb.name !== active) setActive(tb.name)
-                      const text = [
-                        `TABLE ${tb.name}`,
-                        `columns: ${tb.columns.join(', ')}`,
-                        `rows: ${tb.rowCount}`
-                      ].join('\n')
-                      handleClickPickMouseDown(e, () =>
-                        onSelect(`db-table-${tb.name}`, null, {
-                          id: `db-table-${tb.name}`,
-                          kind: 'table',
-                          text,
-                          label: `table ${tb.name}`,
-                          startLine: 1,
-                          endLine: 1
-                        })
-                      )
-                    }
-                  : undefined
-              }
-            >
-              <span className="structured-doc-nav-label">{tb.name}</span>
-              <span className="structured-doc-nav-index muted tiny">{tb.rowCount}</span>
-            </button>
-          ))}
-        </div>
-      </nav>
+    <div className={`sqlite-root${selecting ? ' selecting' : ''}${hideNav ? ' hide-nav' : ''}`}>
+      {!hideNav ? (
+        <nav className="structured-doc-nav">
+          <div className="structured-doc-nav-scroll">
+            {tables.map((tb) => (
+              <button
+                key={tb.name}
+                type="button"
+                className={`structured-doc-nav-item${tb.name === active ? ' active' : ''}${
+                  selected.has(`db-table-${tb.name}`) ? ' selected' : ''
+                }`}
+                title={tb.name}
+                onClick={() => setActive(tb.name)}
+                onMouseDown={
+                  selecting
+                    ? (e) => {
+                        if (tb.name !== active) setActive(tb.name)
+                        const text = [
+                          `TABLE ${tb.name}`,
+                          `columns: ${tb.columns.join(', ')}`,
+                          `rows: ${tb.rowCount}`
+                        ].join('\n')
+                        handleClickPickMouseDown(e, () =>
+                          onSelect(`db-table-${tb.name}`, null, {
+                            id: `db-table-${tb.name}`,
+                            kind: 'table',
+                            text,
+                            label: `table ${tb.name}`,
+                            startLine: 1,
+                            endLine: 1
+                          })
+                        )
+                      }
+                    : undefined
+                }
+              >
+                <span className="structured-doc-nav-label">{tb.name}</span>
+                <span className="structured-doc-nav-index muted tiny">{tb.rowCount}</span>
+              </button>
+            ))}
+          </div>
+        </nav>
+      ) : null}
 
       <div className="sqlite-panel">
         <div className="sqlite-toolbar muted tiny">
@@ -331,10 +443,12 @@ export function SqliteView({
             {active}
           </button>
           <span>
-            {total === 0
-              ? t('common.empty')
-              : t('preview.dbRowCount', { n: total })}
-            {loading ? ` · ${t('common.loading')}` : ''}
+            {!ready
+              ? t('common.loading')
+              : total === 0
+                ? t('common.empty')
+                : t('preview.dbRowCount', { n: total })}
+            {ready && loading ? ` · ${t('common.loading')}` : ''}
           </span>
         </div>
 
@@ -344,11 +458,17 @@ export function SqliteView({
           </div>
         )}
 
-        <div
-          className="sqlite-sheet-wrap"
-          ref={wrapRef}
-          onScroll={onWrapScroll}
-        >
+        {!ready && !error ? (
+          <SqliteSheetSkeleton
+            label={t('common.loading')}
+            columns={headerReady && columns.length ? columns : undefined}
+          />
+        ) : (
+          <div
+            className="sqlite-sheet-wrap"
+            ref={wrapRef}
+            onScroll={onWrapScroll}
+          >
           <table
             className="csv-sheet sqlite-sheet"
             style={{
@@ -428,7 +548,16 @@ export function SqliteView({
                               : undefined
                           }
                         >
-                          {pending ? '' : cell}
+                          {pending ? (
+                            <span
+                              className="sqlite-skel-bar"
+                              style={{
+                                width: `${SKELETON_BAR_PCT[abs % SKELETON_BAR_PCT.length][ci % SKELETON_COLS]}%`
+                              }}
+                            />
+                          ) : (
+                            cell
+                          )}
                         </td>
                       )
                     })}
@@ -457,6 +586,7 @@ export function SqliteView({
             </tbody>
           </table>
         </div>
+        )}
       </div>
     </div>
   )

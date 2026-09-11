@@ -20,6 +20,7 @@ export type RuntimeIpcHost = {
   updatesGet: () => unknown
   updatesCheck: () => unknown
   updatesOpenDownload: () => unknown
+  updatesCancelDownload: () => unknown
   updatesInstall: () => void
 }
 
@@ -52,6 +53,7 @@ export function registerRuntimeIpc(ipcMain: IpcMain, host: RuntimeIpcHost): void
   ipcMain.handle(IPC.updatesGet, () => host.updatesGet())
   ipcMain.handle(IPC.updatesCheck, () => host.updatesCheck())
   ipcMain.handle(IPC.updatesOpenDownload, () => host.updatesOpenDownload())
+  ipcMain.handle(IPC.updatesCancelDownload, () => host.updatesCancelDownload())
   ipcMain.handle(IPC.updatesInstall, () => {
     host.updatesInstall()
   })

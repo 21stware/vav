@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type ReactNode,
@@ -12,12 +13,7 @@ import { buildWorkspaceFocusContext } from '@shared/agentContextInject'
 import { DEFAULT_CLI_AGENTS, enabledCliAgents, type AgentConfig } from '@shared/types'
 import type { FileSessionMeta } from '@shared/ipc'
 import { handoffFocusToCli } from '../lib/cliFocusHandoff'
-import {
-  arrowKeyToPaneDirection,
-  findNeighborPane,
-  focusedCliPaneId,
-  measureCliPaneRects
-} from '../lib/cliPaneNavigate'
+import { findNeighborPane, focusedCliPaneId, measureCliPaneRects } from '../lib/cliPaneNavigate'
 import { focusAgentPane, resolveUiFocusScope } from '../lib/uiFocus'
 import { focusCliAgentPickerFirstOption } from './CliAgentPicker'
 import { useSessionStore } from '../state/sessionStore'
@@ -49,8 +45,8 @@ import { useConversationFileDrop } from '../lib/useConversationFileDrop'
 import { parkTerminal } from '../lib/terminalRegistry'
 import { useT } from '../i18n/useT'
 import { workspaceChromeLabel } from '../lib/format'
-import { IS_MAC, keys } from '../lib/platform'
-import { isTerminalProductModifier } from '../lib/terminalKeys'
+import { matchingKeyBindingId, prettyAccelerator, resolveKeyBindings } from '@shared/keyBindings'
+import { PLATFORM } from '../lib/platform'
 import { useSidebarFloatMode } from '../lib/sidebarLayout'
 import { isCompanionSessionShell } from '../lib/windowKind'
 
@@ -384,14 +380,28 @@ export function SessionDetail({
     }
   }, [swarmMulti, swarmLeaves.join('|')])
 
-  // CLI surface: ⌘D / ⌘⇧D split; ⌘←↑↓→ spatial pane focus.
+  const bindings = useMemo(
+    () => resolveKeyBindings(settings.keyBindings),
+    [settings.keyBindings]
+  )
+
+  // CLI surface: remappable split + spatial pane focus (defaults ⌘D / ⌘⇧D / ⌘⇧←↑↓→).
   // Swarm-on Thread uses the same chords to mint sibling agent sessions.
+  // Plain ⌘←/→ stays with the editor / PTY (line start/end).
   useEffect(() => {
     if (!threadSplit && isVavMode) return
     const onKey = (event: KeyboardEvent): void => {
-      if (!isTerminalProductModifier(event, IS_MAC)) return
-
-      const paneDir = arrowKeyToPaneDirection(event.key)
+      const hit = matchingKeyBindingId(event, bindings, PLATFORM)
+      const paneDir =
+        hit === 'focusPaneLeft'
+          ? 'left'
+          : hit === 'focusPaneRight'
+            ? 'right'
+            : hit === 'focusPaneUp'
+              ? 'up'
+              : hit === 'focusPaneDown'
+                ? 'down'
+                : null
       if (paneDir && threadSplit && swarmMulti) {
         const panes = measureCliPaneRects(document.querySelector('.session-swarm-split'))
         if (panes.length >= 2) {
@@ -431,7 +441,7 @@ export function SessionDetail({
           ''
         if (!from) return
         const next = findNeighborPane(from, paneDir, panes)
-        // Always consume ⌘+arrow in multi-pane Swarm so the picker list does
+        // Always consume ⌘⇧+arrow in multi-pane Swarm so the picker list does
         // not treat it as in-list navigation when no geometric neighbor exists.
         event.preventDefault()
         event.stopPropagation()
@@ -441,27 +451,18 @@ export function SessionDetail({
         return
       }
 
-      const key = event.key.toLowerCase()
-      if (key === 'd') {
-        const live = resolveUiFocusScope(document.activeElement)
-        if (live === 'bash') return
-      }
-      if (key === 'd' && event.shiftKey) {
-        event.preventDefault()
-        if (threadSplit) void useSessionStore.getState().splitSwarmPane('column')
-        else splitCliAndFocusPicker(activeId, 'column')
-        return
-      }
-      if (key === 'd' && !event.shiftKey) {
-        event.preventDefault()
-        if (threadSplit) void useSessionStore.getState().splitSwarmPane('row')
-        else splitCliAndFocusPicker(activeId, 'row')
-      }
+      if (hit !== 'splitPaneRight' && hit !== 'splitPaneDown') return
+      const live = resolveUiFocusScope(document.activeElement)
+      if (live === 'bash') return
+      event.preventDefault()
+      const axis = hit === 'splitPaneDown' ? 'column' : 'row'
+      if (threadSplit) void useSessionStore.getState().splitSwarmPane(axis)
+      else splitCliAndFocusPicker(activeId, axis)
     }
-    // Capture so ⌘←/→ reach us before xterm treats them as line motion.
+    // Capture so remapped pane chords reach us before xterm treats them as motion.
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
-  }, [activeId, previewEdit, isVavMode, threadSplit, swarmMulti])
+  }, [activeId, previewEdit, isVavMode, threadSplit, swarmMulti, bindings])
 
   // Install-inline PTY — hooks must stay above every early return (Rules of Hooks).
   const teardownInstallPty = useCallback((): void => {
@@ -839,6 +840,8 @@ export function AgentModeChrome({
 }): React.JSX.Element {
   const t = useT()
   const cliMode = useWorkspaceStore((s) => !!s.workspaces[conversationId]?.cliMode)
+  const keyBindings = useSessionStore((s) => s.settings.keyBindings)
+  const bindings = resolveKeyBindings(keyBindings)
   const swarmEnabled = useSessionStore((s) => s.settings.swarmModeEnabled === true)
   const isTerminal = swarmEnabled && cliMode
   const isChat = !isTerminal
@@ -929,7 +932,7 @@ export function AgentModeChrome({
                 icon={<Search size={14} />}
                 variant="ghost"
                 testId="session-search"
-                title={`${t('common.search')} ${keys('⌘F')}`}
+                title={`${t('common.search')} ${prettyAccelerator(bindings.find, PLATFORM)}`}
                 onClick={() => (searchOpen ? closeSearch() : openSearch())}
               />
             ) : null}
@@ -940,14 +943,14 @@ export function AgentModeChrome({
                   icon={<SquareSplitVertical size={14} />}
                   variant="ghost"
                   testId="swarm-split-right"
-                  title={`${t('agents.splitRight')} ${keys('⌘D')}`}
+                  title={`${t('agents.splitRight')} ${prettyAccelerator(bindings.splitPaneRight, PLATFORM)}`}
                   onClick={() => splitSwarm('row')}
                 />
                 <Button
                   icon={<SquareSplitHorizontal size={14} />}
                   variant="ghost"
                   testId="swarm-split-down"
-                  title={`${t('agents.splitDown')} ${keys('⌘⇧D')}`}
+                  title={`${t('agents.splitDown')} ${prettyAccelerator(bindings.splitPaneDown, PLATFORM)}`}
                   onClick={() => splitSwarm('column')}
                 />
               </>

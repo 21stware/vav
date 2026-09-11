@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { test, expect } from '@playwright/test'
+import { test, expect, type Page } from '@playwright/test'
 import { connectPhone } from '../../src/main/cli/vavPhoneClient.ts'
 import { parseDaemonPairing } from '../../src/shared/daemonProtocol.ts'
 import {
@@ -19,6 +19,11 @@ import {
   waitForRemoteFolderPicker
 } from '../launch'
 import { startVavServer } from '../startVavServer'
+
+async function revealSidebarCategory(page: Page, label: string): Promise<void> {
+  await page.locator('[data-testid="sidebar-category-config"]').click()
+  await chooseNativeMenu(page, label)
+}
 
 /**
  * Desktop VAV pairs with a real headless vav-server, then a session's files list
@@ -929,5 +934,41 @@ test('third-party controller session on the vav-server syncs to the origin deskt
     await page.screenshot({ path: 'test-results/e2e/third-party-session-sync.png' })
   } finally {
     await harness.dispose()
+  }
+})
+
+test('File category on a paired host lists that machine, not This Mac', async () => {
+  const daemon = await startVavServer()
+  const harness = await launchVav()
+  try {
+    const { page, workspace } = harness
+    const paired = await pairRemoteDaemon(page, daemon.pairing)
+    await expect(page.locator('[data-testid="sidebar-connect"]')).toHaveAttribute(
+      'data-machine-id',
+      paired.host.id
+    )
+    await revealSidebarCategory(page, 'File')
+    await expect(page.locator('[data-testid="file-recents"]')).toBeVisible()
+    await expect(page.locator('[data-testid="file-source-select"] option[value="thisMac"]')).toHaveText(
+      'E2E Daemon'
+    )
+    await page.locator('[data-testid="file-source-select"]').selectOption('thisMac')
+    await expect(page.locator('[data-testid="file-mac-browser"]')).toBeVisible()
+    const remoteHome = await page.evaluate(
+      (machineId) => window.vav.hosts.home(machineId),
+      paired.host.id
+    )
+    await expect(page.locator('[data-testid="file-mac-path"]')).toHaveValue(remoteHome)
+    expect(remoteHome).not.toBe(workspace)
+    await page.locator('[data-testid="file-mac-path"]').fill(daemon.workspace)
+    await page.locator('[data-testid="file-mac-path"]').press('Enter')
+    await expect(page.locator('[data-testid="remote-folder-entry-remote-only.md"]')).toBeVisible()
+    await expect(page.locator('[data-testid="remote-folder-entry-hello.md"]')).toHaveCount(0)
+    await page.locator('[data-testid="remote-folder-entry-remote-only.md"]').dblclick()
+    await expect(page.locator('[data-testid="file-preview-name"]')).toHaveText('remote-only.md')
+    await expect(page.getByText('planted by vav-server e2e')).toBeVisible()
+  } finally {
+    await harness.dispose()
+    daemon.stop()
   }
 })

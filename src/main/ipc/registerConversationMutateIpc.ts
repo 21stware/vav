@@ -271,6 +271,16 @@ export function registerConversationMutateIpc(
     return store.listMeta()
   })
 
+  ipcMain.handle(IPC.convSetFocusedDbTable, (_event, id: string, table: string | null) => {
+    const next = typeof table === 'string' && table.trim() ? table.trim() : null
+    const existing = store.get(id)
+    if (existing && (existing.focusedDbTable ?? null) === next) {
+      return store.listMeta()
+    }
+    store.updateMeta(id, { focusedDbTable: next })
+    return store.listMeta()
+  })
+
   ipcMain.handle(IPC.convAccountQuota, async (_event, id: string, hostOverride?: unknown) => {
     const conversation = store.get(id)
     if (!conversation) return null

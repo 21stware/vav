@@ -49,6 +49,57 @@ export function isEmptyComposerSend(
   return !text.trim() && attachments.length === 0 && refs.length === 0 && cards.length === 0
 }
 
+/** Unsent composer payload — text, attachments, quotes, or preview chips. */
+export function hasUnsentComposerDraft(input: {
+  text?: string
+  attachments?: string[]
+  previewRefs?: unknown[]
+  commentCards?: unknown[]
+  quote?: QuoteDraft | null
+  contextFile?: string | null
+}): boolean {
+  const files = mergeComposerFilePaths(input.contextFile, input.attachments ?? [])
+  if (!isEmptyComposerSend(input.text ?? '', files, input.previewRefs ?? [], input.commentCards ?? [])) {
+    return true
+  }
+  return !!input.quote
+}
+
+/** Conversation ids that currently have unsent composer content. */
+export function unsentComposerIds(state: {
+  drafts: Record<string, string>
+  attachments: Record<string, string[]>
+  quotes: Record<string, QuoteDraft | null>
+  previewRefs: Record<string, unknown[]>
+  commentCards: Record<string, unknown[]>
+  contextFiles?: Record<string, string | null>
+}): string[] {
+  const ids = new Set([
+    ...Object.keys(state.drafts),
+    ...Object.keys(state.attachments),
+    ...Object.keys(state.quotes),
+    ...Object.keys(state.previewRefs),
+    ...Object.keys(state.commentCards),
+    ...Object.keys(state.contextFiles ?? {})
+  ])
+  const dirty: string[] = []
+  for (const id of ids) {
+    if (
+      hasUnsentComposerDraft({
+        text: state.drafts[id],
+        attachments: state.attachments[id],
+        previewRefs: state.previewRefs[id],
+        commentCards: state.commentCards[id],
+        quote: state.quotes[id],
+        contextFile: state.contextFiles?.[id]
+      })
+    ) {
+      dirty.push(id)
+    }
+  }
+  return dirty.sort()
+}
+
 export type ComposerSendDisposition = 'empty' | 'awaiting' | 'need-key' | 'full' | 'enqueue' | 'send'
 
 /** First-send gate: empty / parked ask / missing VAV key / queue / go. */

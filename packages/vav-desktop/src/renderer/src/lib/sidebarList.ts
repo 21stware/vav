@@ -1,6 +1,7 @@
 import { PRESET_MODELS, type ConversationMeta, type SidebarGroupingMode } from '@shared/types.ts'
 import type { MessageKey, TParams } from '@shared/i18n/index.ts'
 import { isTimerDefinition, sessionKindOf } from '@shared/sessionKind.ts'
+import { isDraftDbTitle, isDraftScheduledTitle } from './draftEditorTitle.ts'
 import { conversationOnMachine } from '@shared/workspaceHost.ts'
 import type { SidebarListMode } from '../state/sessionTypes.ts'
 import type { SidebarSessionFilter } from './sidebarSessionFilter.ts'
@@ -257,14 +258,16 @@ export function nextConversationForListMode(
   if (matches.length === 0) return null
   if (mode === 'timers') {
     const defs = matches.filter((row) => isTimerDefinition(row) && !row.archived)
+    const namedDefs = defs.filter((row) => !isDraftScheduledTitle(row.title, 'Untitled-scheduled-task'))
     const live = matches.filter((row) => !row.archived)
-    const ranked = defs.length ? defs : live.length ? live : matches
+    const ranked = namedDefs.length ? namedDefs : defs.length ? defs : live.length ? live : matches
     ranked.sort((a, b) => b.updatedAt - a.updatedAt)
     return ranked[0]?.id ?? null
   }
   if (mode === 'databases') {
     const live = matches.filter((row) => !row.archived)
-    const ranked = live.length ? live : matches
+    const named = live.filter((row) => !isDraftDbTitle(row.title, 'Untitled-db-connection'))
+    const ranked = named.length ? named : live.length ? live : matches
     ranked.sort((a, b) => b.updatedAt - a.updatedAt)
     return ranked[0]?.id ?? null
   }

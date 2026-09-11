@@ -64,4 +64,49 @@ describe('DbConnectionStore', () => {
     assert.equal(store.get(created.id), undefined)
     assert.equal(store.password(created.id), null)
   })
+
+  it('stores a postgres URL without the password and fills fields', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'vav-db-'))
+    const vault = memoryVault()
+    const store = new DbConnectionStore(dir, vault)
+    const created = store.create({
+      useUrl: true,
+      url: 'postgresql://vav:s3cret@db.internal:6543/app?sslmode=require'
+    })
+    assert.equal(created.useUrl, true)
+    assert.equal(created.host, 'db.internal')
+    assert.equal(created.port, 6543)
+    assert.equal(created.database, 'app')
+    assert.equal(created.user, 'vav')
+    assert.equal(created.ssl, true)
+    assert.equal(created.hasPassword, true)
+    assert.equal(created.url.includes('s3cret'), false)
+    assert.equal(store.password(created.id), 's3cret')
+  })
+
+  it('stores mysql and duckdb connections with driver-specific fields', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'vav-db-'))
+    const vault = memoryVault()
+    const store = new DbConnectionStore(dir, vault)
+    const mysql = store.create({
+      driver: 'mysql',
+      useUrl: true,
+      url: 'mysql://root:s3cret@127.0.0.1:3307/shop?ssl=true'
+    })
+    assert.equal(mysql.driver, 'mysql')
+    assert.equal(mysql.host, '127.0.0.1')
+    assert.equal(mysql.port, 3307)
+    assert.equal(mysql.database, 'shop')
+    assert.equal(mysql.ssl, true)
+    assert.equal(mysql.url.includes('s3cret'), false)
+
+    const duck = store.create({
+      driver: 'duckdb',
+      database: '/tmp/analytics.duckdb'
+    })
+    assert.equal(duck.driver, 'duckdb')
+    assert.equal(duck.host, '')
+    assert.equal(duck.port, 0)
+    assert.equal(duck.database, '/tmp/analytics.duckdb')
+  })
 })

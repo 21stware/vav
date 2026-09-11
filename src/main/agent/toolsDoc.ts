@@ -165,7 +165,7 @@ export function createDocTools(host: ToolHost) {
     name: 'sql_query',
     label: TOOL_LABELS.sql_query,
     description:
-      'Run read-only analytical SQL. On a live database connection (PostgreSQL), omit path and query that connection (PostgreSQL dialect). Otherwise DuckDB dialect over a SQLite, CSV, TSV, or Parquet file (not .xlsx/.xls). Use for analysis (aggregation, GROUP BY, JOIN, window functions) instead of paging the preview. Run `SHOW TABLES` / information_schema first. For Excel workbooks use doc_search or officecli/xlsx instead.',
+      'Run read-only analytical SQL. On a live database connection (PostgreSQL, MySQL, ClickHouse, BigQuery, or DuckDB), omit path and query that connection in its native dialect. Otherwise DuckDB dialect over a SQLite, CSV, TSV, or Parquet file (not .xlsx/.xls). Use for analysis (aggregation, GROUP BY, JOIN, window functions) instead of paging the preview. Run `SHOW TABLES` / information_schema first. For Excel workbooks use doc_search or officecli/xlsx instead.',
     parameters: Type.Object({
       sql: Type.String({
         description:
@@ -191,18 +191,19 @@ export function createDocTools(host: ToolHost) {
 
       const connectionId = host.dbConnectionId?.()?.trim() || ''
       if (connectionId && host.postgres) {
+        const driver = host.postgres.connection(connectionId)?.driver ?? 'postgres'
         const result = await host.postgres.querySql(connectionId, sql)
         if (result.error) {
           return {
             content: [{ type: 'text', text: `SQL error: ${result.error}` }],
-            details: { display: `✗ postgres · ${result.error}` }
+            details: { display: `✗ ${driver} · ${result.error}` }
           }
         }
         const header = result.columns.join(' | ')
         const sep = result.columns.map(() => '---').join(' | ')
         const dataRows = result.rows.map((r) => r.join(' | '))
         const modelLines = [
-          `postgres · ${result.rowCount} row(s)${
+          `${driver} · ${result.rowCount} row(s)${
             result.truncated ? ` (truncated to ${result.rows.length})` : ''
           }`,
           header,
@@ -210,7 +211,7 @@ export function createDocTools(host: ToolHost) {
           ...dataRows
         ]
         const displayLines = [
-          `postgres · ${result.rowCount} row(s)${
+          `${driver} · ${result.rowCount} row(s)${
             result.truncated ? ` (truncated to ${result.rows.length})` : ''
           }`,
           header,
@@ -220,7 +221,7 @@ export function createDocTools(host: ToolHost) {
           content: [{ type: 'text', text: cap(modelLines.join('\n')) }],
           details: {
             display: displayLines.join('\n'),
-            summary: isSchema ? 'schema · postgres' : `${result.rowCount} row(s) · postgres`
+            summary: isSchema ? `schema · ${driver}` : `${result.rowCount} row(s) · ${driver}`
           }
         }
       }

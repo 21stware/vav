@@ -1,4 +1,5 @@
 import { app, autoUpdater as electronAutoUpdater, shell } from 'electron'
+import { CancellationToken } from 'builder-util-runtime'
 import { autoUpdater } from 'electron-updater'
 import { existsSync, rmSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -10,6 +11,7 @@ import {
   UPDATE_HEARTBEAT_MS,
   UPDATE_LAUNCH_DELAY_MS,
   isUpdateBusyPhase,
+  isUpdateCancellationError,
   isUpdateSettledPhase,
   nextUpdateFollowUp,
   shouldRunAutomaticCheck,
@@ -52,6 +54,11 @@ export class UpdateService {
   private listeners = new Set<(state: UpdateState) => void>()
   private willInstall: (() => void) | null = null
   private downloading = false
+  private downloadInFlight: Promise<UpdateState> | null = null
+  private cancelToken: CancellationToken | null = null
+  /** User stopped an in-flight download — do not auto-restart until they retry. */
+  private skipAutoDownload = false
+  private cancelRequested = false
   /** Squirrel.Mac has finished staging (native update-downloaded). */
   private nativeUpdateReady = false
   private nativeReadyWaiters: Array<() => void> = []
@@ -70,6 +77,7 @@ export class UpdateService {
     autoUpdater.allowDowngrade = false
     // Public GitHub Releases — no token required for check/download.
     autoUpdater.on('download-progress', (p) => {
+      if (this.cancelRequested || this.state.phase !== 'downloading') return
       this.patch({
         phase: 'downloading',
         progress: Math.max(0, Math.min(100, Math.round(p.percent))),
@@ -77,6 +85,7 @@ export class UpdateService {
       })
     })
     autoUpdater.on('error', (err) => {
+      if (this.cancelRequested || isUpdateCancellationError(err)) return
       if (
         this.state.phase === 'checking' ||
         this.state.phase === 'downloading' ||
@@ -217,6 +226,7 @@ export class UpdateService {
         // (opening the GitHub asset is the About-page Download button).
         if (!app.isPackaged) return
         if (action === 'download') {
+          if (this.skipAutoDownload) return
           await this.openDownload()
           if (nextUpdateFollowUp(this.policy, this.state.phase) === 'install') {
             this.install()
@@ -292,8 +302,34 @@ export class UpdateService {
    */
   async openDownload(): Promise<UpdateState> {
     if (this.state.phase === 'ready' || this.state.phase === 'preparing') return this.getState()
-    if (this.downloading) return this.getState()
+    if (this.downloadInFlight) {
+      if (this.cancelRequested) await this.downloadInFlight.catch(() => undefined)
+      else return this.downloadInFlight
+    }
+    this.downloadInFlight = this.performDownload().finally(() => {
+      this.downloadInFlight = null
+    })
+    return this.downloadInFlight
+  }
 
+  /**
+   * Abort an in-flight package download and return to Available so the user
+   * can retry. Auto-download policies stay paused until they click Download.
+   */
+  cancelDownload(): UpdateState {
+    if (!this.downloading || this.state.phase !== 'downloading') return this.getState()
+    this.cancelRequested = true
+    this.skipAutoDownload = true
+    this.cancelToken?.cancel()
+    return this.patch({
+      phase: 'available',
+      progress: 0,
+      bytesPerSecond: null,
+      message: null
+    })
+  }
+
+  private async performDownload(): Promise<UpdateState> {
     // Unpackaged builds, or packaged builds that fell back to the GitHub API
     // (no latest*.yml on the release): open the asset in the browser.
     if (!app.isPackaged || this.state.downloadUrl) {
@@ -308,11 +344,15 @@ export class UpdateService {
       })
     }
 
+    this.skipAutoDownload = false
+    this.cancelRequested = false
     this.downloading = true
     this.nativeUpdateReady = false
+    this.cancelToken = new CancellationToken()
     this.patch({ phase: 'downloading', progress: 0, bytesPerSecond: 0, message: null })
     try {
-      await autoUpdater.downloadUpdate()
+      await autoUpdater.downloadUpdate(this.cancelToken)
+      if (this.cancelRequested) return this.cancelledDownloadState()
       // macOS: ZIP is local, but Squirrel may still be verifying/unzipping.
       // Surface an explicit "preparing" phase — Restart must wait for this.
       if (process.platform === 'darwin' && !this.nativeUpdateReady) {
@@ -340,6 +380,9 @@ export class UpdateService {
         message: null
       })
     } catch (err) {
+      if (this.cancelRequested || isUpdateCancellationError(err)) {
+        return this.cancelledDownloadState()
+      }
       return this.patch({
         phase: 'error',
         message: (err as Error).message,
@@ -348,7 +391,18 @@ export class UpdateService {
       })
     } finally {
       this.downloading = false
+      this.cancelToken = null
+      this.cancelRequested = false
     }
+  }
+
+  private cancelledDownloadState(): UpdateState {
+    return this.patch({
+      phase: 'available',
+      progress: 0,
+      bytesPerSecond: null,
+      message: null
+    })
   }
 
   /** Apply a downloaded update (restarts the app). */

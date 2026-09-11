@@ -5,7 +5,12 @@ import { useSessionStore } from '../state/sessionStore'
 import { CLI_SURFACE_KEY, useWorkspaceStore } from '../state/workspaceStore'
 import { setUiFocusScope } from '../lib/uiFocus'
 import { requestCliSurface } from '../lib/cliSurfaceSwitch'
-import { IS_MAC } from '../lib/platform'
+import {
+  matchingKeyBindingId,
+  prettyAccelerator,
+  resolveKeyBindings
+} from '@shared/keyBindings'
+import { IS_MAC, PLATFORM } from '../lib/platform'
 import {
   getAgentInstallStatus,
   openAgentWebsite,
@@ -97,6 +102,7 @@ export function CliAgentPicker({
 }): React.JSX.Element {
   const t = useT()
   const settings = useSessionStore((s) => s.settings)
+  const bindings = resolveKeyBindings(settings.keyBindings)
   const agents = enabledCliAgents(settings.cliAgents).filter((a) => !!a.id && !!a.name)
   const installById = useAgentInstallMap()
 
@@ -214,8 +220,14 @@ export function CliAgentPicker({
 
   const onGridKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
     if (agents.length === 0) return
-    // ⌘/Ctrl+arrow is Swarm pane focus — never steal it for in-list moves.
-    if (event.metaKey || event.ctrlKey) return
+    // Remapped Swarm pane-focus chords — never steal them for in-list moves.
+    const paneHit = matchingKeyBindingId(
+      event.nativeEvent,
+      bindings,
+      PLATFORM,
+      ['focusPaneLeft', 'focusPaneRight', 'focusPaneUp', 'focusPaneDown']
+    )
+    if (paneHit) return
     const key = event.key
     let delta: number | null = null
     if (key === 'ArrowRight' || key === 'ArrowDown') delta = 1
@@ -240,15 +252,18 @@ export function CliAgentPicker({
     <div className="cli-agent-picker-help">
       <p>{t('agents.swarmHelpIntro')}</p>
       <p>
-        <ShortcutChord chord="⌘D" /> {t('agents.swarmHelpSplitVertical')}
+        <ShortcutChord chord={prettyAccelerator(bindings.splitPaneRight, 'darwin')} />{' '}
+        {t('agents.swarmHelpSplitVertical')}
         <span className="cli-agent-picker-help-sep">, </span>
-        <ShortcutChord chord="⌘⇧D" /> {t('agents.swarmHelpSplitHorizontal')}
+        <ShortcutChord chord={prettyAccelerator(bindings.splitPaneDown, 'darwin')} />{' '}
+        {t('agents.swarmHelpSplitHorizontal')}
       </p>
       <p>
-        <ShortcutChord chord="⌘←" />{' '}
-        <ShortcutChord chord="⌘→" />{' '}
-        <ShortcutChord chord="⌘↑" />{' '}
-        <ShortcutChord chord="⌘↓" /> {t('agents.swarmHelpNavigate')}
+        <ShortcutChord chord={prettyAccelerator(bindings.focusPaneLeft, 'darwin')} />{' '}
+        <ShortcutChord chord={prettyAccelerator(bindings.focusPaneRight, 'darwin')} />{' '}
+        <ShortcutChord chord={prettyAccelerator(bindings.focusPaneUp, 'darwin')} />{' '}
+        <ShortcutChord chord={prettyAccelerator(bindings.focusPaneDown, 'darwin')} />{' '}
+        {t('agents.swarmHelpNavigate')}
       </p>
     </div>
   )

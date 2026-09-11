@@ -79,7 +79,7 @@ export type RunningSessionTarget = {
   tabId?: string
   agentId?: string
   kind?: 'agent' | 'chat' | 'bash'
-  status?: 'running' | 'done' | 'failed'
+  status?: 'pending' | 'running' | 'done' | 'failed'
   dirKey?: string
   dirLabel?: string
   createdAt?: number
@@ -490,6 +490,7 @@ export class NotificationCenter {
           row.kind === 'bash'
             ? `Bash · ${row.title}`
             : trayStatusRowLabel(row.title, status, {
+                pending: t('tray.pendingTag'),
                 running: t('tray.runningTag'),
                 done: t('tray.doneTag'),
                 failed: t('tray.failedTag')
@@ -505,7 +506,9 @@ export class NotificationCenter {
   /** Rebuild the tray list. Counts default from the session statuses. */
   updateRunningSessions(
     sessions: RunningSessionTarget[],
-    runningCount = sessions.filter((row) => (row.status ?? 'running') === 'running').length,
+    runningCount = sessions.filter(
+      (row) => (row.status ?? 'running') === 'running' || row.status === 'pending'
+    ).length,
     doneCount = sessions.filter((row) => row.status === 'done' || row.status === 'failed').length
   ): void {
     this.runningSessions = sessions

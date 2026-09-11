@@ -16,6 +16,7 @@ export type KeyBindingGroupId =
   | 'find'
   | 'focus'
   | 'terminal'
+  | 'swarm'
   | 'special'
   | 'files'
 
@@ -45,6 +46,12 @@ export type AcceleratorKeyBindingId =
   | 'findNext'
   | 'findPrevious'
   | 'newTerminal'
+  | 'splitPaneRight'
+  | 'splitPaneDown'
+  | 'focusPaneLeft'
+  | 'focusPaneRight'
+  | 'focusPaneUp'
+  | 'focusPaneDown'
   | 'focusTools1'
   | 'focusTools2'
   | 'focusTools3'
@@ -55,7 +62,14 @@ export type AcceleratorKeyBindingId =
   | 'focusTools8'
   | 'focusTools9'
 
-export type KeyBindingId = AcceleratorKeyBindingId | 'sendKey' | 'globalHotkey' | 'quickLook'
+export type KeyBindingId =
+  | AcceleratorKeyBindingId
+  | 'sendKey'
+  | 'globalHotkey'
+  | 'quickLook'
+  | 'zoomIn'
+  | 'zoomOut'
+  | 'zoomReset'
 
 export interface KeyBindingDef {
   id: KeyBindingId
@@ -74,6 +88,7 @@ export const KEY_BINDING_GROUP_LABEL: Record<KeyBindingGroupId, MessageKey> = {
   find: 'keybindings.group.find',
   focus: 'keybindings.group.focus',
   terminal: 'keybindings.group.terminal',
+  swarm: 'keybindings.group.swarm',
   special: 'keybindings.group.special',
   files: 'keybindings.group.files'
 }
@@ -264,6 +279,69 @@ export const KEY_BINDING_DEFS: readonly KeyBindingDef[] = [
     labelKey: 'menu.newTerminal',
     kind: 'accelerator',
     defaultAccelerator: 'CmdOrCtrl+T'
+  },
+  {
+    id: 'splitPaneRight',
+    group: 'swarm',
+    labelKey: 'keybindings.splitPaneRight',
+    kind: 'accelerator',
+    defaultAccelerator: 'CmdOrCtrl+D'
+  },
+  {
+    id: 'splitPaneDown',
+    group: 'swarm',
+    labelKey: 'keybindings.splitPaneDown',
+    kind: 'accelerator',
+    defaultAccelerator: 'CmdOrCtrl+Shift+D'
+  },
+  {
+    id: 'focusPaneLeft',
+    group: 'swarm',
+    labelKey: 'keybindings.focusPaneLeft',
+    kind: 'accelerator',
+    defaultAccelerator: 'CmdOrCtrl+Shift+Left'
+  },
+  {
+    id: 'focusPaneRight',
+    group: 'swarm',
+    labelKey: 'keybindings.focusPaneRight',
+    kind: 'accelerator',
+    defaultAccelerator: 'CmdOrCtrl+Shift+Right'
+  },
+  {
+    id: 'focusPaneUp',
+    group: 'swarm',
+    labelKey: 'keybindings.focusPaneUp',
+    kind: 'accelerator',
+    defaultAccelerator: 'CmdOrCtrl+Shift+Up'
+  },
+  {
+    id: 'focusPaneDown',
+    group: 'swarm',
+    labelKey: 'keybindings.focusPaneDown',
+    kind: 'accelerator',
+    defaultAccelerator: 'CmdOrCtrl+Shift+Down'
+  },
+  {
+    id: 'zoomIn',
+    group: 'chrome',
+    labelKey: 'menu.zoomIn',
+    kind: 'readonly',
+    defaultAccelerator: 'CmdOrCtrl+='
+  },
+  {
+    id: 'zoomOut',
+    group: 'chrome',
+    labelKey: 'menu.zoomOut',
+    kind: 'readonly',
+    defaultAccelerator: 'CmdOrCtrl+-'
+  },
+  {
+    id: 'zoomReset',
+    group: 'chrome',
+    labelKey: 'menu.actualSize',
+    kind: 'readonly',
+    defaultAccelerator: 'CmdOrCtrl+0'
   },
   {
     id: 'focusTools1',
@@ -524,6 +602,14 @@ function inputKeyMatches(accelKey: string, input: { key: string; code: string })
   if (/^F\d{1,2}$/i.test(k)) {
     return input.key.toUpperCase() === k.toUpperCase() || input.code.toUpperCase() === k.toUpperCase()
   }
+  if (k === 'Left' || k === 'Right' || k === 'Up' || k === 'Down') {
+    return (
+      input.key === k ||
+      input.code === k ||
+      input.key === `Arrow${k}` ||
+      input.code === `Arrow${k}`
+    )
+  }
   return input.key === k || input.code === k
 }
 
@@ -580,7 +666,20 @@ export function prettyAccelerator(
   const parts = accelerator.split('+').filter(Boolean)
   if (parts.length === 0) return notSet
   const key = parts[parts.length - 1]!
-  const displayKey = key === 'Return' ? (isMac(platform) ? '↵' : 'Enter') : key
+  const arrowGlyph: Record<string, string> = {
+    Left: '←',
+    Right: '→',
+    Up: '↑',
+    Down: '↓'
+  }
+  const displayKey =
+    key === 'Return'
+      ? isMac(platform)
+        ? '↵'
+        : 'Enter'
+      : isMac(platform)
+        ? (arrowGlyph[key] ?? key)
+        : key
 
   if (isMac(platform)) {
     return parts
@@ -668,4 +767,46 @@ export function defaultAccelerator(id: AcceleratorKeyBindingId): string {
 
 export function acceleratorKeyBindingIds(): AcceleratorKeyBindingId[] {
   return ACCELERATOR_IDS.slice()
+}
+
+export function acceleratorInputFromDom(event: {
+  type?: string
+  key: string
+  code?: string
+  ctrlKey: boolean
+  altKey: boolean
+  shiftKey: boolean
+  metaKey: boolean
+}): AcceleratorInput {
+  return {
+    type: event.type === 'keyup' ? 'keyUp' : 'keyDown',
+    key: event.key,
+    code: event.code ?? '',
+    control: event.ctrlKey,
+    alt: event.altKey,
+    shift: event.shiftKey,
+    meta: event.metaKey
+  }
+}
+
+/** First remappable binding that matches this key event, if any. */
+export function matchingKeyBindingId(
+  event: {
+    type?: string
+    key: string
+    code?: string
+    ctrlKey: boolean
+    altKey: boolean
+    shiftKey: boolean
+    metaKey: boolean
+  },
+  bindings: ResolvedKeyBindings,
+  platform: Platform,
+  ids: readonly AcceleratorKeyBindingId[] = ACCELERATOR_IDS
+): AcceleratorKeyBindingId | null {
+  const input = acceleratorInputFromDom(event)
+  for (const id of ids) {
+    if (matchesAccelerator(input, bindings[id], platform)) return id
+  }
+  return null
 }

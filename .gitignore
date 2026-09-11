@@ -38,3 +38,11 @@ sidecar/tailcatbridge/tailcatbridge.exe
 
 # gomobile output (scripts/build-tailcat-ios.mjs)
 ios/VAVRemote/Frameworks/
+packages/vav-ios/VAVRemote/Frameworks/
+
+# Xcode build artifacts
+packages/vav-ios/DerivedData/
+
+# Generated pack / build outputs
+extension/
+packages/vavd/

@@ -86,14 +86,14 @@ export function isSessionUnread(opts: {
   )
 }
 
-/** Sidebar LED after awaiting / running — unseen finish tone. */
+/** Sidebar LED: pending (ask / permission) yellow, unseen finish green / red. */
 export function sessionUnreadBadge(
   awaiting: boolean,
   running: boolean,
   activity: string | undefined
-): 'awaiting' | 'running' | 'done' | 'failed' | null {
-  if (awaiting) return 'awaiting'
-  if (running) return 'running'
+): 'awaiting' | 'done' | 'failed' | null {
+  if (awaiting || activity === 'pending') return 'awaiting'
+  if (running) return null
   if (activity === 'done' || activity === 'failed') return activity
   return null
 }

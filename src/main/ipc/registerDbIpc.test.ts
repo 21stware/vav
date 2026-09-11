@@ -42,7 +42,13 @@ describe('registerDbIpc', () => {
     registerDbIpc(
       ipcMain as never,
       store,
-      { evict: () => undefined } as never,
+      {
+        evict: () => undefined,
+        test: async (id: string) => {
+          store.markStatus(id, 'ok', null)
+          return { ok: true }
+        }
+      } as never,
       {
         get: (id: string) => conversations.get(id),
         updateMeta: (id: string, patch: { dbConnectionId?: string }) => {
@@ -73,5 +79,47 @@ describe('registerDbIpc', () => {
     const opened = (await handlers.get(IPC.dbOpen)?.({}, created.id)) as { lastStatus: string }
     assert.equal(opened.lastStatus, 'ok')
     assert.equal(store.get(created.id)?.lastStatus, 'ok')
+  })
+
+  it('does not mark a connection ready when the probe fails', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'vav-db-ipc-'))
+    const store = new DbConnectionStore(dir, memoryVault())
+    const conversations = new Map<string, Conversation>()
+    const conversation = { id: 'c2', title: 'Database' } as Conversation
+    conversations.set(conversation.id, conversation)
+    const handlers = new Map<string, (...args: unknown[]) => unknown>()
+    const ipcMain = {
+      handle: (channel: string, fn: (...args: unknown[]) => unknown) => {
+        handlers.set(channel, fn)
+      }
+    }
+    registerDbIpc(
+      ipcMain as never,
+      store,
+      {
+        evict: () => undefined,
+        test: async (id: string) => {
+          store.markStatus(id, 'failed', 'Connect timed out')
+          return { ok: false, error: 'Connect timed out' }
+        }
+      } as never,
+      {
+        get: (id: string) => conversations.get(id),
+        updateMeta: () => undefined
+      } as never,
+      () => undefined,
+      {
+        createDefinitionConversation: () => {
+          throw new Error('should not mint a conversation')
+        },
+        publishConversations: () => undefined
+      }
+    )
+    const created = (await handlers.get(IPC.dbEnsureForConversation)?.({}, 'c2')) as { id: string }
+    await assert.rejects(
+      () => handlers.get(IPC.dbOpen)?.({}, created.id) as Promise<unknown>,
+      /Connect timed out/
+    )
+    assert.equal(store.get(created.id)?.lastStatus, 'failed')
   })
 })

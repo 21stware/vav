@@ -6,7 +6,9 @@ import {
   UPDATE_HEARTBEAT_MS,
   isAutoUpdatePolicy,
   isUpdateBusyPhase,
+  isUpdateCancellationError,
   isUpdateSettledPhase,
+  canCancelUpdateDownload,
   nextUpdateFollowUp,
   resolveAutoUpdatePolicy,
   shouldAutoCheck,
@@ -176,5 +178,20 @@ describe('phase helpers', () => {
     assert.equal(isUpdateBusyPhase('available'), false)
     assert.equal(isUpdateSettledPhase('ready'), true)
     assert.equal(isUpdateSettledPhase('available'), false)
+  })
+
+  it('allows cancel only while the package is downloading', () => {
+    assert.equal(canCancelUpdateDownload('downloading'), true)
+    assert.equal(canCancelUpdateDownload('preparing'), false)
+    assert.equal(canCancelUpdateDownload('available'), false)
+  })
+})
+
+describe('isUpdateCancellationError', () => {
+  it('recognizes electron-updater cancellation', () => {
+    assert.equal(isUpdateCancellationError({ name: 'CancellationError', message: 'cancelled' }), true)
+    assert.equal(isUpdateCancellationError(new Error('Download was canceled')), true)
+    assert.equal(isUpdateCancellationError(new Error('network timeout')), false)
+    assert.equal(isUpdateCancellationError(null), false)
   })
 })

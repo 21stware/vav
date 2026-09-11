@@ -186,7 +186,9 @@ export function Composer({
   const t = useT()
   const isSchedule = variant === 'schedule'
   const storeActiveId = useSessionStore((s) => s.activeId)
-  const conversationId = (pinnedConversationId?.trim() || storeActiveId) || ''
+  const conversationId = isSchedule
+    ? (pinnedConversationId?.trim() ?? '')
+    : (pinnedConversationId?.trim() || storeActiveId) || ''
   const conversation = useSessionStore((s) =>
     s.conversations.find((c) => c.id === conversationId)
   )

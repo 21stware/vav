@@ -4,7 +4,14 @@
  */
 
 export type TrayPaneKind = 'agent' | 'chat' | 'bash'
-export type TrayPaneStatus = 'running' | 'done' | 'failed'
+export type TrayPaneStatus = 'pending' | 'running' | 'done' | 'failed'
+
+const STATUS_RANK: Record<TrayPaneStatus, number> = {
+  running: 0,
+  pending: 1,
+  failed: 2,
+  done: 3
+}
 
 const KIND_RANK: Record<TrayPaneKind, number> = {
   chat: 0,
@@ -67,14 +74,16 @@ export function traySessionLabel(pane: TrayPane): string {
 export function trayStatusRowLabel(
   title: string,
   status: TrayPaneStatus,
-  words: { running: string; done: string; failed?: string }
+  words: { pending?: string; running: string; done: string; failed?: string }
 ): string {
   const word =
     status === 'failed'
       ? (words.failed ?? words.done)
       : status === 'done'
         ? words.done
-        : words.running
+        : status === 'pending'
+          ? (words.pending ?? words.running)
+          : words.running
   return `${word} · ${title}`
 }
 
@@ -108,7 +117,7 @@ export function mergeLiveAndUnseenTrayPanes(live: TrayPane[], unseen: TrayPane[]
   return [...live.map((pane) => ({ ...pane, status: pane.status ?? 'running' })), ...extra]
 }
 
-/** Window LED: Running wins if any pane in the conversation is live. */
+/** Window LED: Running wins, then Pending, then Failed over Done. */
 export function collapseTrayActivity(
   panes: Array<{ conversationId: string; status?: TrayPaneStatus }>
 ): ConversationActivityRow[] {
@@ -116,8 +125,9 @@ export function collapseTrayActivity(
   for (const pane of panes) {
     const status = pane.status ?? 'running'
     const prev = byId.get(pane.conversationId)
-    if (!prev || status === 'running') byId.set(pane.conversationId, status)
-    else if (prev === 'done' && status === 'failed') byId.set(pane.conversationId, status)
+    if (!prev || STATUS_RANK[status] < STATUS_RANK[prev]) {
+      byId.set(pane.conversationId, status)
+    }
   }
   return [...byId.entries()].map(([conversationId, status]) => ({ conversationId, status }))
 }
@@ -142,7 +152,7 @@ export function collapseTrayPanesByConversation(panes: TrayPane[]): TrayPane[] {
     }
     const nextStatus = pane.status ?? 'running'
     const prevStatus = existing.status ?? 'running'
-    if (nextStatus === 'running' && prevStatus === 'done') {
+    if (STATUS_RANK[nextStatus] < STATUS_RANK[prevStatus]) {
       byId.set(pane.conversationId, pane)
       continue
     }
@@ -262,12 +272,12 @@ export function groupTrayPanes(panes: TrayPane[]): TrayPaneGroup[] {
   return order.map((dirKey) => {
     const list = buckets.get(dirKey) ?? []
     list.sort((a, b) => {
-      const aDone = a.status === 'done' || a.status === 'failed' ? 1 : 0
-      const bDone = b.status === 'done' || b.status === 'failed' ? 1 : 0
-      if (aDone !== bDone) return aDone - bDone
-      const aRank = KIND_RANK[a.kind] ?? 10
-      const bRank = KIND_RANK[b.kind] ?? 10
-      if (aRank !== bRank) return aRank - bRank
+      const aStatus = STATUS_RANK[a.status ?? 'running'] ?? 10
+      const bStatus = STATUS_RANK[b.status ?? 'running'] ?? 10
+      if (aStatus !== bStatus) return aStatus - bStatus
+      const aKind = KIND_RANK[a.kind] ?? 10
+      const bKind = KIND_RANK[b.kind] ?? 10
+      if (aKind !== bKind) return aKind - bKind
       return b.createdAt - a.createdAt
     })
     return {

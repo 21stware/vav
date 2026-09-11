@@ -44,6 +44,7 @@ export function AboutSettings(): React.JSX.Element {
   const openSettings = useSessionStore((s) => s.openSettings)
   const checkForUpdates = useSessionStore((s) => s.checkForUpdates)
   const downloadUpdate = useSessionStore((s) => s.downloadUpdate)
+  const cancelUpdateDownload = useSessionStore((s) => s.cancelUpdateDownload)
   const installUpdate = useSessionStore((s) => s.installUpdate)
   const phase = updateState.phase
   const latestVersion = updateState.latestVersion
@@ -218,6 +219,14 @@ export function AboutSettings(): React.JSX.Element {
               label={t('update.availableButton', { version: latestVersion ?? '' })}
               variant="primary"
               onClick={() => void downloadUpdate()}
+            />
+          ) : null}
+          {phase === 'downloading' ? (
+            <Button
+              label={t('update.cancel')}
+              variant="secondary"
+              testId="settings-about-update-cancel"
+              onClick={() => void cancelUpdateDownload()}
             />
           ) : null}
           {canRestart ? (

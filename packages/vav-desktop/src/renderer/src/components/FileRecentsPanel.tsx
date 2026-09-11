@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useState } from 'react'
-import { FileText } from 'lucide-react'
+import { ChevronDown } from 'lucide-react'
 import type { FileSessionListEntry } from '@shared/ipc'
 import { useSessionStore } from '../state/sessionStore'
 import { useT } from '../i18n/useT'
 import { useSidebarFloatMode } from '../lib/sidebarLayout'
 import { basename, dirname } from '../lib/path'
 import { relativeTime } from '../lib/format'
-import { uniqueRecentFileRows } from '../lib/sidebarList'
+import { hostMachineLabel, uniqueRecentFileRows } from '../lib/sidebarList'
+import { isLocalMachine, LOCAL_MACHINE_ID, normalizeMachineId } from '@shared/workspaceHost'
 import {
   fileSessionSelectHint,
   openExistingFileSession,
@@ -14,10 +15,18 @@ import {
 } from '../lib/openFileSession'
 import { ShellLeadingControls } from './ShellLeadingControls'
 import { Button } from './ui'
+import { MachineFilesBrowser } from './filesPanel/MachineFilesBrowser'
 
 export function FileRecentsPanel(): React.JSX.Element {
   const t = useT()
   const sidebarVisible = useSessionStore((s) => s.sidebarVisible)
+  const source = useSessionStore((s) => s.filesSource)
+  const setFilesSource = useSessionStore((s) => s.setFilesSource)
+  const windowMachineId = normalizeMachineId(useSessionStore((s) => s.windowMachineId))
+  const hosts = useSessionStore((s) => s.hosts)
+  const machineLabel = isLocalMachine(windowMachineId)
+    ? t('sidebar.thisMac')
+    : hostMachineLabel(windowMachineId, hosts, LOCAL_MACHINE_ID, t('sidebar.thisMac'))
   const fileSessionKey = useSessionStore((s) =>
     s.conversations
       .filter((c) => c.fileId)
@@ -38,11 +47,11 @@ export function FileRecentsPanel(): React.JSX.Element {
     } finally {
       setLoading(false)
     }
-  }, [])
+  }, [windowMachineId])
 
   useEffect(() => {
     void refresh()
-  }, [refresh, fileSessionKey])
+  }, [refresh, fileSessionKey, windowMachineId])
 
   const openPicker = useCallback((): void => {
     void openPickedFileSessions().then((opened) => {
@@ -61,14 +70,23 @@ export function FileRecentsPanel(): React.JSX.Element {
               <ShellLeadingControls />
             </div>
           ) : null}
+          <div className="font-select file-source-select">
+            <select
+              className="text-field font-select-field"
+              data-testid="file-source-select"
+              aria-label={t('sidebar.filesSource')}
+              value={source}
+              onChange={(event) =>
+                setFilesSource(event.target.value === 'thisMac' ? 'thisMac' : 'recent')
+              }
+            >
+              <option value="recent">{t('sidebar.recentFiles')}</option>
+              <option value="thisMac">{machineLabel}</option>
+            </select>
+            <ChevronDown className="font-select-chevron" size={14} strokeWidth={2} aria-hidden />
+          </div>
           <span className="spacer" />
-        </div>
-      </header>
-      <div className="file-recents-body">
-        <div className="file-recents-card">
-          <div className="inline-review-head">
-            <FileText size={14} className="inline-review-icon" aria-hidden />
-            <span className="inline-review-title">{t('sidebar.recentFiles')}</span>
+          {source === 'recent' && isLocalMachine(windowMachineId) ? (
             <Button
               variant="secondary"
               size="sm"
@@ -77,49 +95,57 @@ export function FileRecentsPanel(): React.JSX.Element {
               label={t('sidebar.openAFile')}
               onClick={openPicker}
             />
-          </div>
-          {loading ? null : rows.length === 0 ? (
-            <p className="file-recents-empty">{t('sidebar.recentFilesEmpty')}</p>
-          ) : (
-            <ul className="inline-review-files file-recents-files">
-              {rows.map((row) => {
-                const name = basename(row.path) || row.path
-                const folder = basename(dirname(row.path)) || dirname(row.path)
-                const missing =
-                  row.pathStatus === 'dir_missing'
-                    ? t('sidebar.dirNotExist')
-                    : row.pathStatus === 'file_missing'
-                      ? t('sidebar.fileNotExist')
-                      : null
-                const meta = missing
-                  ? `${folder} · ${missing}`
-                  : `${folder} · ${relativeTime(row.updatedAt)}`
-                return (
-                  <li key={row.path} className="inline-review-file" data-testid="file-recent-row">
-                    <div className="inline-review-file-main">
-                      <button
-                        type="button"
-                        className="inline-review-file-row"
-                        title={row.path}
-                        onClick={() =>
-                          openExistingFileSession(
-                            row.path,
-                            row.sessionId,
-                            fileSessionSelectHint(row)
-                          )
-                        }
-                      >
-                        <span className="inline-review-file-name">{name}</span>
-                        <span className="inline-review-file-meta">{meta}</span>
-                      </button>
-                    </div>
-                  </li>
-                )
-              })}
-            </ul>
-          )}
+          ) : null}
         </div>
-      </div>
+      </header>
+      {source === 'thisMac' ? (
+        <MachineFilesBrowser key={windowMachineId} />
+      ) : (
+        <div className="file-recents-body">
+          <div className="file-recents-card">
+            {loading ? null : rows.length === 0 ? (
+              <p className="file-recents-empty">{t('sidebar.recentFilesEmpty')}</p>
+            ) : (
+              <ul className="inline-review-files file-recents-files">
+                {rows.map((row) => {
+                  const name = basename(row.path) || row.path
+                  const folder = basename(dirname(row.path)) || dirname(row.path)
+                  const missing =
+                    row.pathStatus === 'dir_missing'
+                      ? t('sidebar.dirNotExist')
+                      : row.pathStatus === 'file_missing'
+                        ? t('sidebar.fileNotExist')
+                        : null
+                  const meta = missing
+                    ? `${folder} · ${missing}`
+                    : `${folder} · ${relativeTime(row.updatedAt)}`
+                  return (
+                    <li key={row.path} className="inline-review-file" data-testid="file-recent-row">
+                      <div className="inline-review-file-main">
+                        <button
+                          type="button"
+                          className="inline-review-file-row"
+                          title={row.path}
+                          onClick={() =>
+                            openExistingFileSession(
+                              row.path,
+                              row.sessionId,
+                              fileSessionSelectHint(row)
+                            )
+                          }
+                        >
+                          <span className="inline-review-file-name">{name}</span>
+                          <span className="inline-review-file-meta">{meta}</span>
+                        </button>
+                      </div>
+                    </li>
+                  )
+                })}
+              </ul>
+            )}
+          </div>
+        </div>
+      )}
     </main>
   )
 }

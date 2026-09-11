@@ -11,6 +11,11 @@ export type SystemPromptOptions = {
   openFilePath?: string | null
   openFileKind?: string | null
   dbSession?: boolean
+  dbDriver?: string
+  /** Connection display name (`database@host` or user title). */
+  dbTitle?: string | null
+  /** Open table in the preview. Null/omit = connection settings. */
+  dbTable?: string | null
   /** Pre-formatted skill catalog lines for progressive disclosure. */
   skillCatalog?: string | null
   /** Stdout from SessionStart / UserPromptSubmit hooks. */
@@ -70,13 +75,6 @@ export function buildSystemPrompt(
         'Do not open or search other documents in the folder unless the user explicitly asks for them.',
         ''
       )
-    } else if (options?.dbSession) {
-      lines.push(
-        'This session is attached to a live PostgreSQL database.',
-        'For tabular analysis prefer `sql_query` against that connection (omit path). Do not invent write/DDL APIs — only read-only SQL is allowed.',
-        'Start with information_schema or `SELECT * FROM … LIMIT 20` to learn tables. Do not open unrelated files unless the user asks.',
-        ''
-      )
     } else if (openKind === 'csv' || openKind === 'parquet' || openKind === 'sqlite') {
       lines.push(
         'That file is the primary document for this session.',
@@ -110,6 +108,21 @@ export function buildSystemPrompt(
         ''
       )
     }
+  } else if (options?.dbSession) {
+    const dialect = options.dbDriver?.trim() || 'PostgreSQL'
+    const dbTitle = options.dbTitle?.trim()
+    const dbTable = options.dbTable?.trim()
+    lines.push(
+      dbTitle
+        ? `This session is attached to a live ${dialect} database: ${dbTitle}.`
+        : `This session is attached to a live ${dialect} database.`,
+      dbTable
+        ? `The user is viewing table \`${dbTable}\` in the preview (like a sheet in a workbook). When they say "this table" / "the table" / "这张表", they mean \`${dbTable}\`. Query that table unless they name another.`
+        : 'The user is viewing this connection\'s settings, not a specific table. When they ask about "this database" / "这个库", they mean this connection. List or inspect tables before assuming a name.',
+      'For tabular analysis prefer `sql_query` against that connection (omit path). Do not invent write/DDL APIs — only read-only SQL is allowed.',
+      'Start with information_schema / system tables or `SELECT * FROM … LIMIT 20` to learn tables. Use the dialect of this connection. Do not open unrelated files unless the user asks.',
+      ''
+    )
   }
   if (options?.fileReadOnly) {
     lines.push(
@@ -132,7 +145,7 @@ export function buildSystemPrompt(
       : '- `fs_read` / `fs_write` / `fs_list` operate on the local filesystem.',
     `- Artifacts are **only** deliberate user-facing documents (reports, briefs, HTML pages, slides notes). Ordinary source edits are not artifacts. Mark a deliverable with \`${ARTIFACT_MARKER}\` near the top of the file, and/or \`artifact: true\` on \`fs_write\`.`,
     '- `doc_search` / `doc_fetch` — local retrieval over PDF, Word, Excel, PowerPoint, CSV/TSV, and text. Prefer these over terminal/python for office/PDF **reading** (PDF = extractable text layer only; no OCR). Do not install python-docx/pdf tools when doc_search can read the file. Not for images/audio/video.',
-    '- `sql_query` — analytical SQL. On a live DB session, queries PostgreSQL (omit path). Otherwise DuckDB over a SQLite, CSV, TSV, or Parquet file (not `.xlsx`). Use for aggregation, GROUP BY, JOIN, window functions, filtering. Prefer this over paging the preview when you need to compute.',
+    '- `sql_query` — analytical SQL. On a live DB session, queries that connection (PostgreSQL / MySQL / ClickHouse / BigQuery / DuckDB; omit path). Otherwise DuckDB over a SQLite, CSV, TSV, or Parquet file (not `.xlsx`). Use for aggregation, GROUP BY, JOIN, window functions, filtering. Prefer this over paging the preview when you need to compute.',
     '- `web_search` / `web_fetch` — public web from this machine (Brave if key configured, else optional SearXNG, else DuckDuckGo HTML). Search first, then fetch promising URLs. HTML/PDF/text/JSON supported; private/localhost URLs are blocked. Prefer these over `terminal` curl/wget for reading pages.',
     '- `load_skill` — load a domain skill (SKILL.md + optional scripts/references) before specialized work. Catalog metadata is below; full instructions load on demand.',
     '- `connector` — GitHub / Cloudflare / Supabase / Vercel. `op=list|probe|act`. Deploy is a connector action, not a skill. GitHub is read-only.',

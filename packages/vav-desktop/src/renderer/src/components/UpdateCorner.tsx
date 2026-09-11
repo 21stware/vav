@@ -1,4 +1,4 @@
-import { Download, LoaderCircle, RotateCw } from 'lucide-react'
+import { Download, LoaderCircle, RotateCw, X } from 'lucide-react'
 import { useSessionStore } from '../state/sessionStore'
 import { useT } from '../i18n/useT'
 
@@ -25,6 +25,7 @@ export function UpdateCorner({
   const progress = useSessionStore((s) => s.updateState.progress)
   const bytesPerSecond = useSessionStore((s) => s.updateState.bytesPerSecond)
   const downloadUpdate = useSessionStore((s) => s.downloadUpdate)
+  const cancelUpdateDownload = useSessionStore((s) => s.cancelUpdateDownload)
   const installUpdate = useSessionStore((s) => s.installUpdate)
 
   if (
@@ -57,6 +58,16 @@ export function UpdateCorner({
               speed: formatSpeed(bytesPerSecond ?? 0)
             })}
           </span>
+          <button
+            type="button"
+            className="update-corner-cancel"
+            data-testid="update-cancel"
+            title={t('update.cancel')}
+            aria-label={t('update.cancel')}
+            onClick={() => void cancelUpdateDownload()}
+          >
+            <X size={12} strokeWidth={2.25} aria-hidden />
+          </button>
         </div>
         <div className="update-corner-track" aria-hidden>
           <div
