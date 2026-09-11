@@ -12,6 +12,7 @@ export function newCliToolCallBlock(opts: {
   questions?: ToolCallBlock['questions']
   askTitle?: string
   choices?: string[]
+  secretRequests?: ToolCallBlock['secretRequests']
 }): ToolCallBlock {
   const block: ToolCallBlock = {
     kind: 'toolCall',
@@ -26,6 +27,7 @@ export function newCliToolCallBlock(opts: {
   if (opts.questions) block.questions = opts.questions
   if (opts.askTitle) block.askTitle = opts.askTitle
   if (opts.choices) block.choices = opts.choices
+  if (opts.secretRequests) block.secretRequests = opts.secretRequests
   return block
 }
 
@@ -52,7 +54,10 @@ export function shouldKeepPendingInteractive(block: {
   tool: string
 }): boolean {
   return (
-    block.status === 'pending' && (block.tool === 'plan_doc' || block.tool === 'ask_user_question')
+    block.status === 'pending' &&
+    (block.tool === 'plan_doc' ||
+      block.tool === 'ask_user_question' ||
+      block.tool === 'request_for_secret')
   )
 }
 
@@ -82,6 +87,7 @@ export function applyToolRuntimePatch(
     multiSelect?: boolean
     questions?: ToolCallBlock['questions']
     askTitle?: string
+    secretRequests?: ToolCallBlock['secretRequests']
   }
 ): ToolCallBlock {
   const block: ToolCallBlock = {
@@ -93,13 +99,16 @@ export function applyToolRuntimePatch(
     delete block.choices
     delete block.multiSelect
     delete block.questions
-    delete block.askTitle
+    if (!state.askTitle) delete block.askTitle
+    if (!state.secretRequests?.length) delete block.secretRequests
   } else {
     block.choices = state.choices
     if (state.multiSelect != null) block.multiSelect = state.multiSelect
     if (state.questions) block.questions = state.questions
     if (state.askTitle) block.askTitle = state.askTitle
   }
+  if (state.askTitle) block.askTitle = state.askTitle
+  if (state.secretRequests?.length) block.secretRequests = state.secretRequests
   return block
 }
 
@@ -118,6 +127,7 @@ export function applyToolStatePatch<T extends { status: string; output?: string 
     multiSelect?: unknown
     questions?: unknown
     askTitle?: unknown
+    secretRequests?: unknown
   }
 ): T {
   Object.assign(prev, patch)
@@ -129,6 +139,9 @@ export function applyToolStatePatch<T extends { status: string; output?: string 
     delete (prev as { questions?: unknown }).questions
   }
   if ('askTitle' in patch && patch.askTitle === undefined) delete (prev as { askTitle?: unknown }).askTitle
+  if ('secretRequests' in patch && patch.secretRequests === undefined) {
+    delete (prev as { secretRequests?: unknown }).secretRequests
+  }
   return prev
 }
 

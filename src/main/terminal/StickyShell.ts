@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import type { ShellKind } from '@shared/types'
 import { localHostProcess, type HostChild, type HostProcess } from '../host/HostProcess.ts'
+import { isValidEnvName } from '@shared/sessionSecrets'
 import { agentShellEnv } from './agentShellEnv'
 import { appendCapped } from './bufferCap.ts'
 
@@ -134,11 +135,45 @@ export class StickyShell {
 
   private shell: ShellKind
   private hostProcess: HostProcess
+  private extraEnv?: () => Record<string, string>
 
-  constructor(shell: ShellKind, cwd: string, hostProcess: HostProcess = localHostProcess) {
+  constructor(
+    shell: ShellKind,
+    cwd: string,
+    hostProcess: HostProcess = localHostProcess,
+    extraEnv?: () => Record<string, string>
+  ) {
     this.shell = shell
     this.cwd = cwd
     this.hostProcess = hostProcess
+    this.extraEnv = extraEnv
+  }
+
+  private spawnEnv(extra?: Record<string, string | undefined>): Record<string, string> {
+    return agentShellEnv({ ...this.extraEnv?.(), ...extra })
+  }
+
+  /**
+   * Export session secrets into the already-running sticky shell.
+   * Queued so it never interleaves with a framed command. Not recorded
+   * in scrollback (values must not leak to `read_bash_session`).
+   */
+  injectEnv(vars: Record<string, string>): Promise<void> {
+    return this.writeSilent(envExportScript(this.shell, vars))
+  }
+
+  /** Drop session secrets from the already-running sticky shell. */
+  unsetEnv(names: string[]): Promise<void> {
+    return this.writeSilent(envUnsetScript(this.shell, names))
+  }
+
+  private writeSilent(script: string): Promise<void> {
+    const task = this.queue.then(() => {
+      if (!script || !this.child?.stdin) return
+      this.child.stdin.write(script)
+    })
+    this.queue = task.catch(() => undefined)
+    return task
   }
 
   private recordSession(chunk: string): void {
@@ -321,7 +356,7 @@ export class StickyShell {
         oneShotArgs(this.shell, command),
         {
           cwd: this.cwd,
-          env: agentShellEnv(),
+          env: this.spawnEnv(),
           detached: !IS_WINDOWS,
           windowsHide: true,
           stdio: ['ignore', 'pipe', 'pipe']
@@ -597,7 +632,7 @@ export class StickyShell {
   private spawnShell(): void {
     const child = this.hostProcess.spawn(shellPath(this.shell), stdinArgs(this.shell), {
       cwd: this.cwd,
-      env: agentShellEnv(),
+      env: this.spawnEnv(),
       // Own process group, so a timeout can take the whole command tree down.
       detached: !IS_WINDOWS,
       windowsHide: true,
@@ -644,7 +679,7 @@ export class StickyShell {
     return new Promise((resolve) => {
       const child = this.hostProcess.spawn(shellPath(this.shell), oneShotArgs(this.shell, command), {
         cwd: this.cwd,
-        env: agentShellEnv({ TERM: 'dumb' }),
+        env: this.spawnEnv({ TERM: 'dumb' }),
         detached: !IS_WINDOWS,
         windowsHide: true,
         stdio: ['pipe', 'pipe', 'pipe']
@@ -732,6 +767,37 @@ export class StickyShell {
 
 function quote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`
+}
+
+function envExportScript(kind: ShellKind, vars: Record<string, string>): string {
+  const lines: string[] = []
+  for (const [name, value] of Object.entries(vars)) {
+    if (!isValidEnvName(name)) continue
+    const cleaned = value.replace(/\0/g, '')
+    if (kind === 'powershell') {
+      lines.push(`$env:${name} = '${cleaned.replace(/'/g, "''")}'`)
+    } else if (kind === 'fish') {
+      lines.push(`set -gx ${name} ${quote(cleaned)}`)
+    } else {
+      lines.push(`export ${name}=${quote(cleaned)}`)
+    }
+  }
+  return lines.length ? `${lines.join('\n')}\n` : ''
+}
+
+function envUnsetScript(kind: ShellKind, names: string[]): string {
+  const lines: string[] = []
+  for (const name of names) {
+    if (!isValidEnvName(name)) continue
+    if (kind === 'powershell') {
+      lines.push(`Remove-Item Env:${name} -ErrorAction SilentlyContinue`)
+    } else if (kind === 'fish') {
+      lines.push(`set -e ${name}`)
+    } else {
+      lines.push(`unset ${name}`)
+    }
+  }
+  return lines.length ? `${lines.join('\n')}\n` : ''
 }
 
 function escapeRegex(value: string): string {

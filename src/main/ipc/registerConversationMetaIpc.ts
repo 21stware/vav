@@ -65,6 +65,11 @@ export type ConversationMetaIpcHost = {
   forwardSetLeaf?: (id: string, leafId: string) => Promise<boolean>
   forwardDuplicate?: (id: string) => Promise<ConversationMeta | null | undefined>
   forwardContinue?: (id: string, messageId: string) => Promise<ConversationMeta | null | undefined>
+  /**
+   * Local store miss — pull from spawned vav-server. File-preview sessions
+   * never enter listClientMeta, so click-to-view depends on this.
+   */
+  forwardGet?: (id: string) => Promise<Conversation | null | undefined>
 }
 
 /** Sidebar list / pin / archive / model — create and host-switch stay in the entry. */
@@ -74,9 +79,11 @@ export function registerConversationMetaIpc(
   host: ConversationMetaIpcHost
 ): void {
   ipcMain.handle(IPC.convList, () => store.listMeta())
-  ipcMain.handle(IPC.convGet, (_event, id: string) => {
+  ipcMain.handle(IPC.convGet, async (_event, id: string) => {
     if (store.hydrateMissingHostUsage(id)) host.publish()
-    return store.get(id) ?? null
+    const local = store.get(id)
+    if (local) return local
+    return (await host.forwardGet?.(id)) ?? null
   })
   ipcMain.handle(IPC.convRename, async (_event, id: string, title: string) => {
     const next = title.trim() || host.untitledTitle()

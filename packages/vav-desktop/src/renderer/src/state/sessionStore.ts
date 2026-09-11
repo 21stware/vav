@@ -15,7 +15,7 @@ import { DEFAULT_CLI_AGENTS, DEFAULT_SETTINGS } from '@shared/types'
 import type { WorkspaceHostInfo } from '@shared/workspaceHost'
 import type { IncomingController } from '@shared/daemonProtocol'
 import type { RemoteControlStatus } from '@shared/remoteControl'
-import { mergeConversationList, nextConversationSelection, isArchivedConversation, regenerateActiveLeaf, canMutateActiveSession, compactRefusalReason, genericErrorBanner, patchConversationById, shouldSkipSessionDeleteConfirm, fallbackConversationIdAfterDelete, sessionDeleteDialogCopy, prependConversationIfMissing, listedConversationIdsForSelect, fileSessionHydrateOnDemandPatch, deleteMessageHydratePatch, renameConversationPatch, rememberDroppedConversationIds, isDroppedConversationId } from './sessionListMerge'
+import { mergeConversationList, nextConversationSelection, isArchivedConversation, regenerateActiveLeaf, canMutateActiveSession, compactRefusalReason, genericErrorBanner, patchConversationById, shouldSkipSessionDeleteConfirm, fallbackConversationIdAfterDelete, sessionDeleteDialogCopy, prependConversationIfMissing, listedConversationIdsForSelect, fileSessionHydrateOnDemandPatch, fileSessionHintToMeta, deleteMessageHydratePatch, renameConversationPatch, rememberDroppedConversationIds, isDroppedConversationId, type FileSessionSelectHint } from './sessionListMerge'
 import {
   activeToolsFields,
   collapsedFileSessionTools,
@@ -104,6 +104,7 @@ import {
   mergeImageAttachments
 } from '@shared/agentImageInput'
 import { tt } from '../i18n/useT'
+import { isDraftDbTitle, isDraftScheduledTitle } from '../lib/draftEditorTitle'
 import { isTemporaryWorkspace } from '../lib/format'
 import { conversationFitsListMode, nextConversationForListMode } from '../lib/sidebarList'
 import { isTimerDefinition } from '@shared/sessionKind'
@@ -144,8 +145,10 @@ import { chatHostPickerModels, coercedChatHostModel, defaultModelSettingsPatch, 
 
 function swarmBlocksWorkdirSwitch(
   id: string | null | undefined,
-  swarmEnabled: boolean
+  swarmEnabled: boolean,
+  archived?: boolean
 ): boolean {
+  if (archived) return true
   return swarmSurfaceBlocksWorkdir(
     id,
     swarmEnabled,
@@ -233,7 +236,7 @@ interface SessionState {
   /** Tray-identical Running / Done per conversation — drives the window LED. */
   activityById: Record<string, 'running' | 'done' | 'failed'>
   sidebarQuery: string
-  /** Session-list filter field is open (toolbar button, not persisted). */
+  /** Request focus on the always-visible list search field (not persisted). */
   sidebarSearchOpen: boolean
   renamingId: string | null
   /** Set in a detached window, which follows exactly one conversation. */
@@ -413,6 +416,11 @@ interface SessionState {
        * Default false: sidebar clicks leave workspace view.
        */
       stayInWorkspace?: boolean
+      /**
+       * File-category click: seed fileId so FileSessionView mounts even when
+       * conversations.get misses (body lives on spawned vav-server).
+       */
+      fileSession?: FileSessionSelectHint
     }
   ): Promise<void>
   /**
@@ -451,6 +459,10 @@ interface SessionState {
    * otherwise mint the same draft as "New scheduled task".
    */
   ensureScheduledConversation(): void
+  /** New database connection: configure in the current window's right panel. */
+  createDbConversation(): Promise<void>
+  /** DB category: keep a connection editor open. */
+  ensureDbConversation(): void
   /** ⌘D / ⌘⇧D: mint a sibling agent session and split the Thread surface. */
   splitSwarmPane(axis?: TerminalSplitAxis): Promise<void>
   /** Hide a Swarm pane without deleting the agent session. */
@@ -586,6 +598,10 @@ interface SessionState {
   drainMessageQueue(conversationId: string): Promise<void>
   cancel(id: string): Promise<void>
   answerTool(toolCallId: string, answer: string): Promise<boolean>
+  answerSecrets(
+    toolCallId: string,
+    payload: import('@shared/types').SecretAnswerPayload
+  ): Promise<boolean>
   regenerate(messageId: string): Promise<void>
   editUserMessage(messageId: string, text: string): Promise<void>
   selectBranch(messageId: string): Promise<void>
@@ -687,6 +703,8 @@ let workspaceSelectGen = 0
 const hydrationGen = new Map<string, number>()
 /** Coalesce overlapping "new scheduled task" calls (category open + empty list). */
 let scheduledCreateInflight: Promise<void> | null = null
+/** Coalesce overlapping "new database" calls (category open + empty list). */
+let dbCreateInflight: Promise<void> | null = null
 
 export const useSessionStore = create<SessionState>((set, get) => ({
   sidebarVisible: globalLayout.sidebarVisible,
@@ -935,7 +953,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     // Prefer an existing conversation already rooted here (reuse quietly).
     // Never adopt a file-bound session as the workspace agent.
     const rooted = get().conversations.find(
-      (c) => !c.archived && !c.fileId && c.sessionKind !== 'timer' && c.workingDirectory === workdir
+      (c) =>
+        !c.archived &&
+        !c.fileId &&
+        c.sessionKind !== 'timer' &&
+        c.sessionKind !== 'db' &&
+        c.workingDirectory === workdir
     )
     if (rooted) {
       const map = { ...get().workspaceAgentByPath, [workdir]: rooted.id }
@@ -957,6 +980,15 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const { selectedIds, activeId, conversations } = get()
     if (isDroppedConversationId(id)) return
     let target = conversations.find((c) => c.id === id)
+    // File-preview sessions are hidden from listMeta. Seed chrome from the
+    // sidebar row first so FileSessionView can mount before / without get().
+    if (!target && options?.fileSession?.fileId) {
+      const seed = fileSessionHintToMeta(id, options.fileSession)
+      set((state) => ({
+        conversations: prependConversationIfMissing(state.conversations, seed)
+      }))
+      target = seed
+    }
     // File-preview sessions are hidden from listMeta — hydrate on demand.
     if (!target) {
       const full = await window.vav.conversations.get(id)
@@ -1132,7 +1164,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           (job) =>
             !job.enabled &&
             !job.prompt.trim() &&
-            (!job.title.trim() || job.title.trim() === untitled) &&
+            isDraftScheduledTitle(job.title, untitled) &&
             !!job.conversationId
         )
         if (draft?.conversationId) {
@@ -1175,6 +1207,61 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       return
     }
     void get().createScheduledConversation()
+  },
+
+  async createDbConversation() {
+    if (dbCreateInflight) return dbCreateInflight
+    const run = (async () => {
+      if (!window.vav?.db?.create) return
+      try {
+        const untitled = tt('db.untitled')
+        const connections = window.vav.db.list ? await window.vav.db.list() : []
+        const draft = connections.find(
+          (row) =>
+            row.lastStatus !== 'ok' &&
+            !row.database.trim() &&
+            !row.user.trim() &&
+            isDraftDbTitle(row.title, untitled) &&
+            !!row.conversationId
+        )
+        if (draft?.conversationId) {
+          set({ sidebarListMode: 'databases' })
+          await get().selectConversation(draft.conversationId)
+          return
+        }
+        const result = await window.vav.db.create()
+        set((state) => ({
+          ...seedEmptyConversationPatch(state, result.conversation),
+          sidebarListMode: 'databases'
+        }))
+        await get().selectConversation(result.conversation.id)
+      } catch (err) {
+        get().showToast({
+          kind: 'error',
+          title: tt('db.createFailed'),
+          description: err instanceof Error ? err.message : String(err)
+        })
+      }
+    })()
+    dbCreateInflight = run
+    try {
+      await run
+    } finally {
+      if (dbCreateInflight === run) dbCreateInflight = null
+    }
+  },
+
+  ensureDbConversation() {
+    const { conversations, activeId, windowMachineId } = get()
+    const machineId = normalizeMachineId(windowMachineId)
+    const current = conversations.find((row) => row.id === activeId)
+    if (current && conversationFitsListMode(current, 'databases')) return
+    const nextId = nextConversationForListMode(conversations, 'databases', activeId, machineId)
+    if (nextId) {
+      if (nextId !== activeId) void get().selectConversation(nextId)
+      return
+    }
+    void get().createDbConversation()
   },
 
   async splitSwarmPane(axis = 'row') {
@@ -1301,6 +1388,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     if (isTimerDefinition(row ?? {}) && row?.timerJobId && window.vav?.timers?.updateJob) {
       void window.vav.timers.updateJob(row.timerJobId, { title })
     }
+    if (row?.sessionKind === 'db' && row.dbConnectionId && window.vav?.db?.update) {
+      void window.vav.db.update(row.dbConnectionId, { title })
+    }
   },
 
   beginRename(id) {
@@ -1320,23 +1410,50 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       const applyRemove = async (toRemove: string[]): Promise<void> => {
         if (toRemove.length === 0) return
         const jobIds = new Set<string>()
+        const dbIds = new Set<string>()
         for (const id of toRemove) {
           const row = get().conversations.find((item) => item.id === id)
           if (row?.timerJobId) jobIds.add(row.timerJobId)
-          if (!window.vav?.timers?.getJobForConversation) continue
-          try {
-            const job = await window.vav.timers.getJobForConversation(id)
-            if (job) jobIds.add(job.id)
-          } catch {
-            // Job lookup is best-effort; conversation remove still proceeds.
+          if (row?.dbConnectionId) dbIds.add(row.dbConnectionId)
+          if (window.vav?.timers?.getJobForConversation) {
+            try {
+              const job = await window.vav.timers.getJobForConversation(id)
+              if (job) jobIds.add(job.id)
+            } catch {
+              // Job lookup is best-effort; conversation remove still proceeds.
+            }
+          }
+          if (window.vav?.db?.getForConversation) {
+            try {
+              const connection = await window.vav.db.getForConversation(id)
+              if (connection) dbIds.add(connection.id)
+            } catch {
+              // Connection lookup is best-effort.
+            }
           }
         }
         if (window.vav?.timers?.removeJob) {
           for (const jobId of jobIds) {
             try {
-              await window.vav.timers.removeJob(jobId)
+              const ok = await window.vav.timers.removeJob(jobId)
+              if (ok === false) {
+                get().showToast({ kind: 'error', title: tt('timer.deleteFailed') })
+              }
+            } catch (err) {
+              get().showToast({
+                kind: 'error',
+                title: tt('timer.deleteFailed'),
+                description: err instanceof Error ? err.message : String(err)
+              })
+            }
+          }
+        }
+        if (window.vav?.db?.remove) {
+          for (const connectionId of dbIds) {
+            try {
+              await window.vav.db.remove(connectionId)
             } catch {
-              // Job may already be gone; still drop the definition conversation.
+              // Connection may already be gone.
             }
           }
         }
@@ -1349,31 +1466,50 @@ export const useSessionStore = create<SessionState>((set, get) => ({
               jobIds.has(row.timerJobId)
           )
           .map((row) => row.id)
-        const { removed, conversations: next } = await window.vav.conversations.remove([
-          ...toRemove,
-          ...runIds
-        ])
+        const departing = [...toRemove, ...runIds]
+        rememberDroppedConversationIds(departing)
+        let removed = departing
+        let next = get().conversations.filter((row) => !departing.includes(row.id))
+        try {
+          const result = await window.vav.conversations.remove(departing)
+          removed = result.removed.length > 0 ? result.removed : departing
+          next = result.conversations
+        } catch (err) {
+          get().showToast({
+            kind: 'error',
+            title: tt('dialog.deleteSession'),
+            description: err instanceof Error ? err.message : String(err)
+          })
+          return
+        }
         rememberDroppedConversationIds(removed)
-        for (const id of removed) {
+        for (const id of departing) {
           disposeProjection(id)
           useWorkspaceStore.getState().disposeConversation(id)
         }
+        const departingSet = new Set(departing)
         set((state) => {
-          for (const id of removed) hydrationGen.delete(id)
-          const toolsLayouts = omitKeys(state.toolsLayouts, removed)
+          for (const id of departing) hydrationGen.delete(id)
+          const toolsLayouts = omitKeys(state.toolsLayouts, departing)
           saveSessionToolsMap(toolsLayouts)
           return {
-            conversations: next,
+            conversations: mergeConversationList(
+              state.conversations.filter((row) => !departingSet.has(row.id)),
+              next
+            ),
             toolsLayouts,
-            ...omitMappedKeys(state, SESSION_DELETE_MAPPED_KEYS, removed)
+            ...omitMappedKeys(state, SESSION_DELETE_MAPPED_KEYS, departing)
           }
         })
-        if (removed.includes(get().activeId)) {
+        if (departingSet.has(get().activeId)) {
           const fallback =
             get().sidebarListMode === 'timers'
-              ? next.find((c) => c.sessionKind === 'timer' && !c.archived)?.id ??
-                fallbackConversationIdAfterDelete(next)
-              : fallbackConversationIdAfterDelete(next)
+              ? next.find((c) => c.sessionKind === 'timer' && !c.archived && !departingSet.has(c.id))
+                ?.id ?? fallbackConversationIdAfterDelete(next.filter((c) => !departingSet.has(c.id)))
+              : get().sidebarListMode === 'databases'
+                ? next.find((c) => c.sessionKind === 'db' && !c.archived && !departingSet.has(c.id))
+                  ?.id ?? fallbackConversationIdAfterDelete(next.filter((c) => !departingSet.has(c.id)))
+                : fallbackConversationIdAfterDelete(next.filter((c) => !departingSet.has(c.id)))
           if (fallback) await get().selectConversation(fallback)
           else {
             set({ activeId: '', selectedIds: [], activeGroupId: null })
@@ -1550,8 +1686,15 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   async pickWorkingDirectory(id) {
-    if (swarmBlocksWorkdirSwitch(id, get().settings.swarmModeEnabled === true)) return
     const conversation = get().conversations.find((c) => c.id === id)
+    if (
+      swarmBlocksWorkdirSwitch(
+        id,
+        get().settings.swarmModeEnabled === true,
+        conversation?.archived
+      )
+    )
+      return
     const machineId = normalizeMachineId(conversation?.machineId ?? get().windowMachineId)
     if (!isLocalMachine(machineId)) {
       get().openRemoteFolderPicker(id, machineId)
@@ -1569,7 +1712,14 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   async useTempWorkingDirectory(id) {
-    if (swarmBlocksWorkdirSwitch(id, get().settings.swarmModeEnabled === true)) return
+    if (
+      swarmBlocksWorkdirSwitch(
+        id,
+        get().settings.swarmModeEnabled === true,
+        get().conversations.find((c) => c.id === id)?.archived
+      )
+    )
+      return
     const conversations = await window.vav.conversations.useTempWorkingDirectory(id)
     get().revealWorkdirPath(id)
     set((state) => ({
@@ -1580,7 +1730,14 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   async setWorkingDirectory(id, path, machineId) {
-    if (swarmBlocksWorkdirSwitch(id, get().settings.swarmModeEnabled === true)) return
+    if (
+      swarmBlocksWorkdirSwitch(
+        id,
+        get().settings.swarmModeEnabled === true,
+        get().conversations.find((c) => c.id === id)?.archived
+      )
+    )
+      return
     // User-driven switch (menu / recent) — always reveal real path thereafter.
     get().revealWorkdirPath(id)
     const conversations = await window.vav.conversations.setWorkingDirectory(id, path, machineId)
@@ -1629,8 +1786,15 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   async locateWorkspace(id) {
-    if (swarmBlocksWorkdirSwitch(id, get().settings.swarmModeEnabled === true)) return
     const conversation = get().conversations.find((c) => c.id === id)
+    if (
+      swarmBlocksWorkdirSwitch(
+        id,
+        get().settings.swarmModeEnabled === true,
+        conversation?.archived
+      )
+    )
+      return
     const machineId = normalizeMachineId(conversation?.machineId ?? get().windowMachineId)
     if (!isLocalMachine(machineId)) {
       get().openRemoteFolderPicker(id, machineId, 'locate')
@@ -2328,6 +2492,23 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     return ok !== false
   },
 
+  async answerSecrets(toolCallId, payload) {
+    const { activeId } = get()
+    let conversationId = activeId || ''
+    if (toolCallId) {
+      conversationId = conversationIdAwaitingTool(get().turns, toolCallId, conversationId)
+    }
+    const ok = await window.vav.agent.answerSecrets(conversationId, toolCallId, payload)
+    if (ok === false) {
+      console.warn('[session] answerSecrets: main had no pending waiter', {
+        conversationId,
+        toolCallId,
+        activeId
+      })
+    }
+    return ok !== false
+  },
+
   async updateSettings(patch) {
     const settings = await window.vav.settings.update(patch)
     set({
@@ -2559,6 +2740,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     // AppKit leaves the workdir / path-chip menu up when only the renderer swaps.
     void window.vav?.window?.closePopupMenu?.()
     if (mode === 'timers') get().ensureScheduledConversation()
+    if (mode === 'databases') get().ensureDbConversation()
   },
 
   toggleToolsPanel() {
@@ -2723,8 +2905,15 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   openWorkspaceSwitcher() {
-    const { activeId, settings } = get()
-    if (swarmBlocksWorkdirSwitch(activeId, settings.swarmModeEnabled === true)) return
+    const { activeId, settings, conversations } = get()
+    if (
+      swarmBlocksWorkdirSwitch(
+        activeId,
+        settings.swarmModeEnabled === true,
+        conversations.find((c) => c.id === activeId)?.archived
+      )
+    )
+      return
     set((state) => ({ workspaceMenuNonce: state.workspaceMenuNonce + 1 }))
   },
 

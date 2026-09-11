@@ -3,10 +3,15 @@
  * The floating (narrow-window) sidebar keeps the default CSS width.
  */
 
-export const SIDEBAR_WIDTH_MIN = 190
-export const SIDEBAR_WIDTH_MAX = 420
-/** Matches --sidebar-width in index.css. */
-export const SIDEBAR_WIDTH_DEFAULT = 232
+import {
+  SIDEBAR_WIDTH_DEFAULT,
+  SIDEBAR_WIDTH_MAX,
+  SIDEBAR_WIDTH_MIN
+} from '@shared/shellMinSize'
+
+export { SIDEBAR_WIDTH_DEFAULT, SIDEBAR_WIDTH_MAX, SIDEBAR_WIDTH_MIN }
+
+export const SIDEBAR_WIDTH_CHANGED = 'vav:sidebar-width'
 
 const STORAGE_KEY = 'vav.sidebar-width'
 
@@ -26,9 +31,11 @@ export function loadSidebarWidth(): number {
 }
 
 export function persistSidebarWidth(value: number): void {
+  const next = clampSidebarWidth(value)
   try {
-    localStorage.setItem(STORAGE_KEY, String(clampSidebarWidth(value)))
+    localStorage.setItem(STORAGE_KEY, String(next))
   } catch {
     // ignore
   }
+  window.dispatchEvent(new CustomEvent(SIDEBAR_WIDTH_CHANGED, { detail: next }))
 }

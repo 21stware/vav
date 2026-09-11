@@ -42,6 +42,17 @@ const api: VavApi = {
     unlock: () => ipcRenderer.invoke(IPC.secretsUnlock)
   },
 
+  sessionSecrets: {
+    list: (conversationId) => ipcRenderer.invoke(IPC.sessionSecretsList, conversationId),
+    reveal: (conversationId, name) =>
+      ipcRenderer.invoke(IPC.sessionSecretsReveal, conversationId, name),
+    set: (conversationId, name, value) =>
+      ipcRenderer.invoke(IPC.sessionSecretsSet, conversationId, name, value),
+    remove: (conversationId, name) =>
+      ipcRenderer.invoke(IPC.sessionSecretsRemove, conversationId, name),
+    onChanged: (handler) => subscribe(IPC.sessionSecretsChanged, handler)
+  },
+
   settings: {
     get: () => ipcRenderer.invoke(IPC.settingsGet),
     update: (patch: Partial<AppSettings>) => ipcRenderer.invoke(IPC.settingsUpdate, patch),
@@ -212,6 +223,8 @@ const api: VavApi = {
     cancel: (id: string) => ipcRenderer.invoke(IPC.agentCancel, id),
     answer: (id: string, toolCallId: string, answer: string): Promise<boolean> =>
       ipcRenderer.invoke(IPC.agentAnswer, id, toolCallId, answer),
+    answerSecrets: (id, toolCallId, payload) =>
+      ipcRenderer.invoke(IPC.agentAnswerSecrets, id, toolCallId, payload),
     status: (id: string) => ipcRenderer.invoke(IPC.agentStatus, id),
     regenerate: (id: string, messageId: string) =>
       ipcRenderer.invoke(IPC.agentRegenerate, id, messageId),
@@ -394,6 +407,23 @@ const api: VavApi = {
     onChanged: (handler) => subscribe(IPC.timersChanged, handler)
   },
 
+  db: {
+    list: () => ipcRenderer.invoke(IPC.dbList),
+    create: () => ipcRenderer.invoke(IPC.dbCreate),
+    getForConversation: (conversationId) =>
+      ipcRenderer.invoke(IPC.dbGetForConversation, conversationId),
+    ensureForConversation: (conversationId) =>
+      ipcRenderer.invoke(IPC.dbEnsureForConversation, conversationId),
+    update: (id, patch) => ipcRenderer.invoke(IPC.dbUpdate, id, patch),
+    remove: (id) => ipcRenderer.invoke(IPC.dbRemove, id),
+    test: (id) => ipcRenderer.invoke(IPC.dbTest, id),
+    open: (id) => ipcRenderer.invoke(IPC.dbOpen, id),
+    schema: (id) => ipcRenderer.invoke(IPC.dbSchema, id),
+    queryTable: (id, table, offset, limit) =>
+      ipcRenderer.invoke(IPC.dbQueryTable, id, table, offset, limit),
+    onChanged: (handler) => subscribe(IPC.dbChanged, handler)
+  },
+
   fileSessions: {
     open: (path: string) => ipcRenderer.invoke(IPC.fileSessionsOpen, path),
     create: (path: string) => ipcRenderer.invoke(IPC.fileSessionsCreate, path),
@@ -552,7 +582,8 @@ const api: VavApi = {
       ipcRenderer.invoke(IPC.windowOpenSwarmHistory, conversationId, anchor),
     onSwarmHistoryResume: (handler) =>
       subscribe<SwarmHistoryResumeEvent>(IPC.swarmHistoryResume, handler),
-    relaunch: () => ipcRenderer.invoke(IPC.windowRelaunch)
+    relaunch: () => ipcRenderer.invoke(IPC.windowRelaunch),
+    setMinSize: (size) => ipcRenderer.invoke(IPC.windowSetMinSize, size)
   },
 
   screenshot: {

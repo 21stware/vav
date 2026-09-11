@@ -1,3 +1,4 @@
+import { isAcpCliHost, type CliHostKind } from './cliHost.ts'
 import type { ChatMessage, DisplayCurrency, MessageBlock, TokenSnapshot } from './types'
 import { t, type AppLocale } from './i18n/index.ts'
 
@@ -150,6 +151,26 @@ export function cacheHitPercent(snapshot: TokenSnapshot): number {
   const total = snapshot.totalInputTokens
   if (total <= 0) return 0
   return (snapshot.cacheReadTokens / total) * 100
+}
+
+export function historyHasCacheMetrics(
+  history: Array<{ cacheReadTokens?: number; cacheWriteTokens?: number }> | null | undefined
+): boolean {
+  return (history ?? []).some((row) => (row.cacheReadTokens ?? 0) > 0 || (row.cacheWriteTokens ?? 0) > 0)
+}
+
+/**
+ * Anthropic-style cache hit chart / TTL clocks. ACP hosts usually never
+ * report a cache breakdown (Cursor sends no usage at all). Show the block
+ * only when a host has actually produced cache tokens, or when this is not
+ * an ACP session (VAV / Claude / Codex still get the empty-state tease).
+ */
+export function shouldShowCacheHitUi(opts: {
+  cliHost?: CliHostKind | null
+  history: Array<{ cacheReadTokens?: number; cacheWriteTokens?: number }> | null | undefined
+}): boolean {
+  if (historyHasCacheMetrics(opts.history)) return true
+  return !isAcpCliHost(opts.cliHost)
 }
 
 export function buildSnapshot(input: {

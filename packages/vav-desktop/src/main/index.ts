@@ -138,6 +138,7 @@ import { LOG_EVENT } from '@shared/appLog'
 import { SleepBlocker } from '@main/power/SleepBlocker'
 import { MacLidSleepGuard } from '@main/power/MacLidSleep'
 import { SecretStore } from '@main/store/SecretStore'
+import { SessionSecretStore } from '@main/store/SessionSecretStore'
 import { AccountStore } from '@main/store/AccountStore'
 import {
   accountHasKey,
@@ -187,13 +188,18 @@ import { registerConversationMetaIpc } from '@main/ipc/registerConversationMetaI
 import { registerConversationMutateIpc } from '@main/ipc/registerConversationMutateIpc'
 import { registerScreenshotIpc } from '@main/ipc/registerScreenshotIpc'
 import { registerSecretsIpc } from '@main/ipc/registerSecretsIpc'
+import { registerSessionSecretsIpc } from '@main/ipc/registerSessionSecretsIpc'
+import { evaluateOwner } from '@main/auth/localOwnerAuth'
 import { registerFileSessionsIpc } from '@main/ipc/registerFileSessionsIpc'
 import { registerAgentsIpc } from '@main/ipc/registerAgentsIpc'
 import { registerSettingsIpc } from '@main/ipc/registerSettingsIpc'
 import { registerConnectorIpc } from '@main/ipc/registerConnectorIpc'
 import { registerTimerIpc } from '@main/ipc/registerTimerIpc'
+import { registerDbIpc } from '@main/ipc/registerDbIpc'
 import { createConnectorRegistry } from '@main/connectors/registry'
 import { TimerStore } from '@main/store/TimerStore'
+import { DbConnectionStore } from '@main/store/DbConnectionStore'
+import { PostgresService } from '@main/fs/PostgresService'
 import { defaultVavServerStateDir } from '@main/store/vavServerStateDir'
 import { TimerScheduler } from '@main/timer/TimerScheduler'
 import { probeListenAlive, readListenState } from '@main/daemon/listenState'
@@ -269,6 +275,12 @@ import {
   REMOTE_FOLDER_WINDOW_MIN_WIDTH,
   REMOTE_FOLDER_WINDOW_WIDTH
 } from '@main/window/remoteFolderView'
+import {
+  MAIN_WINDOW_MIN_HEIGHT,
+  MAIN_WINDOW_MIN_WIDTH,
+  SESSION_WINDOW_MIN_HEIGHT,
+  SESSION_WINDOW_MIN_WIDTH
+} from '@shared/shellMinSize'
 import { appBuildNumber as formatAppBuildNumber } from '@main/appBuild'
 import { FALLBACK_SYSTEM_ACCENT, normalizeAccentHex } from '@main/window/accentColor'
 import { closeActiveNativePopup, popupNativeMenu } from '@main/window/nativePopup'
@@ -568,11 +580,25 @@ let sessionOpenT0 = 0
 
 const settingsStore = new SettingsStore()
 const secretStore = new SecretStore()
+const sessionSecretStore = new SessionSecretStore({
+  dir: join(app.getPath('userData'), 'session-secrets'),
+  persist: {
+    read: (id) => secretStore.getBlob(`session:${id}`),
+    write: (id, json) => secretStore.setBlob(`session:${id}`, json),
+    remove: (id) => secretStore.clearBlob(`session:${id}`)
+  }
+})
 const accountStore = new AccountStore(app.getPath('userData'))
 const conversationStore = new ConversationStore()
 const timerStore = new TimerStore(defaultVavServerStateDir(), {
   migrateFrom: app.getPath('userData')
 })
+const dbConnectionStore = new DbConnectionStore(defaultVavServerStateDir(), {
+  get: (id) => secretStore.getAccountKey(`db:${id}`),
+  set: (id, password) => secretStore.setAccountKey(`db:${id}`, password),
+  clear: (id) => secretStore.clearAccountKey(`db:${id}`)
+})
+const postgres = new PostgresService(dbConnectionStore)
 const connectorRegistry = createConnectorRegistry({
   creds: () => ({
     cloudflare: {
@@ -1299,11 +1325,12 @@ function handleAgentEvent(event: TurnEvent): void {
     const kind = awaitingNotifyKind(event.block.tool, !!event.block.choices?.length)
     if (kind) {
       notifications.alertUser(
-        kind,
+        kind === 'secret' ? 'request' : kind,
         event.conversationId,
         awaitingNotifyTitle(kind, {
           ask: t('notify.awaitingAnswer', { title }),
           request: t('notify.requestConfirm', { title }),
+          secret: t('notify.awaitingSecret', { title }),
           approval: t('notify.awaitingApproval', { title })
         }),
         body,
@@ -1403,6 +1430,7 @@ const agent = new AgentRuntime({
   conversations: conversationStore,
   settings: settingsStore,
   secrets: secretStore,
+  sessionSecrets: sessionSecretStore,
   resolveVavCredentials: (conversation) =>
     resolveVavCredentials(
       { conversation, settingsEndpoint: settingsStore.get().apiEndpoint },
@@ -1414,6 +1442,7 @@ const agent = new AgentRuntime({
   changeSets: changeSetStore,
   retrieval: documentRetrieval,
   duckdb,
+  postgres,
   webSearch,
   webFetch,
   skills: skillService,
@@ -1470,6 +1499,7 @@ function syncScheduledJobFromConversation(
 const cliHost = new CliAgentHost({
   conversations: conversationStore,
   settings: settingsStore,
+  sessionSecrets: sessionSecretStore,
   changeSets: changeSetStore,
   files: fileService,
   hosts: hostRegistry,
@@ -2384,7 +2414,10 @@ function refreshHostSession(machineId: string, hostConversationId: string): void
       const conversation = (got as { conversation?: Conversation } | null)?.conversation
       if (!conversation || typeof conversation !== 'object') return
       const adopted = conversationStore.adoptHostConversation(conversation, adoptAs)
-      if (adopted) publishConversations()
+      if (adopted) {
+        publishConversations()
+        pushTokenUsageIfOpen(adopted.id)
+      }
     })
     .catch(() => undefined)
 }
@@ -2809,9 +2842,6 @@ function syncVibrancyShellWindows(): void {
 }
 
 
-/** Main window + detached session column — narrowest useful shell. */
-const MAIN_WINDOW_MIN_WIDTH = 400
-
 function applyTrafficLights(win: BrowserWindow, barHeight = TOOLBAR_HEIGHT): void {
   if (!IS_MAC || win.isDestroyed()) return
   try {
@@ -3177,7 +3207,7 @@ function createWindow(): BrowserWindow {
     width,
     height,
     minWidth: MAIN_WINDOW_MIN_WIDTH,
-    minHeight: 560,
+    minHeight: MAIN_WINDOW_MIN_HEIGHT,
     show: false,
     // Paint while hidden so ready-to-show / hotkey reveal has a real frame.
     paintWhenInitiallyHidden: true,
@@ -3436,7 +3466,7 @@ function detachedBounds(cascade: number): {
   }
 
   const stored = settingsStore.get().detachedWindowSize
-  return placeDetachedBounds(area, stored, cascade, MAIN_WINDOW_MIN_WIDTH)
+  return placeDetachedBounds(area, stored, cascade, SESSION_WINDOW_MIN_WIDTH)
 }
 
 /**
@@ -3679,8 +3709,8 @@ function createSessionBrowserWindow(opts: {
   const bounds = opts.bounds ?? detachedBounds(0)
   const window = new BrowserWindow({
     ...bounds,
-    minWidth: MAIN_WINDOW_MIN_WIDTH,
-    minHeight: 420,
+    minWidth: SESSION_WINDOW_MIN_WIDTH,
+    minHeight: SESSION_WINDOW_MIN_HEIGHT,
     show: opts.show,
     paintWhenInitiallyHidden: true,
     title: opts.title ?? 'Session',
@@ -6971,12 +7001,47 @@ function registerIpc(): void {
       console.error('[analysis] post-unlock warm failed', err)
     })
   })
+  sessionSecretStore.onChanged((conversationId, names) => {
+    broadcast(IPC.sessionSecretsChanged, { conversationId, names })
+  })
+  registerSessionSecretsIpc(ipcMain, {
+    list: (id) => sessionSecretStore.listNames(id),
+    peek: (id, name) => agent.peekSessionSecret(id, name),
+    upsert: (id, values) => agent.upsertSessionSecrets(id, values),
+    remove: (id, name) => agent.removeSessionSecret(id, name),
+    evaluateOwner: (event, reason) =>
+      evaluateOwner(reason, {
+        skip: () => isE2eRuntime(),
+        canPromptTouchID: () => {
+          try {
+            return systemPreferences.canPromptTouchID()
+          } catch {
+            return false
+          }
+        },
+        promptTouchID: (prompt) => systemPreferences.promptTouchID(prompt),
+        fallbackConfirm: async () => {
+          if (isE2eRuntime()) return true
+          const result = await showParentedMessageBox(
+            windowFromSender(event.sender),
+            revealSecretBoxOptions({
+              cancel: t('common.cancel'),
+              confirm: t('secrets.revealConfirm'),
+              title: t('secrets.revealTouchId'),
+              detail: t('secrets.lead')
+            })
+          )
+          return result.response === 1
+        }
+      }),
+    revealReason: () => t('secrets.revealTouchId')
+  })
 
   ipcMain.handle(IPC.bootstrap, (event): Bootstrap => {
     // Bootstrap must not force Keychain before onboarding unlock on macOS.
     const settings = currentSettings()
     setLocalePreference(settings.locale)
-    const conversations = [...conversationStore.listMeta(), ...conversationStore.listTimerMeta()]
+    const conversations = conversationStore.listClientMeta()
     const machineId = machineIdFromContents(event.sender)
     const activeConversationId =
       conversations.find(
@@ -7391,6 +7456,20 @@ return c as text`
       if (!controlPlaneOwns(conversation)) return false
       return dialControl(conversation, (dial, hostId) => dial.setLeaf(hostId, leafId))
     },
+    forwardGet: async (id) => {
+      const client = daemonAttach.localShellClient()
+      if (!client) return null
+      try {
+        const got = (await client.request('sessions.get', { id }, 15_000)) as {
+          conversation?: Conversation
+        } | null
+        const conversation = got?.conversation
+        if (!conversation || typeof conversation !== 'object' || !conversation.id) return null
+        return conversation
+      } catch {
+        return null
+      }
+    },
     forwardDuplicate: async (id) => {
       const conversation = conversationStore.get(id)
       if (!controlPlaneOwns(conversation)) return undefined
@@ -7626,6 +7705,8 @@ return c as text`
       cancelBuiltin: (id) => agent.cancel(id),
       answerCli: (id, toolCallId, answer) => cliHost.answer(id, toolCallId, answer),
       answerBuiltin: (id, toolCallId, answer) => agent.answer(id, toolCallId, answer),
+      answerSecretsBuiltin: (id, toolCallId, payload) =>
+        agent.answerSecrets(id, toolCallId, payload),
       statusCli: (id) => controlPlaneTurnStatus(id) ?? cliHost.status(id),
       statusBuiltin: (id) => controlPlaneTurnStatus(id) ?? agent.status(id),
       regenerateCli: (id, messageId) => {
@@ -7805,6 +7886,33 @@ return c as text`
           {
             sessionKind: 'timer',
             title: t('timer.untitled'),
+            approvalMode: settings.defaultApprovalMode ?? 'auto',
+            thinkingLevel: parseThinkingLevel(settings.defaultThinkingLevel),
+            cliHost: defaultHost,
+            accountId: accountIdForSession(workdir, defaultHost)
+          }
+        )
+      }
+    }
+  )
+  registerDbIpc(
+    ipcMain,
+    dbConnectionStore,
+    postgres,
+    conversationStore,
+    () => broadcast(IPC.dbChanged, null),
+    {
+      publishConversations,
+      createDefinitionConversation: () => {
+        const settings = settingsStore.get()
+        const workdir = resolveNewWorkdir()
+        const defaultHost = resolveDefaultChatHost(settings.defaultAgentId)
+        return conversationStore.create(
+          workdir,
+          modelForNewConversation(defaultHost),
+          {
+            sessionKind: 'db',
+            title: t('db.untitled'),
             approvalMode: settings.defaultApprovalMode ?? 'auto',
             thinkingLevel: parseThinkingLevel(settings.defaultThinkingLevel),
             cliHost: defaultHost,
@@ -8265,6 +8373,7 @@ if (singleInstance) {
     stopDesktopWeb?.()
     remoteControl.dispose()
     timerScheduler?.stop()
+    void postgres.close()
     agent.disposeAll()
     cliHost.disposeAll()
     stopAllAgentInstalls()
@@ -8389,6 +8498,7 @@ if (singleInstance) {
     setLocalePreference(settings.locale ?? DEFAULT_SETTINGS.locale)
     conversationStore.load({ model: settings.defaultModel, mintWorkdir: resolveNewWorkdir })
     timerStore.load()
+    dbConnectionStore.load()
     timerScheduler?.start()
     logStore.load()
     appLog().system(LOG_EVENT.systemBoot, 'App ready', {

@@ -1,6 +1,6 @@
 {
   "name": "@21stware/vav-ios",
-  "version": "1.24.0",
+  "version": "1.25.0",
   "role": "vav-ios",
   "kind": "native",
   "sources": [

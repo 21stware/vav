@@ -155,6 +155,15 @@ export function readAcpJsonlUsage(
       lastLimit = sample.contextSize
     }
 
+    // usage_update is often used/size/cost only — do not mint a 0-cache
+    // history row or the hit chart becomes a flat line.
+    const hasTurnTokens =
+      (sample.inputTokens ?? 0) > 0 ||
+      (sample.outputTokens ?? 0) > 0 ||
+      (sample.cacheRead ?? 0) > 0 ||
+      (sample.cacheWrite ?? 0) > 0
+    if (!hasTurnTokens) continue
+
     const snap = snapshotFromSample(sample, all.length + 1, modelId, timestampMs(row.timestamp))
     if (!snap) continue
     all.push(snap)
@@ -183,8 +192,8 @@ export function readHostSessionUsage(
   return readAcpJsonlUsage(host, sessionId, cwd, options)
 }
 
-function bucketHasUsage(history: TokenSnapshot[] | undefined, tokensUsed: number | undefined): boolean {
-  return (history?.length ?? 0) > 0 || (tokensUsed ?? 0) > 0
+function bucketHasHistory(history: TokenSnapshot[] | undefined): boolean {
+  return (history?.length ?? 0) > 0
 }
 
 function applyImport(
@@ -196,7 +205,7 @@ function applyImport(
   },
   usage: HostUsageImport
 ): boolean {
-  if (bucketHasUsage(target.tokenHistory, target.tokensUsed)) return false
+  if (bucketHasHistory(target.tokenHistory)) return false
   target.tokenHistory = usage.history
   target.tokensUsed = usage.tokensUsed
   if (typeof usage.tokenLimit === 'number' && usage.tokenLimit > 0) {
@@ -220,7 +229,7 @@ export function applyMissingHostUsage(
   let changed = false
   const activeHost = conversation.cliHost ?? null
   const activeId = resumeSessionId(conversation.cliResumeCursor)
-  if (activeHost && activeId && !bucketHasUsage(conversation.tokenHistory, conversation.tokensUsed)) {
+  if (activeHost && activeId && !bucketHasHistory(conversation.tokenHistory)) {
     const usage = readHostSessionUsage(activeHost, activeId, cwd, {
       home: options?.home,
       modelId: conversation.model
@@ -231,7 +240,7 @@ export function applyMissingHostUsage(
   if (!parked) return changed
   for (const [key, bucket] of Object.entries(parked) as Array<[string, HostTranscriptBucket]>) {
     if (!bucket || key === 'vav') continue
-    if (bucketHasUsage(bucket.tokenHistory, bucket.tokensUsed)) continue
+    if (bucketHasHistory(bucket.tokenHistory)) continue
     const sessionId = resumeSessionId(bucket.cliResumeCursor)
     if (!sessionId) continue
     const usage = readHostSessionUsage(key as CliHostKind, sessionId, cwd, {

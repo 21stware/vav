@@ -145,7 +145,14 @@ export function createTimerCatalog(opts: {
     createJob: (input) => opts.store.createJob(input as TimerJobInput),
     updateJob: (id, patch) =>
       opts.store.updateJob(id, patch as Partial<TimerJobInput> & { enabled?: boolean }),
-    removeJob: (id) => opts.store.removeJob(id),
+    removeJob: (id) => {
+      const job = opts.store.getJob(id)
+      const ok = opts.store.removeJob(id)
+      if (ok && job?.conversationId) {
+        opts.conversations.remove([job.conversationId])
+      }
+      return ok
+    },
     runNow: (id) => opts.scheduler()?.runNow(id) ?? null,
     listRuns: (jobId) => opts.store.listRuns(jobId),
     listSessions: () => opts.conversations.listTimerMeta()

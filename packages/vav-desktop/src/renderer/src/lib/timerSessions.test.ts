@@ -1,7 +1,12 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import type { ConversationMeta } from '@shared/types'
-import { timerListConversationIds, timerScheduleLabel, timerSessionsForJob } from './timerSessions.ts'
+import {
+  sortTimerJobs,
+  timerListConversationIds,
+  timerScheduleLabel,
+  timerSessionsForJob
+} from './timerSessions.ts'
 
 function row(partial: Partial<ConversationMeta> & { id: string }): ConversationMeta {
   return {
@@ -57,6 +62,20 @@ describe('timerScheduleLabel', () => {
     assert.equal(
       timerScheduleLabel({ kind: 'cron', expr: '30 9 * * 1-5' }, weekday),
       '一二三四五 09:30'
+    )
+  })
+})
+
+describe('sortTimerJobs', () => {
+  it('moves a recently finished job to the top without depending on array index', () => {
+    const ranked = sortTimerJobs([
+      { id: 'older', updatedAt: 10 },
+      { id: 'newer', updatedAt: 30 },
+      { id: 'mid', updatedAt: 20 }
+    ])
+    assert.deepEqual(
+      ranked.map((job) => job.id),
+      ['newer', 'mid', 'older']
     )
   })
 })

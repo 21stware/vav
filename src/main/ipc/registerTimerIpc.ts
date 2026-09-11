@@ -27,6 +27,9 @@ export function registerTimerIpc(
   host: TimerIpcHost
 ): void {
   const remote = (): TimerIpcRemote | null => host.remote?.() ?? null
+  const syncLocal = (): void => {
+    store.load()
+  }
 
   ipcMain.handle(IPC.timersListJobs, async () => {
     const client = remote()
@@ -35,7 +38,12 @@ export function registerTimerIpc(
   })
   ipcMain.handle(IPC.timersCreateScheduled, async () => {
     const client = remote()
-    if (client) return client.request('timers.createScheduled')
+    if (client) {
+      const result = await client.request('timers.createScheduled')
+      syncLocal()
+      broadcast()
+      return result
+    }
     const conversation = host.createDefinitionConversation()
     const job = store.createJob({
       title: conversation.title,
@@ -59,7 +67,12 @@ export function registerTimerIpc(
   })
   ipcMain.handle(IPC.timersCreateJob, async (_event, input: TimerJobInput) => {
     const client = remote()
-    if (client) return client.request('timers.createJob', { input })
+    if (client) {
+      const job = await client.request('timers.createJob', { input })
+      syncLocal()
+      broadcast()
+      return job
+    }
     const job = store.createJob(input)
     broadcast()
     return job
@@ -68,7 +81,12 @@ export function registerTimerIpc(
     IPC.timersUpdateJob,
     async (_event, id: string, patch: Partial<TimerJobInput> & { enabled?: boolean }) => {
       const client = remote()
-      if (client) return client.request('timers.updateJob', { id, patch })
+      if (client) {
+        const job = await client.request('timers.updateJob', { id, patch })
+        syncLocal()
+        broadcast()
+        return job
+      }
       const job = store.updateJob(id, patch)
       broadcast()
       return job
@@ -76,14 +94,30 @@ export function registerTimerIpc(
   )
   ipcMain.handle(IPC.timersRemoveJob, async (_event, id: string) => {
     const client = remote()
-    if (client) return client.request('timers.removeJob', { id })
+    if (client) {
+      let ok = false
+      try {
+        ok = (await client.request('timers.removeJob', { id })) === true
+      } catch {
+        ok = false
+      }
+      syncLocal()
+      if (!ok) ok = store.removeJob(id)
+      broadcast()
+      return ok
+    }
     const ok = store.removeJob(id)
     if (ok) broadcast()
     return ok
   })
   ipcMain.handle(IPC.timersRunNow, async (_event, id: string) => {
     const client = remote()
-    if (client) return client.request('timers.runNow', { id })
+    if (client) {
+      const result = await client.request('timers.runNow', { id })
+      syncLocal()
+      broadcast()
+      return result
+    }
     const result = scheduler.runNow(id)
     broadcast()
     return result

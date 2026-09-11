@@ -23,11 +23,13 @@ export type SecretName = 'api' | 'braveSearch' | 'tinyfish' | 'cloudflare' | 'su
 
 const ACCOUNT_SECRET_PREFIX = 'secret-account-'
 const OAUTH_SNAPSHOT_PREFIX = 'secret-oauth-'
+const BLOB_PREFIX = 'secret-blob-'
 
 export class SecretStore {
   private readonly memory = new Map<SecretName, string>()
   private readonly accountMemory = new Map<string, string>()
   private readonly oauthSnapshotMemory = new Map<string, HostCredentialSnapshot>()
+  private readonly blobMemory = new Map<string, string>()
   /**
    * When false on darwin, disk decrypt is deferred so Keychain is not touched
    * until the user clicks through onboarding. Non-mac always starts unlocked.
@@ -140,6 +142,7 @@ export class SecretStore {
         }
         this.warmAccountSecrets()
         this.warmOAuthSnapshots()
+        this.warmBlobs()
       }
       this.gateOpen = true
       this.markOnboardingDone()
@@ -319,6 +322,69 @@ export class SecretStore {
     }
   }
 
+  /**
+   * Generic Keychain-backed blob (session env maps, etc.).
+   * Slot is an app-chosen id; values never go into conversation JSON.
+   */
+  getBlob(slot: string): string | null {
+    const id = this.blobKey(slot)
+    if (!id) return null
+    if (this.blobMemory.has(id)) return this.blobMemory.get(id) ?? null
+    if (!this.gateOpen) return null
+    try {
+      const file = this.blobPath(id)
+      if (!existsSync(file)) return null
+      if (!safeStorage.isEncryptionAvailable()) return null
+      const value = safeStorage.decryptString(readFileSync(file))
+      if (value) this.blobMemory.set(id, value)
+      return value
+    } catch {
+      return null
+    }
+  }
+
+  setBlob(slot: string, value: string): void {
+    const id = this.blobKey(slot)
+    if (!id) return
+    const trimmed = value.trim()
+    if (!trimmed) {
+      this.clearBlob(id)
+      return
+    }
+    if (!this.gateOpen) {
+      const result = this.unlock()
+      if (!result.ok) {
+        this.blobMemory.set(id, trimmed)
+        return
+      }
+    }
+    try {
+      if (!safeStorage.isEncryptionAvailable()) {
+        this.blobMemory.set(id, trimmed)
+        return
+      }
+      const file = this.blobPath(id)
+      mkdirSync(dirname(file), { recursive: true })
+      writeFileSync(file, safeStorage.encryptString(trimmed))
+      this.blobMemory.set(id, trimmed)
+    } catch (err) {
+      console.error(`[secret] persist failed (blob ${id})`, err)
+      this.blobMemory.set(id, trimmed)
+    }
+  }
+
+  clearBlob(slot: string): void {
+    const id = this.blobKey(slot)
+    if (!id) return
+    this.blobMemory.delete(id)
+    try {
+      const file = this.blobPath(id)
+      if (existsSync(file)) rmSync(file)
+    } catch (err) {
+      console.error(`[secret] clear failed (blob ${id})`, err)
+    }
+  }
+
   clearOAuthSnapshot(accountId: string): void {
     const id = accountId.trim()
     if (!id) return
@@ -339,6 +405,14 @@ export class SecretStore {
   private oauthSnapshotPath(accountId: string): string {
     const safe = accountId.replace(/[^a-zA-Z0-9_-]/g, '_')
     return join(app.getPath('userData'), `${OAUTH_SNAPSHOT_PREFIX}${safe}.bin`)
+  }
+
+  private blobKey(slot: string): string {
+    return slot.trim().replace(/[^a-zA-Z0-9_-]/g, '_')
+  }
+
+  private blobPath(slot: string): string {
+    return join(app.getPath('userData'), `${BLOB_PREFIX}${this.blobKey(slot)}.bin`)
   }
 
   private warmAccountSecrets(): void {
@@ -372,6 +446,26 @@ export class SecretStore {
         try {
           const snap = coerceSnapshot(safeJson(safeStorage.decryptString(readFileSync(join(dir, name)))))
           if (snap) this.oauthSnapshotMemory.set(id, snap)
+        } catch {
+          // Corrupt or denied — leave empty for this session.
+        }
+      }
+    } catch {
+      // userData unreadable
+    }
+  }
+
+  private warmBlobs(): void {
+    try {
+      const dir = app.getPath('userData')
+      if (!existsSync(dir) || !safeStorage.isEncryptionAvailable()) return
+      for (const name of readdirSync(dir)) {
+        if (!name.startsWith(BLOB_PREFIX) || !name.endsWith('.bin')) continue
+        const id = name.slice(BLOB_PREFIX.length, -4)
+        if (!id || this.blobMemory.has(id)) continue
+        try {
+          const value = safeStorage.decryptString(readFileSync(join(dir, name)))
+          if (value) this.blobMemory.set(id, value)
         } catch {
           // Corrupt or denied — leave empty for this session.
         }

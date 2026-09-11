@@ -1,4 +1,9 @@
 import { normalizeAskQuestions, normalizePlanSteps } from '@shared/askPlan'
+import {
+  normalizeSecretRequests,
+  secretResultLooksDeclined,
+  summarizeSecretRequests
+} from '@shared/sessionSecrets'
 import { TOOL_LABELS } from '@shared/types'
 import { cap } from './toolSummarize'
 import { Type, defineTool, failure, park, type ToolHost } from './toolHost'
@@ -79,6 +84,64 @@ export function createInteractiveTools(host: ToolHost) {
           multiSelect: questions.length === 1 ? questions[0].multiSelect : undefined
         })
       )
+    },
+    executionMode: 'sequential'
+  })
+
+  const secretItem = Type.Object({
+    name: Type.String({
+      description:
+        'Environment variable name to bind, e.g. OPENAI_API_KEY or GH_TOKEN. POSIX: [A-Za-z_][A-Za-z0-9_]*.'
+    }),
+    description: Type.Optional(
+      Type.String({
+        description:
+          'How the user obtains this token. Include a https:// URL when there is a dashboard page — the UI makes it clickable.'
+      })
+    )
+  })
+
+  const requestForSecret = defineTool({
+    name: 'request_for_secret',
+    label: TOOL_LABELS.request_for_secret,
+    description: [
+      'Pause the turn and ask the user for one or more secrets (API tokens, keys).',
+      'Choose the env var name now. After they grant, the value is available in this conversation as that environment variable — never returned to you.',
+      'Do not ask the user to paste secrets in chat or ask_user_question.',
+      'You may request many in one call. Add description (with a URL) when they need to know how to create/copy the token.',
+      'The user may decline. After grant, use $NAME in terminal; never echo, print, or write the values.'
+    ].join(' '),
+    parameters: Type.Object({
+      title: Type.Optional(Type.String({ description: 'Card title when requesting several secrets.' })),
+      secrets: Type.Array(secretItem, {
+        minItems: 1,
+        maxItems: 20,
+        description: 'Secrets to request. Each needs a unique env var name.'
+      })
+    }),
+    execute: async (id, params) => {
+      if (host.isTimerSession?.()) {
+        return failure('Timer runs are non-interactive — do not call request_for_secret.')
+      }
+      const requests = normalizeSecretRequests(params as Record<string, unknown>)
+      if (requests.length === 0) return failure('Missing secrets[].name (POSIX env var names).')
+      const title = String((params as { title?: string }).title ?? '').trim()
+      const summary = summarizeSecretRequests(requests, title || undefined)
+      const answer = await host.ask(id, summary, {
+        secretRequests: requests,
+        askTitle: title || undefined
+      })
+      if (answer.cancelled) {
+        return {
+          content: [{ type: 'text', text: 'The user cancelled the turn without providing secrets.' }],
+          details: { display: '本轮已取消，未提供密钥', failed: true }
+        }
+      }
+      const declined = secretResultLooksDeclined(answer.text)
+      return {
+        content: [{ type: 'text', text: answer.text }],
+        details: { display: answer.text, failed: declined }
+      }
     },
     executionMode: 'sequential'
   })
@@ -272,5 +335,5 @@ export function createInteractiveTools(host: ToolHost) {
     }
   })
 
-  return { request, askUserQuestion, loadSkill, plan, switchMode }
+  return { request, askUserQuestion, requestForSecret, loadSkill, plan, switchMode }
 }

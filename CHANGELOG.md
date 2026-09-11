@@ -4,6 +4,12 @@ User-facing changes by release. Unreleased work lives at the top until the next 
 
 ## Unreleased
 
+## 1.25.0
+
+PostgreSQL connections are a first-class sidebar category: create a DB session, connect, then browse tables and chat with the same SQL tools as a local SQLite file. MySQL, remote SQLite, and SQL Server stay listed as coming soon. File sessions list recent opens. Category chips besides Task are optional — Scheduled stays on by default; File, DB, and Archived stay hidden until you turn them on.
+
+Agents can ask for secrets (`request_for_secret`). Values become session environment variables and show up in the Files tray Secrets tab — never in the transcript. Revealing a value on this Mac requires Touch ID or the login password. The window's native min size follows the visible columns so you cannot drag the frame smaller than the sidebar, agent, or preview that is open. Token usage hides the cache-hit chart on CLI hosts that never report cache metrics.
+
 ## 1.24.0
 
 Scheduled tasks pick a workspace: a new temp folder each run, one sticky temp folder for the job, or a recent / chosen folder. New timers default to a fresh temp folder instead of the definition conversation's directory. Deleting a scheduled task drops its run sessions with it.

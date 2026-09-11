@@ -43,7 +43,8 @@ describe('listedSidebarGroups', () => {
     const rows = [
       conv({ id: 'live', title: 'Chat' }),
       conv({ id: 'timer', title: 'Run', sessionKind: 'timer', timerJobId: 'j', timerRunId: 'r' }),
-      conv({ id: 'arch-timer', title: 'Old', sessionKind: 'timer', archived: true, archivedAt: 2 })
+      conv({ id: 'arch-timer', title: 'Old', sessionKind: 'timer', archived: true, archivedAt: 2 }),
+      conv({ id: 'db', title: 'Prod', sessionKind: 'db' })
     ]
     const main = listedSidebarGroups(rows, opts).flatMap((g) => g.conversations.map((c) => c.id))
     assert.deepEqual(main, ['live'])
@@ -51,5 +52,9 @@ describe('listedSidebarGroups', () => {
       g.conversations.map((c) => c.id)
     )
     assert.deepEqual(archived, [])
+    const databases = listedSidebarGroups(rows, { ...opts, databasesView: true }).flatMap((g) =>
+      g.conversations.map((c) => c.id)
+    )
+    assert.deepEqual(databases, ['db'])
   })
 })

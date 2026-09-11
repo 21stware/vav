@@ -72,7 +72,7 @@ export function AppearanceSettings(): React.JSX.Element {
   }, [])
   const themeTargets = useMemo(
     () => [
-      { id: LOCAL_MACHINE_ID, name: LOCAL_MACHINE_ID },
+      { id: LOCAL_MACHINE_ID, name: serviceShortName(LOCAL_MACHINE_ID) },
       ...remotes.map((host) => ({
         id: host.id,
         name: serviceShortName(host.id, hosts, host.name)

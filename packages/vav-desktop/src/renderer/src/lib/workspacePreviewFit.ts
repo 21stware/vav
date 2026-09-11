@@ -1,8 +1,10 @@
+import { AGENT_MIN_WIDTH, PREVIEW_MIN_WIDTH } from '@shared/shellMinSize'
+
 /** First-open / double-click reset width as a fraction of the shell. */
 export const PREVIEW_DEFAULT_RATIO = 0.42
-export const PREVIEW_MIN = 320
+export const PREVIEW_MIN = PREVIEW_MIN_WIDTH
 /** Conversation column never shrinks below this when the preview is open. */
-export const AGENT_MIN = 360
+export const AGENT_MIN = AGENT_MIN_WIDTH
 /** Fallback before the shell is measured (tight windows only). */
 export const PREVIEW_FALLBACK_PX = 380
 

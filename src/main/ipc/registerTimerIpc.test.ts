@@ -12,12 +12,21 @@ describe('registerTimerIpc', () => {
         handlers.set(channel, fn)
       }
     }
+    let loaded = 0
+    let broadcasts = 0
     registerTimerIpc(
       ipcMain as never,
+      {
+        load: () => {
+          loaded += 1
+        },
+        removeJob: () => false
+      } as never,
       {} as never,
       {} as never,
-      {} as never,
-      () => undefined,
+      () => {
+        broadcasts += 1
+      },
       {
         createDefinitionConversation: () => {
           throw new Error('local timer store should not run')
@@ -41,8 +50,46 @@ describe('registerTimerIpc', () => {
     assert.deepEqual(listed, [{ id: 'job-1' }])
     assert.deepEqual(created, { job: { id: 'job-2' } })
     assert.equal(removed, true)
+    assert.ok(loaded >= 2)
+    assert.ok(broadcasts >= 2)
     assert.ok(calls.some((call) => call.method === 'timers.listJobs'))
     assert.ok(calls.some((call) => call.method === 'timers.createScheduled'))
     assert.ok(calls.some((call) => call.method === 'timers.removeJob'))
+  })
+
+  it('falls back to the local store when remote remove misses the job', async () => {
+    const handlers = new Map<string, (...args: unknown[]) => unknown>()
+    const ipcMain = {
+      handle: (channel: string, fn: (...args: unknown[]) => unknown) => {
+        handlers.set(channel, fn)
+      }
+    }
+    let localRemoved = ''
+    registerTimerIpc(
+      ipcMain as never,
+      {
+        load: () => undefined,
+        removeJob: (id: string) => {
+          localRemoved = id
+          return true
+        }
+      } as never,
+      {} as never,
+      {} as never,
+      () => undefined,
+      {
+        createDefinitionConversation: () => {
+          throw new Error('local timer store should not run')
+        },
+        publishConversations: () => undefined,
+        remote: () => ({
+          request: async () => false
+        })
+      }
+    )
+
+    const removed = await handlers.get(IPC.timersRemoveJob)?.({}, 'stale-job')
+    assert.equal(removed, true)
+    assert.equal(localRemoved, 'stale-job')
   })
 })

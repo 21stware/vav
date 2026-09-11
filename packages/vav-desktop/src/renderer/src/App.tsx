@@ -18,7 +18,9 @@ import { SessionDetail } from './components/SessionDetail'
 import { useTerminalAppearance } from './lib/useTerminalAppearance'
 import { WorkspaceView } from './components/WorkspaceView'
 import { FileSessionView } from './components/FileSessionView'
+import { FileRecentsPanel } from './components/FileRecentsPanel'
 import { ScheduleEditor } from './components/ScheduleEditor'
+import { DbConnectEditor } from './components/DbConnectEditor'
 import { AppToast } from './components/AppToast'
 import { RemoteFolderPicker } from './components/RemoteFolderPicker'
 import { UpdateCorner } from './components/UpdateCorner'
@@ -29,7 +31,8 @@ import { useAppearance } from './lib/appearance'
 import { useMenuCommands } from './lib/menuCommands'
 import { installDefaultContextMenu } from './lib/nativeMenu'
 import { installInstallRunBridge } from './state/installRunStore'
-import { SIDEBAR_FLOAT_MAX, useSidebarFloatMode } from './lib/sidebarLayout'
+import { useSidebarFloatMode } from './lib/sidebarLayout'
+import { useWindowMinSize } from './lib/useWindowMinSize'
 import {
   SIDEBAR_WIDTH_DEFAULT,
   clampSidebarWidth,
@@ -140,6 +143,8 @@ export default function App(): React.JSX.Element {
           next.setSidebarListMode('fileSessions')
         } else if (meta?.sessionKind === 'timer') {
           next.setSidebarListMode('timers')
+        } else if (meta?.sessionKind === 'db') {
+          next.setSidebarListMode('databases')
         } else if (meta?.archived) {
           next.setSidebarListMode('archive')
         } else {
@@ -179,7 +184,7 @@ export default function App(): React.JSX.Element {
   useAppearance()
   useTerminalAppearance()
   useMenuCommands()
-  useResponsiveSidebar()
+  useWindowMinSize()
   const activeId = useSessionStore((s) => s.activeId)
   useAttentionSeen(activeId)
 
@@ -300,6 +305,20 @@ function DetailSlot(): React.JSX.Element {
       <ScheduleEditor conversationId={activeConversation && fits ? activeConversation.id : null} />
     )
   }
+  if (listMode === 'databases') {
+    if (activeConversation && fits) {
+      const wd = activeConversation.workingDirectory
+      return (
+        <WorkspaceView
+          conversationId={activeConversation.id}
+          workdir={wd && !wd.startsWith('__') ? wd : null}
+        />
+      )
+    }
+    return (
+      <DbConnectEditor conversationId={null} />
+    )
+  }
   // Session surface + optional right file preview (session state).
   // Workspace groups only aggregate/pin in the sidebar — no group selection.
   if (activeConversation && fits) {
@@ -312,12 +331,7 @@ function DetailSlot(): React.JSX.Element {
     )
   }
   if (listMode === 'fileSessions') {
-    return (
-      <CategoryEmpty
-        title={t('sidebar.fileSessionsEmptyTitle')}
-        description={t('sidebar.fileSessionsEmptyDesc')}
-      />
-    )
+    return <FileRecentsPanel />
   }
   if (listMode === 'archive') {
     return (
@@ -507,39 +521,3 @@ function SidebarSlot({
   )
 }
 
-/**
- * On a narrow window the sidebar becomes a floating overlay (see SidebarSlot).
- * Auto-hide when entering that band so the detail column keeps full width;
- * restore when the window is wide enough again. The user can always re-open
- * it (as a float while narrow, docked while wide).
- */
-function useResponsiveSidebar(): void {
-  const [autoCollapsed, setAutoCollapsed] = useState(false)
-
-  useEffect(() => {
-    let timer: ReturnType<typeof setTimeout> | null = null
-    const apply = (): void => {
-      const narrow = window.innerWidth <= SIDEBAR_FLOAT_MAX
-      const store = useSessionStore.getState()
-      if (narrow && store.sidebarVisible && !autoCollapsed) {
-        setAutoCollapsed(true)
-        store.toggleSidebar()
-      } else if (!narrow && autoCollapsed) {
-        setAutoCollapsed(false)
-        if (!store.sidebarVisible) store.toggleSidebar()
-      }
-    }
-    // Debounce past the live-resize storm — toggling the sidebar mid-drag
-    // forces a full layout on every crossing of the float threshold.
-    const onResize = (): void => {
-      if (timer) clearTimeout(timer)
-      timer = setTimeout(apply, 120)
-    }
-    apply()
-    window.addEventListener('resize', onResize, { passive: true })
-    return () => {
-      window.removeEventListener('resize', onResize)
-      if (timer) clearTimeout(timer)
-    }
-  }, [autoCollapsed])
-}

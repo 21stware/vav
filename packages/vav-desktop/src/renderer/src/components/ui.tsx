@@ -207,6 +207,7 @@ export function Button({
   className,
   testId,
   pressed,
+  type = 'button',
   onClick
 }: {
   id?: string
@@ -219,6 +220,7 @@ export function Button({
   className?: string
   testId?: string
   pressed?: boolean
+  type?: 'button' | 'submit'
   onClick?: (event: React.MouseEvent) => void
 }): React.JSX.Element {
   const classes = [
@@ -235,7 +237,7 @@ export function Button({
   return (
     <button
       id={id}
-      type="button"
+      type={type}
       className={classes}
       disabled={disabled}
       title={tip}
@@ -382,6 +384,7 @@ export function Toggle({
 }): React.JSX.Element {
   return (
     <button
+      type="button"
       className={`toggle${checked ? ' on' : ''}`}
       role="switch"
       aria-checked={checked}

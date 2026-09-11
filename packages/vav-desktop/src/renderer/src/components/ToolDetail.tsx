@@ -90,7 +90,11 @@ export const ToolDetail = memo(function ToolDetail({
       </div>
     )
   }
-  if (block.tool === 'request' || block.tool === 'ask_user_question') {
+  if (
+    block.tool === 'request' ||
+    block.tool === 'ask_user_question' ||
+    block.tool === 'request_for_secret'
+  ) {
     return (
       <div className="detail-qa">
         <div className="detail-question">{block.summary}</div>

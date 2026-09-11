@@ -60,5 +60,11 @@ describe('truncateToolSummary / summarizeToolInput', () => {
       summarizeToolInput('ask_user_question', { question: 'Which one?' }),
       'Which one?'
     )
+    assert.equal(
+      summarizeToolInput('request_for_secret', {
+        secrets: [{ name: 'OPENAI_API_KEY' }, { name: 'GH_TOKEN' }]
+      }),
+      'OPENAI_API_KEY, GH_TOKEN'
+    )
   })
 })

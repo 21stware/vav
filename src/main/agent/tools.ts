@@ -3,8 +3,9 @@
  *
  * These are deliberately not pi's built-ins. `terminal` writes into the
  * conversation's sticky shell so `cd` and `export` survive between calls and
- * the transcript can be mirrored into the Agent terminal tab; `request` and
- * `ask_user_question` park the turn on a promise the renderer resolves. Both
+ * the transcript can be mirrored into the Agent terminal tab; `request`,
+ * `ask_user_question`, and `request_for_secret` park the turn on a promise
+ * the renderer resolves. Both
  * behaviours are product decisions pi's `bash` tool would undo.
  *
  * Each tool returns two things: `content` is what the model reads (capped), and
@@ -39,7 +40,8 @@ export function createTools(host: ToolHost): AgentTool[] {
   const [fsRead, fsWrite, fsList] = createFsTools(host)
   const [docSearch, docFetch, sqlQuery] = createDocTools(host)
   const [webSearch, webFetch] = createWebTools(host)
-  const { request, askUserQuestion, loadSkill, plan, switchMode } = createInteractiveTools(host)
+  const { request, askUserQuestion, requestForSecret, loadSkill, plan, switchMode } =
+    createInteractiveTools(host)
   const { connector } = createConnectorTools(host)
 
   const tools: AgentTool[] = [
@@ -58,6 +60,7 @@ export function createTools(host: ToolHost): AgentTool[] {
     connector,
     request,
     askUserQuestion,
+    requestForSecret,
     plan
   ]
   // File-preview Read: offer Switch to Edit so the agent can request write access.

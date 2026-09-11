@@ -165,20 +165,66 @@ export function createDocTools(host: ToolHost) {
     name: 'sql_query',
     label: TOOL_LABELS.sql_query,
     description:
-      'Run read-only analytical SQL (DuckDB dialect) over a SQLite, CSV, TSV, or Parquet file (not .xlsx/.xls). The file is attached in-memory; tables from a SQLite DB or a single CSV/TSV/Parquet file are queryable by name. Use this for analysis (aggregation, GROUP BY, JOIN, window functions) instead of paging the DB preview. Run `SHOW TABLES` first to list available tables, or `DESCRIBE <table>` for columns. For Excel workbooks use doc_search or officecli/xlsx instead.',
+      'Run read-only analytical SQL. On a live database connection (PostgreSQL), omit path and query that connection (PostgreSQL dialect). Otherwise DuckDB dialect over a SQLite, CSV, TSV, or Parquet file (not .xlsx/.xls). Use for analysis (aggregation, GROUP BY, JOIN, window functions) instead of paging the preview. Run `SHOW TABLES` / information_schema first. For Excel workbooks use doc_search or officecli/xlsx instead.',
     parameters: Type.Object({
       sql: Type.String({
         description:
-          'DuckDB SQL statement. SELECT / SHOW / DESCRIBE / WITH / EXPLAIN are expected. DDL that mutates the source file is not possible (in-memory attach).'
+          'SQL statement. SELECT / WITH / EXPLAIN / SHOW are expected. Mutations are refused on live connections; DuckDB file attaches are in-memory so the source file is not written.'
       }),
       path: Type.Optional(
         Type.String({
           description:
-            'File path (.db/.sqlite/.sqlite3/.db3/.csv/.tsv/.parquet), absolute or workdir-relative. Defaults to the file-session document.'
+            'File path (.db/.sqlite/.sqlite3/.db3/.csv/.tsv/.parquet), absolute or workdir-relative. Defaults to the file-session document. Omit on a live DB connection.'
         })
       )
     }),
     async execute(_id, params) {
+      const sql = String(params.sql ?? '').trim()
+      if (!sql) return failure('Missing sql parameter')
+      const lower = sql.toLowerCase()
+      const isSchema =
+        lower.startsWith('show ') ||
+        lower.startsWith('describe ') ||
+        lower.startsWith('pragma ') ||
+        lower === 'show tables' ||
+        lower.includes('information_schema')
+
+      const connectionId = host.dbConnectionId?.()?.trim() || ''
+      if (connectionId && host.postgres) {
+        const result = await host.postgres.querySql(connectionId, sql)
+        if (result.error) {
+          return {
+            content: [{ type: 'text', text: `SQL error: ${result.error}` }],
+            details: { display: `✗ postgres · ${result.error}` }
+          }
+        }
+        const header = result.columns.join(' | ')
+        const sep = result.columns.map(() => '---').join(' | ')
+        const dataRows = result.rows.map((r) => r.join(' | '))
+        const modelLines = [
+          `postgres · ${result.rowCount} row(s)${
+            result.truncated ? ` (truncated to ${result.rows.length})` : ''
+          }`,
+          header,
+          sep,
+          ...dataRows
+        ]
+        const displayLines = [
+          `postgres · ${result.rowCount} row(s)${
+            result.truncated ? ` (truncated to ${result.rows.length})` : ''
+          }`,
+          header,
+          ...result.rows.map((r) => r.join(' | '))
+        ]
+        return {
+          content: [{ type: 'text', text: cap(modelLines.join('\n')) }],
+          details: {
+            display: displayLines.join('\n'),
+            summary: isSchema ? 'schema · postgres' : `${result.rowCount} row(s) · postgres`
+          }
+        }
+      }
+
       if (!host.duckdb) return failure('DuckDB is unavailable')
       const path = resolveDocPath(host, params.path)
       if (!path) {
@@ -186,8 +232,6 @@ export function createDocTools(host: ToolHost) {
           'No file path. Pass path=… or open a file session for a SQLite/CSV/TSV/Parquet file.'
         )
       }
-      const sql = String(params.sql ?? '').trim()
-      if (!sql) return failure('Missing sql parameter')
 
       const kind = duckDbKindForPath(path)
       if (!kind) {
@@ -195,13 +239,6 @@ export function createDocTools(host: ToolHost) {
           `Unsupported file type for sql_query: ${extname(path) || basename(path)}. Use .db/.sqlite/.csv/.tsv/.parquet.`
         )
       }
-
-      const lower = sql.toLowerCase()
-      const isSchema =
-        lower.startsWith('show ') ||
-        lower.startsWith('describe ') ||
-        lower.startsWith('pragma ') ||
-        lower === 'show tables'
 
       const result = await host.duckdb.query(path, sql)
       if (result.error) {

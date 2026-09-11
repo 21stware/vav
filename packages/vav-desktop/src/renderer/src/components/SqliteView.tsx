@@ -8,7 +8,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { PreviewBlock } from '@shared/previewBlock'
-import type { SqliteDatabaseInfo } from '@shared/ipc'
+import type { SqliteDatabaseInfo, SqliteQueryResult } from '@shared/ipc'
 import { handleClickPickMouseDown, type ClickPickPointer } from '../lib/clickPick'
 import { useSheetVirtualWindow } from '../lib/useSheetVirtualWindow'
 import { useT } from '../i18n/useT'
@@ -37,7 +37,8 @@ export function SqliteView({
   info,
   selecting,
   selectedIds,
-  onSelect
+  onSelect,
+  query
 }: {
   path: string
   info: SqliteDatabaseInfo
@@ -48,6 +49,8 @@ export function SqliteView({
     event?: React.MouseEvent | ClickPickPointer | null,
     hint?: PreviewBlock
   ) => void
+  /** Override table paging — live PG connections use this instead of a file path. */
+  query?: (table: string, offset: number, limit: number) => Promise<SqliteQueryResult>
 }): React.JSX.Element {
   const t = useT()
   const tables = info.tables
@@ -122,7 +125,9 @@ export function SqliteView({
         await Promise.all(
           batch.map(async (c) => {
             try {
-              const result = await window.vav.files.dbQuery(path, table, c * CHUNK, CHUNK)
+              const result = query
+                ? await query(table, c * CHUNK, CHUNK)
+                : await window.vav.files.dbQuery(path, table, c * CHUNK, CHUNK)
               if (gen !== genRef.current) return
               if (result.error) {
                 setError(result.error)
@@ -152,7 +157,7 @@ export function SqliteView({
         }
       }
     },
-    [path]
+    [path, query]
   )
 
   useEffect(() => {

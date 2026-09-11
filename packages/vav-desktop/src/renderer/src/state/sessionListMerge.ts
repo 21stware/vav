@@ -15,7 +15,7 @@ function isHiddenSidebarSession(row: {
   fileId?: string | null
   sessionKind?: import('@shared/sessionKind.ts').SessionKind | null
 }): boolean {
-  return !!row.fileId || row.sessionKind === 'timer'
+  return !!row.fileId || row.sessionKind === 'timer' || row.sessionKind === 'db'
 }
 
 /** Deleted file / timer rows. listMeta omits them, so merge must not resurrect. */
@@ -86,10 +86,69 @@ export function listedConversationIdsForSelect(
 ): string[] {
   return conversations
     .filter((c) => {
-      if (c.sessionKind === 'timer') return false
+      if (c.sessionKind === 'timer' || c.sessionKind === 'db') return false
       return archived ? c.archived && !c.fileId : !c.archived && !c.fileId
     })
     .map((c) => c.id)
+}
+
+/** Sidebar / recents row → enough meta for FileSessionView to mount. */
+export type FileSessionSelectHint = {
+  fileId: string
+  title: string
+  createdAt?: number
+  updatedAt?: number
+  tokensUsed?: number
+  workingDirectory?: string | null
+}
+
+/**
+ * File-preview sessions are omitted from listMeta / listClientMeta. Clicking
+ * one must still paint FileSessionView before conversations.get returns (and
+ * even when get misses because the body lives on spawned vav-server).
+ */
+export function fileSessionHintToMeta(
+  id: string,
+  hint: FileSessionSelectHint
+): {
+  id: string
+  title: string
+  createdAt: number
+  updatedAt: number
+  workingDirectory: string | null
+  model: string
+  tokensUsed: number
+  tokenLimit: number
+  pinned: boolean
+  pinTime: null
+  duplicateSourceId: null
+  duplicateSourceTitle: null
+  archived: boolean
+  archivedAt: null
+  approvalMode: 'auto'
+  fileId: string
+  sessionKind: 'file'
+} {
+  const now = Date.now()
+  return {
+    id,
+    title: hint.title.trim() || 'New session',
+    createdAt: hint.createdAt ?? now,
+    updatedAt: hint.updatedAt ?? now,
+    workingDirectory: hint.workingDirectory ?? null,
+    model: '',
+    tokensUsed: hint.tokensUsed ?? 0,
+    tokenLimit: 0,
+    pinned: false,
+    pinTime: null,
+    duplicateSourceId: null,
+    duplicateSourceTitle: null,
+    archived: false,
+    archivedAt: null,
+    approvalMode: 'auto',
+    fileId: hint.fileId,
+    sessionKind: 'file'
+  }
 }
 
 /** File-preview sessions are hidden from listMeta — hydrate maps on demand. */
@@ -338,7 +397,7 @@ export function fallbackConversationIdAfterDelete(
   }>
 ): string | undefined {
   return (
-    conversations.find((c) => !c.archived && !c.fileId && c.sessionKind !== 'timer')?.id ??
+    conversations.find((c) => !c.archived && !c.fileId && c.sessionKind !== 'timer' && c.sessionKind !== 'db')?.id ??
     conversations.find((c) => !c.archived && !c.fileId)?.id ??
     conversations[0]?.id
   )

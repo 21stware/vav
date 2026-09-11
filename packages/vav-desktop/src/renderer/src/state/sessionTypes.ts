@@ -84,7 +84,7 @@ export interface SearchState {
   tick: number
 }
 
-/** Sidebar list: main sessions, archive, file-bound sessions, or timer jobs. */
-export type SidebarListMode = 'main' | 'archive' | 'fileSessions' | 'timers'
+/** Sidebar list: main sessions, archive, file-bound sessions, timer jobs, or db connections. */
+export type SidebarListMode = 'main' | 'archive' | 'fileSessions' | 'timers' | 'databases'
 
 export type { QueuedMessage } from './sessionQueue'

@@ -95,6 +95,18 @@ describe('readAcpUsageFromPromptResult', () => {
 })
 
 describe('readAcpUsageFromUpdate', () => {
+  it('splits inclusive prompt tokens on usage_update when cache is present', () => {
+    const sample = readAcpUsageFromUpdate({
+      sessionUpdate: 'usage_update',
+      inputTokens: 9000,
+      outputTokens: 500,
+      cacheRead: 3000
+    })
+    assert.equal(sample?.inputTokens, 6000)
+    assert.equal(sample?.cacheRead, 3000)
+    assert.equal(sample?.contextUsed, 9000)
+  })
+
   it('reads the stable usage_update used/size/cost shape', () => {
     const sample = readAcpUsageFromUpdate({
       sessionUpdate: 'usage_update',

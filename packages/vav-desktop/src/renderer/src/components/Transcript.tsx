@@ -698,51 +698,64 @@ export function Transcript({
           ref={contentRef}
           className={`transcript-inner${branchSwapActive ? ' is-branch-swap' : ''}`}
         >
-          {isEmpty && (
-            /* One empty tree — swapping nokey/ready remounted the agent name and
-               replayed stagger while `.is-entering` was still on. */
-            <EmptyState
-              layout="session"
-              logo={<AgentBrandMark agent={emptyLogoAgent} size={96} />}
-              logoKey={emptyLogoAgent.id}
-              logoAlt={emptyLogoAgent.name}
-              logoLabel={workspaceSwitch.projectName}
-              logoTitle={
-                workspaceSwitch.allowSwitch ? t('empty.switchWorkspace') : workspaceSwitch.cwd ?? undefined
-              }
-              logoLabelOnClick={workspaceSwitch.allowSwitch ? workspaceSwitch.openMenu : undefined}
-              enterKey={emptyScene}
-              enterSlot={emptySlot}
-              meta={
-                activeId ? (
-                  <EmptyQuotaUsage
-                    conversationId={activeId}
-                    host={cliHost}
-                    accountId={accountId}
+          {isEmpty &&
+            (archived ? (
+              /* Read-only archive: skip provider / workspace chrome. */
+              <EmptyState
+                layout="session"
+                enterKey={emptyScene}
+                enterSlot={emptySlot}
+                description={t('empty.archived')}
+              />
+            ) : (
+              /* One empty tree — swapping nokey/ready remounted the agent name and
+                 replayed stagger while `.is-entering` was still on. */
+              <EmptyState
+                layout="session"
+                logo={<AgentBrandMark agent={emptyLogoAgent} size={96} />}
+                logoKey={emptyLogoAgent.id}
+                logoAlt={emptyLogoAgent.name}
+                logoLabel={workspaceSwitch.projectName}
+                logoTitle={
+                  workspaceSwitch.allowSwitch
+                    ? t('empty.switchWorkspace')
+                    : workspaceSwitch.cwd ?? undefined
+                }
+                logoLabelOnClick={
+                  workspaceSwitch.allowSwitch ? workspaceSwitch.openMenu : undefined
+                }
+                enterKey={emptyScene}
+                enterSlot={emptySlot}
+                meta={
+                  activeId ? (
+                    <EmptyQuotaUsage
+                      conversationId={activeId}
+                      host={cliHost}
+                      accountId={accountId}
+                    />
+                  ) : null
+                }
+                title={needsVavKey ? t('transcript.configureKey') : undefined}
+                description={
+                  needsVavKey
+                    ? t('transcript.configureKeyDesc')
+                    : cliHost
+                      ? undefined
+                      : t('empty.harnessedByVav')
+                }
+                foot={<SessionWorkspaceChrome conversationId={activeId} />}
+              >
+                {needsVavKey ? (
+                  <Button
+                    label={t('transcript.openSettings')}
+                    variant="primary"
+                    testId="empty-open-settings"
+                    onClick={() => openSettings('agents', 'vav')}
                   />
-                ) : null
-              }
-              title={needsVavKey ? t('transcript.configureKey') : undefined}
-              description={
-                needsVavKey
-                  ? t('transcript.configureKeyDesc')
-                  : cliHost
-                    ? undefined
-                    : t('empty.harnessedByVav')
-              }
-              foot={<SessionWorkspaceChrome conversationId={activeId} />}
-            >
-              {needsVavKey ? (
-                <Button
-                  label={t('transcript.openSettings')}
-                  variant="primary"
-                  testId="empty-open-settings"
-                  onClick={() => openSettings('agents', 'vav')}
-                />
-              ) : null}
-              {activeId ? <FirstRunChecklist conversationId={activeId} /> : null}
-            </EmptyState>
-          )}
+                ) : null}
+                {activeId ? <FirstRunChecklist conversationId={activeId} /> : null}
+              </EmptyState>
+            ))}
 
           {/* Branches that start before the first prompt have no message to
               hang off, so their pager sits at the top of the transcript. */}

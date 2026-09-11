@@ -4,6 +4,8 @@
  * state with the main window for the same conversationId.
  */
 
+import { WORKBENCH_BODY_MIN } from '@shared/shellMinSize'
+
 export interface SessionToolsLayout {
   toolsCollapsed: boolean
   panelSegment: 'files' | 'terminal'
@@ -12,7 +14,7 @@ export interface SessionToolsLayout {
   panelHeight: number
 }
 
-export const PANEL_MIN_HEIGHT = 160
+export const PANEL_MIN_HEIGHT = WORKBENCH_BODY_MIN
 /**
  * Safety rail for persisted heights. Interactive drag / double-click max is
  * `PANEL_SNAP_RATIO` of the session column (see ToolsPanel).

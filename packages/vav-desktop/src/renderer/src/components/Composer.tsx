@@ -69,7 +69,8 @@ function retainComposerFocus(event: MouseEvent): void {
  * Prompt input for the active conversation.
  *
  * Streaming (main-chat-streaming.rpml §5): composer stays enabled and enqueues
- * instead of disabling. ask_user_question still disables. `canSend` requires
+ * instead of disabling. ask_user_question / request_for_secret still disable.
+ * `canSend` requires
  * text or an attachment; a missing key turns send into Settings.
  */
 /** Stable identity: a fresh [] from a selector would re-render forever. */

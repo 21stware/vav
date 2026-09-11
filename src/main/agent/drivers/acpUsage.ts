@@ -295,13 +295,7 @@ export function readAcpUsageFromUpdate(update: Record<string, unknown>): AcpUsag
     asRecord(meta?.usage)
   )
   if (!sample) return null
-  const kind = normalizeUpdateKind(
-    asString(update.sessionUpdate) || asString(update.session_update) || ''
-  )
-  if (kind === 'turncompleted' || asRecord(update.usage)) {
-    return splitInclusivePromptTokens(sample)
-  }
-  return sample
+  return splitInclusivePromptTokens(sample)
 }
 
 /**

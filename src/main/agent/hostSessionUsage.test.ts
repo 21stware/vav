@@ -64,6 +64,23 @@ describe('readAcpJsonlUsage', () => {
     assert.ok(usage.reportedSessionCostUsd != null)
     assert.ok(usage.reportedSessionCostUsd! > 0)
   })
+
+  it('ignores usage_update rows that only carry used/size', () => {
+    const home = mkdtempSync(join(tmpdir(), 'vav-grok-usage-fill-'))
+    const cwd = '/tmp/proj'
+    const id = 'sess-fill-only'
+    const dir = join(home, '.grok', 'sessions', encodeGrokSessionDir(cwd), id)
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(
+      join(dir, 'updates.jsonl'),
+      JSON.stringify({
+        timestamp: 100,
+        method: 'session/update',
+        params: { update: { sessionUpdate: 'usage_update', used: 9000, size: 200000 } }
+      })
+    )
+    assert.equal(readAcpJsonlUsage('grok', id, cwd, { home }), null)
+  })
 })
 
 describe('applyMissingHostUsage', () => {
@@ -99,5 +116,47 @@ describe('applyMissingHostUsage', () => {
     assert.equal(conversation.tokenHistory.length, 1)
     assert.equal(conversation.tokensUsed, 80)
     assert.equal(applyMissingHostUsage(conversation, { home }), false)
+  })
+
+  it('backfills history when only a context fill landed (usage_update, no snapshots)', () => {
+    const home = mkdtempSync(join(tmpdir(), 'vav-grok-hydrate-fill-'))
+    const cwd = '/tmp/proj'
+    const id = 'sess-3'
+    const dir = join(home, '.grok', 'sessions', encodeGrokSessionDir(cwd), id)
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(
+      join(dir, 'updates.jsonl'),
+      [
+        JSON.stringify({
+          timestamp: 100,
+          method: 'session/update',
+          params: { update: { sessionUpdate: 'usage_update', used: 9000, size: 200000 } }
+        }),
+        JSON.stringify({
+          timestamp: 110,
+          method: '_x.ai/session/update',
+          params: {
+            update: {
+              sessionUpdate: 'turn_completed',
+              usage: { inputTokens: 80, outputTokens: 10, cachedReadTokens: 20 }
+            }
+          }
+        })
+      ].join('\n')
+    )
+    const conversation = {
+      cliHost: 'grok',
+      workingDirectory: cwd,
+      model: 'grok-4.5',
+      tokenHistory: [],
+      tokensUsed: 9000,
+      tokenLimit: 200_000,
+      cliResumeCursor: { provider: 'grok', sessionId: id },
+      hostTranscripts: {}
+    } as Conversation
+    assert.equal(applyMissingHostUsage(conversation, { home }), true)
+    assert.equal(conversation.tokenHistory.length, 1)
+    assert.equal(conversation.tokenHistory[0]?.cacheReadTokens, 20)
+    assert.equal(conversation.tokensUsed, 80)
   })
 })

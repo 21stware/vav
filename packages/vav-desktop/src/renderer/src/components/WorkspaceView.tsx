@@ -15,6 +15,7 @@ import { useSessionStore } from '../state/sessionStore'
 import { useWorkspaceStore } from '../state/workspaceStore'
 import { useT } from '../i18n/useT'
 import { prefetchForPath } from '../lib/prefetchHeavy'
+import { reportWorkspacePreviewWidth } from '../lib/useWindowMinSize'
 import {
   PREVIEW_FALLBACK_PX,
   PREVIEW_MIN,
@@ -26,7 +27,8 @@ import {
 import { Button, EmptyState } from './ui'
 import { SessionDetail, type FileSessionChromeProps } from './SessionDetail'
 import { ScheduleEditor } from './ScheduleEditor'
-import { isTimerDefinition } from '@shared/sessionKind'
+import { DbWorkspace } from './DbWorkspace'
+import { isDbSession, isTimerDefinition } from '@shared/sessionKind'
 import { GitDiffPreview, GitPatchPreview } from './GitChangesPanel'
 import {
   GithubActionPreview,
@@ -142,6 +144,11 @@ export function WorkspaceView({
     setFilePreviewHost(true)
     return () => setFilePreviewHost(false)
   }, [setFilePreviewHost])
+
+  useEffect(() => {
+    reportWorkspacePreviewWidth(previewOpen ? previewWidth : null)
+    return () => reportWorkspacePreviewWidth(null)
+  }, [previewOpen, previewWidth])
 
   useEffect(() => {
     if (activeId) void ensureFilesLoaded(activeId)
@@ -306,6 +313,10 @@ export function WorkspaceView({
 
   if (isTimerDefinition(conversation ?? {})) {
     return <ScheduleEditor conversationId={activeId} />
+  }
+
+  if (isDbSession(conversation ?? {})) {
+    return <DbWorkspace conversationId={activeId} />
   }
 
   return (

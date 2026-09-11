@@ -1,9 +1,10 @@
 import { Type, type TSchema } from '@earendil-works/pi-ai'
 import type { AgentTool } from '@earendil-works/pi-agent-core'
-import type { AppSettings, AskQuestion, PreviewRef, ToolName } from '@shared/types'
+import type { AppSettings, AskQuestion, PreviewRef, SecretRequest, ToolName } from '@shared/types'
 import type { FileService } from '../fs/FileService'
 import type { DocumentRetrievalService } from '../retrieval/DocumentRetrievalService'
 import type { DuckDbService } from '../fs/DuckDbService'
+import type { PostgresService } from '../fs/PostgresService'
 import type { WebSearchService } from '../web/WebSearchService'
 import type { WebFetchService } from '../web/WebFetchService'
 import type { StickyShell } from '../terminal/StickyShell'
@@ -36,12 +37,15 @@ export interface ToolHost {
       multiSelect?: boolean
       questions?: AskQuestion[]
       askTitle?: string
+      secretRequests?: SecretRequest[]
     }
   ) => Promise<{ text: string; cancelled: boolean }>
   /** Record an fs_write for Change Review (before/after already captured). */
   recordWrite?: (filePath: string, originalContent: string | null, newContent: string) => void
   retrieval?: DocumentRetrievalService
   duckdb?: DuckDbService
+  postgres?: PostgresService
+  dbConnectionId?: () => string | null
   webSearch?: WebSearchService
   webFetch?: WebFetchService
   skills?: SkillService

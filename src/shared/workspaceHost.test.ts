@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import {
   LOCAL_MACHINE_ID,
+  LOCAL_MACHINE_LABEL,
   conversationOnMachine,
   remoteConversationMachineId,
   formatWorkspaceLabel,
@@ -51,7 +52,7 @@ describe('listedServices', () => {
         { id: 'air', name: 'Mac air' }
       ]),
       [
-        { id: LOCAL_MACHINE_ID, name: LOCAL_MACHINE_ID },
+        { id: LOCAL_MACHINE_ID, name: LOCAL_MACHINE_LABEL },
         { id: 'air', name: 'Mac air' }
       ]
     )
@@ -59,9 +60,9 @@ describe('listedServices', () => {
 })
 
 describe('serviceShortName', () => {
-  it('labels this process as local', () => {
-    assert.equal(serviceShortName(LOCAL_MACHINE_ID), LOCAL_MACHINE_ID)
-    assert.equal(serviceShortName(null), LOCAL_MACHINE_ID)
+  it('labels this process as Local', () => {
+    assert.equal(serviceShortName(LOCAL_MACHINE_ID), LOCAL_MACHINE_LABEL)
+    assert.equal(serviceShortName(null), LOCAL_MACHINE_LABEL)
   })
 
   it('uses the host name for a paired service', () => {

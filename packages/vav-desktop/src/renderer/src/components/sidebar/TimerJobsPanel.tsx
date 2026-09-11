@@ -4,7 +4,12 @@ import type { ConversationMeta } from '@shared/types'
 import type { TimerJob, TimerRun } from '@shared/timer'
 import { useSessionStore } from '../../state/sessionStore'
 import { isDroppedConversationId, replaceTimerSessions } from '../../state/sessionListMerge'
-import { timerListConversationIds, timerScheduleLabel, timerSessionsForJob } from '../../lib/timerSessions'
+import {
+  sortTimerJobs,
+  timerListConversationIds,
+  timerScheduleLabel,
+  timerSessionsForJob
+} from '../../lib/timerSessions'
 import { flattenSessionTitle, adjacentRunClass } from '../../lib/sidebarList'
 import { relativeTime, middleTruncate } from '../../lib/format'
 import { showMenu, type MenuItem } from '../../lib/nativeMenu'
@@ -81,11 +86,13 @@ export function TimerJobsPanel(): React.JSX.Element {
 
   const visibleJobs = useMemo(
     () =>
-      jobs.filter((job) => {
-        if (!job.conversationId) return true
-        if (conversations.some((row) => row.id === job.conversationId)) return true
-        return !isDroppedConversationId(job.conversationId)
-      }),
+      sortTimerJobs(
+        jobs.filter((job) => {
+          if (!job.conversationId) return true
+          if (conversations.some((row) => row.id === job.conversationId)) return true
+          return !isDroppedConversationId(job.conversationId)
+        })
+      ),
     [jobs, conversations]
   )
 

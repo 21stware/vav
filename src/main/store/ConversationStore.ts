@@ -115,6 +115,7 @@ export class ConversationStore {
    * Desktop sets this when the spawned local vav-server owns local chats.
    */
   private persistGate: ((conversation: Conversation) => boolean) | null = null
+  private removedListeners: Array<(ids: string[]) => void> = []
 
   /** Path shown in About / diagnostics — the sharded conversations directory. */
   get path(): string {
@@ -125,6 +126,14 @@ export class ConversationStore {
    * Host-owned rows stay in the sidebar cache but leave this directory.
    * Passing `null` restores persist-all (no spawned vav-server).
    */
+  /** Fired after rows leave memory (delete / ephemeral dispose / file-session wipe). */
+  onRemoved(listener: (ids: string[]) => void): () => void {
+    this.removedListeners.push(listener)
+    return () => {
+      this.removedListeners = this.removedListeners.filter((row) => row !== listener)
+    }
+  }
+
   setShouldPersist(gate: ((conversation: Conversation) => boolean) | null): void {
     this.persistGate = gate
     if (!this.loaded) return
@@ -188,6 +197,7 @@ export class ConversationStore {
       if (conversation.timerJobId === undefined) conversation.timerJobId = null
       if (conversation.timerRunId === undefined) conversation.timerRunId = null
       if (conversation.timerRunAt === undefined) conversation.timerRunAt = null
+      if (conversation.dbConnectionId === undefined) conversation.dbConnectionId = null
       if (conversation.fileReadOnly === undefined) conversation.fileReadOnly = false
       if (conversation.agentBinaryName === undefined) conversation.agentBinaryName = null
       if (conversation.cliHost === undefined) conversation.cliHost = null
@@ -251,7 +261,7 @@ export class ConversationStore {
       .sort((a, b) => b.updatedAt - a.updatedAt)
   }
 
-  /** Workspace + timer rows for the renderer. File-preview sessions stay omitted. */
+  /** Workspace + timer + db rows for the renderer. File-preview sessions stay omitted. */
   listClientMeta(): ConversationMeta[] {
     return this.conversations
       .filter((c) => sessionKindOf(c) !== 'file')
@@ -306,6 +316,7 @@ export class ConversationStore {
       timerJobId?: string | null
       timerRunId?: string | null
       timerRunAt?: number | null
+      dbConnectionId?: string | null
       title?: string
       fileReadOnly?: boolean
       approvalMode?: import('@shared/types').ApprovalMode
@@ -354,6 +365,7 @@ export class ConversationStore {
       timerJobId: options?.timerJobId ?? null,
       timerRunId: options?.timerRunId ?? null,
       timerRunAt: options?.timerRunAt ?? null,
+      dbConnectionId: options?.dbConnectionId ?? null,
       fileReadOnly: options?.fileReadOnly ?? false,
       agentBinaryName: cliHost,
       cliHost,
@@ -404,6 +416,7 @@ export class ConversationStore {
       timerJobId: null,
       timerRunId: null,
       timerRunAt: null,
+      dbConnectionId: null,
       fileReadOnly: false,
       accountId: source.accountId ?? null,
       messages: (source.messages ?? []).map((message) => ({
@@ -579,10 +592,11 @@ export class ConversationStore {
       cacheCreatedAt: cloned.cacheCreatedAt ?? null,
       cacheExpiresAt: cloned.cacheExpiresAt ?? null,
       fileId: null,
-      sessionKind: cloned.sessionKind === 'timer' ? 'timer' : 'workspace',
+      sessionKind: cloned.sessionKind === 'timer' || cloned.sessionKind === 'db' ? cloned.sessionKind : 'workspace',
       timerJobId: cloned.timerJobId ?? null,
       timerRunId: cloned.timerRunId ?? null,
       timerRunAt: cloned.timerRunAt ?? null,
+      dbConnectionId: cloned.dbConnectionId ?? null,
       fileReadOnly: false,
       agentBinaryName: cloned.agentBinaryName ?? null,
       cliHost: cloned.cliHost ?? null,
@@ -1003,6 +1017,13 @@ export class ConversationStore {
       this.markDirty(parentId)
     }
     this.markDeleted(removed)
+    for (const listener of this.removedListeners) {
+      try {
+        listener(removed)
+      } catch (err) {
+        console.error('[conversations] onRemoved listener failed', err)
+      }
+    }
     return removed
   }
 

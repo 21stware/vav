@@ -1,5 +1,7 @@
-import type { IpcMain, IpcMainInvokeEvent } from 'electron'
+import { BrowserWindow, type IpcMain, type IpcMainInvokeEvent } from 'electron'
 import { IPC, type SettingsView } from '@shared/ipc'
+import { MAIN_WINDOW_MIN_HEIGHT, WINDOW_MIN_WIDTH_FLOOR } from '@shared/shellMinSize'
+import { applyWindowMinSize } from '@main/window/applyWindowMinSize'
 import type { AppSettings, ShellKind } from '@shared/types'
 import type { OverlayPayload } from '@shared/overlayOpen'
 
@@ -123,4 +125,17 @@ export function registerWindowIpc(ipcMain: IpcMain, actions: WindowIpcActions): 
     ) => actions.openSwarmHistory(event.sender, conversationId, anchor)
   )
   ipcMain.handle(IPC.windowRelaunch, () => actions.relaunch())
+  ipcMain.handle(IPC.windowSetMinSize, (event, size: { width?: unknown; height?: unknown }) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    if (!win || win.isDestroyed()) return
+    const width =
+      typeof size?.width === 'number' && Number.isFinite(size.width)
+        ? Math.max(WINDOW_MIN_WIDTH_FLOOR, Math.round(size.width))
+        : WINDOW_MIN_WIDTH_FLOOR
+    const height =
+      typeof size?.height === 'number' && Number.isFinite(size.height)
+        ? Math.max(MAIN_WINDOW_MIN_HEIGHT, Math.round(size.height))
+        : MAIN_WINDOW_MIN_HEIGHT
+    applyWindowMinSize(win, width, height)
+  })
 }

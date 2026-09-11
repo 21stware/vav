@@ -250,6 +250,7 @@ interface HostRuntime {
 export interface CliAgentHostDeps {
   conversations: ConversationStore
   settings: SettingsStore
+  sessionSecrets?: import('../store/SessionSecretStore.ts').SessionSecretStore
   changeSets?: ChangeSetStore
   files?: FileService
   /** Lookup for the machine a conversation's agent process should spawn on. */
@@ -933,7 +934,7 @@ export class CliAgentHost {
         thinkingLevel: conversation.thinkingLevel ?? null,
         fast: conversation.fast === true,
         cursor,
-        env: agent?.envVars,
+        env: { ...agent?.envVars, ...this.deps.sessionSecrets?.getEnv(conversationId) },
         extraArgs: agent?.defaultArgs,
         hostProcess: this.hostProcessFor(conversationId),
         files: this.deps.files

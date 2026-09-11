@@ -202,19 +202,45 @@ export function filterFileSessionRows<T extends { title: string; path: string }>
   )
 }
 
+/** Newest-first file-session rows, one entry per path. */
+export function uniqueRecentFileRows<T extends { path: string }>(rows: readonly T[]): T[] {
+  const seen = new Set<string>()
+  const out: T[] = []
+  for (const row of rows) {
+    if (seen.has(row.path)) continue
+    seen.add(row.path)
+    out.push(row)
+  }
+  return out
+}
+
 type ListModeRow = Pick<ConversationMeta, 'archived' | 'fileId' | 'sessionKind'>
 
-/** Which sidebar category a row belongs to (file / timer win over archived). */
+/** Which sidebar category a row belongs to (file / timer / db win over archived). */
 export function sidebarListModeOfConversation(row: ListModeRow): SidebarListMode {
   const kind = sessionKindOf(row)
   if (kind === 'file') return 'fileSessions'
   if (kind === 'timer') return 'timers'
+  if (kind === 'db') return 'databases'
   if (row.archived) return 'archive'
   return 'main'
 }
 
 export function conversationFitsListMode(row: ListModeRow, mode: SidebarListMode): boolean {
   return sidebarListModeOfConversation(row) === mode
+}
+
+/**
+ * Recency reshuffles (a background task finishing) must not steal the
+ * selection onto whichever row is now first. Only a category / machine
+ * switch may pick a fallback by rank.
+ */
+export function shouldReconcileSidebarSelection(opts: {
+  currentFits: boolean
+  listScopeChanged: boolean
+}): boolean {
+  if (opts.currentFits) return false
+  return opts.listScopeChanged
 }
 
 /** Keep the current row when it belongs here; otherwise the newest match on this machine. */
@@ -233,6 +259,12 @@ export function nextConversationForListMode(
     const defs = matches.filter((row) => isTimerDefinition(row) && !row.archived)
     const live = matches.filter((row) => !row.archived)
     const ranked = defs.length ? defs : live.length ? live : matches
+    ranked.sort((a, b) => b.updatedAt - a.updatedAt)
+    return ranked[0]?.id ?? null
+  }
+  if (mode === 'databases') {
+    const live = matches.filter((row) => !row.archived)
+    const ranked = live.length ? live : matches
     ranked.sort((a, b) => b.updatedAt - a.updatedAt)
     return ranked[0]?.id ?? null
   }

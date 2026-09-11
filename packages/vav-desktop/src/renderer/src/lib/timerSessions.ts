@@ -8,6 +8,11 @@ function sortTimerSessions(a: ConversationMeta, b: ConversationMeta): number {
   return (b.timerRunAt ?? b.updatedAt) - (a.timerRunAt ?? a.updatedAt)
 }
 
+/** Finished / recently touched schedules float to the top; selection stays by id. */
+export function sortTimerJobs<T extends { updatedAt: number }>(jobs: readonly T[]): T[] {
+  return [...jobs].sort((a, b) => b.updatedAt - a.updatedAt)
+}
+
 /** Fired run conversations for one schedule. Definition chats are excluded. */
 export function timerSessionsForJob(
   conversations: ConversationMeta[],

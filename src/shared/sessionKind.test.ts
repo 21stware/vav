@@ -1,12 +1,13 @@
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { isTimerDefinition, isWorkspaceSession, sessionKindOf } from './sessionKind.ts'
+import { isDbSession, isTimerDefinition, isWorkspaceSession, sessionKindOf } from './sessionKind.ts'
 
 describe('sessionKindOf', () => {
   it('prefers an explicit kind', () => {
     assert.equal(sessionKindOf({ sessionKind: 'timer', fileId: 'x' }), 'timer')
     assert.equal(sessionKindOf({ sessionKind: 'file' }), 'file')
     assert.equal(sessionKindOf({ sessionKind: 'workspace' }), 'workspace')
+    assert.equal(sessionKindOf({ sessionKind: 'db' }), 'db')
   })
 
   it('treats fileId as a file session when kind is missing', () => {
@@ -28,6 +29,15 @@ describe('isWorkspaceSession', () => {
     assert.equal(isWorkspaceSession({}), true)
     assert.equal(isWorkspaceSession({ fileId: 'a' }), false)
     assert.equal(isWorkspaceSession({ sessionKind: 'timer' }), false)
+    assert.equal(isWorkspaceSession({ sessionKind: 'db' }), false)
     assert.equal(isWorkspaceSession({ sessionKind: 'workspace', fileId: null }), true)
+  })
+})
+
+describe('isDbSession', () => {
+  it('is only the db category row', () => {
+    assert.equal(isDbSession({ sessionKind: 'db' }), true)
+    assert.equal(isDbSession({ sessionKind: 'timer' }), false)
+    assert.equal(isDbSession({}), false)
   })
 })

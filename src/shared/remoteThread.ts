@@ -2,7 +2,7 @@
  * Phone-sized projection of a conversation path: last N plain-text turns
  * and a one-line list preview. Host RPCs stay off this channel.
  */
-import type { AppLocale } from './i18n/index.ts'
+import { t, type AppLocale } from './i18n/index.ts'
 import { markdownToPlainText } from './markdownPlain.ts'
 import type { ChatMessage, MessageBlock, PlanBlock, ToolCallBlock } from './types.ts'
 import type { RemoteThreadBlock, RemoteThreadMessage } from './remoteControl.ts'
@@ -59,8 +59,25 @@ export function projectRemoteToolBlock(
     (block.tool === 'ask_user_question' ||
       block.tool === 'plan_doc' ||
       block.tool === 'request' ||
+      block.tool === 'request_for_secret' ||
       Boolean(block.choices?.length || block.questions?.length))
   if (interactive) {
+    if (block.tool === 'request_for_secret') {
+      const names = (block.secretRequests ?? []).map((row) => row.name)
+      const how = (block.secretRequests ?? [])
+        .filter((row) => row.description)
+        .map((row) => `${row.name}: ${row.description}`)
+        .join('\n')
+      return {
+        kind: 'awaiting',
+        id: block.id,
+        tool: block.tool,
+        name: toolDisplayName(block.tool, locale),
+        title: (block.askTitle || block.summary || names.join(', ') || block.tool).slice(0, 120),
+        prompt: (how || names.join(', ') || block.summary || '').slice(0, 2000),
+        choices: [{ id: 'decline', label: t(locale, 'secret.decline') }]
+      }
+    }
     const question = block.questions?.[0]
     const choices = (block.choices ?? question?.choices ?? []).slice(0, 12).map((label) => ({
       id: label,

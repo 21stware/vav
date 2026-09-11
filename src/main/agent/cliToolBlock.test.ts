@@ -90,6 +90,22 @@ describe('cliToolBlock', () => {
     assert.equal(next.askTitle, undefined)
   })
 
+  it('keeps secretRequests when the runtime parks without choices', () => {
+    const prev = newCliToolCallBlock({
+      id: 's',
+      tool: 'request_for_secret',
+      summary: 'OPENAI_API_KEY',
+      input: '{}'
+    })
+    const next = applyToolRuntimePatch(prev, {
+      status: 'pending',
+      secretRequests: [{ name: 'OPENAI_API_KEY', description: 'https://example.com' }]
+    })
+    assert.equal(next.secretRequests?.[0]?.name, 'OPENAI_API_KEY')
+    const cleared = applyToolRuntimePatch(next, { status: 'executing', output: 'ok' })
+    assert.equal(cleared.secretRequests, undefined)
+  })
+
   it('builds an Approve/Deny permission card', () => {
     const block = newCliPermissionBlock({
       requestId: 'r1',

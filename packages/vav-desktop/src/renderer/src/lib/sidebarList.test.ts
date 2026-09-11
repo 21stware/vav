@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import type { ConversationMeta } from '@shared/types.ts'
+import {
+  DEFAULT_SIDEBAR_VISIBLE_CATEGORIES,
+  isSidebarCategoryVisible,
+  parseSidebarVisibleCategories,
+  toggleSidebarVisibleCategory
+} from '@shared/types.ts'
 import { t as translate } from '@shared/i18n/index.ts'
 import {
   agentTypeLabel,
@@ -16,9 +22,11 @@ import {
   pinnableWorkspaceDir,
   nextVisibleSelectionAfterArchive,
   filterFileSessionRows,
+  uniqueRecentFileRows,
   sidebarListModeOfConversation,
   conversationFitsListMode,
-  nextConversationForListMode
+  nextConversationForListMode,
+  shouldReconcileSidebarSelection
 } from './sidebarList.ts'
 
 function conv(partial: Partial<ConversationMeta> & Pick<ConversationMeta, 'id'>): ConversationMeta {
@@ -213,9 +221,33 @@ describe('nextVisibleSelectionAfterArchive', () => {
   })
 })
 
+describe('sidebar category visibility', () => {
+  it('defaults to scheduled only and ignores junk', () => {
+    assert.deepEqual(parseSidebarVisibleCategories(undefined), ['timers'])
+    assert.deepEqual(parseSidebarVisibleCategories(DEFAULT_SIDEBAR_VISIBLE_CATEGORIES), ['timers'])
+    assert.deepEqual(parseSidebarVisibleCategories(['fileSessions', 'timers', 'timers', 'nope']), [
+      'fileSessions',
+      'timers'
+    ])
+    assert.deepEqual(parseSidebarVisibleCategories([]), [])
+  })
+
+  it('keeps Task always visible and toggles the optional chips', () => {
+    assert.equal(isSidebarCategoryVisible('main', []), true)
+    assert.equal(isSidebarCategoryVisible('timers', ['timers']), true)
+    assert.equal(isSidebarCategoryVisible('fileSessions', ['timers']), false)
+    assert.deepEqual(toggleSidebarVisibleCategory(['timers'], 'fileSessions'), [
+      'timers',
+      'fileSessions'
+    ])
+    assert.deepEqual(toggleSidebarVisibleCategory(['timers', 'archive'], 'timers'), ['archive'])
+  })
+})
+
 describe('sidebar list mode', () => {
   it('maps file / timer / archived / task rows onto categories', () => {
     assert.equal(sidebarListModeOfConversation(conv({ id: 't', sessionKind: 'timer' })), 'timers')
+    assert.equal(sidebarListModeOfConversation(conv({ id: 'db', sessionKind: 'db' })), 'databases')
     assert.equal(sidebarListModeOfConversation(conv({ id: 'f', fileId: 'ino-1' })), 'fileSessions')
     assert.equal(
       sidebarListModeOfConversation(conv({ id: 'a', archived: true, archivedAt: 9 })),
@@ -237,7 +269,8 @@ describe('sidebar list mode', () => {
       conv({ id: 'arch', archived: true, archivedAt: 20, updatedAt: 2 }),
       conv({ id: 'file', fileId: 'ino', updatedAt: 9 }),
       conv({ id: 'job', sessionKind: 'timer', updatedAt: 4 }),
-      conv({ id: 'run', sessionKind: 'timer', timerRunId: 'r1', updatedAt: 12 })
+      conv({ id: 'run', sessionKind: 'timer', timerRunId: 'r1', updatedAt: 12 }),
+      conv({ id: 'db', sessionKind: 'db', updatedAt: 7 })
     ]
     assert.equal(nextConversationForListMode(rows, 'main', 'live', 'local'), 'live')
     assert.equal(nextConversationForListMode(rows, 'main', 'arch', 'local'), 'live')
@@ -246,6 +279,7 @@ describe('sidebar list mode', () => {
     assert.equal(nextConversationForListMode(rows, 'timers', 'live', 'local'), 'job')
     assert.equal(nextConversationForListMode(rows, 'timers', 'run', 'local'), 'run')
     assert.equal(nextConversationForListMode(rows, 'timers', null, 'local'), 'job')
+    assert.equal(nextConversationForListMode(rows, 'databases', 'live', 'local'), 'db')
     assert.equal(
       nextConversationForListMode(
         [conv({ id: 'live', updatedAt: 8 })],
@@ -272,6 +306,20 @@ describe('filterFileSessionRows', () => {
     assert.deepEqual(
       filterFileSessionRows(rows, 'app.ts').map((r) => r.path),
       ['/tmp/src/app.ts']
+    )
+  })
+})
+
+describe('uniqueRecentFileRows', () => {
+  it('keeps the first (newest) row for each path', () => {
+    const rows = [
+      { path: '/tmp/a.md', sessionId: 'new' },
+      { path: '/tmp/b.md', sessionId: 'other' },
+      { path: '/tmp/a.md', sessionId: 'old' }
+    ]
+    assert.deepEqual(
+      uniqueRecentFileRows(rows).map((row) => row.sessionId),
+      ['new', 'other']
     )
   })
 })

@@ -1,16 +1,18 @@
 import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react'
 import type { FileSessionListEntry } from '@shared/ipc'
+import { FILE_SESSION_AGENT_MIN_WIDTH } from '@shared/shellMinSize'
 import { useSessionStore } from '../state/sessionStore'
 import { useT } from '../i18n/useT'
 import { basename } from '../lib/path'
+import { useSidebarFloatMode } from '../lib/sidebarLayout'
+import { reportFileSessionAgentOpen } from '../lib/useWindowMinSize'
 import { EmptyState } from './ui'
 import { SessionDetail } from './SessionDetail'
 import { ShellLeadingControls } from './ShellLeadingControls'
-import { useSidebarFloatMode } from '../lib/sidebarLayout'
 
 const FileViewer = lazy(() => import('./FileViewer').then((m) => ({ default: m.FileViewer })))
 
-const AGENT_MIN = 280
+const AGENT_MIN = FILE_SESSION_AGENT_MIN_WIDTH
 const AGENT_DEFAULT = 380
 const AGENT_WIDTH_KEY = 'vav.file-session-agent-width'
 
@@ -52,6 +54,11 @@ export function FileSessionView({
   const sidebarFloating = useSidebarFloatMode()
   const showShellLeading = !(sidebarVisible && !sidebarFloating)
   const shellLeading = showShellLeading ? <ShellLeadingControls /> : null
+
+  useEffect(() => {
+    reportFileSessionAgentOpen(agentOpen, agentWidth)
+  }, [agentOpen, agentWidth])
+  useEffect(() => () => reportFileSessionAgentOpen(null), [])
 
   useEffect(() => {
     let cancelled = false

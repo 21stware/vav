@@ -20,6 +20,7 @@ import { useT } from './i18n/useT'
 import { useAttentionSeen } from './lib/useAttentionSeen'
 import { acceptSessionNavigateSeq } from './lib/cliSurfaceAuthority'
 import { installSwarmHistoryBridge } from './lib/swarmHistoryBridge'
+import { useWindowMinSize } from './lib/useWindowMinSize'
 
 /** Open clock from main (requestedAt) for [session-perf] logs. */
 let sessionOpenClock = 0
@@ -209,6 +210,7 @@ export default function SessionWindow({
   // Full shortcut surface — not just focus-composer (detached windows used to
   // drop ⌘⇧E / Ctrl+` once a CLI agent host stole keyboard focus).
   useMenuCommands()
+  useWindowMinSize()
 
   const title = useMemo(() => {
     const name = (conversation?.title || '').trim()

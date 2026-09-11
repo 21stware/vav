@@ -23,7 +23,10 @@ export function allowWorkdirSwitch(opts: {
   enclosedUnrevealed: boolean
   /** Root gone — allow recover except on Swarm, where PTYs cannot follow. */
   rootMissing: boolean
+  /** Archived sessions are read-only: keep the path chip, drop the switcher. */
+  archived?: boolean
 }): boolean {
+  if (opts.archived) return false
   if (opts.swarmSurface) return false
   return opts.rootMissing || !opts.enclosedUnrevealed
 }

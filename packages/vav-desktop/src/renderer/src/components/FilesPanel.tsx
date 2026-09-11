@@ -7,6 +7,7 @@ import {
   GitBranch,
   Github,
   Info,
+  KeyRound,
   List,
   FolderInput,
   Package,
@@ -42,6 +43,7 @@ import { SupabaseMark } from './SupabaseMark'
 import { CloudflarePanel, type CloudflarePanelChrome } from './CloudflarePanel'
 import { VercelPanel, type VercelPanelChrome } from './VercelPanel'
 import { ArtifactsPanel } from './ArtifactsPanel'
+import { SecretsPanel, type SecretsPanelChrome } from './SecretsPanel'
 import {
   PluginsPanel,
   type PluginCreateKind,
@@ -59,6 +61,7 @@ import {
 type FilesTrayView =
   | 'files'
   | 'artifacts'
+  | 'secrets'
   | 'plugins'
   | 'git'
   | 'github'
@@ -140,6 +143,8 @@ export function FilesPanel({
   const [supabaseChrome, setSupabaseChrome] = useState<SupabasePanelChrome | null>(null)
   const [cloudflareChrome, setCloudflareChrome] = useState<CloudflarePanelChrome | null>(null)
   const [pluginsChrome, setPluginsChrome] = useState<PluginsPanelChrome | null>(null)
+  const [secretsChrome, setSecretsChrome] = useState<SecretsPanelChrome | null>(null)
+  const [secretCount, setSecretCount] = useState(0)
   const [vercelChrome, setVercelChrome] = useState<VercelPanelChrome | null>(null)
   const cliHost = conversation?.cliHost ?? null
   /** Temp dirs can become repos after Files → Git “enable version control”. */
@@ -208,6 +213,9 @@ export function FilesPanel({
       }
       return next
     })
+  }, [])
+  const onSecretsChrome = useCallback((next: SecretsPanelChrome | null) => {
+    setSecretsChrome(next)
   }, [])
   const onCloudflareChrome = useCallback((next: CloudflarePanelChrome | null) => {
     setCloudflareChrome((prev) => {
@@ -288,6 +296,24 @@ export function FilesPanel({
   useEffect(() => {
     if (openArtifactsNonce > 0) setTrayViewState('artifacts')
   }, [openArtifactsNonce])
+
+  useEffect(() => {
+    if (!activeId || !window.vav?.sessionSecrets?.list) {
+      setSecretCount(0)
+      return
+    }
+    let cancelled = false
+    void window.vav.sessionSecrets.list(activeId).then((row) => {
+      if (!cancelled) setSecretCount(row?.names.length ?? 0)
+    })
+    const off = window.vav.sessionSecrets.onChanged((payload) => {
+      if (payload.conversationId === activeId) setSecretCount(payload.names.length)
+    })
+    return () => {
+      cancelled = true
+      off()
+    }
+  }, [activeId])
 
   // GitHub needs a repo; Git stays available so a plain folder can be inited.
   useEffect(() => {
@@ -759,6 +785,13 @@ export function FilesPanel({
                 badge: artifactCount > 0 ? artifactCount : undefined
               },
               {
+                value: 'secrets',
+                label: t('files.tabSecrets'),
+                title: t('files.tabSecrets'),
+                icon: <KeyRound size={14} />,
+                badge: secretCount > 0 ? secretCount : undefined
+              },
+              {
                 value: 'plugins',
                 label: t('files.tabPlugins'),
                 title: t('files.tabPlugins'),
@@ -877,6 +910,15 @@ export function FilesPanel({
                 }
               />
             </>
+          )}
+          {trayView === 'secrets' && (
+            <Button
+              icon={<Plus size={14} />}
+              size="sm"
+              testId="secrets-add"
+              title={t('secrets.add')}
+              onClick={() => secretsChrome?.startAdd()}
+            />
           )}
           {trayView === 'plugins' && pluginsChrome && (
             <>
@@ -1056,6 +1098,13 @@ export function FilesPanel({
           data-testid="artifacts-tray"
         >
           <ArtifactsPanel />
+        </div>
+        <div
+          className="files-tray-pane"
+          data-hidden={trayView !== 'secrets'}
+          data-testid="secrets-tray"
+        >
+          <SecretsPanel visible={visible && trayView === 'secrets'} onChrome={onSecretsChrome} />
         </div>
         <div
           className="files-tray-pane"

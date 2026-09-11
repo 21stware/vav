@@ -17,6 +17,7 @@ import {
 describe('shouldSkipToolGate / terminalCommandFromArgs', () => {
   it('skips interactive and wait tools', () => {
     assert.equal(shouldSkipToolGate('ask_user_question'), true)
+    assert.equal(shouldSkipToolGate('request_for_secret'), true)
     assert.equal(shouldSkipToolGate('plan'), true)
     assert.equal(shouldSkipToolGate('wait'), true)
     assert.equal(shouldSkipToolGate('fs_write'), false)

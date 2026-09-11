@@ -1,6 +1,10 @@
 import type { ToolName } from '../../shared/types.ts'
 
-export const INTERACTIVE_TOOLS: ReadonlySet<ToolName> = new Set(['request', 'ask_user_question'])
+export const INTERACTIVE_TOOLS: ReadonlySet<ToolName> = new Set([
+  'request',
+  'ask_user_question',
+  'request_for_secret'
+])
 export const READONLY_TOOLS: ReadonlySet<ToolName> = new Set([
   'fs_read',
   'fs_list',

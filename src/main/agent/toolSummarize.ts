@@ -1,4 +1,5 @@
 import { normalizeAskQuestions, normalizePlanSteps } from '../../shared/askPlan.ts'
+import { normalizeSecretRequests, summarizeSecretRequests } from '../../shared/sessionSecrets.ts'
 import { TOOL_OUTPUT_CAP, type ToolName } from '../../shared/types.ts'
 
 /** Default sticky-shell session id (`StickyShell.BASH_SESSION_ID`). */
@@ -93,6 +94,13 @@ export function summarizeToolInput(
         return truncateToolSummary(String(input.title ?? `${questions.length} 个问题`), 120)
       }
       return truncateToolSummary(questions[0]?.question ?? String(input.question ?? ''), 120)
+    }
+    case 'request_for_secret': {
+      const requests = normalizeSecretRequests(input)
+      return truncateToolSummary(
+        summarizeSecretRequests(requests, String(input.title ?? '')),
+        120
+      )
     }
     case 'plan': {
       const steps = normalizePlanSteps(input.steps)

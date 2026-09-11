@@ -301,7 +301,7 @@ function liveBlockEvents(conversationId: string, index: number, block: RemoteThr
   if (mapped.kind === 'plan') {
     return [{ type: 'plan', conversationId, index, block: mapped }]
   }
-  if (mapped.kind === 'toolCall' && mapped.status === 'pending' && (mapped.tool === 'ask_user_question' || mapped.tool === 'request' || mapped.choices?.length)) {
+  if (mapped.kind === 'toolCall' && mapped.status === 'pending' && (mapped.tool === 'ask_user_question' || mapped.tool === 'request' || mapped.tool === 'request_for_secret' || mapped.choices?.length)) {
     return [
       {
         type: 'awaiting',

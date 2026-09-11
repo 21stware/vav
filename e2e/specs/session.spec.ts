@@ -1,5 +1,10 @@
-import { test, expect } from '@playwright/test'
+import { test, expect, type Page } from '@playwright/test'
 import { chooseNativeMenu, launchWorkbench, peekNativeMenu, waitForNewWindow } from '../launch'
+
+async function revealSidebarCategory(page: Page, label: string): Promise<void> {
+  await page.locator('[data-testid="sidebar-category-config"]').click()
+  await chooseNativeMenu(page, label)
+}
 
 /**
  * session/sidebar-conversation-list.rpml + session/main-chat-empty.rpml
@@ -16,9 +21,25 @@ test('sidebar lists the session, groups by workspace, and archives stay reachabl
       'data-expanded',
       'true'
     )
-    await expect(page.locator('[data-testid="sidebar-category-file"]')).toBeVisible()
     await expect(page.locator('[data-testid="sidebar-category-scheduled"]')).toBeVisible()
-    await expect(page.locator('[data-testid="sidebar-category-archived"]')).toBeVisible()
+    await expect(page.locator('[data-testid="sidebar-category-file"]')).toHaveCount(0)
+    await expect(page.locator('[data-testid="sidebar-category-db"]')).toHaveCount(0)
+    await expect(page.locator('[data-testid="sidebar-category-archived"]')).toHaveCount(0)
+    await expect(page.locator('[data-testid="sidebar-category-config"]')).toBeVisible()
+    await page.locator('[data-testid="sidebar-category-config"]').click()
+    await expect
+      .poll(async () => (await peekNativeMenu(page))?.map((item) => item.label) ?? [])
+      .toEqual(expect.arrayContaining(['Show categories', 'Scheduled', 'File', 'DB', 'Archived']))
+    await expect
+      .poll(async () => (await peekNativeMenu(page))?.find((item) => item.label === 'Scheduled')?.checked)
+      .toBe(true)
+    await chooseNativeMenu(page, 'File')
+    await expect(page.locator('[data-testid="sidebar-category-file"]')).toBeVisible()
+    await expect(page.locator('[data-testid="sidebar-category-file"]')).toHaveAttribute(
+      'data-expanded',
+      'true'
+    )
+    await page.locator('[data-testid="sidebar-category-task"]').click()
     await expect(page.locator('[data-testid="sidebar-list-menu"]')).toHaveAttribute(
       'data-grouping',
       'workspace'
@@ -84,11 +105,12 @@ test('new session is created and selected', async () => {
   }
 })
 
-test('Archived category opens the empty archive list and Task restores grouping', async () => {
+test('Archived menu opens the empty archive list and Task restores grouping', async () => {
   const harness = await launchWorkbench()
   try {
     const { page } = harness
-    await page.locator('[data-testid="sidebar-category-archived"]').click()
+    await page.locator('[data-testid="sidebar-connect"]').click()
+    await chooseNativeMenu(page, 'Archived')
     await expect(page.getByText('No archived sessions').first()).toBeVisible()
     await expect(page.locator('[data-testid="sidebar-list-menu"]')).toHaveCount(0)
     await page.locator('[data-testid="sidebar-category-task"]').click()
@@ -99,12 +121,18 @@ test('Archived category opens the empty archive list and Task restores grouping'
   }
 })
 
-test('File category shows the file-session empty state', async () => {
+test('File category shows recent files and Open File in the detail pane', async () => {
   const harness = await launchWorkbench()
   try {
     const { page } = harness
-    await page.locator('[data-testid="sidebar-category-file"]').click()
+    await revealSidebarCategory(page, 'File')
+    await expect(page.locator('[data-testid="sidebar-category-file"]')).toHaveAttribute(
+      'data-expanded',
+      'true'
+    )
     await expect(page.getByText('No file sessions').first()).toBeVisible()
+    await expect(page.locator('[data-testid="file-recents"]')).toBeVisible()
+    await expect(page.getByText('Recent files')).toBeVisible()
     await expect(page.locator('[data-testid="open-a-file"]')).toBeVisible()
     await expect(page.locator('[data-testid="sidebar-list-menu"]')).toHaveCount(0)
     await page.locator('[data-testid="sidebar-category-task"]').click()
@@ -133,7 +161,31 @@ test('Scheduled category switches the list and the detail pane', async () => {
     await expect(page.locator('[data-testid="timer-workspace"]')).toHaveValue('mint')
     await expect(page.locator('[data-testid="timer-prompt"]')).toBeVisible()
     await expect(page.locator('[data-testid="timer-enabled"]')).toBeVisible()
+    await expect(page.locator('[data-testid="timer-create"]')).toBeVisible()
     await expect(page.locator('[data-testid="timer-run-now"]')).toBeVisible()
+    await expect(page.locator('[data-testid="composer-input"]')).toHaveCount(0)
+    await page.locator('[data-testid="sidebar-category-task"]').click()
+    await expect(page.locator('[data-testid="composer-input"]')).toBeVisible()
+    await expect(page.getByText('E2E session')).toBeVisible()
+  } finally {
+    await harness.dispose()
+  }
+})
+
+test('DB category opens the connection form', async () => {
+  const harness = await launchWorkbench()
+  try {
+    const { page } = harness
+    await revealSidebarCategory(page, 'DB')
+    await expect(page.locator('[data-testid="sidebar-category-db"]')).toHaveAttribute(
+      'data-expanded',
+      'true'
+    )
+    await expect(page.locator('[data-testid="new-db"]')).toBeVisible()
+    await expect(page.locator('[data-testid="db-connect-editor"]')).toBeVisible()
+    await expect(page.locator('[data-testid="db-driver"]')).toHaveValue('postgres')
+    await expect(page.locator('[data-testid="db-host"]')).toBeVisible()
+    await expect(page.locator('[data-testid="db-connect"]')).toBeVisible()
     await expect(page.locator('[data-testid="composer-input"]')).toHaveCount(0)
     await page.locator('[data-testid="sidebar-category-task"]').click()
     await expect(page.locator('[data-testid="composer-input"]')).toBeVisible()
@@ -147,8 +199,8 @@ test('sidebar search filters by title', async () => {
   const harness = await launchWorkbench()
   try {
     const { page } = harness
-    await page.locator('[data-testid="sidebar-search-toggle"]').click()
     const search = page.locator('[data-testid="sidebar-search"]')
+    await expect(search).toBeVisible()
     await search.fill('zzz-no-such-session')
     await expect(page.getByText('No matching sessions')).toBeVisible()
     await search.fill('E2E')

@@ -6,6 +6,7 @@ import {
   DEFAULT_CLI_AGENTS,
   DEFAULT_SETTINGS,
   DISPLAY_CURRENCIES,
+  parseSidebarVisibleCategories,
   VAV_DEFAULT_MODEL_ID,
   SURFACE_PATTERNS,
   mergeBuiltinDefaultArgs,
@@ -431,6 +432,7 @@ export class SettingsStore {
       // Drop legacy `source` grouping (sidebar-conversation-list.rpml).
       s.sidebarGroupingMode = 'none'
     }
+    s.sidebarVisibleCategories = parseSidebarVisibleCategories(s.sidebarVisibleCategories)
     const legacyActive = (s as { activeMachineId?: unknown }).activeMachineId
     if (typeof s.defaultMachineId !== 'string' || !s.defaultMachineId.trim()) {
       s.defaultMachineId =

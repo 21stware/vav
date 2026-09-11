@@ -59,6 +59,12 @@ export function leanToolArgs(tool: ToolName, args: Record<string, unknown>): Rec
     }
     case 'request':
       return typeof args.instruction === 'string' ? { instruction: args.instruction } : {}
+    case 'request_for_secret': {
+      const lean: Record<string, unknown> = {}
+      if (args.title !== undefined) lean.title = args.title
+      if (args.secrets !== undefined) lean.secrets = args.secrets
+      return lean
+    }
     case 'ask_user_question': {
       // Keep choices / multiSelect so the renderer can rebuild single- and
       // multi-select cards from persisted input (not free-text-only).

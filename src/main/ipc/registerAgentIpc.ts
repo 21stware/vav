@@ -1,7 +1,7 @@
 import type { IpcMain } from 'electron'
 import { IPC } from '@shared/ipc'
 import { LOG_EVENT } from '@shared/appLog'
-import type { PreviewRef, QuoteDraft } from '@shared/types'
+import type { PreviewRef, QuoteDraft, SecretAnswerPayload } from '@shared/types'
 import { logUserAnswer, logUserCancel, logUserSend, appLog } from '../log/appLogger'
 
 export type AgentIpcRuntimes = {
@@ -27,6 +27,7 @@ export type AgentIpcRuntimes = {
   cancelBuiltin: (id: string) => void
   answerCli: (id: string, toolCallId: string, answer: string) => boolean
   answerBuiltin: (id: string, toolCallId: string, answer: string) => boolean
+  answerSecretsBuiltin: (id: string, toolCallId: string, payload: SecretAnswerPayload) => boolean
   statusCli: (id: string) => unknown
   statusBuiltin: (id: string) => unknown
   regenerateCli: (id: string, messageId: string) => void
@@ -121,6 +122,14 @@ export function registerAgentIpc(
     if (runtimes.answerCli(id, toolCallId, answer)) return true
     return runtimes.answerBuiltin(id, toolCallId, answer)
   })
+  ipcMain.handle(
+    IPC.agentAnswerSecrets,
+    (_event, id: string, toolCallId: string, payload: SecretAnswerPayload) => {
+      const granted = payload?.declined ? 0 : Object.keys(payload?.values ?? {}).length
+      logUserAnswer(id, toolCallId, granted)
+      return runtimes.answerSecretsBuiltin(id, toolCallId, payload ?? { declined: true })
+    }
+  )
   ipcMain.handle(IPC.agentStatus, (_event, id: string) =>
     runtimes.ownsCli(id) ? runtimes.statusCli(id) : runtimes.statusBuiltin(id)
   )

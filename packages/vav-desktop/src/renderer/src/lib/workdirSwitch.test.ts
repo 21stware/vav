@@ -58,6 +58,18 @@ describe('allowWorkdirSwitch', () => {
       true
     )
   })
+
+  it('blocks archived sessions, including a missing root', () => {
+    assert.equal(
+      allowWorkdirSwitch({
+        swarmSurface: false,
+        enclosedUnrevealed: false,
+        rootMissing: true,
+        archived: true
+      }),
+      false
+    )
+  })
 })
 
 describe('locateWorkspaceDefaultName', () => {

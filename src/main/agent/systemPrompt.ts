@@ -10,12 +10,15 @@ export type SystemPromptOptions = {
   fileReadOnly?: boolean
   openFilePath?: string | null
   openFileKind?: string | null
+  dbSession?: boolean
   /** Pre-formatted skill catalog lines for progressive disclosure. */
   skillCatalog?: string | null
   /** Stdout from SessionStart / UserPromptSubmit hooks. */
   pluginContext?: string | null
   /** Override `process.platform` so tests do not depend on the host OS. */
   platform?: string
+  /** Env var names already granted for this conversation (values never listed). */
+  sessionSecretNames?: string[]
 }
 
 export function osDisplayName(platform: string): string {
@@ -65,6 +68,13 @@ export function buildSystemPrompt(
       lines.push(
         'This file type (application/octet-stream) cannot be parsed for content. Only file metadata is available.',
         'Do not open or search other documents in the folder unless the user explicitly asks for them.',
+        ''
+      )
+    } else if (options?.dbSession) {
+      lines.push(
+        'This session is attached to a live PostgreSQL database.',
+        'For tabular analysis prefer `sql_query` against that connection (omit path). Do not invent write/DDL APIs — only read-only SQL is allowed.',
+        'Start with information_schema or `SELECT * FROM … LIMIT 20` to learn tables. Do not open unrelated files unless the user asks.',
         ''
       )
     } else if (openKind === 'csv' || openKind === 'parquet' || openKind === 'sqlite') {
@@ -122,12 +132,21 @@ export function buildSystemPrompt(
       : '- `fs_read` / `fs_write` / `fs_list` operate on the local filesystem.',
     `- Artifacts are **only** deliberate user-facing documents (reports, briefs, HTML pages, slides notes). Ordinary source edits are not artifacts. Mark a deliverable with \`${ARTIFACT_MARKER}\` near the top of the file, and/or \`artifact: true\` on \`fs_write\`.`,
     '- `doc_search` / `doc_fetch` — local retrieval over PDF, Word, Excel, PowerPoint, CSV/TSV, and text. Prefer these over terminal/python for office/PDF **reading** (PDF = extractable text layer only; no OCR). Do not install python-docx/pdf tools when doc_search can read the file. Not for images/audio/video.',
-    '- `sql_query` — analytical SQL (DuckDB) over a SQLite, CSV, TSV, or Parquet file (not `.xlsx`). The file is attached in-memory; tables are queryable by name. Use for aggregation, GROUP BY, JOIN, window functions, filtering. Run `SHOW TABLES` first, `DESCRIBE <table>` for columns. Prefer this over paging the DB/CSV preview when you need to compute.',
+    '- `sql_query` — analytical SQL. On a live DB session, queries PostgreSQL (omit path). Otherwise DuckDB over a SQLite, CSV, TSV, or Parquet file (not `.xlsx`). Use for aggregation, GROUP BY, JOIN, window functions, filtering. Prefer this over paging the preview when you need to compute.',
     '- `web_search` / `web_fetch` — public web from this machine (Brave if key configured, else optional SearXNG, else DuckDuckGo HTML). Search first, then fetch promising URLs. HTML/PDF/text/JSON supported; private/localhost URLs are blocked. Prefer these over `terminal` curl/wget for reading pages.',
     '- `load_skill` — load a domain skill (SKILL.md + optional scripts/references) before specialized work. Catalog metadata is below; full instructions load on demand.',
     '- `connector` — GitHub / Cloudflare / Supabase / Vercel. `op=list|probe|act`. Deploy is a connector action, not a skill. GitHub is read-only.',
     '- `request` and `ask_user_question` pause the turn to involve the user (VAV tools).',
+    '- `request_for_secret` — ask the user for API tokens/keys. You choose the env var names; values are never returned to you. Use $NAME in terminal. Never ask them to paste secrets in chat.',
     '- `plan` — visible checklist for multi-step work. The UI only updates when you call it; finishing tools alone does not check steps off.',
+    ...(options?.sessionSecretNames?.length
+      ? [
+          '',
+          '## Session secrets',
+          `These environment variables are set for this conversation (values are hidden; never echo or print them): ${options.sessionSecretNames.join(', ')}.`,
+          'Use $NAME in `terminal`. Call `request_for_secret` again to add or replace names.'
+        ]
+      : []),
     '',
     '## Agent Skills (progressive disclosure)',
     'Call `load_skill` with the matching id **before** substantial work in that domain. Do not invent skill APIs — follow the loaded SKILL.md.',
@@ -166,6 +185,7 @@ export function buildSystemPrompt(
     '- Ask via `request` before destructive or irreversible operations.',
     '- `ask_user_question`: keep it short — few questions, 2–4 real choices each (UI adds Other). No long option menus or joke fillers.',
     '- For several related questions, prefer one `ask_user_question` with a `questions` array.',
+    '- Need a token/key? Call `request_for_secret` with names like OPENAI_API_KEY. Put a how-to URL in `description` when helpful. Never echo granted secrets.',
     // Plan lifecycle — models often finish the work then reply without a last plan call.
     '- When you open a `plan`, keep it truthful: after each meaningful step call `plan` again (done / executing).',
     '- Before your final reply on a planned task, call `plan` once more so every completed step is `done`. Mark leftover work `skipped` or `error` — do not leave finished work as `pending`.',

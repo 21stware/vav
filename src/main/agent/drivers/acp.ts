@@ -1237,7 +1237,10 @@ function handleSessionUpdate(
   if (kind === 'user_message_chunk' || norm === 'usermessagechunk') return
 
   if (norm === 'usageupdate') {
-    emitAcpUsage(emit, readAcpUsageFromUpdate(update), { recordHistory: false })
+    // Standard ACP usage_update is used/size/cost only — applyUsage then
+    // skips history. When a host also sends per-turn tokens (Grok cache
+    // reads, draft PromptResponse.usage), keep those as chart samples.
+    emitAcpUsage(emit, readAcpUsageFromUpdate(update))
     return
   }
 

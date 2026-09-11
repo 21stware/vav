@@ -40,4 +40,14 @@ describe('buildSystemPrompt', () => {
     assert.match(pdf, /Windows machine/)
     assert.match(pdf, /load_skill\("pdf"\)/)
   })
+
+  it('lists session secret names without values', () => {
+    const prompt = buildSystemPrompt('/w', 'zsh', {
+      platform: 'darwin',
+      sessionSecretNames: ['OPENAI_API_KEY', 'GH_TOKEN']
+    })
+    assert.match(prompt, /request_for_secret/)
+    assert.match(prompt, /OPENAI_API_KEY, GH_TOKEN/)
+    assert.doesNotMatch(prompt, /sk-/)
+  })
 })

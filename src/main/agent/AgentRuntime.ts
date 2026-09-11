@@ -12,6 +12,8 @@ import {
   type QuoteDraft,
   type ToolCallBlock,
   type ToolCallStatus,
+  type SecretAnswerPayload,
+  type SecretRequest,
   type ToolName,
   type TurnEvent,
   type TurnPhase,
@@ -76,6 +78,15 @@ import {
   createTools,
   type ToolDetails
 } from './tools'
+import { parseToolInput } from '@shared/askPlan'
+import {
+  formatSecretToolResult,
+  normalizeSecretAnswerPayload,
+  normalizeSecretRequests,
+  normalizeSecretValues,
+  parseSecretAnswer
+} from '@shared/sessionSecrets'
+import { SessionSecretStore } from '../store/SessionSecretStore.ts'
 import { buildSystemPrompt } from './systemPrompt'
 import { summarizeToolInput } from './toolSummarize'
 import { McpToolBridge } from '../plugins/mcpClient.ts'
@@ -99,6 +110,7 @@ import type { SecretStore } from '../store/SecretStore'
 import type { FileService } from '../fs/FileService'
 import type { DocumentRetrievalService } from '../retrieval/DocumentRetrievalService'
 import type { DuckDbService } from '../fs/DuckDbService'
+import type { PostgresService } from '../fs/PostgresService'
 import type { WebSearchService } from '../web/WebSearchService'
 import type { WebFetchService } from '../web/WebFetchService'
 import type { FileSessionStore } from '../store/FileSessionStore'
@@ -124,6 +136,7 @@ interface ToolRuntimeState {
   multiSelect?: boolean
   questions?: import('@shared/types').AskQuestion[]
   askTitle?: string
+  secretRequests?: SecretRequest[]
 }
 
 interface TurnState {
@@ -182,6 +195,7 @@ export interface AgentRuntimeDeps {
   changeSets?: import('./ChangeSetStore').ChangeSetStore
   retrieval?: DocumentRetrievalService
   duckdb?: DuckDbService
+  postgres?: PostgresService
   webSearch?: WebSearchService
   webFetch?: WebFetchService
   skills?: SkillService
@@ -196,6 +210,8 @@ export interface AgentRuntimeDeps {
     endpoint: string
   }
   connectors?: ConnectorRegistry
+  /** Per-conversation env secrets from `request_for_secret`. */
+  sessionSecrets?: SessionSecretStore
 }
 
 /**
@@ -224,10 +240,15 @@ export class AgentRuntime {
   private e2eAskWaiters = new Map<string, (text: string) => void>()
 
   private deps: AgentRuntimeDeps
+  readonly sessionSecrets: SessionSecretStore
 
   constructor(deps: AgentRuntimeDeps) {
     this.deps = deps
+    this.sessionSecrets = deps.sessionSecrets ?? new SessionSecretStore()
     this.mcpBridge = deps.mcpTools ?? new McpToolBridge()
+    deps.conversations.onRemoved((ids) => {
+      for (const id of ids) this.sessionSecrets.clear(id)
+    })
     deps.plugins?.onChange(() => {
       this.mcpBridge.invalidate()
       this.deps.skills?.invalidate()
@@ -695,6 +716,7 @@ export class AgentRuntime {
             {
               systemPrompt: buildSystemPrompt(this.workdirOf(conversation), settings.shell, {
                 fileReadOnly: !!conversation.fileReadOnly,
+                sessionSecretNames: this.sessionSecrets.listNames(conversationId),
                 // Only when the File Attachment Chip is attached (focusedFilePath).
                 // When sandboxed, this is the working-copy path (agent must edit that).
                 openFilePath: openFilePathForPrompt,
@@ -706,7 +728,8 @@ export class AgentRuntime {
                       : null)
                   : null,
                 skillCatalog: this.deps.skills?.catalogForPrompt() ?? null,
-                pluginContext: turn.pluginContext || null
+                pluginContext: turn.pluginContext || null,
+                dbSession: conversation.sessionKind === 'db'
               }),
               messages: history,
               tools: this.toolsFor(conversation, turn)
@@ -854,6 +877,9 @@ export class AgentRuntime {
 
   /** Routes a card answer back into the paused turn. */
   answer(conversationId: string, toolCallId: string, text: string): boolean {
+    if (this.pendingSecretTool(conversationId, toolCallId)) {
+      return this.answerSecrets(conversationId, toolCallId, parseSecretAnswer(text))
+    }
     const e2e = this.e2eAskWaiters.get(toolCallId)
     const preferred = this.turns.get(conversationId)
     const preferredHasTool = !!preferred?.pending.has(toolCallId)
@@ -888,6 +914,93 @@ export class AgentRuntime {
       sole: waiters.length
     })
     return false
+  }
+
+  /**
+   * Store granted secrets on the conversation, inject env, and resolve the
+   * parked tool with names only — values never enter the transcript.
+   */
+  answerSecrets(
+    conversationId: string,
+    toolCallId: string,
+    payload: SecretAnswerPayload
+  ): boolean {
+    const turn = this.turnForSecretAnswer(conversationId, toolCallId)
+    const requested = this.secretRequestsOf(turn, toolCallId)
+    const allowed = new Set(requested.map((row) => row.name))
+    const parsed = normalizeSecretAnswerPayload(payload, allowed)
+    const skipped = requested.map((row) => row.name).filter((name) => !parsed.values[name])
+    const granted = Object.keys(parsed.values).sort()
+    const text = formatSecretToolResult({
+      declined: parsed.declined,
+      granted,
+      skipped: parsed.declined ? requested.map((row) => row.name) : skipped
+    })
+
+    if (!parsed.declined && granted.length) {
+      this.upsertSessionSecrets(conversationId, parsed.values)
+    }
+
+    const e2e = this.e2eAskWaiters.get(toolCallId)
+    if (e2e) {
+      this.e2eAskWaiters.delete(toolCallId)
+      e2e(text)
+      return true
+    }
+    if (turn) return this.resolvePending(turn, toolCallId, { text, cancelled: false })
+    return false
+  }
+
+  listSessionSecretNames(conversationId: string): string[] {
+    return this.sessionSecrets.listNames(conversationId)
+  }
+
+  peekSessionSecret(conversationId: string, name: string): string | null {
+    const envName = name.trim()
+    if (!envName) return null
+    return this.sessionSecrets.getEnv(conversationId)[envName] ?? null
+  }
+
+  upsertSessionSecrets(conversationId: string, values: Record<string, string>): string[] {
+    const granted = this.sessionSecrets.setMany(conversationId, values)
+    const injected = normalizeSecretValues(values)
+    const shell = this.shells.get(conversationId)
+    if (shell && Object.keys(injected).length) void shell.injectEnv(injected)
+    return granted.length ? this.sessionSecrets.listNames(conversationId) : []
+  }
+
+  removeSessionSecret(conversationId: string, name: string): string[] {
+    const envName = name.trim()
+    if (envName && this.sessionSecrets.remove(conversationId, envName)) {
+      const shell = this.shells.get(conversationId)
+      if (shell) void shell.unsetEnv([envName])
+    }
+    return this.sessionSecrets.listNames(conversationId)
+  }
+
+  private pendingSecretTool(conversationId: string, toolCallId: string): boolean {
+    const turn = this.turnForSecretAnswer(conversationId, toolCallId)
+    return this.secretRequestsOf(turn, toolCallId).length > 0
+  }
+
+  private turnForSecretAnswer(conversationId: string, toolCallId: string): TurnState | undefined {
+    const preferred = this.turns.get(conversationId)
+    if (preferred?.pending.has(toolCallId)) return preferred
+    return findTurnWithPendingTool(this.turns.values(), (turn) => turn.pending.has(toolCallId))
+  }
+
+  private secretRequestsOf(turn: TurnState | undefined, toolCallId: string): SecretRequest[] {
+    if (!turn) return []
+    const fromState = turn.toolState.get(toolCallId)?.secretRequests
+    if (fromState?.length) return fromState
+    const block = turn.blocks.find(
+      (row): row is ToolCallBlock => row.kind === 'toolCall' && row.id === toolCallId
+    )
+    if (block?.secretRequests?.length) return block.secretRequests
+    if (block?.tool === 'request_for_secret') {
+      return normalizeSecretRequests(parseToolInput(block.input))
+    }
+    return []
   }
 
   private resolvePending(
@@ -1247,6 +1360,8 @@ export class AgentRuntime {
         ),
       retrieval: this.deps.retrieval,
       duckdb: this.deps.duckdb,
+      postgres: this.deps.postgres,
+      dbConnectionId: () => this.deps.conversations.get(conversationId)?.dbConnectionId ?? null,
       webSearch: this.deps.webSearch,
       webFetch: this.deps.webFetch,
       skills: this.deps.skills,
@@ -1308,7 +1423,7 @@ export class AgentRuntime {
 
   /**
    * Tool approval (main-chat.rpml): Auto / Bypass / Edit per conversation.
-   * Interactive tools (`request`, `ask_user_question`) park themselves.
+   * Interactive tools (`request`, `ask_user_question`, `request_for_secret`) park themselves.
    */
   private async gateToolCall(
     conversationId: string,
@@ -1407,6 +1522,7 @@ export class AgentRuntime {
       multiSelect?: boolean
       questions?: import('@shared/types').AskQuestion[]
       askTitle?: string
+      secretRequests?: SecretRequest[]
     } = {}
   ): Promise<{ text: string; cancelled: boolean }> {
     if (turn.abort.signal.aborted) return Promise.resolve({ text: '', cancelled: true })
@@ -1421,7 +1537,8 @@ export class AgentRuntime {
       choices: options.choices,
       multiSelect: options.multiSelect,
       questions: options.questions,
-      askTitle: options.askTitle
+      askTitle: options.askTitle,
+      secretRequests: options.secretRequests
     })
     // Refresh summary on the card (title + command body for approvals).
     let slot = toolCallBlockIndex(turn.blocks, toolCallId)
@@ -1447,7 +1564,8 @@ export class AgentRuntime {
           choices: options.choices,
           multiSelect: options.multiSelect,
           questions: options.questions,
-          askTitle: options.askTitle
+          askTitle: options.askTitle,
+          secretRequests: options.secretRequests
         }
       })
     }
@@ -1480,7 +1598,8 @@ export class AgentRuntime {
               choices: undefined,
               multiSelect: undefined,
               questions: undefined,
-              askTitle: undefined
+              askTitle: undefined,
+              secretRequests: undefined
             })
           } else {
             this.patchTool(conversationId, turn, toolCallId, {
@@ -1488,7 +1607,8 @@ export class AgentRuntime {
               choices: undefined,
               multiSelect: undefined,
               questions: undefined,
-              askTitle: undefined
+              askTitle: undefined,
+              secretRequests: undefined
             })
           }
           // Only leave awaiting-user when no other card is still parked.
@@ -1670,7 +1790,8 @@ export class AgentRuntime {
       shell = new StickyShell(
         this.deps.settings.get().shell,
         this.workdirOf(conversation),
-        this.deps.hosts?.hostFor(conversation.machineId).process
+        this.deps.hosts?.hostFor(conversation.machineId).process,
+        () => this.sessionSecrets.getEnv(conversation.id)
       )
       this.shells.set(conversation.id, shell)
     }

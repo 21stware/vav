@@ -93,6 +93,14 @@
 
   --toolbar-height: 42px;
   --row-height: 34px;
+  /* Overlay chrome glass: full frost at the top, lightest at the header bottom. */
+  --chrome-glass-mask: linear-gradient(
+    to bottom,
+    #000 0%,
+    #000 42%,
+    rgb(0 0 0 / 0.5) 78%,
+    rgb(0 0 0 / 0.12) 100%
+  );
 
   /* Room for the system's own window buttons, which are drawn over our
      frameless title bar. macOS puts the traffic lights at the leading edge;
@@ -105,6 +113,10 @@
 
   /* Docked list column width (matches .sidebar). */
   --sidebar-width: 232px;
+  --sidebar-min-width: 190px;
+  --agent-min-width: 360px;
+  --preview-min-width: 320px;
+  --file-agent-min-width: 280px;
 
   /* Motion. The built-in CSS easings are too weak to read as deliberate, so
      everything here uses these three curves and nothing hand-rolled. */
@@ -497,7 +509,7 @@ html[data-resizing='true'] .banner.error {
   flex-direction: column;
   flex: 0 0 auto;
   width: var(--sidebar-width);
-  min-width: 190px;
+  min-width: var(--sidebar-min-width);
   max-width: 420px;
   min-height: 0;
   align-self: stretch;
@@ -812,11 +824,7 @@ html[data-resizing='true'] .banner.error {
   height: var(--session-titlebar-h);
   box-sizing: border-box;
   isolation: isolate;
-  background: color-mix(
-    in srgb,
-    var(--bg-content) calc(var(--chrome-solid) * 70%),
-    transparent
-  );
+  background: transparent;
   /* Lead clears native traffic lights; modest trail so the label isn’t flush. */
   padding: 0 12px 0 var(--chrome-lead);
   border-bottom: 0;
@@ -829,13 +837,16 @@ html[data-resizing='true'] .banner.error {
   z-index: -1;
   pointer-events: none;
   opacity: var(--chrome-solid);
+  background: color-mix(in srgb, var(--bg-content) 70%, transparent);
   backdrop-filter: blur(12px) saturate(1.2);
   -webkit-backdrop-filter: blur(12px) saturate(1.2);
+  -webkit-mask-image: var(--chrome-glass-mask);
+  mask-image: var(--chrome-glass-mask);
 }
 
 @media (prefers-reduced-transparency: reduce) {
   .session-window .titlebar.bare.session-window-titlebar {
-    background: var(--bg-content);
+    background: linear-gradient(to bottom, var(--bg-content) 62%, transparent);
   }
 
   .session-window .titlebar.bare.session-window-titlebar::before {
@@ -969,45 +980,105 @@ html[data-resizing='true'] .banner.error {
 }
 
 /*
- * Main-panel agent chrome sits in flow so the log, empty hero, and Swarm
- * focus ring start below the toolbar — never painted under it.
+ * Main-panel agent chrome floats over the log. Frost sits on a ::before
+ * plate clipped to the header (strongest at the top, lightest at the
+ * bar’s own bottom) and follows `--chrome-solid` (off at scroll top).
  */
-.app-shell:not(.session-window) .detail {
+.app-shell:not(.session-window) .detail:has(> .session-surfaces) {
   --agent-chrome-h: var(--toolbar-height);
+  --agent-chrome-pad: calc(var(--agent-chrome-h) + 8px);
   --chrome-solid: 0;
 }
 
-.app-shell:not(.session-window) .detail > .terminal-host-chrome.agent-mode-chrome {
-  position: relative;
+.app-shell:not(.session-window) .detail:has(> .session-surfaces) > .terminal-host-chrome.agent-mode-chrome {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
   z-index: 20;
-  flex: 0 0 var(--agent-chrome-h);
+  flex: none;
   height: var(--agent-chrome-h);
   min-height: var(--agent-chrome-h);
   max-height: var(--agent-chrome-h);
-  overflow: visible;
+  overflow: hidden;
   isolation: isolate;
-  /* In-flow, so the log never paints under the bar. Keep the plate clear so
-   * the surface texture on `.detail::before` still reads in the top chrome. */
+  pointer-events: none;
   background: transparent;
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
 }
 
-.app-shell:not(.session-window) .detail .transcript {
-  padding-top: 22px;
+.app-shell:not(.session-window) .detail:has(> .session-surfaces) > .terminal-host-chrome.agent-mode-chrome::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: color-mix(
+    in srgb,
+    var(--bg-content) calc(var(--chrome-solid) * 42%),
+    transparent
+  );
+  backdrop-filter:
+    blur(calc(var(--chrome-solid) * 20px))
+    saturate(calc(1 + var(--chrome-solid) * 0.8))
+    brightness(calc(1 + var(--chrome-solid) * 0.08));
+  -webkit-backdrop-filter:
+    blur(calc(var(--chrome-solid) * 20px))
+    saturate(calc(1 + var(--chrome-solid) * 0.8))
+    brightness(calc(1 + var(--chrome-solid) * 0.08));
+  -webkit-mask-image: var(--chrome-glass-mask);
+  mask-image: var(--chrome-glass-mask);
 }
 
-.app-shell:not(.session-window) .detail .transcript:has(> .transcript-inner > .empty-state-session) {
-  padding-top: 8px;
+.app-shell:not(.session-window) .detail:has(> .session-surfaces) > .terminal-host-chrome.agent-mode-chrome > * {
+  pointer-events: auto;
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .app-shell:not(.session-window) .detail:has(> .session-surfaces) > .terminal-host-chrome.agent-mode-chrome::before {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    background: color-mix(
+      in srgb,
+      var(--bg-content) calc(var(--chrome-solid) * 92%),
+      transparent
+    );
+  }
+}
+
+.app-shell:not(.session-window) .detail:has(> .session-surfaces) > .banner {
+  margin-top: var(--agent-chrome-h);
+}
+
+.app-shell:not(.session-window) .detail:has(> .session-surfaces) > .banner ~ .banner {
+  margin-top: 0;
+}
+
+.app-shell:not(.session-window) .detail:has(> .session-surfaces) .transcript {
+  padding-top: var(--agent-chrome-pad);
+  scroll-padding-top: var(--agent-chrome-pad);
+}
+
+.app-shell:not(.session-window) .detail:has(> .session-surfaces) .transcript:has(> .transcript-inner > .empty-state-session) {
+  padding-top: var(--agent-chrome-h);
   padding-bottom: 8px;
+  scroll-padding-top: var(--agent-chrome-h);
 }
 
-.app-shell:not(.session-window) .detail-stream[data-search='true'] .plan-overlay {
-  top: 48px;
+.app-shell:not(.session-window) .detail:has(> .session-surfaces) .detail-stream > .search-strip,
+.app-shell:not(.session-window) .detail:has(> .session-surfaces) .detail-stream > .goal-banner {
+  margin-top: var(--agent-chrome-h);
 }
 
-.app-shell:not(.session-window) .detail .plan-overlay {
-  top: 8px;
+.app-shell:not(.session-window) .detail:has(> .session-surfaces) .detail-stream[data-search='true'] > .goal-banner {
+  margin-top: 0;
+}
+
+.app-shell:not(.session-window) .detail:has(> .session-surfaces) .detail-stream[data-search='true'] .plan-overlay {
+  top: calc(var(--agent-chrome-h) + 48px);
+}
+
+.app-shell:not(.session-window) .detail:has(> .session-surfaces) .plan-overlay {
+  top: calc(var(--agent-chrome-h) + 8px);
 }
 
 .titlebar .spacer {
@@ -1298,6 +1369,17 @@ button.chip:active {
     var(--ring-accent);
 }
 
+.text-field[type='number'] {
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+
+.text-field[type='number']::-webkit-inner-spin-button,
+.text-field[type='number']::-webkit-outer-spin-button {
+  appearance: none;
+  margin: 0;
+}
+
 .text-field:read-only {
   color: var(--text-secondary);
   background: transparent;
@@ -1457,12 +1539,14 @@ kbd {
 
 .sidebar {
   width: var(--sidebar-width);
-  min-width: 190px;
+  min-width: var(--sidebar-min-width);
   max-width: 320px;
   flex: 0 0 auto;
   display: flex;
   flex-direction: column;
   background: transparent;
+  container-type: inline-size;
+  container-name: sidebar;
 }
 
 /* Docked without .sidebar-column wrapper (no flush chrome): own the material. */
@@ -1558,88 +1642,70 @@ kbd {
 .sidebar-search {
   padding: 8px 10px;
   display: flex;
-  flex-direction: column;
-  gap: 8px;
+  flex-direction: row;
+  align-items: center;
+  gap: 4px;
 }
 
 .sidebar-search-field {
   position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
-.sidebar-category-bar.sidebar-service-bar {
+.sidebar-category-bar {
   flex: 0 0 auto;
   min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
   padding: 4px 10px 0;
+  background: transparent;
+}
+
+.sidebar-category-chips.sidebar-service-bar {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0;
   overflow-x: hidden;
   background: transparent;
 }
 
-.sidebar-list-toolbar {
-  display: flex;
+.sidebar-category-config {
+  flex: 0 0 auto;
+  display: inline-flex;
   align-items: center;
-  gap: 2px;
-  min-width: 0;
-}
-
-.sidebar-new-row {
-  flex: 1 1 auto;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
+  justify-content: center;
+  width: 28px;
   height: 28px;
   margin: 0;
-  padding: 0 8px;
+  padding: 0;
   border: 0;
   border-radius: 7px;
-  background: var(--bg-selected);
-  color: var(--text);
-  font: inherit;
-  font-size: 12px;
-  text-align: left;
-  cursor: default;
-  user-select: none;
-  -webkit-user-select: none;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
   transition:
     background var(--dur-hover) ease,
     color var(--dur-hover) ease,
     transform var(--dur-press) var(--ease-out);
 }
 
-.sidebar-new-row:hover {
+.sidebar-category-config svg {
+  display: block;
+  width: 14px;
+  height: 14px;
+}
+
+.sidebar-category-config:hover {
   color: var(--text);
-  background: color-mix(in srgb, var(--text) 8%, var(--bg-selected));
+  background: var(--bg-hover);
 }
 
-:root[data-platform='darwin'][data-vibrancy='true'] .sidebar-new-row {
-  background: color-mix(in srgb, var(--text) 11%, transparent);
-}
-
-:root[data-theme='dark'][data-platform='darwin'][data-vibrancy='true'] .sidebar-new-row {
-  background: color-mix(in srgb, #fff 12%, transparent);
-}
-
-@media (hover: hover) and (pointer: fine) {
-  :root[data-platform='darwin'][data-vibrancy='true'] .sidebar-new-row:hover {
-    background: color-mix(in srgb, var(--text) 16%, transparent);
-  }
-
-  :root[data-theme='dark'][data-platform='darwin'][data-vibrancy='true'] .sidebar-new-row:hover {
-    background: color-mix(in srgb, #fff 17%, transparent);
-  }
-}
-
-.sidebar-new-row:active {
+.sidebar-category-config:active {
   transform: scale(0.97);
 }
 
-.sidebar-new-row span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.sidebar-new-row svg,
 .sidebar-list-menu svg {
   flex: 0 0 auto;
   width: 14px;
@@ -6749,6 +6815,45 @@ mark {
   box-shadow: inset 0 0 0 1px var(--border);
 }
 
+.secret-card .secret-lead {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+.secret-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.secret-name code {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.secret-desc {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+  user-select: text;
+}
+
+.secret-desc-link {
+  color: var(--accent-text);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.secret-desc-link:hover {
+  color: var(--accent);
+}
+
 /* Tool approval: one quiet surface — no nested warning slabs. */
 .approval-card {
   display: flex;
@@ -7207,6 +7312,41 @@ mark {
   grid-template-columns: 1fr;
 }
 
+/* Icon-only when the sidebar is too narrow, or too many chips are visible. */
+@container sidebar (max-width: 210px) {
+  .sidebar-category-bar .sidebar-service-chip[data-expanded='true'] {
+    justify-content: center;
+    gap: 0;
+    flex: 0 0 auto;
+  }
+
+  .sidebar-category-bar .sidebar-service-chip[data-expanded='true'] .sidebar-service-label-clip {
+    grid-template-columns: 0fr;
+  }
+}
+
+@media (max-width: 560px) {
+  .sidebar-category-bar .sidebar-service-chip[data-expanded='true'] {
+    justify-content: center;
+    gap: 0;
+    flex: 0 0 auto;
+  }
+
+  .sidebar-category-bar .sidebar-service-chip[data-expanded='true'] .sidebar-service-label-clip {
+    grid-template-columns: 0fr;
+  }
+}
+
+.sidebar-category-bar[data-compact='true'] .sidebar-service-chip[data-expanded='true'] {
+  justify-content: center;
+  gap: 0;
+  flex: 0 0 auto;
+}
+
+.sidebar-category-bar[data-compact='true'] .sidebar-service-chip[data-expanded='true'] .sidebar-service-label-clip {
+  grid-template-columns: 0fr;
+}
+
 .sidebar-service-label-inner {
   display: flex;
   align-items: center;
@@ -7373,6 +7513,62 @@ mark {
   white-space: nowrap;
 }
 
+.file-recents-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  width: 100%;
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 12px 20px;
+  box-sizing: border-box;
+}
+
+.file-recents-body::before,
+.file-recents-body::after {
+  content: '';
+  align-self: stretch;
+  pointer-events: none;
+  min-height: 0;
+}
+
+.file-recents-body::before {
+  flex: 0.36 1 0;
+}
+
+.file-recents-body::after {
+  flex: 0.64 1 0;
+}
+
+.file-recents-card {
+  flex: none;
+  width: min(100%, var(--reading-max));
+  max-width: var(--reading-max);
+  border-radius: var(--radius);
+  background: var(--bg-sunken);
+  box-shadow: inset 0 0 0 1px var(--border);
+  overflow: hidden;
+}
+
+.file-recents-card .inline-review-icon {
+  color: var(--text-tertiary);
+}
+
+.file-recents-files.inline-review-files {
+  max-height: min(50vh, calc(var(--inline-review-row) * 12));
+}
+
+.file-recents-empty {
+  margin: 0;
+  padding: 14px 12px 16px;
+  font-size: 12.5px;
+  color: var(--text-tertiary);
+  text-align: center;
+}
+
 .file-session-item-title {
   grid-column: 1;
   grid-row: 1;
@@ -7415,6 +7611,7 @@ mark {
   color: color-mix(in srgb, var(--danger) 45%, var(--accent-text));
 }
 
+.db-connect-body,
 .schedule-editor-body {
   flex: 1;
   min-height: 0;
@@ -7425,11 +7622,13 @@ mark {
   flex-direction: column;
   align-items: center;
   justify-content: flex-start;
-  padding: 12px 20px;
+  padding: 20px 24px 32px;
   box-sizing: border-box;
 }
 
 /* Optical vertical center — same spacer language as pane empty states. */
+.db-connect-body::before,
+.db-connect-body::after,
 .schedule-editor-body::before,
 .schedule-editor-body::after {
   content: '';
@@ -7438,103 +7637,151 @@ mark {
   min-height: 0;
 }
 
+.db-connect-body::before,
 .schedule-editor-body::before {
-  flex: 0.48 1 0;
+  flex: 0.42 1 0;
 }
 
+.db-connect-body::after,
 .schedule-editor-body::after {
-  flex: 0.52 1 0;
+  flex: 0.58 1 0;
 }
 
-.schedule-editor-group {
+.db-connect-card,
+.schedule-editor-card {
   flex: none;
-  width: min(100%, var(--reading-max));
-  max-width: var(--reading-max);
+  width: min(100%, 360px);
   display: flex;
   flex-direction: column;
-  justify-content: flex-start;
-  gap: 12px;
-  padding: 0 var(--composer-gutter);
-  box-sizing: border-box;
+  gap: 16px;
+  -webkit-app-region: no-drag;
 }
 
-.schedule-editor-group > * {
-  flex: none;
+.db-connect-card input,
+.db-connect-card select,
+.db-connect-card button,
+.db-connect-card .btn,
+.db-connect-card .toggle,
+.schedule-editor-card input,
+.schedule-editor-card select,
+.schedule-editor-card button,
+.schedule-editor-card .btn,
+.schedule-editor-card .toggle {
+  -webkit-app-region: no-drag;
 }
 
-.schedule-editor-group .composer {
+.db-connect-intro,
+.schedule-editor-intro {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.db-connect-title,
+.schedule-editor-title {
+  height: 32px;
+  padding: 0;
+  font-size: 20px;
+  font-weight: 560;
+  letter-spacing: -0.03em;
+  line-height: 1.2;
+  background: transparent;
+  box-shadow: none;
+  cursor: text;
+}
+
+.db-connect-title::placeholder,
+.schedule-editor-title::placeholder {
+  color: var(--text-tertiary);
+  font-weight: 500;
+}
+
+.db-connect-title.is-untitled,
+.schedule-editor-title.is-untitled {
+  color: var(--text-tertiary);
+  font-weight: 500;
+  letter-spacing: -0.02em;
+  text-decoration: underline;
+  text-decoration-style: dashed;
+  text-decoration-color: color-mix(in srgb, var(--text-tertiary) 70%, transparent);
+  text-underline-offset: 5px;
+}
+
+.db-connect-title.is-untitled:hover,
+.schedule-editor-title.is-untitled:hover {
+  color: var(--text-secondary);
+  text-decoration-style: solid;
+  text-decoration-color: var(--text-secondary);
+}
+
+.db-connect-title:focus,
+.schedule-editor-title:focus,
+.db-connect-title.is-untitled:focus,
+.schedule-editor-title.is-untitled:focus {
+  color: var(--text);
+  font-weight: 560;
+  background: transparent;
+  box-shadow: none;
+  text-decoration: none;
+}
+
+.schedule-editor-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(7em, 0.72fr);
+  gap: 10px;
+}
+
+.schedule-editor-row .text-field {
+  height: 32px;
+}
+
+.schedule-editor-card .font-select,
+.schedule-editor-card .text-field {
+  width: 100%;
+}
+
+.schedule-editor-card .composer {
   width: 100%;
   max-width: none;
   align-self: stretch;
   padding: 0;
 }
 
-.schedule-editor-actions {
+.schedule-editor-picker {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
-.schedule-editor-actions .spacer {
-  flex: 1 1 auto;
-  min-width: 8px;
-}
-
-.schedule-editor-enable-label {
-  font-size: 12px;
-  color: var(--text-secondary);
-}
-
-.schedule-editor-when {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.schedule-editor-when > * {
-  flex: none;
-}
-
-.schedule-editor-when-row {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px 12px;
-}
-
-.schedule-editor-when-row > .text-field {
-  width: auto;
-  min-width: 9.5em;
-}
-
-.schedule-editor-field {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  color: var(--text-secondary);
-}
-
-.schedule-editor-field .text-field {
-  width: auto;
-  min-width: 8.5em;
-}
-
-.schedule-editor-field .text-field[type='number'] {
-  min-width: 4.5em;
-}
-
-.schedule-editor-field-workspace {
-  flex: none;
   width: 100%;
   min-width: 0;
 }
 
-.schedule-editor-field-workspace .text-field {
-  flex: 1 1 auto;
-  min-width: 0;
-  max-width: 100%;
+.schedule-editor-picker .text-field {
+  padding-right: 26px;
+}
+
+.schedule-editor-picker-icon {
+  position: absolute;
+  right: 8px;
+  display: flex;
+  color: var(--text-tertiary);
+  pointer-events: none;
+}
+
+.schedule-editor-picker:hover .schedule-editor-picker-icon,
+.schedule-editor-picker:focus-within .schedule-editor-picker-icon {
+  color: var(--text-secondary);
+}
+
+/* Keep the native picker hit target; drop the system circular button. */
+.schedule-editor-picker .text-field::-webkit-calendar-picker-indicator {
+  position: absolute;
+  inset: 0 0 0 auto;
+  width: 26px;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  opacity: 0;
+  cursor: pointer;
 }
 
 .schedule-editor-weekdays {
@@ -7550,9 +7797,75 @@ mark {
   justify-content: center;
 }
 
+.schedule-editor-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.schedule-editor-actions .btn.primary {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.schedule-editor-actions .btn.secondary {
+  flex: 0 0 auto;
+}
+
 .schedule-editor-next {
-  font-size: 11px;
+  margin: -6px 0 0;
+  font-size: 12px;
+  line-height: 1.4;
   color: var(--text-tertiary);
+}
+
+.db-connect-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 88px;
+  gap: 10px;
+}
+
+.db-connect-row-split {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+}
+
+.db-connect-card .font-select {
+  width: 100%;
+}
+
+.db-connect-actions {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+}
+
+.db-connect-submit {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: auto;
+}
+
+.db-connect-test {
+  flex: 0 0 auto;
+  min-width: 4.5em;
+  padding-left: 10px;
+  padding-right: 10px;
+}
+
+.db-connect-status {
+  margin: -6px 0 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-tertiary);
+}
+
+.db-connect-status.is-error {
+  color: var(--danger);
+}
+
+.db-connect-status.is-ok {
+  color: var(--success);
 }
 
 .timer-jobs {
@@ -7607,16 +7920,31 @@ mark {
   padding: 0 10px;
   height: var(--toolbar-height);
   min-height: var(--toolbar-height);
+  isolation: isolate;
+  overflow: hidden;
+  background: transparent;
+}
+
+.file-session-missing-header.file-viewer-header::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
   background: color-mix(in srgb, var(--bg-content) 52%, transparent);
   backdrop-filter: blur(20px) saturate(1.35);
   -webkit-backdrop-filter: blur(20px) saturate(1.35);
+  -webkit-mask-image: var(--chrome-glass-mask);
+  mask-image: var(--chrome-glass-mask);
 }
 
 @media (prefers-reduced-transparency: reduce) {
   .file-session-missing-header.file-viewer-header {
-    background: var(--bg-content);
-    backdrop-filter: none;
-    -webkit-backdrop-filter: none;
+    background: linear-gradient(to bottom, var(--bg-content) 62%, transparent);
+  }
+
+  .file-session-missing-header.file-viewer-header::before {
+    content: none;
   }
 }
 
@@ -9408,6 +9736,109 @@ mark {
   min-height: 0;
   overflow: auto;
   padding: 6px 8px 10px;
+}
+
+/* —— Secrets tray (after Artifacts) —— */
+.secrets-panel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.secrets-lead {
+  margin: 8px 10px 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+}
+
+.secrets-error {
+  margin: 6px 10px 0;
+  font-size: 11px;
+  color: var(--danger, #ff453a);
+}
+
+.files-tray-pane > .secrets-panel > .empty-state {
+  flex: 1;
+  min-height: 0;
+}
+
+.secrets-list {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 4px 0 12px;
+  overflow: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+.secrets-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+  padding: 2px 10px;
+  box-sizing: border-box;
+  cursor: default;
+  user-select: none;
+}
+
+.secrets-row:hover:not(.is-creating) {
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+}
+
+.secrets-add {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+}
+
+.secrets-add-name {
+  flex: 0 1 38%;
+  min-width: 88px;
+  max-width: 220px;
+}
+
+.secrets-add-value {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.secrets-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 46%;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.secrets-mask,
+.secrets-value {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.secrets-mask {
+  letter-spacing: 0.12em;
+  color: var(--text-tertiary);
+}
+
+.secrets-value {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  color: var(--text-secondary);
+  user-select: text;
 }
 
 /* —— Git tray (Files | Git | GitHub) —— */

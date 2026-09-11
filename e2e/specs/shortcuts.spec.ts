@@ -37,7 +37,7 @@ test('session and chrome accelerators drive find, tools, sidebar, composer, and 
     await pressAccelerator(harness, 'Meta+Shift+h')
     await expect(page.locator('[data-testid="sidebar"]')).toBeVisible()
 
-    await page.locator('[data-testid="sidebar-search-toggle"]').click()
+    await page.locator('[data-testid="sidebar-search"]').click()
     await expect(page.locator('[data-testid="sidebar-search"]')).toBeFocused()
     await pressAccelerator(harness, 'Meta+k')
     await expect(page.locator('[data-testid="composer-input"]')).toBeFocused()

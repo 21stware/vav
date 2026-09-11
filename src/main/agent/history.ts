@@ -283,7 +283,7 @@ export function blockFromContent(
   ) =>
     | Pick<
         ToolCallBlock,
-        'status' | 'output' | 'choices' | 'multiSelect' | 'questions' | 'askTitle'
+        'status' | 'output' | 'choices' | 'multiSelect' | 'questions' | 'askTitle' | 'secretRequests'
       >
     | undefined,
   summarize: (name: string, args: Record<string, unknown>) => string
@@ -304,7 +304,8 @@ export function blockFromContent(
     ...(state?.choices ? { choices: state.choices } : {}),
     ...(state?.multiSelect != null ? { multiSelect: state.multiSelect } : {}),
     ...(state?.questions ? { questions: state.questions } : {}),
-    ...(state?.askTitle ? { askTitle: state.askTitle } : {})
+    ...(state?.askTitle ? { askTitle: state.askTitle } : {}),
+    ...(state?.secretRequests ? { secretRequests: state.secretRequests } : {})
   }
 }
 

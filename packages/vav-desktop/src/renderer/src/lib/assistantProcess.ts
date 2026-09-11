@@ -15,7 +15,13 @@ const RAW_TOOL_SUMMARY = /^(task|subtask|tool|external)$/i
 export function isHollowToolCard(block: ToolCallBlock): boolean {
   if (block.tool === 'plan') return true
   if (block.tool === 'plan_doc') return false
-  if (block.tool === 'request' || block.tool === 'ask_user_question') return false
+  if (
+    block.tool === 'request' ||
+    block.tool === 'ask_user_question' ||
+    block.tool === 'request_for_secret'
+  ) {
+    return false
+  }
   if (block.status === 'executing' || block.status === 'pending') return false
   if (block.children?.some((child) => isVisibleAssistantBlock(child))) return false
   if (block.output.trim()) return false

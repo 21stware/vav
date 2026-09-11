@@ -44,6 +44,7 @@ export type ToolName =
   | 'web_fetch'
   | 'request'
   | 'ask_user_question'
+  | 'request_for_secret'
   | 'plan'
   | 'sql_query'
   | 'load_skill'
@@ -63,6 +64,11 @@ export type ToolName =
  * What the tool card shows. The schema names above are the model's ABI and
  * stay stable across the wire; these are the names for humans.
  */
+/** Parks the turn until the user answers (`request`, ask, or session secrets). */
+export function isUserAskTool(tool: string): boolean {
+  return tool === 'request' || tool === 'ask_user_question' || tool === 'request_for_secret'
+}
+
 export const TOOL_LABELS: Record<ToolName, string> = {
   terminal: '运行命令',
   wait: '等待输出',
@@ -76,6 +82,7 @@ export const TOOL_LABELS: Record<ToolName, string> = {
   web_fetch: '抓取网页',
   request: '请求确认',
   ask_user_question: '提问',
+  request_for_secret: '请求密钥',
   plan: '计划',
   sql_query: 'SQL 查询',
   load_skill: '加载技能',
@@ -101,6 +108,20 @@ export interface AskQuestion {
   choices?: string[]
   /** When true and choices are present, render checkboxes; otherwise radios. */
   multiSelect?: boolean
+}
+
+/** One env var the agent wants the user to supply (`request_for_secret`). */
+export interface SecretRequest {
+  /** Environment variable name, e.g. `OPENAI_API_KEY`. */
+  name: string
+  /** How to obtain the value. URLs in the UI are clickable. */
+  description?: string
+}
+
+/** Renderer → main payload for `request_for_secret`. Values never enter the transcript. */
+export interface SecretAnswerPayload {
+  declined: boolean
+  values?: Record<string, string>
 }
 
 export type ToolCallStatus =
@@ -130,6 +151,8 @@ export interface ToolCallBlock {
   questions?: AskQuestion[]
   /** ask_user_question: optional card title when N > 1. */
   askTitle?: string
+  /** request_for_secret: names + how-to text (never values). */
+  secretRequests?: SecretRequest[]
   /** terminal only: which terminal tab mirrored this command. */
   targetTabId?: string
   /**
@@ -358,6 +381,8 @@ export interface ConversationMeta {
   timerRunId?: string | null
   /** Wall time this timer run started. */
   timerRunAt?: number | null
+  /** Live database connection bound to this session. */
+  dbConnectionId?: string | null
   /**
    * When true, the agent system prompt forbids file modifications (read-only
    * toggle on the File Preview chrome).
@@ -845,6 +870,49 @@ export type MachineAppearance = {
 }
 /** Sidebar list grouping; default is time buckets ("无分组" in the UI). */
 export type SidebarGroupingMode = 'none' | 'workspace' | 'provider'
+/**
+ * Optional sidebar category chips. Task (`main`) is always shown; these four
+ * can be toggled from the category-bar settings menu.
+ */
+export type SidebarOptionalCategory = 'fileSessions' | 'timers' | 'databases' | 'archive'
+
+export const SIDEBAR_OPTIONAL_CATEGORIES = [
+  'timers',
+  'fileSessions',
+  'databases',
+  'archive'
+] as const satisfies readonly SidebarOptionalCategory[]
+
+/** Default chips: Task + Scheduled. File / DB / Archived stay hidden. */
+export const DEFAULT_SIDEBAR_VISIBLE_CATEGORIES: readonly SidebarOptionalCategory[] = ['timers']
+
+export function parseSidebarVisibleCategories(value: unknown): SidebarOptionalCategory[] {
+  if (!Array.isArray(value)) return [...DEFAULT_SIDEBAR_VISIBLE_CATEGORIES]
+  const allowed = new Set<string>(SIDEBAR_OPTIONAL_CATEGORIES)
+  const seen = new Set<string>()
+  const out: SidebarOptionalCategory[] = []
+  for (const item of value) {
+    if (typeof item !== 'string' || !allowed.has(item) || seen.has(item)) continue
+    seen.add(item)
+    out.push(item as SidebarOptionalCategory)
+  }
+  return out
+}
+
+export function toggleSidebarVisibleCategory(
+  visible: readonly SidebarOptionalCategory[],
+  mode: SidebarOptionalCategory
+): SidebarOptionalCategory[] {
+  return visible.includes(mode) ? visible.filter((item) => item !== mode) : [...visible, mode]
+}
+
+export function isSidebarCategoryVisible(
+  mode: 'main' | SidebarOptionalCategory,
+  visible: readonly SidebarOptionalCategory[]
+): boolean {
+  return mode === 'main' || visible.includes(mode)
+}
+
 /** Per-conversation tool approval policy (main-chat.rpml). */
 export type ApprovalMode = 'auto' | 'bypass' | 'edit'
 
@@ -1099,6 +1167,11 @@ export interface AppSettings {
   /** Sidebar grouping segmented control; persisted. */
   sidebarGroupingMode: SidebarGroupingMode
   /**
+   * Optional sidebar category chips to show (Task is always visible).
+   * Default: scheduled tasks only.
+   */
+  sidebarVisibleCategories: SidebarOptionalCategory[]
+  /**
    * Sidebar session filter. `none` / `active` / `favorite`, or `ws:<abs path>`
    * for a recent workspace.
    */
@@ -1285,6 +1358,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   globalHotkey: 'Control+Command+Space',
   keyBindings: {},
   sidebarGroupingMode: 'workspace',
+  sidebarVisibleCategories: [...DEFAULT_SIDEBAR_VISIBLE_CATEGORIES],
   sidebarSessionFilter: 'none',
   defaultMachineId: LOCAL_MACHINE_ID,
   favoriteConversationIds: [],

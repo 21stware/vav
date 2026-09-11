@@ -1,7 +1,7 @@
 /**
  * Change review in the conversation stream — compact, icon-first actions.
  */
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   Check,
   CheckCheck,
@@ -144,6 +144,7 @@ export function InlineChangeReview({
   const title = allResolved
     ? t('review.allReviewedShort', { n })
     : t('review.modifiedFilesShort', { n })
+  const openFile = openPath ? (set.files.find((file) => file.filePath === openPath) ?? null) : null
 
   return (
     <div
@@ -204,6 +205,7 @@ export function InlineChangeReview({
           />
         ))}
       </ul>
+      {openFile ? <FileReviewDetail file={openFile} /> : null}
     </div>
   )
 }
@@ -224,9 +226,20 @@ function FileRow({
   onUndo: () => void
 }): React.JSX.Element {
   const t = useT()
+  const rowRef = useRef<HTMLLIElement>(null)
   const { plus, minus } = diffStats(file.diffText)
   const binary = looksLikeBinaryChange(file)
   const name = file.relativePath || basename(file.filePath)
+  useEffect(() => {
+    if (!expanded) return
+    const row = rowRef.current
+    const list = row?.closest('.inline-review-files')
+    if (!row || !(list instanceof HTMLElement)) return
+    const rowBox = row.getBoundingClientRect()
+    const listBox = list.getBoundingClientRect()
+    if (rowBox.top < listBox.top) list.scrollTop -= listBox.top - rowBox.top
+    else if (rowBox.bottom > listBox.bottom) list.scrollTop += rowBox.bottom - listBox.bottom
+  }, [expanded])
   const typeLabel =
     file.changeType === 'added'
       ? t('review.typeAdded')
@@ -255,6 +268,7 @@ function FileRow({
 
   return (
     <li
+      ref={rowRef}
       className={`inline-review-file status-${file.status}`}
       data-testid="inline-review-file"
       data-name={name}
@@ -300,18 +314,19 @@ function FileRow({
           )}
         </div>
       </div>
-      {/* Stay mounted so grid-template-rows can retarget open/close mid-flight. */}
-      <div className="inline-review-file-detail">
-        <div className="inline-review-file-detail-inner">
-          <div className="inline-review-file-body">
-            {binary ? (
-              <BinaryChangeCard file={file} compact />
-            ) : (
-              <MiniDiff text={file.diffText} />
-            )}
-          </div>
+    </li>
+  )
+}
+
+function FileReviewDetail({ file }: { file: ChangeEntry }): React.JSX.Element {
+  const binary = looksLikeBinaryChange(file)
+  return (
+    <div className="inline-review-file-detail">
+      <div className="inline-review-file-detail-inner">
+        <div className="inline-review-file-body">
+          {binary ? <BinaryChangeCard file={file} compact /> : <MiniDiff text={file.diffText} />}
         </div>
       </div>
-    </li>
+    </div>
   )
 }

@@ -20,8 +20,9 @@ export function activeTurnStatusFromPhase(
 export function awaitingNotifyKind(
   tool: string,
   hasChoices: boolean
-): 'ask' | 'approval' | 'request' | null {
+): 'ask' | 'approval' | 'request' | 'secret' | null {
   if (tool === 'ask_user_question') return 'ask'
+  if (tool === 'request_for_secret') return 'secret'
   if (tool === 'plan_doc') return 'approval'
   if (tool === 'request') return 'request'
   if (hasChoices) return 'approval'
@@ -30,11 +31,12 @@ export function awaitingNotifyKind(
 
 /** OS alert title for a parked tool. Caller injects already-translated strings. */
 export function awaitingNotifyTitle(
-  kind: 'ask' | 'approval' | 'request',
-  titles: { ask: string; request: string; approval: string }
+  kind: 'ask' | 'approval' | 'request' | 'secret',
+  titles: { ask: string; request: string; approval: string; secret: string }
 ): string {
   if (kind === 'ask') return titles.ask
   if (kind === 'request') return titles.request
+  if (kind === 'secret') return titles.secret
   return titles.approval
 }
 

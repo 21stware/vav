@@ -114,7 +114,8 @@ export function useWorkspaceSwitchMenu(conversationId?: string): {
   const allowSwitch = allowWorkdirSwitch({
     swarmSurface: isSwarmSurfaceActive(swarmEnabled, cliMode),
     enclosedUnrevealed: false,
-    rootMissing: false
+    rootMissing: false,
+    archived: conversation?.archived === true
   })
 
   const items = useCallback((): MenuItem[] => {

@@ -434,6 +434,16 @@
   right: 0;
   z-index: 20;
   flex: none;
+  isolation: isolate;
+  background: transparent;
+}
+
+.file-preview-shell .file-viewer-header::before,
+.file-preview-shell .file-preview-statusbar::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  pointer-events: none;
   background: color-mix(in srgb, var(--bg-content) 52%, transparent);
   backdrop-filter: blur(20px) saturate(1.35);
   -webkit-backdrop-filter: blur(20px) saturate(1.35);
@@ -441,10 +451,21 @@
 
 .file-preview-shell .file-viewer-header {
   top: 0;
+  overflow: hidden;
+}
+
+.file-preview-shell .file-viewer-header::before {
+  inset: 0;
+  -webkit-mask-image: var(--chrome-glass-mask);
+  mask-image: var(--chrome-glass-mask);
 }
 
 .file-preview-shell .file-preview-statusbar {
   bottom: 0;
+}
+
+.file-preview-shell .file-preview-statusbar::before {
+  inset: 0;
 }
 
 /* Body is the scrollport (markdown / code / html). */
@@ -506,11 +527,17 @@
 }
 
 @media (prefers-reduced-transparency: reduce) {
-  .file-preview-shell .file-viewer-header,
+  .file-preview-shell .file-viewer-header {
+    background: linear-gradient(to bottom, var(--bg-content) 62%, transparent);
+  }
+
   .file-preview-shell .file-preview-statusbar {
     background: var(--bg-content);
-    backdrop-filter: none;
-    -webkit-backdrop-filter: none;
+  }
+
+  .file-preview-shell .file-viewer-header::before,
+  .file-preview-shell .file-preview-statusbar::before {
+    content: none;
   }
 }
 
@@ -3123,7 +3150,7 @@
   display: flex;
   flex-direction: column;
   flex: 1 1 auto;
-  min-width: 320px;
+  min-width: var(--preview-min-width);
   min-height: 0;
   overflow: hidden;
 }
@@ -3197,6 +3224,7 @@
 
 .workspace-view-agent.is-collapsed {
   border-left: 0;
+  min-width: 0;
 }
 
 /*
@@ -3207,6 +3235,7 @@
  */
 .workspace-view.preview-right > .workspace-view-agent {
   flex: 1 1 auto;
+  min-width: var(--agent-min-width);
   border-left: 0;
   transition: none;
 }
@@ -3218,12 +3247,25 @@
   transition: width var(--dur-sheet) var(--ease-drawer);
 }
 
+.workspace-view.preview-right > .workspace-view-preview:not(.is-collapsed) {
+  min-width: var(--preview-min-width);
+}
+
 .workspace-view.preview-right > .workspace-view-preview.is-collapsed {
   border-left: 0;
+  min-width: 0;
   /* Explicit width:0 can still lose to flex min-content without these. */
   overflow: hidden;
   visibility: hidden;
   pointer-events: none;
+}
+
+.workspace-view.file-session-view > .workspace-view-agent:not(.is-collapsed) {
+  min-width: var(--file-agent-min-width);
+}
+
+.workspace-view.file-session-view > .workspace-view-preview {
+  min-width: var(--preview-min-width);
 }
 
 .workspace-view.preview-right.is-col-resizing > .workspace-view-preview {

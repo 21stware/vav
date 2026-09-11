@@ -792,6 +792,30 @@ export interface VavApi {
     unlock(): Promise<{ ok: true } | { ok: false; error: string }>
   }
 
+  /**
+   * Per-session env secrets (`request_for_secret` + workspace tab).
+   * List returns names only. Reveal requires device-owner eval.
+   */
+  sessionSecrets: {
+    list(conversationId: string): Promise<{ names: string[] }>
+    reveal(
+      conversationId: string,
+      name: string
+    ): Promise<import('./sessionSecrets').SessionSecretRevealResult>
+    set(
+      conversationId: string,
+      name: string,
+      value: string
+    ): Promise<import('./sessionSecrets').SessionSecretMutateResult>
+    remove(
+      conversationId: string,
+      name: string
+    ): Promise<import('./sessionSecrets').SessionSecretMutateResult>
+    onChanged(
+      handler: (payload: import('./sessionSecrets').SessionSecretNamesPayload) => void
+    ): () => void
+  }
+
   settings: {
     get(): Promise<AppSettings>
     update(patch: Partial<AppSettings>): Promise<AppSettings>
@@ -1041,6 +1065,12 @@ export interface VavApi {
     appendNotice(conversationId: string, text: string): Promise<void>
     cancel(conversationId: string): Promise<void>
     answer(conversationId: string, toolCallId: string, answer: string): Promise<boolean>
+    /** Grant or decline `request_for_secret`. Values stay in main — never transcript. */
+    answerSecrets(
+      conversationId: string,
+      toolCallId: string,
+      payload: import('./types').SecretAnswerPayload
+    ): Promise<boolean>
     status(conversationId: string): Promise<TurnStatus>
     /** Another version of this reply, as a sibling rather than an appended one. */
     regenerate(conversationId: string, messageId: string): Promise<void>
@@ -1403,6 +1433,35 @@ export interface VavApi {
     onChanged(handler: () => void): () => void
   }
 
+  /** Live database connections. Definition chats are db sessions. */
+  db: {
+    list(): Promise<import('./dbConnection').DbConnection[]>
+    create(): Promise<{
+      connection: import('./dbConnection').DbConnection
+      conversation: import('./types').ConversationMeta
+    }>
+    getForConversation(conversationId: string): Promise<import('./dbConnection').DbConnection | null>
+    ensureForConversation(
+      conversationId: string
+    ): Promise<import('./dbConnection').DbConnection | null>
+    update(
+      id: string,
+      patch: import('./dbConnection').DbConnectionInput
+    ): Promise<import('./dbConnection').DbConnection | null>
+    remove(id: string): Promise<boolean>
+    test(id: string): Promise<{ ok: boolean; error?: string }>
+    /** Mark the connection ready without probing the server. */
+    open(id: string): Promise<import('./dbConnection').DbConnection | null>
+    schema(id: string): Promise<SqliteDatabaseInfo | { error: string }>
+    queryTable(
+      id: string,
+      table: string,
+      offset: number,
+      limit: number
+    ): Promise<SqliteQueryResult>
+    onChanged(handler: () => void): () => void
+  }
+
   /** File Preview multi-session store (independent of sidebar conversations). */
   fileSessions: {
     open(path: string): Promise<FileSessionsState | null>
@@ -1692,6 +1751,11 @@ export interface VavApi {
     onSwarmHistoryResume(handler: (payload: SwarmHistoryResumeEvent) => void): () => void
     /** Relaunch the app (e.g. after Dock-hide preference). */
     relaunch(): Promise<void>
+    /**
+     * Floor for this BrowserWindow from the visible columns / empty-state
+     * stage. Electron grows the frame when the current size is below.
+     */
+    setMinSize(size: { width: number; height: number }): Promise<void>
     /** Resolves to the chosen row's id, or null if the menu was dismissed. */
     popupMenu(
       items: NativeMenuItem[],
@@ -1934,6 +1998,11 @@ export const IPC = {
   bootstrap: 'vav:bootstrap',
   secretsStatus: 'vav:secrets:status',
   secretsUnlock: 'vav:secrets:unlock',
+  sessionSecretsList: 'vav:session-secrets:list',
+  sessionSecretsReveal: 'vav:session-secrets:reveal',
+  sessionSecretsSet: 'vav:session-secrets:set',
+  sessionSecretsRemove: 'vav:session-secrets:remove',
+  sessionSecretsChanged: 'vav:session-secrets:changed',
 
   settingsGet: 'vav:settings:get',
   settingsUpdate: 'vav:settings:update',
@@ -2031,6 +2100,7 @@ export const IPC = {
   agentAppendNotice: 'vav:agent:append-notice',
   agentCancel: 'vav:agent:cancel',
   agentAnswer: 'vav:agent:answer',
+  agentAnswerSecrets: 'vav:agent:answer-secrets',
   agentStatus: 'vav:agent:status',
   agentRegenerate: 'vav:agent:regenerate',
   agentEditUser: 'vav:agent:edit-user',
@@ -2144,6 +2214,17 @@ export const IPC = {
   timersListRuns: 'vav:timers:list-runs',
   timersListSessions: 'vav:timers:list-sessions',
   timersChanged: 'vav:timers:changed',
+  dbList: 'vav:db:list',
+  dbCreate: 'vav:db:create',
+  dbGetForConversation: 'vav:db:get-for-conversation',
+  dbEnsureForConversation: 'vav:db:ensure-for-conversation',
+  dbUpdate: 'vav:db:update',
+  dbRemove: 'vav:db:remove',
+  dbTest: 'vav:db:test',
+  dbOpen: 'vav:db:open',
+  dbSchema: 'vav:db:schema',
+  dbQueryTable: 'vav:db:query-table',
+  dbChanged: 'vav:db:changed',
 
   agentsResolveBinary: 'vav:agents:resolve-binary',
   agentsProbeBinaries: 'vav:agents:probe-binaries',
@@ -2205,6 +2286,7 @@ export const IPC = {
   windowOpenSwarmHistory: 'vav:window:open-swarm-history',
   swarmHistoryResume: 'vav:swarm-history:resume',
   windowRelaunch: 'vav:window:relaunch',
+  windowSetMinSize: 'vav:window:set-min-size',
   windowFullscreen: 'vav:window:fullscreen',
   notificationsPermission: 'vav:notifications:permission',
   notificationsSeen: 'vav:notifications:seen',

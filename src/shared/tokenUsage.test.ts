@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { estimateContextTokens, estimateTextTokens } from './tokenUsage.ts'
+import {
+  estimateContextTokens,
+  estimateTextTokens,
+  historyHasCacheMetrics,
+  shouldShowCacheHitUi
+} from './tokenUsage.ts'
 import type { ChatMessage } from './types.ts'
 
 function message(partial: Partial<ChatMessage>): ChatMessage {
@@ -63,5 +68,24 @@ describe('estimateContextTokens', () => {
       message({ id: 'm2', role: 'assistant', content: 'x'.repeat(4_000) })
     ])
     assert.ok(long > short)
+  })
+})
+
+describe('shouldShowCacheHitUi', () => {
+  it('hides the Anthropic cache chart on ACP until a host reports cache tokens', () => {
+    assert.equal(historyHasCacheMetrics([]), false)
+    assert.equal(historyHasCacheMetrics([{ cacheReadTokens: 0, cacheWriteTokens: 0 }]), false)
+    assert.equal(historyHasCacheMetrics([{ cacheReadTokens: 12, cacheWriteTokens: 0 }]), true)
+    assert.equal(shouldShowCacheHitUi({ cliHost: 'cursor', history: [] }), false)
+    assert.equal(shouldShowCacheHitUi({ cliHost: 'grok', history: [] }), false)
+    assert.equal(
+      shouldShowCacheHitUi({
+        cliHost: 'grok',
+        history: [{ cacheReadTokens: 11264, cacheWriteTokens: 0 }]
+      }),
+      true
+    )
+    assert.equal(shouldShowCacheHitUi({ cliHost: null, history: [] }), true)
+    assert.equal(shouldShowCacheHitUi({ cliHost: 'claude', history: [] }), true)
   })
 })

@@ -122,7 +122,7 @@ export class TimerStore {
   createJob(input: TimerJobInput, now = Date.now()): TimerJob {
     const schedule = coerceTimerSchedule(input.schedule)
     if (!schedule) throw new Error('Invalid timer schedule')
-    const title = input.title.trim() || 'Scheduled task'
+    const title = input.title.trim() || 'Untitled-scheduled-task'
     const prompt = input.prompt.trim()
     const job: TimerJob = {
       id: randomUUID(),

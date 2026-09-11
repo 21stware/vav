@@ -999,6 +999,13 @@ export function installPhoneVav(transport: PhoneTransport): PhoneVavHandle {
       }),
       unlock: async () => ({ ok: true as const })
     },
+    sessionSecrets: {
+      list: async () => ({ names: [] }),
+      reveal: async () => ({ ok: false as const, cancelled: true }),
+      set: async () => ({ ok: false as const, error: 'unavailable' }),
+      remove: async () => ({ ok: false as const, error: 'unavailable' }),
+      onChanged: () => () => undefined
+    },
     settings: {
       get: async () => {
         await pullHostSettings()
@@ -1683,6 +1690,18 @@ export function installPhoneVav(transport: PhoneTransport): PhoneVavHandle {
       },
       answer: async (conversationId: string, toolCallId: string, answer: string) => {
         send({ type: 'reply', conversationId, toolCallId, answer })
+        return true
+      },
+      answerSecrets: async (conversationId, toolCallId, payload) => {
+        send({
+          type: 'reply',
+          conversationId,
+          toolCallId,
+          answer: JSON.stringify({
+            declined: payload.declined === true,
+            values: payload.declined ? undefined : payload.values
+          })
+        })
         return true
       },
       status: async (conversationId: string) => IDLE_STATUS(conversationId),

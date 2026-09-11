@@ -40,6 +40,7 @@ import { buildRemoteThreadEvent, fallbackRemoteSession, mapRemoteSessions } from
 import { AccountStore } from '../store/AccountStore.ts'
 import { ConversationStore } from '../store/ConversationStore.ts'
 import { NodeSecretStore } from '../store/NodeSecretStore.ts'
+import { SessionSecretStore } from '../store/SessionSecretStore.ts'
 import { SettingsStore } from '../store/SettingsStore.ts'
 import { LogStore } from '../store/LogStore.ts'
 import { createAppLogger, setAppLogger, logUserAnswer, logUserCancel } from '../log/appLogger.ts'
@@ -222,10 +223,15 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
     for (const path of pluginAccessPaths('vav', home)) files.grantRoot(path)
   }
 
+  const sessionSecrets = new SessionSecretStore({
+    dir: join(opts.stateDir, 'session-secrets')
+  })
+
   const agent = new AgentRuntime({
     conversations,
     settings,
     secrets: secrets.asSecretStore(),
+    sessionSecrets,
     resolveVavCredentials: (conversation) => resolveCreds(conversation),
     files,
     hosts,
@@ -280,6 +286,7 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
           cli = new CliAgentHost({
             conversations,
             settings,
+            sessionSecrets,
             changeSets,
             files,
             hosts,

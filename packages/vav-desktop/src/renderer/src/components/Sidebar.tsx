@@ -28,8 +28,9 @@ import {
 import { swarmChildrenOf } from '@shared/swarmLayout'
 import { menuAnchor, showMenu, type MenuItem } from '../lib/nativeMenu'
 import { lucideMenuIcon, warmMenuIcons, warmSessionContextMenuIcons } from '../lib/menuIcons'
-import { fileManagerLabel, keys } from '../lib/platform'
+import { fileManagerLabel } from '../lib/platform'
 import { basename } from '../lib/path'
+import { fileSessionSelectHint } from '../lib/openFileSession'
 import {
   agentTypeLabel,
   conversationFitsListMode,
@@ -42,7 +43,8 @@ import {
   pinnableWorkspaceDir,
   nextConversationForListMode,
   nextVisibleSelectionAfterArchive,
-  filterFileSessionRows
+  filterFileSessionRows,
+  shouldReconcileSidebarSelection
 } from '../lib/sidebarList'
 import { ConvBracket, type SwarmBracketKind } from './sidebar/ConvBracket'
 import { TimerJobsPanel } from './sidebar/TimerJobsPanel'
@@ -116,11 +118,11 @@ export function Sidebar({
   const rawCliAgents = useSessionStore((s) => s.settings.cliAgents)
   const cliAgents = useMemo(() => enabledCliAgents(rawCliAgents), [rawCliAgents])
   const setSidebarQuery = useSessionStore((s) => s.setSidebarQuery)
-  const closeSidebarSearch = useSessionStore((s) => s.closeSidebarSearch)
   const selectConversation = useSessionStore((s) => s.selectConversation)
   const createConversation = useSessionStore((s) => s.createConversation)
-  const createScheduledConversation = useSessionStore((s) => s.createScheduledConversation)
   const ensureScheduledConversation = useSessionStore((s) => s.ensureScheduledConversation)
+  const createDbConversation = useSessionStore((s) => s.createDbConversation)
+  const ensureDbConversation = useSessionStore((s) => s.ensureDbConversation)
   const duplicateConversation = useSessionStore((s) => s.duplicateConversation)
   const requestDelete = useSessionStore((s) => s.requestDelete)
   const beginRename = useSessionStore((s) => s.beginRename)
@@ -157,8 +159,18 @@ export function Sidebar({
     return () => window.cancelAnimationFrame(frame)
   }, [searchOpen])
 
+  const scrolledFocusId = useRef<string | null>(null)
   useEffect(() => {
-    if (!activeId) return
+    if (!activeId) {
+      scrolledFocusId.current = null
+      return
+    }
+    // Follow the conversation id, never the visual index. Recency reshuffles
+    // (a finished task moving to the top) must not scroll / steal focus.
+    const fileReady = listMode === 'fileSessions' && fileSessionRows.length > 0 ? '1' : '0'
+    const focusKey = `${listMode}:${activeId}:${fileReady}`
+    if (scrolledFocusId.current === focusKey) return
+    scrolledFocusId.current = focusKey
     const root = listRef.current
     if (!root) return
     const frame = window.requestAnimationFrame(() => {
@@ -175,6 +187,7 @@ export function Sidebar({
   const archiveView = listMode === 'archive'
   const fileSessionsView = listMode === 'fileSessions'
   const timersView = listMode === 'timers'
+  const databasesView = listMode === 'databases'
 
   // Rasterize the foot-menu glyphs ahead of the first open.
   useEffect(() => {
@@ -204,39 +217,6 @@ export function Sidebar({
     void refreshFileSessions()
   }, [fileSessionsView, refreshFileSessions])
 
-  const openAFile = useCallback((): void => {
-    void (async () => {
-      const picked = await window.vav.files.pickAttachments()
-      if (!picked.ok || picked.paths.length === 0) return
-      let lastId: string | null = null
-      for (const path of picked.paths) {
-        let conversationId: string | undefined
-        try {
-          const state = await window.vav.fileSessions.open(path)
-          if (state?.activeSessionId) {
-            conversationId = state.activeSessionId
-            lastId = state.activeSessionId
-          }
-        } catch (err) {
-          showToast({
-            kind: 'error',
-            title: t('preview.openFailed'),
-            description: String(err)
-          })
-          continue
-        }
-        void window.vav.window.openFilePreview(path, {
-          origin: 'session',
-          conversationId,
-          surface: 'file'
-        })
-      }
-      await refreshFileSessions()
-      if (lastId) void selectConversation(lastId)
-      onNavigate?.()
-    })()
-  }, [onNavigate, refreshFileSessions, selectConversation, showToast, t])
-
   useEffect(() => {
     return () => {
       if (clickTimerRef.current) clearTimeout(clickTimerRef.current)
@@ -251,11 +231,21 @@ export function Sidebar({
     hostMachineLabel(machineId, hosts, LOCAL_MACHINE_ID, t('sidebar.thisMachine'), fallback)
   const localWindow = isLocalMachine(windowMachineId)
 
+  const listScopeKey = `${listMode}:${windowMachineId ?? ''}`
+  const listScopeRef = useRef<string | null>(null)
   useEffect(() => {
+    const listScopeChanged = listScopeRef.current !== listScopeKey
+    listScopeRef.current = listScopeKey
     const current = conversations.find((row) => row.id === activeId)
-    if (current && conversationFitsListMode(current, listMode)) return
+    const currentFits = !!current && conversationFitsListMode(current, listMode)
+    // Task complete only reorders the list. Do not pick the new first row.
+    if (!shouldReconcileSidebarSelection({ currentFits, listScopeChanged })) return
     if (listMode === 'timers') {
       ensureScheduledConversation()
+      return
+    }
+    if (listMode === 'databases') {
+      ensureDbConversation()
       return
     }
     const nextId = nextConversationForListMode(conversations, listMode, activeId, windowMachineId)
@@ -264,7 +254,9 @@ export function Sidebar({
     activeId,
     conversations,
     ensureScheduledConversation,
+    ensureDbConversation,
     listMode,
+    listScopeKey,
     selectConversation,
     windowMachineId
   ])
@@ -300,6 +292,7 @@ export function Sidebar({
       listedSidebarGroups(conversations, {
         fileSessionsView,
         archiveView,
+        databasesView,
         query,
         windowMachineId,
         sessionFilter,
@@ -322,6 +315,7 @@ export function Sidebar({
     pinnedWorkspaces,
     archiveView,
     fileSessionsView,
+    databasesView,
     turnBusyKey,
     shellBusyKey,
     activityById,
@@ -480,7 +474,7 @@ export function Sidebar({
           label: t('sidebar.fileSessionOpenChat'),
           icon: lucideMenuIcon('message-square'),
           onSelect: () => {
-            void selectConversation(row.sessionId)
+            void selectConversation(row.sessionId, { fileSession: fileSessionSelectHint(row) })
             onNavigate?.()
           }
         },
@@ -489,7 +483,7 @@ export function Sidebar({
           icon: lucideMenuIcon('file-text'),
           disabled: row.pathStatus !== 'ok',
           onSelect: () => {
-            void selectConversation(row.sessionId)
+            void selectConversation(row.sessionId, { fileSession: fileSessionSelectHint(row) })
             void window.vav.window.openFilePreview(row.path, {
               origin: 'session',
               conversationId: row.sessionId,
@@ -502,7 +496,7 @@ export function Sidebar({
           icon: lucideMenuIcon('app-window'),
           disabled: row.pathStatus !== 'ok',
           onSelect: () => {
-            void selectConversation(row.sessionId)
+            void selectConversation(row.sessionId, { fileSession: fileSessionSelectHint(row) })
             void window.vav.window.openFilePreview(row.path, {
               origin: 'session',
               conversationId: row.sessionId,
@@ -581,9 +575,11 @@ export function Sidebar({
           const base = index < 0 ? (event.key === 'ArrowDown' ? -1 : 0) : index
           const next = fileSessionOrderedIds[base + (event.key === 'ArrowDown' ? 1 : -1)]
           if (next) {
+            const row = filteredFileSessions.find((item) => item.sessionId === next)
             void selectConversation(next, {
               range: event.shiftKey,
-              rangeIds: fileSessionOrderedIds
+              rangeIds: fileSessionOrderedIds,
+              fileSession: row ? fileSessionSelectHint(row) : undefined
             })
           }
           return
@@ -637,6 +633,7 @@ export function Sidebar({
     fileSessionsView,
     timersView,
     fileSessionOrderedIds,
+    filteredFileSessions,
     deleteSelectedFileSessions,
     activateSidebarListMode
   ])
@@ -1281,105 +1278,59 @@ export function Sidebar({
     <aside className={`sidebar${floating ? ' floating' : ''}`} data-testid="sidebar">
       <SidebarCategoryBar />
       <div className="sidebar-search">
-        {searchOpen && (
-          <div className="sidebar-search-field">
-            <Search
-              size={12}
-              style={{
-                position: 'absolute',
-                left: 7,
-                top: 7,
-                opacity: 0.5,
-                pointerEvents: 'none'
-              }}
-            />
-            <input
-              ref={searchInputRef}
-              className="text-field"
-              data-testid="sidebar-search"
-              style={{ paddingLeft: 24, paddingRight: query ? 24 : 8 }}
-              placeholder={t('sidebar.searchPlaceholder')}
-              value={query}
-              onChange={(event) => setSidebarQuery(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === 'Escape') {
-                  event.preventDefault()
-                  closeSidebarSearch()
-                }
-              }}
-            />
-            {query && (
-              <button
-                type="button"
-                className="btn icon-only sm"
-                style={{ position: 'absolute', right: 2, top: 2 }}
-                title={t('common.clear')}
-                aria-label={t('common.clear')}
-                onClick={() => setSidebarQuery('')}
-              >
-                <X size={12} />
-              </button>
-            )}
-          </div>
-        )}
-        {(listMode === 'main' || timersView || fileSessionsView) && (
-          <div className="sidebar-list-toolbar">
+        <div className="sidebar-search-field">
+          <Search
+            size={12}
+            style={{
+              position: 'absolute',
+              left: 7,
+              top: 7,
+              opacity: 0.5,
+              pointerEvents: 'none'
+            }}
+          />
+          <input
+            ref={searchInputRef}
+            className="text-field"
+            data-testid="sidebar-search"
+            style={{ paddingLeft: 24, paddingRight: query ? 24 : 8 }}
+            placeholder={t('sidebar.searchPlaceholder')}
+            value={query}
+            onChange={(event) => setSidebarQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key !== 'Escape') return
+              event.preventDefault()
+              if (query) setSidebarQuery('')
+              else searchInputRef.current?.blur()
+            }}
+          />
+          {query && (
             <button
               type="button"
-              className="sidebar-new-row"
-              id={listMode === 'main' ? 'create' : undefined}
-              data-testid={
-                listMode === 'main'
-                  ? 'new-session'
-                  : fileSessionsView
-                    ? 'open-a-file'
-                    : 'new-scheduled'
-              }
-              title={
-                listMode === 'main'
-                  ? t('app.newSessionTitle', { shortcut: keys('⌘N') })
-                  : fileSessionsView
-                    ? t('sidebar.openAFile')
-                    : t('timer.new')
-              }
-              onClick={() => {
-                if (fileSessionsView) {
-                  openAFile()
-                  return
-                }
-                if (timersView) {
-                  void createScheduledConversation()
-                  return
-                }
-                void createConversation({ machineId: windowMachineId })
-                onNavigate?.()
-              }}
+              className="btn icon-only sm"
+              style={{ position: 'absolute', right: 2, top: 2 }}
+              title={t('common.clear')}
+              aria-label={t('common.clear')}
+              onClick={() => setSidebarQuery('')}
             >
-              <Plus size={14} aria-hidden />
-              <span>
-                {listMode === 'main'
-                  ? t('common.newSession')
-                  : fileSessionsView
-                    ? t('sidebar.openAFile')
-                    : t('timer.new')}
-              </span>
+              <X size={12} />
             </button>
-            {listMode === 'main' && (
-              <button
-                type="button"
-                className={`sidebar-list-menu${isSidebarSessionFilterEnabled(sessionFilter) ? ' is-active' : ''}`}
-                data-testid="sidebar-list-menu"
-                data-grouping={groupingMode}
-                data-filter={sessionFilter.kind}
-                title={t('sidebar.listMenu')}
-                aria-label={t('sidebar.listMenu')}
-                aria-haspopup="menu"
-                onClick={(event) => openListMenu(event.currentTarget)}
-              >
-                <ListFilter size={14} aria-hidden />
-              </button>
-            )}
-          </div>
+          )}
+        </div>
+        {listMode === 'main' && (
+          <button
+            type="button"
+            className={`sidebar-list-menu${isSidebarSessionFilterEnabled(sessionFilter) ? ' is-active' : ''}`}
+            data-testid="sidebar-list-menu"
+            data-grouping={groupingMode}
+            data-filter={sessionFilter.kind}
+            title={t('sidebar.listMenu')}
+            aria-label={t('sidebar.listMenu')}
+            aria-haspopup="menu"
+            onClick={(event) => openListMenu(event.currentTarget)}
+          >
+            <ListFilter size={14} aria-hidden />
+          </button>
         )}
       </div>
 
@@ -1391,6 +1342,7 @@ export function Sidebar({
               !c.archived &&
               !c.fileId &&
               c.sessionKind !== 'timer' &&
+              c.sessionKind !== 'db' &&
               conversationOnMachine(c, windowMachineId)
           ).length === 0 &&
           groupingMode !== 'workspace' && (
@@ -1426,18 +1378,35 @@ export function Sidebar({
           <EmptyState
             title={t('sidebar.fileSessionsEmptyTitle')}
             description={t('sidebar.fileSessionsEmptyDesc')}
-          >
-            <button
-              className="btn secondary"
-              title={t('sidebar.openAFile')}
-              onClick={() => openAFile()}
-            >
-              {t('sidebar.openAFile')}
-            </button>
-          </EmptyState>
+          />
         )}
         {timersView && (
           <TimerJobsPanel />
+        )}
+        {databasesView && visible.length === 0 && !searching && (
+          <EmptyState
+            title={t('sidebar.dbEmptyTitle')}
+            description={t('sidebar.dbEmptyDesc')}
+          >
+            <button
+              className="btn secondary"
+              title={t('db.new')}
+              onClick={() => void createDbConversation()}
+            >
+              {t('db.new')}
+            </button>
+          </EmptyState>
+        )}
+        {databasesView && searching && visible.length === 0 && (
+          <EmptyState title={t('sidebar.noMatchTitle')} description={t('sidebar.noMatchDesc')}>
+            <button
+              className="btn secondary"
+              title={t('sidebar.clearFilter')}
+              onClick={() => setSidebarQuery('')}
+            >
+              {t('sidebar.clearFilter')}
+            </button>
+          </EmptyState>
         )}
         {fileSessionsView && searching && filteredFileSessions.length === 0 && (
           <EmptyState title={t('sidebar.noMatchTitle')} description={t('sidebar.noMatchDesc')}>
@@ -1525,7 +1494,8 @@ export function Sidebar({
                     void selectConversation(row.sessionId, {
                       additive,
                       range,
-                      rangeIds: fileSessionOrderedIds
+                      rangeIds: fileSessionOrderedIds,
+                      fileSession: fileSessionSelectHint(row)
                     })
                     // Multi-select keeps the float open so the user can keep picking.
                     if (additive || range) return
@@ -1548,7 +1518,9 @@ export function Sidebar({
                     }
                     // Same as regular sessions: companion window. File sessions
                     // open the file-preview shell (canvas + agent), not bare chat.
-                    void selectConversation(row.sessionId)
+                    void selectConversation(row.sessionId, {
+                      fileSession: fileSessionSelectHint(row)
+                    })
                     void window.vav.window.openFilePreview(row.path, {
                       origin: 'session',
                       conversationId: row.sessionId,
@@ -1570,7 +1542,9 @@ export function Sidebar({
                         ? selectedIds
                         : [row.sessionId]
                     if (targets.length === 1 && selectedIds.length > 1) {
-                      void selectConversation(row.sessionId)
+                      void selectConversation(row.sessionId, {
+                        fileSession: fileSessionSelectHint(row)
+                      })
                     }
                     void showMenu(fileSessionMenuItems(targets))
                   }}
@@ -1604,7 +1578,7 @@ export function Sidebar({
           </div>
         )}
 
-        {!fileSessionsView && !timersView && pinnedGroups.length > 0 && (
+        {!fileSessionsView && !timersView && !databasesView && pinnedGroups.length > 0 && (
           <div className="conv-pinned-section">
             <button
               type="button"
@@ -1637,6 +1611,12 @@ export function Sidebar({
               label: t('sidebar.menu.import'),
               icon: lucideMenuIcon('import'),
               onSelect: () => void importSessions()
+            },
+            {
+              label: t('sidebar.category.archived'),
+              icon: lucideMenuIcon('archive'),
+              checked: archiveView,
+              onSelect: () => activateSidebarListMode('archive')
             }
           ]}
         />

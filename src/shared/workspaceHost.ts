@@ -14,6 +14,8 @@ import type { MachineAppearance } from './types.ts'
 
 /** This process. Remote hosts use a paired machine id. */
 export const LOCAL_MACHINE_ID = 'local'
+/** Switcher / tray title for {@link LOCAL_MACHINE_ID}. */
+export const LOCAL_MACHINE_LABEL = 'Local'
 
 export type WorkspaceHostKind = 'local' | 'remote'
 
@@ -82,7 +84,7 @@ export function listedServices(
   hosts: readonly Pick<WorkspaceHostInfo, 'id' | 'name' | 'localShell'>[]
 ): Array<{ id: string; name: string }> {
   return [
-    { id: LOCAL_MACHINE_ID, name: LOCAL_MACHINE_ID },
+    { id: LOCAL_MACHINE_ID, name: LOCAL_MACHINE_LABEL },
     ...userFacingRemotes(hosts).map((host) => ({
       id: host.id,
       name: serviceShortName(host.id, hosts, host.name)
@@ -90,14 +92,14 @@ export function listedServices(
   ]
 }
 
-/** Short switcher / tray title: `local`, or the host’s name (`macmini-v1`). */
+/** Short switcher / tray title: `Local`, or the host’s name (`macmini-v1`). */
 export function serviceShortName(
   machineId: string | null | undefined,
   hosts: readonly Pick<WorkspaceHostInfo, 'id' | 'name'>[] = [],
   fallback?: string
 ): string {
   const id = normalizeMachineId(machineId)
-  if (isLocalMachine(id)) return LOCAL_MACHINE_ID
+  if (isLocalMachine(id)) return LOCAL_MACHINE_LABEL
   return hosts.find((host) => host.id === id)?.name?.trim() || fallback?.trim() || id
 }
 

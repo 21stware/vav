@@ -145,7 +145,9 @@ export function applySessionTurnEvent(
         toolCount: countTools(get, id, event.block.id),
         awaitingToolCallId:
           event.block.status === 'pending' &&
-          (event.block.tool === 'request' || event.block.tool === 'ask_user_question')
+          (event.block.tool === 'request' ||
+            event.block.tool === 'ask_user_question' ||
+            event.block.tool === 'request_for_secret')
             ? event.block.id
             : get().turns[id]?.awaitingToolCallId === event.block.id
               ? null

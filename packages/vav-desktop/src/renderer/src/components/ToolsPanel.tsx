@@ -203,12 +203,14 @@ export function ToolsPanel({
       : (workdir ?? t('sidebar.temporaryWorkspace'))
   // Enclosed dir (file session path bound): no switch while the path still works.
   // Missing root allows switch so the conversation is not a dead end — except
-  // Swarm, where live CLI PTYs stay on the spawn cwd.
+  // Swarm (live CLI PTYs stay on the spawn cwd) and archived (read-only).
   const swarmSurface = isSwarmSurfaceActive(swarmEnabled, cliMode)
+  const archived = conversation?.archived === true
   const allowWorkdirSwitch = workdirSwitchAllowed({
     swarmSurface,
     enclosedUnrevealed: useEnclosedLabel,
-    rootMissing
+    rootMissing,
+    archived
   })
   // Tools tray shows user bash only — never main-surface CLI agent hosts.
   const tabs = (workspaceTabs ?? []).filter(
@@ -387,6 +389,24 @@ export function ToolsPanel({
   )
 
   const pathContextItems = (): MenuItem[] => {
+    if (archived) {
+      return [
+        {
+          label: t('tools.copyPath'),
+          disabled: !workdir,
+          onSelect: () => void window.vav.conversations.copyToClipboard(workdir ?? '')
+        },
+        ...(!rootMissing
+          ? [
+              {
+                label: t('tools.revealInFm', { fileManager: fileManagerLabel() }),
+                disabled: !workdir,
+                onSelect: () => void window.vav.conversations.revealInFinder(workdir ?? '')
+              } satisfies MenuItem
+            ]
+          : [])
+      ]
+    }
     if (swarmSurface) {
       return [
         { label: t('tools.switchWorkdirSwarmLocked'), disabled: true },
@@ -606,7 +626,8 @@ export function ToolsPanel({
       >
         <div className="tools-header-lead">
           {/* Path chip opens Files. File sessions use Enclosed dir (no switch).
-              Missing root → red "dir not exist"; click / action still switches. */}
+              Archived sessions cannot switch. Missing root → red "dir not exist";
+              click / action still switches when allowed. */}
           <div className="workdir-chip" data-testid="workdir-chip" ref={pathChipRef}>
             <Chip
               label={label}

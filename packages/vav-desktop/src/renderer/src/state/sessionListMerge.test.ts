@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { mergeConversationList, nextConversationSelection, patchConversationById, isArchivedConversation, regenerateActiveLeaf, canMutateActiveSession, compactRefusalReason, genericErrorBanner, shouldSkipSessionDeleteConfirm, fallbackConversationIdAfterDelete, sessionDeleteDialogCopy, prependConversationIfMissing, upsertConversationMeta, listedConversationIdsForSelect, fileSessionHydrateOnDemandPatch, deleteMessageHydratePatch, renameConversationPatch, rememberDroppedConversationIds, forgetDroppedConversationIds, replaceTimerSessions, type ConversationListItem } from './sessionListMerge.ts'
+import { mergeConversationList, nextConversationSelection, patchConversationById, isArchivedConversation, regenerateActiveLeaf, canMutateActiveSession, compactRefusalReason, genericErrorBanner, shouldSkipSessionDeleteConfirm, fallbackConversationIdAfterDelete, sessionDeleteDialogCopy, prependConversationIfMissing, upsertConversationMeta, listedConversationIdsForSelect, fileSessionHydrateOnDemandPatch, fileSessionHintToMeta, deleteMessageHydratePatch, renameConversationPatch, rememberDroppedConversationIds, forgetDroppedConversationIds, replaceTimerSessions, type ConversationListItem } from './sessionListMerge.ts'
 
 function row(
   partial: Partial<ConversationListItem> & { id: string }
@@ -25,6 +25,18 @@ describe('mergeConversationList', () => {
     assert.deepEqual(
       mergeConversationList(prev, next).map((c) => c.id),
       ['live', 'timer']
+    )
+  })
+
+  it('keeps hydrated db sessions when the broadcast omits them', () => {
+    const prev = [
+      row({ id: 'live', updatedAt: 2 }),
+      row({ id: 'db', updatedAt: 1, sessionKind: 'db' })
+    ]
+    const next = [row({ id: 'live', updatedAt: 2 })]
+    assert.deepEqual(
+      mergeConversationList(prev, next).map((c) => c.id),
+      ['live', 'db']
     )
   })
 
@@ -315,6 +327,25 @@ describe('listedConversationIdsForSelect', () => {
     assert.deepEqual(listedConversationIdsForSelect(rows, false), ['live'])
     assert.deepEqual(listedConversationIdsForSelect(rows, undefined), ['live'])
     assert.deepEqual(listedConversationIdsForSelect(rows, true), ['arch'])
+  })
+})
+
+describe('fileSessionHintToMeta', () => {
+  it('stamps fileId so the detail pane treats the row as a file session', () => {
+    const meta = fileSessionHintToMeta('sess-1', {
+      fileId: 'ino-9',
+      title: '  Notes  ',
+      createdAt: 10,
+      updatedAt: 20,
+      tokensUsed: 3,
+      workingDirectory: '/tmp/docs'
+    })
+    assert.equal(meta.id, 'sess-1')
+    assert.equal(meta.fileId, 'ino-9')
+    assert.equal(meta.sessionKind, 'file')
+    assert.equal(meta.title, 'Notes')
+    assert.equal(meta.workingDirectory, '/tmp/docs')
+    assert.equal(meta.archived, false)
   })
 })
 

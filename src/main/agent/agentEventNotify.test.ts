@@ -20,6 +20,7 @@ describe('awaitingNotifyKind', () => {
     assert.equal(awaitingNotifyKind('ask_user_question', false), 'ask')
     assert.equal(awaitingNotifyKind('plan_doc', false), 'approval')
     assert.equal(awaitingNotifyKind('request', false), 'request')
+    assert.equal(awaitingNotifyKind('request_for_secret', false), 'secret')
     assert.equal(awaitingNotifyKind('fs_write', true), 'approval')
     assert.equal(awaitingNotifyKind('fs_read', false), null)
   })
@@ -27,10 +28,11 @@ describe('awaitingNotifyKind', () => {
 
 describe('awaitingNotifyTitle / turnCompleteNotifyAction', () => {
   it('picks the injected title and completes only a clean turn', () => {
-    const titles = { ask: 'Ask?', request: 'Request?', approval: 'Approve?' }
+    const titles = { ask: 'Ask?', request: 'Request?', approval: 'Approve?', secret: 'Secret?' }
     assert.equal(awaitingNotifyTitle('ask', titles), 'Ask?')
     assert.equal(awaitingNotifyTitle('request', titles), 'Request?')
     assert.equal(awaitingNotifyTitle('approval', titles), 'Approve?')
+    assert.equal(awaitingNotifyTitle('secret', titles), 'Secret?')
     assert.equal(turnCompleteNotifyAction(false, undefined), 'complete')
     assert.equal(turnCompleteNotifyAction(true, undefined), 'acknowledge')
     assert.equal(turnCompleteNotifyAction(false, 'boom'), 'acknowledge')

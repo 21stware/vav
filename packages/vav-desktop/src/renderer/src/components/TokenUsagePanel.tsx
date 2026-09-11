@@ -13,7 +13,8 @@ import {
   formatCost,
   modelDisplayName,
   providerLabel,
-  sessionCostOf
+  sessionCostOf,
+  shouldShowCacheHitUi
 } from '@shared/tokenUsage'
 
 function formatCount(value: number): string {
@@ -123,6 +124,7 @@ export function TokenUsagePanel({
       ? `${formatCount(latest.cacheReadTokens)} / ${formatCount(latest.totalInputTokens)} tokens (${hitPct}%)`
       : `${formatCount(latest.cacheReadTokens)} tokens (${hitPct}%)`
     : '—'
+  const showCacheHit = shouldShowCacheHitUi({ cliHost: payload.cliHost, history })
 
   const pathCount = payload.pathMessageCount ?? 0
   // defaultKeepAfterIndex needs at least COMPACT_MIN_FOLDED folded + 1 kept.
@@ -261,48 +263,56 @@ export function TokenUsagePanel({
         </section>
       )}
 
-      <section className="token-usage-section">
-        <div className="token-usage-heading">{t('token.cacheHitChart')}</div>
-        {chartRows.length < 2 ? (
-          <div className="token-usage-empty">
-            <div className="token-usage-empty-title">{t('token.insufficientData')}</div>
-            <div className="token-usage-muted">{t('token.needTwoTurns')}</div>
-          </div>
-        ) : (
-          <>
-            <CacheHitChart rows={chartRows} t={t} />
-            <div className="token-usage-muted">{t('token.chartAxisHint')}</div>
-          </>
-        )}
-      </section>
+      {showCacheHit ? (
+        <>
+          <section className="token-usage-section">
+            <div className="token-usage-heading">{t('token.cacheHitChart')}</div>
+            {chartRows.length < 2 ? (
+              <div className="token-usage-empty">
+                <div className="token-usage-empty-title">{t('token.insufficientData')}</div>
+                <div className="token-usage-muted">{t('token.needTwoTurns')}</div>
+              </div>
+            ) : (
+              <>
+                <CacheHitChart rows={chartRows} t={t} />
+                <div className="token-usage-muted">{t('token.chartAxisHint')}</div>
+              </>
+            )}
+          </section>
 
-      <dl className="token-usage-kv">
-        <div>
-          <dt>{isRunning ? t('token.cacheHitThisTurn') : t('token.cacheHit')}</dt>
-          <dd>{cacheHitLabel}</dd>
-        </div>
-        <div>
-          <dt>{t('token.cacheWriteTime')}</dt>
-          <dd>{formatClock(payload.cacheCreatedAt, locale)}</dd>
-        </div>
-        <div>
-          <dt>{t('token.cacheExpireTime')}</dt>
-          <dd>
-            {formatExpiry(payload.cacheExpiresAt, payload.now, locale)}
-            {payload.cacheExpiryEstimated ? (
-              <div className="token-usage-muted">{t('token.cacheExpiryNote')}</div>
+          <dl className="token-usage-kv">
+            <div>
+              <dt>{isRunning ? t('token.cacheHitThisTurn') : t('token.cacheHit')}</dt>
+              <dd>{cacheHitLabel}</dd>
+            </div>
+            {payload.cacheCreatedAt || payload.cacheExpiresAt ? (
+              <>
+                <div>
+                  <dt>{t('token.cacheWriteTime')}</dt>
+                  <dd>{formatClock(payload.cacheCreatedAt, locale)}</dd>
+                </div>
+                <div>
+                  <dt>{t('token.cacheExpireTime')}</dt>
+                  <dd>
+                    {formatExpiry(payload.cacheExpiresAt, payload.now, locale)}
+                    {payload.cacheExpiryEstimated ? (
+                      <div className="token-usage-muted">{t('token.cacheExpiryNote')}</div>
+                    ) : null}
+                  </dd>
+                </div>
+              </>
             ) : null}
-          </dd>
-        </div>
-        <div>
-          <dt>{t('token.cacheReadTokens')}</dt>
-          <dd>{latest ? formatCount(latest.cacheReadTokens) : '—'}</dd>
-        </div>
-        <div>
-          <dt>{t('token.newWriteTokens')}</dt>
-          <dd>{latest ? formatCount(latest.cacheWriteTokens) : '—'}</dd>
-        </div>
-      </dl>
+            <div>
+              <dt>{t('token.cacheReadTokens')}</dt>
+              <dd>{latest ? formatCount(latest.cacheReadTokens) : '—'}</dd>
+            </div>
+            <div>
+              <dt>{t('token.newWriteTokens')}</dt>
+              <dd>{latest ? formatCount(latest.cacheWriteTokens) : '—'}</dd>
+            </div>
+          </dl>
+        </>
+      ) : null}
 
       <dl className="token-usage-kv">
         <div>

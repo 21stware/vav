@@ -40,7 +40,7 @@ describe('TimerStore', () => {
       schedule: { kind: 'interval', everyMs: 60_000 },
       conversationId: 'conv-def'
     })
-    assert.equal(job.title, 'Scheduled task')
+    assert.equal(job.title, 'Untitled-scheduled-task')
     assert.equal(job.prompt, '')
     assert.equal(job.conversationId, 'conv-def')
     assert.equal(timers.getJobForConversation('conv-def')?.id, job.id)

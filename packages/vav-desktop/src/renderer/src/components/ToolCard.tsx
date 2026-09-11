@@ -3,10 +3,13 @@ import { Check, ChevronRight, CircleAlert, Loader2 } from 'lucide-react'
 import { normalizeAskQuestions, parseToolInput } from '@shared/askPlan'
 import { normalizePlanDocInput, planDocHasBody } from '@shared/planDoc'
 import { catalogTextEquals, catalogTextStartsWithTemplate, type MessageKey } from '@shared/i18n'
+import { normalizeSecretRequests, splitDescriptionParts, summarizeSecretRequests } from '@shared/sessionSecrets'
 import {
   TOOL_LABELS,
+  isUserAskTool,
   type AskQuestion,
   type MessageBlock,
+  type SecretRequest,
   type ToolCallBlock,
   type ToolName
 } from '@shared/types'
@@ -28,6 +31,7 @@ const TOOL_NAME_KEYS: Partial<Record<ToolName, MessageKey>> = {
   load_skill: 'tool.loadSkill',
   ask_user_question: 'tool.ask',
   request: 'tool.ask',
+  request_for_secret: 'tool.secret',
   switch_mode: 'tool.switchMode',
   task: 'tool.task',
   plan_doc: 'tool.planDoc'
@@ -68,9 +72,10 @@ function statusLabel(status: ToolCallBlock['status']): string | undefined {
  * collapsed; `wait` starts expanded; fire-and-forget terminal is not expandable.
  * Local expand state is not persisted — a new turn remounts cards at defaults.
  *
- * `request` / `ask_user_question` in the `pending` state render as an
- * interactive card instead, because that turn is parked until the user answers
- * (main-chat-awaiting-user.rpml). `plan` renders as a checklist projection.
+ * `request` / `ask_user_question` / `request_for_secret` in the `pending`
+ * state render as an interactive card instead, because that turn is parked
+ * until the user answers (main-chat-awaiting-user.rpml). `plan` renders as
+ * a checklist projection.
  */
 export const ToolCard = memo(function ToolCard({
   block,
@@ -93,7 +98,7 @@ export const ToolCard = memo(function ToolCard({
     el.addEventListener(REVEAL_CITE_EVENT, onReveal)
     return () => el.removeEventListener(REVEAL_CITE_EVENT, onReveal)
   }, [])
-  const isInteractive = block.tool === 'request' || block.tool === 'ask_user_question'
+  const isInteractive = isUserAskTool(block.tool)
   const isApproval =
     block.status === 'pending' && !!block.choices?.length && !isInteractive
 
@@ -110,6 +115,7 @@ export const ToolCard = memo(function ToolCard({
   }
 
   if (isInteractive && block.status === 'pending') {
+    if (block.tool === 'request_for_secret') return <SecretCard block={block} />
     return <AskCard block={block} />
   }
 
@@ -119,6 +125,10 @@ export const ToolCard = memo(function ToolCard({
 
   if (isInteractive && block.tool === 'ask_user_question') {
     return <AskSealed block={block} />
+  }
+
+  if (isInteractive && block.tool === 'request_for_secret') {
+    return <SecretSealed block={block} />
   }
 
   const label = statusLabel(block.status)
@@ -281,6 +291,152 @@ function truncate(text: string, max: number): string {
 function questionsOf(block: ToolCallBlock): AskQuestion[] {
   if (block.questions?.length) return block.questions
   return normalizeAskQuestions(parseToolInput(block.input))
+}
+
+function secretsOf(block: ToolCallBlock): SecretRequest[] {
+  if (block.secretRequests?.length) return block.secretRequests
+  return normalizeSecretRequests(parseToolInput(block.input))
+}
+
+function DescriptionWithLinks({ text }: { text: string }): React.JSX.Element {
+  const parts = splitDescriptionParts(text)
+  return (
+    <p className="secret-desc">
+      {parts.map((part, index) =>
+        part.href ? (
+          <a
+            key={index}
+            href={part.href}
+            className="secret-desc-link"
+            onClick={(event) => {
+              event.preventDefault()
+              window.open(part.href, '_blank', 'noopener,noreferrer')
+            }}
+          >
+            {part.text}
+          </a>
+        ) : (
+          <span key={index}>{part.text}</span>
+        )
+      )}
+    </p>
+  )
+}
+
+function SecretCard({ block }: { block: ToolCallBlock }): React.JSX.Element {
+  const t = useT()
+  const answerSecrets = useSessionStore((s) => s.answerSecrets)
+  const requests = secretsOf(block)
+  const [values, setValues] = useState<Record<string, string>>({})
+  const [submitting, setSubmitting] = useState<'grant' | 'decline' | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const title =
+    block.askTitle?.trim() ||
+    String(parseToolInput(block.input).title ?? '').trim() ||
+    (requests.length > 1
+      ? t('secret.titleN', { n: requests.length })
+      : t('secret.title'))
+
+  const filled = requests.filter((row) => (values[row.name] ?? '').trim().length > 0)
+  const canSubmit = filled.length > 0 && !submitting
+
+  const send = (payload: { declined: boolean; values?: Record<string, string> }): void => {
+    if (submitting) return
+    setSubmitting(payload.declined ? 'decline' : 'grant')
+    setError(null)
+    void answerSecrets(block.id, payload)
+      .catch(() => {
+        setError(t('common.submitFailed'))
+        setSubmitting(null)
+      })
+  }
+
+  return (
+    <div
+      className={`ask-card secret-card${submitting ? ' submitting' : ''}`}
+      data-testid="secret-card"
+    >
+      <div className="ask-title">{title}</div>
+      <p className="secret-lead">{t('secret.lead')}</p>
+      {error && <InlineAlert kind="error" message={error} />}
+      {requests.map((row) => (
+        <label className="secret-field" key={row.name}>
+          <span className="secret-name">
+            <code>${row.name}</code>
+          </span>
+          {row.description ? <DescriptionWithLinks text={row.description} /> : null}
+          <input
+            className="text-field"
+            type="password"
+            autoComplete="off"
+            spellCheck={false}
+            disabled={!!submitting}
+            placeholder={t('secret.placeholder')}
+            value={values[row.name] ?? ''}
+            onChange={(event) =>
+              setValues((prev) => ({ ...prev, [row.name]: event.target.value }))
+            }
+          />
+        </label>
+      ))}
+      <div className="ask-actions">
+        <Button
+          label={t('secret.decline')}
+          variant="danger"
+          disabled={!!submitting}
+          onClick={() => send({ declined: true })}
+        />
+        <span className="spacer" />
+        <Button
+          label={submitting === 'grant' ? t('common.submitting') : t('secret.submit')}
+          variant="primary"
+          disabled={!canSubmit}
+          title={canSubmit ? undefined : t('secret.submitHint')}
+          onClick={() => {
+            const granted: Record<string, string> = {}
+            for (const row of filled) granted[row.name] = (values[row.name] ?? '').trim()
+            send({ declined: false, values: granted })
+          }}
+        />
+      </div>
+    </div>
+  )
+}
+
+function SecretSealed({ block }: { block: ToolCallBlock }): React.JSX.Element {
+  const t = useT()
+  const requests = secretsOf(block)
+  const declined =
+    block.status === 'skipped' ||
+    block.status === 'error' ||
+    catalogTextEquals('tool.secretCancelled', block.output) ||
+    /declined to provide session secrets/.test(block.output)
+  const names =
+    block.output.match(/hidden from you\): ([^.]+)\./)?.[1]?.trim() ||
+    requests.map((row) => row.name).join(', ')
+
+  return (
+    <div
+      className={`ask-card sealed secret-card${declined ? ' cancelled' : ''}`}
+      data-testid="secret-card-sealed"
+    >
+      <div className="ask-title">
+        {block.askTitle?.trim() ||
+          summarizeSecretRequests(requests) ||
+          t('secret.title')}
+      </div>
+      <div className="ask-sealed-line">
+        {declined ? (
+          t('secret.declined')
+        ) : (
+          <>
+            <Check size={12} className="ask-sealed-check" />
+            {t('secret.granted', { names: names || '—' })}
+          </>
+        )}
+      </div>
+    </div>
+  )
 }
 
 function PlanDocCard({ block }: { block: ToolCallBlock }): React.JSX.Element {

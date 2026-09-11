@@ -128,7 +128,9 @@ export function sealCancelledInteractiveTools(blocks: MessageBlock[], cancelledL
     if (block.kind !== 'toolCall') continue
     if (block.tool === 'plan') continue
     if (
-      (block.tool === 'ask_user_question' || block.tool === 'request') &&
+      (block.tool === 'ask_user_question' ||
+        block.tool === 'request' ||
+        block.tool === 'request_for_secret') &&
       block.status === 'pending'
     ) {
       block.status = 'skipped'
