@@ -1,6 +1,6 @@
 {
   "name": "@21stware/vav-chrome-extension",
-  "version": "1.25.0",
+  "version": "1.25.1",
   "role": "vav-chrome-extension",
   "kind": "extension",
   "sources": [

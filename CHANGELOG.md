@@ -4,6 +4,10 @@ User-facing changes by release. Unreleased work lives at the top until the next 
 
 ## Unreleased
 
+## 1.25.1
+
+Turning the display off no longer quits VAV — including `npm run dev`. A leftover ShipIt background item from a finished update is cleared on launch.
+
 ## 1.25.0
 
 PostgreSQL connections are a first-class sidebar category: create a DB session, connect, then browse tables and chat with the same SQL tools as a local SQLite file. MySQL, remote SQLite, and SQL Server stay listed as coming soon. File sessions list recent opens. Category chips besides Task are optional — Scheduled stays on by default; File, DB, and Archived stay hidden until you turn them on.

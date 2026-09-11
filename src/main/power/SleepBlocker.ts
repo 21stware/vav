@@ -26,6 +26,16 @@ export class SleepBlocker {
     if (powerSaveBlocker.isStarted(id)) powerSaveBlocker.stop(id)
   }
 
+  /**
+   * Re-take the assertion. Display-only sleep does not fire `resume`, and
+   * macOS can drop `PreventUserIdleSystemSleep` when the panel powers off.
+   */
+  refresh(): void {
+    if (this.id == null) return
+    this.release()
+    this.acquire()
+  }
+
   private acquire(): void {
     if (this.id != null && powerSaveBlocker.isStarted(this.id)) return
     this.id = powerSaveBlocker.start('prevent-app-suspension')

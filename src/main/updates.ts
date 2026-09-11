@@ -34,7 +34,9 @@ const REPO = '21stware/vav'
  * Also: a failed Squirrel.Mac install can leave launchd job `com.vav.app.ShipIt`
  * restarting every ~2s without ShipItState.plist. That loop re-triggers app
  * opens and surfaces as a repeated Gatekeeper “damaged” dialog until the user
- * trashes the app. Clear the orphan on startup (see {@link clearOrphanedMacShipIt}).
+ * trashes the app. A *successful* install used to leave the same job in Login
+ * Items (“Allow in the Background”). Clear it on startup
+ * (see {@link clearOrphanedMacShipIt}).
  */
 export class UpdateService {
   private state: UpdateState = {
@@ -485,8 +487,11 @@ export function clearOrphanedMacShipIt(): void {
   if (process.platform !== 'darwin') return
   const cacheDir = join(homedir(), 'Library/Caches/com.vav.app.ShipIt')
   const statePath = join(cacheDir, 'ShipItState.plist')
-  if (existsSync(statePath)) return
 
+  // Always unload the job on a normal launch. A finished update leaves
+  // ShipItState.plist behind; the old early-return kept `com.vav.app.ShipIt`
+  // in Login Items as “Allow in the Background” forever. quitAndInstall
+  // re-registers the job when a real update is applied.
   try {
     execFileSync('launchctl', ['bootout', `gui/${process.getuid?.() ?? 501}/com.vav.app.ShipIt`], {
       stdio: 'ignore'
@@ -494,6 +499,7 @@ export function clearOrphanedMacShipIt(): void {
   } catch {
     // Job may not be loaded — fine.
   }
+  if (existsSync(statePath)) return
   try {
     // Drop empty/broken cache so the next real update starts clean.
     rmSync(cacheDir, { recursive: true, force: true })

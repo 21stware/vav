@@ -347,7 +347,8 @@ import { menuCommandFromInput, matchesNewSessionWindow } from '@main/menuShortcu
 import { isToggleDevtoolsChord, shouldSkipDuplicateMenuCommand } from '@main/window/menuInput'
 import { resolveKeyBindings } from '@shared/keyBindings'
 import { isDevRuntime } from '@main/devRuntime'
-import { installDevParentWatchdog } from '@main/devParentWatchdog'
+import { installDevParentWatchdog, pauseDevParentWatchdog } from '@main/devParentWatchdog'
+import { currentDisplaysLookAsleep } from '@main/window/displaySleep'
 import { AgentRuntime } from '@main/agent/AgentRuntime'
 import { CliAgentHost } from '@main/agent/CliAgentHost'
 import { createSwarmSessionService } from '@main/agent/swarmSession'
@@ -2991,6 +2992,7 @@ function wirePreviewLifecycle(window: BrowserWindow, path: string): void {
       return
     }
     event.preventDefault()
+    if (currentDisplaysLookAsleep()) return
     if (disposition === 'guard') {
       safeSend(window.webContents, IPC.previewCloseAttempt)
       return
@@ -3235,6 +3237,9 @@ function createWindow(): BrowserWindow {
     window.on('close', (event) => {
       if (quitting) return
       event.preventDefault()
+      // Display sleep / lid-close can emit close with no screens. Hiding
+      // every shell then looks like a quit (and invites auto-termination).
+      if (currentDisplaysLookAsleep()) return
       // Must leave native fullscreen before hide, or macOS keeps a black Space.
       hideLeavingFullscreen(window)
     })
@@ -3400,6 +3405,7 @@ function ensureSettingsWindow(
   settingsWindow.on('close', (event) => {
     if (quitting) return
     event.preventDefault()
+    if (currentDisplaysLookAsleep()) return
     if (settingsWindow && !settingsWindow.isDestroyed()) settingsWindow.hide()
   })
   settingsWindow.on('closed', () => {
@@ -3859,6 +3865,7 @@ function wireDetachedSessionLifecycle(window: BrowserWindow): void {
       return
     }
     event.preventDefault()
+    if (currentDisplaysLookAsleep()) return
     finalizeDetachedClose(window)
   })
 
@@ -4303,6 +4310,7 @@ function wireOverlayLifecycle(window: BrowserWindow): void {
       return
     }
     event.preventDefault()
+    if (currentDisplaysLookAsleep()) return
     parkWarmOverlayShell(window)
   })
 }
@@ -8399,11 +8407,22 @@ if (singleInstance) {
       macLidSleep.start()
       const onPowerChange = (): void => {
         macLidSleep.refresh()
+        if (sleepBlocker.isActive()) sleepBlocker.refresh()
         syncSleepBlocker()
+      }
+      const onWake = (): void => {
+        pauseDevParentWatchdog()
+        onPowerChange()
       }
       powerMonitor.on('on-ac', onPowerChange)
       powerMonitor.on('on-battery', onPowerChange)
-      powerMonitor.on('resume', onPowerChange)
+      // Display-only sleep does not emit `resume`. Re-assert keep-awake and
+      // give the dev parent watchdog a grace window — `kill -0` flakes on wake.
+      powerMonitor.on('resume', onWake)
+      powerMonitor.on('unlock-screen', onWake)
+      powerMonitor.on('user-did-become-active', onWake)
+      powerMonitor.on('lock-screen', onPowerChange)
+      powerMonitor.on('user-did-resign-active', onPowerChange)
     }
     protocol.handle('vav-local', async (request) => {
       try {

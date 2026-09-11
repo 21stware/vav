@@ -91,6 +91,8 @@
     "entitlementsInherit": "build/entitlements.mac.plist",
     "notarize": true,
     "extendInfo": {
+      "NSSupportsAutomaticTermination": false,
+      "NSSupportsSuddenTermination": false,
       "NSLocalNetworkUsageDescription": "VAV pairs with other computers and phones on your local network to open folders and run agents.",
       "NSBonjourServices": [
         "_vav-daemon._tcp"

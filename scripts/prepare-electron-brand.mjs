@@ -38,7 +38,7 @@ function currentStamp() {
     ? execSync(`stat -f %m "${iconDark}"`).toString().trim()
     : '0'
   // Bump the trailing token when Info.plist shape changes (e.g. document types).
-  return `${version}:${iconMtime}:${iconDarkMtime}:${BUNDLE_ID}:dock-name-VAV-Dev:local-net-1`
+  return `${version}:${iconMtime}:${iconDarkMtime}:${BUNDLE_ID}:dock-name-VAV-Dev:local-net-1:no-auto-term-1`
 }
 
 function isBranded() {
@@ -127,6 +127,15 @@ function patchInfoPlist(plistPath) {
   }
   plistBuddy(plistPath, 'Add :NSBonjourServices array')
   plistBuddy(plistPath, 'Add :NSBonjourServices:0 string _vav-daemon._tcp')
+
+  // Idle display-sleep must not let AppKit auto-quit VAV Dev (or SIGKILL it).
+  for (const key of ['NSSupportsAutomaticTermination', 'NSSupportsSuddenTermination']) {
+    try {
+      plistBuddy(plistPath, `Set :${key} false`)
+    } catch {
+      plistBuddy(plistPath, `Add :${key} bool false`)
+    }
+  }
 }
 
 /** Editing a signed bundle invalidates its signature; re-sign ad-hoc so it launches. */
