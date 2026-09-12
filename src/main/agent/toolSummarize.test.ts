@@ -66,5 +66,10 @@ describe('truncateToolSummary / summarizeToolInput', () => {
       }),
       'OPENAI_API_KEY, GH_TOKEN'
     )
+    assert.equal(summarizeToolInput('computer_list', {}), 'apps + windows')
+    assert.equal(
+      summarizeToolInput('computer_act', { kind: 'click', pid: 3, window_id: 9 }),
+      'click · pid 3 window 9'
+    )
   })
 })

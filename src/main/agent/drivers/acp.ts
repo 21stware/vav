@@ -376,7 +376,7 @@ export function wireAcp(
           await request('session/load', {
             sessionId,
             cwd: options.cwd,
-            mcpServers: []
+            mcpServers: options.mcpServers ?? []
           })
         )
         ingestSessionSetup(loaded, { resume: true })
@@ -413,7 +413,7 @@ export function wireAcp(
   const sessionNewParams = (modelId: string | null): Record<string, unknown> => {
     const params: Record<string, unknown> = {
       cwd: options.cwd,
-      mcpServers: []
+      mcpServers: options.mcpServers ?? []
     }
     if (modelId) params.modelId = modelId
     if (kind === 'grok' && autoApprove) params._meta = { yoloMode: true }

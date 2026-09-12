@@ -68,6 +68,7 @@ describe('sidebarList', () => {
       ['none', 'workspace', 'provider']
     )
     assert.equal(filterValueLabel({ kind: 'none' }, t), t('sidebar.filter.none'))
+    assert.equal(filterValueLabel({ kind: 'active' }, t), t('sidebar.filter.active'))
     assert.equal(filterValueLabel({ kind: 'favorite' }, t), t('sidebar.filter.favorite'))
     assert.equal(filterValueLabel({ kind: 'workspace', path: '/Users/me/repo' }, t), 'repo')
   })
@@ -335,6 +336,25 @@ describe('filterFileSessionRows', () => {
     assert.deepEqual(
       filterFileSessionRows(rows, 'app.ts').map((r) => r.path),
       ['/tmp/src/app.ts']
+    )
+  })
+})
+
+describe('shouldReconcileSidebarSelection', () => {
+  it('only picks a fallback when the list scope changed and the row does not fit', () => {
+    assert.equal(shouldReconcileSidebarSelection({ currentFits: true, listScopeChanged: true }), false)
+    assert.equal(shouldReconcileSidebarSelection({ currentFits: false, listScopeChanged: false }), false)
+    assert.equal(shouldReconcileSidebarSelection({ currentFits: false, listScopeChanged: true }), true)
+  })
+
+  it('keeps the File category browser when no row is selected', () => {
+    assert.equal(
+      shouldReconcileSidebarSelection({
+        currentFits: false,
+        listScopeChanged: true,
+        keepEmptyFileList: true
+      }),
+      false
     )
   })
 })

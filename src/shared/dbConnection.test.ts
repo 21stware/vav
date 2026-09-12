@@ -14,6 +14,7 @@ import {
   isSingleSqlStatement,
   parseDbUrl,
   parsePostgresUrl,
+  isDbAuthError,
   postgresUrlWithPassword,
   setPostgresUrlSsl
 } from './dbConnection.ts'
@@ -102,6 +103,8 @@ describe('dbConnection helpers', () => {
     assert.equal(setPostgresUrlSsl(composed, false).includes('sslmode'), false)
     const withPw = postgresUrlWithPassword('postgresql://vav@db.internal:5432/app', 's3cret')
     assert.ok(withPw.includes('s3cret'))
+    assert.equal(isDbAuthError('SASL: SCRAM-SERVER-FIRST-MESSAGE: client password must be a string'), true)
+    assert.equal(isDbAuthError('relation "rna" does not exist'), false)
   })
 
   it('parses mysql, clickhouse, bigquery, and duckdb URLs', () => {

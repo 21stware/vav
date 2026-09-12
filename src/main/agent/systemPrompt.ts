@@ -6,6 +6,12 @@ const OS_NAMES: Record<string, string> = {
   linux: 'Linux'
 }
 
+export type DbPromptTable = {
+  name: string
+  columns: string[]
+  rowCount: number
+}
+
 export type SystemPromptOptions = {
   fileReadOnly?: boolean
   openFilePath?: string | null
@@ -14,8 +20,10 @@ export type SystemPromptOptions = {
   dbDriver?: string
   /** Connection display name (`database@host` or user title). */
   dbTitle?: string | null
-  /** Open table in the preview. Null/omit = connection settings. */
+  /** Open table in the preview. Null/omit = no table focused yet. */
   dbTable?: string | null
+  /** Catalog snapshot for this connection (names + columns when known). */
+  dbSchema?: DbPromptTable[] | null
   /** Pre-formatted skill catalog lines for progressive disclosure. */
   skillCatalog?: string | null
   /** Stdout from SessionStart / UserPromptSubmit hooks. */
@@ -24,6 +32,48 @@ export type SystemPromptOptions = {
   platform?: string
   /** Env var names already granted for this conversation (values never listed). */
   sessionSecretNames?: string[]
+  /** Embedded Cua Driver is up — offer computer_list / observe / act. */
+  computerUse?: boolean
+}
+
+const DB_SCHEMA_PROMPT_BUDGET = 12_000
+
+/** Compact catalog for the system prompt — names always, columns while they fit. */
+export function formatDbSchemaForPrompt(
+  tables: readonly DbPromptTable[],
+  currentTable?: string | null
+): string {
+  const lines = [`Catalog: ${tables.length} table(s).`]
+  let used = 0
+  let omitted = 0
+  for (const table of tables) {
+    const cols = table.columns.length ? `: ${table.columns.join(', ')}` : ''
+    const rows =
+      Number.isFinite(table.rowCount) && table.rowCount > 0 ? ` (~${table.rowCount} rows)` : ''
+    const line = `- \`${table.name}\`${rows}${cols}`
+    if (used + line.length > DB_SCHEMA_PROMPT_BUDGET) {
+      omitted = tables.length - (lines.length - 1)
+      break
+    }
+    lines.push(line)
+    used += line.length + 1
+  }
+  if (omitted > 0) {
+    lines.push(`- … ${omitted} more table(s) omitted from this snapshot.`)
+  }
+  const current = currentTable?.trim()
+  if (current) {
+    const match = tables.find((table) => table.name === current)
+    const cols = match?.columns.length ? ` Columns: ${match.columns.join(', ')}.` : ''
+    lines.push(
+      `Current preview table: \`${current}\`.${cols} When they say "this table" / "the table" / "这张表", they mean \`${current}\`. Query that table unless they name another.`
+    )
+  } else {
+    lines.push(
+      'No table is focused in the preview yet. When they ask about "this database" / "这个库", they mean this connection. Name a table before assuming one.'
+    )
+  }
+  return lines.join('\n')
 }
 
 export function osDisplayName(platform: string): string {
@@ -112,15 +162,22 @@ export function buildSystemPrompt(
     const dialect = options.dbDriver?.trim() || 'PostgreSQL'
     const dbTitle = options.dbTitle?.trim()
     const dbTable = options.dbTable?.trim()
+    const catalog = options.dbSchema?.length
+      ? formatDbSchemaForPrompt(options.dbSchema, dbTable)
+      : null
     lines.push(
       dbTitle
         ? `This session is attached to a live ${dialect} database: ${dbTitle}.`
         : `This session is attached to a live ${dialect} database.`,
-      dbTable
-        ? `The user is viewing table \`${dbTable}\` in the preview (like a sheet in a workbook). When they say "this table" / "the table" / "这张表", they mean \`${dbTable}\`. Query that table unless they name another.`
-        : 'The user is viewing this connection\'s settings, not a specific table. When they ask about "this database" / "这个库", they mean this connection. List or inspect tables before assuming a name.',
+      catalog
+        ? catalog
+        : dbTable
+          ? `The user is viewing table \`${dbTable}\` in the preview (like a sheet in a workbook). When they say "this table" / "the table" / "这张表", they mean \`${dbTable}\`. Query that table unless they name another.`
+          : 'No table is focused in the preview yet. When they ask about "this database" / "这个库", they mean this connection. List or inspect tables before assuming a name.',
       'For tabular analysis prefer `sql_query` against that connection (omit path). Do not invent write/DDL APIs — only read-only SQL is allowed.',
-      'Start with information_schema / system tables or `SELECT * FROM … LIMIT 20` to learn tables. Use the dialect of this connection. Do not open unrelated files unless the user asks.',
+      catalog
+        ? 'The catalog above is already in context. Use it for table/column names; query when you need samples, fresh counts, or objects missing from the snapshot. Use the dialect of this connection. Do not open unrelated files unless the user asks.'
+        : 'Start with information_schema / system tables or `SELECT * FROM … LIMIT 20` to learn tables. Use the dialect of this connection. Do not open unrelated files unless the user asks.',
       ''
     )
   }
@@ -149,6 +206,12 @@ export function buildSystemPrompt(
     '- `web_search` / `web_fetch` — public web from this machine (Brave if key configured, else optional SearXNG, else DuckDuckGo HTML). Search first, then fetch promising URLs. HTML/PDF/text/JSON supported; private/localhost URLs are blocked. Prefer these over `terminal` curl/wget for reading pages.',
     '- `load_skill` — load a domain skill (SKILL.md + optional scripts/references) before specialized work. Catalog metadata is below; full instructions load on demand.',
     '- `connector` — GitHub / Cloudflare / Supabase / Vercel. `op=list|probe|act`. Deploy is a connector action, not a skill. GitHub is read-only.',
+    ...(options?.computerUse
+      ? [
+          '- `computer_list` / `computer_observe` / `computer_act` — native windows via the embedded driver. Prefer `terminal` / `fs_*` / `web_fetch` when they suffice. Observe a bound pid+window_id before acting. Actions stay in the background (no focus steal, real mouse stays put). Never request activate or foreground. If a click does not land, tell the user.',
+          '- Load `computer-use` before substantial GUI work.'
+        ]
+      : []),
     '- `request` and `ask_user_question` pause the turn to involve the user (VAV tools).',
     '- `request_for_secret` — ask the user for API tokens/keys. You choose the env var names; values are never returned to you. Use $NAME in terminal. Never ask them to paste secrets in chat.',
     '- `plan` — visible checklist for multi-step work. The UI only updates when you call it; finishing tools alone does not check steps off.',
@@ -175,6 +238,7 @@ export function buildSystemPrompt(
     '- Generative / static visual art → `algorithmic-art` / `canvas-design` / `shader-dev` / `gif-sticker`',
     '- Full-stack app structure → `fullstack-dev`',
     '- MCP servers → `mcp-builder`',
+    ...(options?.computerUse ? ['- Native desktop GUI (not the browser) → `computer-use`'] : []),
     'Bundled catalog:',
     options?.skillCatalog?.trim() || '(skill catalog unavailable)',
     options?.pluginContext?.trim()

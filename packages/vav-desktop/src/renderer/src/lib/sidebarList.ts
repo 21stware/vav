@@ -239,7 +239,13 @@ export function conversationFitsListMode(row: ListModeRow, mode: SidebarListMode
 export function shouldReconcileSidebarSelection(opts: {
   currentFits: boolean
   listScopeChanged: boolean
+  /**
+   * File category “back to file list” (no row selected). Machine switches must
+   * keep the This Mac / recents browser — do not yank into another file canvas.
+   */
+  keepEmptyFileList?: boolean
 }): boolean {
+  if (opts.keepEmptyFileList) return false
   if (opts.currentFits) return false
   return opts.listScopeChanged
 }

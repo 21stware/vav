@@ -1,3 +1,4 @@
+import { coalesceStreamChunk, foldSnapshotText } from '@shared/streamCoalesce'
 import type { MessageBlock, ToolCallBlock, TurnPhase, TurnRecovery } from '@shared/types'
 import { recoveryEqual } from '@shared/turnRecovery'
 import { MarkdownSegmenter } from '../lib/segmenter'
@@ -84,7 +85,7 @@ export class StreamProjection {
         this.slots[index] = {
           kind: 'reasoning',
           key: `r${index}`,
-          text: block.text,
+          text: foldSnapshotText(block.text),
           startedAt: Date.now(),
           durationMs: block.durationMs
         }
@@ -139,9 +140,14 @@ export class StreamProjection {
   appendReasoning(index: number, text: string): void {
     this.ensureLive()
     const slot = this.slots[index]
-    if (slot?.kind === 'reasoning') slot.text += text
+    if (slot?.kind === 'reasoning') slot.text = foldSnapshotText(coalesceStreamChunk(slot.text, text))
     else {
-      this.slots[index] = { kind: 'reasoning', key: `r${index}`, text, startedAt: Date.now() }
+      this.slots[index] = {
+        kind: 'reasoning',
+        key: `r${index}`,
+        text: foldSnapshotText(text),
+        startedAt: Date.now()
+      }
     }
     this.dirty = true
     this.ensureTicking()

@@ -5,7 +5,6 @@ import type { TimerJob, TimerRun } from '@shared/timer'
 import { useSessionStore } from '../../state/sessionStore'
 import { isDroppedConversationId, replaceTimerSessions } from '../../state/sessionListMerge'
 import {
-  isDraftTimerJob,
   orphanTimerSessions,
   sortTimerJobs,
   timerListConversationIds,
@@ -42,7 +41,6 @@ export function TimerJobsPanel(): React.JSX.Element {
   const showToast = useSessionStore((s) => s.showToast)
   const conversations = useSessionStore((s) => s.conversations)
   const activeId = useSessionStore((s) => s.activeId)
-  const scheduledCreating = useSessionStore((s) => s.scheduledCreating)
   const selectedIds = useSessionStore((s) => s.selectedIds)
   const query = useSessionStore((s) => s.sidebarQuery)
   const createScheduledConversation = useSessionStore((s) => s.createScheduledConversation)
@@ -77,26 +75,12 @@ export function TimerJobsPanel(): React.JSX.Element {
       setJobs(nextJobs)
       setRuns(nextRuns)
       await hydrateSessions()
-      if (gen !== refreshGen.current) return
-      const untitled = t('timer.untitled')
-      const state = useSessionStore.getState()
-      if (state.sidebarListMode !== 'timers') return
-      const activeJob = nextJobs.find((job) => job.conversationId === state.activeId)
-      if (!activeJob || !isDraftTimerJob(activeJob, untitled)) return
-      const committed = nextJobs.find(
-        (job) => !isDraftTimerJob(job, untitled) && job.conversationId
-      )
-      if (committed?.conversationId) {
-        void state.selectConversation(committed.conversationId)
-        return
-      }
-      if (!state.scheduledCreating) useSessionStore.setState({ scheduledCreating: true })
     } catch {
       if (gen !== refreshGen.current) return
       setJobs([])
       setRuns([])
     }
-  }, [hydrateSessions, t])
+  }, [hydrateSessions])
 
   useEffect(() => {
     void refresh()
@@ -105,13 +89,11 @@ export function TimerJobsPanel(): React.JSX.Element {
     })
   }, [refresh])
 
-  const untitled = t('timer.untitled')
   const searching = query.trim().length > 0
   const visibleJobs = useMemo(
     () =>
       sortTimerJobs(
         jobs.filter((job) => {
-          if (isDraftTimerJob(job, untitled)) return false
           const definition = job.conversationId
             ? conversations.find((row) => row.id === job.conversationId)
             : undefined
@@ -125,7 +107,7 @@ export function TimerJobsPanel(): React.JSX.Element {
           return !isDroppedConversationId(job.conversationId)
         })
       ),
-    [jobs, conversations, untitled, query, searching]
+    [jobs, conversations, query, searching]
   )
 
   const orderedIds = useMemo(
@@ -252,7 +234,7 @@ export function TimerJobsPanel(): React.JSX.Element {
     run: TimerRun | undefined,
     swarmBracket?: SwarmBracketKind
   ): React.JSX.Element => {
-    const isActive = !scheduledCreating && conversation.id === activeId
+    const isActive = conversation.id === activeId
     const isMultiSelected = selectedIds.length > 1 && selectedIds.includes(conversation.id)
     const index = orderedIds.indexOf(conversation.id)
     const prevMulti = index > 0 && selectedIds.includes(orderedIds[index - 1]!)
@@ -363,6 +345,7 @@ export function TimerJobsPanel(): React.JSX.Element {
         >
           <button
             className="btn secondary"
+            data-testid="sidebar-create-scheduled"
             title={t('timer.new')}
             onClick={() => void createScheduledConversation()}
           >
@@ -379,7 +362,7 @@ export function TimerJobsPanel(): React.JSX.Element {
         const unmatched = jobRuns.filter(
           (run) => !conversations.some((row) => row.id === run.conversationId)
         )
-        const jobActive = !scheduledCreating && job.conversationId === activeId
+        const jobActive = job.conversationId === activeId
         const jobMulti =
           !!job.conversationId &&
           selectedIds.length > 1 &&

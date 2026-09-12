@@ -22,6 +22,49 @@ img, video, svg, canvas {
 }
 `
 
+/**
+ * Selection/hover chrome, injected into the iframe.
+ *
+ * HTML lives in a sandboxed iframe (its own document), so the screen-space HUD
+ * cannot measure it in the host's offset space and the cross-document HUD portal
+ * is fragile across `srcdoc` reloads. Paint the outline directly on the pick
+ * target instead: `outline` takes no layout space, works on replaced elements
+ * (img/video), and is inherently coordinate-free — no Y shift is possible.
+ * `.vav-pick-selecting` on <html> gates the hover ring to selection mode.
+ * Accent is inlined (the parent theme token is unavailable in the guest frame).
+ */
+export const HTML_PREVIEW_HUD_ACCENT_FALLBACK = '#3a82f6'
+
+export function htmlPreviewPickChromeStyle(accent: string): string {
+  return `
+.office-pick-target.selected {
+  outline: 2px solid ${accent};
+  outline-offset: -1px;
+  border-radius: 2px;
+}
+.vav-pick-selecting .office-pick-target:hover:not(.selected):not(:has(.office-pick-target:hover)) {
+  outline: 1px dashed ${accent};
+  outline-offset: -1px;
+  border-radius: 2px;
+}
+`
+}
+
+/** Live parent accent token; falls back when no DOM (detached parse / tests). */
+export function resolvePreviewAccent(): string {
+  try {
+    if (typeof document !== 'undefined' && typeof getComputedStyle === 'function') {
+      const value = getComputedStyle(document.documentElement)
+        .getPropertyValue('--accent')
+        .trim()
+      if (value) return value
+    }
+  } catch {
+    // ignore — no live document (unit tests / non-DOM env)
+  }
+  return HTML_PREVIEW_HUD_ACCENT_FALLBACK
+}
+
 export function isAbsoluteOrSpecialUrl(value: string): boolean {
   return /^(?:[a-z][a-z0-9+.-]*:|\/\/|#|data:|blob:|mailto:|tel:|javascript:)/i.test(
     value.trim()
@@ -88,7 +131,9 @@ function injectPickStyle(doc: Document): void {
   doc.querySelectorAll('style[data-vav-html-pick]').forEach((el) => el.remove())
   const pickStyle = doc.createElement('style')
   pickStyle.setAttribute('data-vav-html-pick', '1')
-  pickStyle.textContent = HTML_PREVIEW_PICK_STYLE
+  // Selection paints on the element itself (the host HUD skips cross-document
+  // targets), so the outline can never drift from the block it marks.
+  pickStyle.textContent = `${HTML_PREVIEW_PICK_STYLE}\n${htmlPreviewPickChromeStyle(resolvePreviewAccent())}`
   doc.head.appendChild(pickStyle)
 }
 

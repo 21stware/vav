@@ -29,6 +29,10 @@ resources/bin/officecli
 resources/bin/officecli.exe
 resources/bin/officecli.*
 resources/bin/officecli.version
+resources/bin/cua-driver
+resources/bin/cua-driver.exe
+resources/bin/cua-driver.version
+resources/bin/cua-driver-rs-*
 resources/bin/vav_screencap.node
 resources/bin/tailcatbridge
 resources/bin/tailcatbridge.exe

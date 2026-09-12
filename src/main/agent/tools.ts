@@ -22,6 +22,7 @@ import { createDocTools } from './toolsDoc'
 import { createWebTools } from './toolsWeb'
 import { createInteractiveTools } from './toolsInteractive'
 import { createConnectorTools } from './toolsConnector'
+import { createComputerTools } from './toolsComputer'
 
 export { normalizeAskQuestions, normalizePlanSteps } from '@shared/askPlan'
 export { summarizeToolInput } from './toolSummarize'
@@ -65,6 +66,7 @@ export function createTools(host: ToolHost): AgentTool[] {
   ]
   // File-preview Read: offer Switch to Edit so the agent can request write access.
   if (host.isFileReadOnly?.()) tools.push(switchMode)
+  tools.push(...createComputerTools(host))
   if (host.extraTools?.length) tools.push(...host.extraTools)
   return tools
 }

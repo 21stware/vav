@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { buildSystemPrompt, osDisplayName } from './systemPrompt.ts'
+import { buildSystemPrompt, formatDbSchemaForPrompt, osDisplayName } from './systemPrompt.ts'
 
 describe('osDisplayName', () => {
   it('maps known platforms', () => {
@@ -57,22 +57,52 @@ describe('buildSystemPrompt', () => {
       dbSession: true,
       dbDriver: 'PostgreSQL',
       dbTitle: 'pfmegrnargs@hh-pgsql-public.ebi.ac.uk',
-      dbTable: 'rnacen.xref'
+      dbTable: 'rnacen.xref',
+      dbSchema: [
+        { name: 'rnacen.xref', columns: ['upi', 'ac'], rowCount: 12 },
+        { name: 'rnc_database', columns: ['id'], rowCount: 3 }
+      ]
     })
     assert.match(prompt, /pfmegrnargs@hh-pgsql-public\.ebi\.ac\.uk/)
     assert.match(prompt, /rnacen\.xref/)
     assert.match(prompt, /this table/)
+    assert.match(prompt, /Catalog: 2 table\(s\)/)
+    assert.match(prompt, /upi, ac/)
+    assert.match(prompt, /rnc_database/)
   })
 
-  it('says settings are in view when no table is open', () => {
+  it('says no table is focused when the preview has none', () => {
     const prompt = buildSystemPrompt('/w', 'zsh', {
       platform: 'darwin',
       dbSession: true,
       dbDriver: 'PostgreSQL',
       dbTitle: 'pfmegrnargs@host'
     })
-    assert.match(prompt, /connection's settings/)
-    assert.doesNotMatch(prompt, /viewing table/)
+    assert.match(prompt, /No table is focused/)
+    assert.doesNotMatch(prompt, /Current preview table/)
+  })
+
+  it('formats a catalog snapshot with the current table', () => {
+    const text = formatDbSchemaForPrompt(
+      [
+        { name: 'orders', columns: ['id', 'total'], rowCount: 40 },
+        { name: 'empty', columns: [], rowCount: 0 }
+      ],
+      'orders'
+    )
+    assert.match(text, /Catalog: 2 table\(s\)/)
+    assert.match(text, /`orders` \(~40 rows\): id, total/)
+    assert.match(text, /`empty`/)
+    assert.match(text, /Current preview table: `orders`/)
+  })
+
+  it('describes computer use only when the driver is up', () => {
+    const off = buildSystemPrompt('/w', 'zsh', { platform: 'darwin' })
+    assert.doesNotMatch(off, /computer_list/)
+    const on = buildSystemPrompt('/w', 'zsh', { platform: 'darwin', computerUse: true })
+    assert.match(on, /computer_list/)
+    assert.match(on, /background/)
+    assert.match(on, /computer-use/)
   })
 
   it('lists session secret names without values', () => {

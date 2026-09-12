@@ -46,30 +46,44 @@ export function AppearanceSettings(): React.JSX.Element {
     if (focusMachineId) useSessionStore.setState({ settingsFocusMachineId: null })
   }, [focusMachineId, windowMachineId])
   useEffect(() => {
-    if (focusAgentId !== 'screenshot') return
-    const row = document.getElementById('settings-screenshot')
-    row?.scrollIntoView({ block: 'center' })
+    const focusId =
+      focusAgentId === 'screenshot'
+        ? 'settings-screenshot'
+        : focusAgentId === 'computer-use'
+          ? 'settings-computer-use'
+          : null
+    if (!focusId) return
+    document.getElementById(focusId)?.scrollIntoView({ block: 'center' })
     useSessionStore.setState({ settingsFocusAgentId: null })
   }, [focusAgentId])
   const [screenPermission, setScreenPermission] = useState<
     'granted' | 'denied' | 'not-determined' | 'restricted' | 'unknown'
   >('unknown')
+  const [computerStatus, setComputerStatus] = useState<
+    import('@shared/computerUse').ComputerUseStatus | null
+  >(null)
   useEffect(() => {
-    if (!IS_MAC) return
     let alive = true
     const refresh = (): void => {
-      void window.vav.files.screenshotPermission().then((status) => {
-        if (alive) setScreenPermission(status)
+      if (IS_MAC) {
+        void window.vav.files.screenshotPermission().then((status) => {
+          if (alive) setScreenPermission(status)
+        })
+      }
+      void window.vav.computer.status().then((status) => {
+        if (alive) setComputerStatus(status)
       })
     }
     refresh()
+    const later = window.setTimeout(refresh, 1600)
     // Re-check when the user returns after granting in System Settings.
     window.addEventListener('focus', refresh)
     return () => {
       alive = false
+      window.clearTimeout(later)
       window.removeEventListener('focus', refresh)
     }
-  }, [])
+  }, [settings.computerUseEnabled])
   const themeTargets = useMemo(
     () => [
       { id: LOCAL_MACHINE_ID, name: serviceShortName(LOCAL_MACHINE_ID) },
@@ -472,6 +486,56 @@ export function AppearanceSettings(): React.JSX.Element {
           </div>
           {screenPermission !== 'granted' && (
             <div className="form-hint">{t('appearance.screenshotPermissionHint')}</div>
+          )}
+        </>
+      )}
+
+      <div className="form-row" id="settings-computer-use">
+        <label>{t('appearance.computerUse')}</label>
+        <div className="control">
+          <Toggle
+            checked={settings.computerUseEnabled === true}
+            title={t('appearance.computerUse')}
+            testId="settings-computer-use"
+            onChange={(computerUseEnabled) => void updateSettings({ computerUseEnabled })}
+          />
+        </div>
+      </div>
+      <div className="form-hint">{t('appearance.computerUseHint')}</div>
+      {computerStatus && !computerStatus.binaryPresent && (
+        <div className="form-hint">{t('appearance.computerUseBinaryMissing')}</div>
+      )}
+      {settings.computerUseEnabled && computerStatus && (
+        <div className="form-hint">
+          {computerStatus.running
+            ? t('appearance.computerUseRunning')
+            : computerStatus.error || t('appearance.computerUseStopped')}
+        </div>
+      )}
+      {IS_MAC && (
+        <>
+          <div className="form-row" id="settings-accessibility-permission">
+            <label>{t('appearance.accessibilityPermission')}</label>
+            <div className="control">
+              {computerStatus?.accessibility === 'granted' ? (
+                <span>{t('appearance.screenshotPermissionGranted')}</span>
+              ) : (
+                <button
+                  type="button"
+                  className="btn ghost sm"
+                  onClick={() => {
+                    void window.vav.computer.requestAccessibility().then((ok) => {
+                      if (!ok) void window.vav.computer.openAccessibilitySettings()
+                    })
+                  }}
+                >
+                  {t('appearance.accessibilityPermissionAuthorize')}
+                </button>
+              )}
+            </div>
+          </div>
+          {computerStatus?.accessibility !== 'granted' && (
+            <div className="form-hint">{t('appearance.accessibilityPermissionHint')}</div>
           )}
         </>
       )}

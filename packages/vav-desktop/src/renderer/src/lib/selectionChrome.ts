@@ -664,6 +664,11 @@ export function collectNaturalLayers(
 
   const byFrame = new Map<HTMLElement, NaturalBox[]>()
   const push = (el: HTMLElement, kind: ChromeKind, index: number): void => {
+    // Cross-document (iframe) targets can't be measured in the host's offset
+    // space, and portaling the HUD into the guest frame drifts by the iframe's
+    // position (≈ the chrome height) and breaks on srcdoc reloads. Those
+    // previews paint their own element outline (see htmlPreviewDoc).
+    if (el.ownerDocument !== host.ownerDocument) return
     const frame = resolveChromeFrame(el, host)
     const fill = isMediaPaintTarget(el) || frame.classList.contains('image-zoom-content')
     let geom: { x: number; y: number; w: number; h: number } | null = null

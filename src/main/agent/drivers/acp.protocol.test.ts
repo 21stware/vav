@@ -231,6 +231,54 @@ describe('wireAcp protocol', () => {
     assert.ok(closed.id !== undefined)
   })
 
+  it('forwards embedded computer MCP servers on session/new', async () => {
+    const events: DriverEvent[] = []
+    const { proc, outbound, toClient } = fakeStdio()
+    const dir = await mkdtemp(join(tmpdir(), 'vav-acp-mcp-'))
+    const mcpServers = [
+      {
+        type: 'stdio',
+        name: 'vav-computer',
+        command: '/app/cua-driver',
+        args: ['mcp', '--embedded', '--socket', '/tmp/vav-cua.sock'],
+        env: []
+      }
+    ]
+
+    const driver = wireAcp(
+      'cursor',
+      proc,
+      {
+        binary: 'cursor-agent',
+        cwd: dir,
+        approvalMode: 'edit',
+        mcpServers
+      },
+      (event) => events.push(event)
+    )
+
+    const init = await waitFor(outbound, (msg) => msg.method === 'initialize')
+    toClient({
+      jsonrpc: '2.0',
+      id: init.id,
+      result: {
+        protocolVersion: ACP_PROTOCOL_VERSION,
+        agentCapabilities: { loadSession: true },
+        authMethods: []
+      }
+    })
+
+    const created = await waitFor(outbound, (msg) => msg.method === 'session/new')
+    assert.deepEqual(asRecord(created.params)?.mcpServers, mcpServers)
+    toClient({
+      jsonrpc: '2.0',
+      id: created.id,
+      result: { sessionId: 'sess-mcp' }
+    })
+    await waitForEvent(events, (event) => event.type === 'connected')
+    driver.dispose()
+  })
+
   it('maps picker model ids onto ACP session/set_model before each prompt', async () => {
     const events: DriverEvent[] = []
     const { proc, outbound, toClient } = fakeStdio()

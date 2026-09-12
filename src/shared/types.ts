@@ -50,6 +50,9 @@ export type ToolName =
   | 'load_skill'
   | 'connector'
   | 'switch_mode'
+  | 'computer_list'
+  | 'computer_observe'
+  | 'computer_act'
   /** Claude Task / OpenCode task+subtask — a nested agent run. */
   | 'task'
   /**
@@ -88,6 +91,9 @@ export const TOOL_LABELS: Record<ToolName, string> = {
   load_skill: '加载技能',
   connector: '连接器',
   switch_mode: '切换到编辑',
+  computer_list: '列出窗口',
+  computer_observe: '观察窗口',
+  computer_act: '操作窗口',
   task: '子任务',
   plan_doc: '计划文档',
   external: '工具'
@@ -1157,6 +1163,11 @@ export interface AppSettings {
    */
   screenshotKeepWindowFront: boolean
   /**
+   * Opt-in embedded computer use (Cua Driver spawned by VAV.app).
+   * Off by default. The agent never moves the real pointer.
+   */
+  computerUseEnabled: boolean
+  /**
    * How the main composer submits a message.
    * - `enter` (default): Enter sends; Shift+Enter inserts a newline.
    * - `mod-enter`: ⌘↵ / Ctrl+Enter sends; Enter inserts a newline.
@@ -1359,6 +1370,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   reduceMotion: false,
   windowVibrancyEnabled: true,
   screenshotKeepWindowFront: true,
+  computerUseEnabled: false,
   sendKey: 'enter',
   globalHotkey: 'Control+Command+Space',
   keyBindings: {},

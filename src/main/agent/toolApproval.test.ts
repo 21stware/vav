@@ -81,6 +81,24 @@ describe('readonlyApprovalBlock / shouldPauseForApproval', () => {
     )
     assert.equal(
       shouldPauseForApproval({
+        mode: 'auto',
+        name: 'computer_act',
+        command: '',
+        autoApproveReadonly: true
+      }),
+      true
+    )
+    assert.equal(
+      shouldPauseForApproval({
+        mode: 'auto',
+        name: 'computer_list',
+        command: '',
+        autoApproveReadonly: true
+      }),
+      false
+    )
+    assert.equal(
+      shouldPauseForApproval({
         mode: 'edit',
         name: 'fs_read',
         command: '',

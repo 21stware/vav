@@ -24,6 +24,7 @@ import { useT } from '../i18n/useT'
 import { InlineChangeReview } from './InlineChangeReview'
 import { MarkdownView } from './MarkdownView'
 import { ReasoningBlock } from './ReasoningBlock'
+import { ProcessText } from './ProcessText'
 import { ThinkingProcess } from './ThinkingProcess'
 import { processThoughtMs, splitAssistantProcess } from '../lib/assistantProcess'
 
@@ -475,13 +476,12 @@ export const MessageRow = memo(function MessageRow({
           ): React.JSX.Element | null => {
             const { block, index } = item
             if (block.kind === 'reasoning') {
-              return nested ? (
-                <ReasoningBlock key={`r${index}`} text={block.text} flat />
-              ) : (
+              return (
                 <ReasoningBlock
                   key={`r${index}`}
                   text={block.text}
-                  durationMs={block.durationMs}
+                  durationMs={nested ? undefined : block.durationMs}
+                  flat={nested}
                 />
               )
             }
@@ -489,7 +489,11 @@ export const MessageRow = memo(function MessageRow({
               return <ToolCard key={block.id} block={block} startCollapsed={nested} />
             }
             if (block.kind === 'text') {
-              return <MarkdownView key={`t${index}`} source={block.text} highlight={highlight} />
+              return nested ? (
+                <ProcessText key={`t${index}`} text={block.text} />
+              ) : (
+                <MarkdownView key={`t${index}`} source={block.text} highlight={highlight} />
+              )
             }
             return null
           }

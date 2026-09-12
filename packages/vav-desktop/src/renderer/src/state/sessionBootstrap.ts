@@ -1,5 +1,5 @@
 import { conversationOnMachine } from '@shared/workspaceHost.ts'
-import { isWorkspaceSession } from '@shared/sessionKind.ts'
+import { isWorkspaceSession, sessionKindOf } from '@shared/sessionKind.ts'
 import type { AgentConfig, AppSettings } from '@shared/types.ts'
 import { upsertConversationMeta } from './sessionListMerge.ts'
 
@@ -68,6 +68,29 @@ export function nextConversationForMachine(
     )
     .sort((a, b) => b.updatedAt - a.updatedAt)[0]
   if (next) return { action: 'select', id: next.id }
+  return { action: 'idle' }
+}
+
+/**
+ * File category after an instance switch: keep a file session that already
+ * lives on the new machine, otherwise the This Mac / recents list. Never
+ * pick a workspace row — that raced FileSessionView into a stuck loading
+ * canvas while the file browser was on screen.
+ */
+export function nextFileCategoryForMachine(
+  conversations: BootstrapConversation[],
+  activeId: string,
+  windowMachineId: string
+): { action: 'keep' } | { action: 'idle' } {
+  const current = conversations.find((conversation) => conversation.id === activeId)
+  if (
+    current &&
+    !current.archived &&
+    sessionKindOf(current) === 'file' &&
+    conversationOnMachine(current, windowMachineId)
+  ) {
+    return { action: 'keep' }
+  }
   return { action: 'idle' }
 }
 

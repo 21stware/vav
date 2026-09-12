@@ -58,6 +58,7 @@ export interface ToolHost {
   setFileReadOnly?: (readOnly: boolean) => string | null
   connectors?: ConnectorRegistry
   isTimerSession?: () => boolean
+  computer?: import('../computer/CuaComputerHost').ComputerHost
 }
 
 export type { ToolName }

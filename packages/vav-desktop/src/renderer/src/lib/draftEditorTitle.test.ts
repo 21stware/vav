@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { isDraftDbConnection, isDraftDbTitle, isDraftScheduledTitle } from './draftEditorTitle.ts'
+import {
+  dbEditorTitlePatch,
+  dbEditorTitleValue,
+  isDraftDbConnection,
+  isDraftDbTitle,
+  isDraftScheduledTitle
+} from './draftEditorTitle.ts'
 
 describe('draft editor titles', () => {
   it('treats empty, current, and legacy scheduled titles as drafts', () => {
@@ -19,6 +25,24 @@ describe('draft editor titles', () => {
     assert.equal(isDraftDbTitle('Database', 'Untitled-db-connection'), true)
     assert.equal(isDraftDbTitle('数据库连接', 'Untitled-db-connection'), true)
     assert.equal(isDraftDbTitle('Prod replica', 'Untitled-db-connection'), false)
+  })
+
+  it('shows the auto db title instead of Untitled when editing a draft name', () => {
+    assert.equal(
+      dbEditorTitleValue('', 'Untitled-db-connection', 'pfmegrnargs@localhost'),
+      'pfmegrnargs@localhost'
+    )
+    assert.equal(
+      dbEditorTitleValue('Untitled-db-connection', 'Untitled-db-connection', 'app@db'),
+      'app@db'
+    )
+    assert.equal(
+      dbEditorTitleValue('Analytics', 'Untitled-db-connection', 'app@db'),
+      'Analytics'
+    )
+    assert.equal(dbEditorTitlePatch('pfmegrnargs@localhost', 'Untitled-db-connection', 'pfmegrnargs@localhost'), '')
+    assert.equal(dbEditorTitlePatch('Untitled-db-connection', 'Untitled-db-connection', 'app@db'), '')
+    assert.equal(dbEditorTitlePatch('Analytics', 'Untitled-db-connection', 'app@db'), 'Analytics')
   })
 
   it('hides empty untitled db connections minted for the create form', () => {

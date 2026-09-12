@@ -113,4 +113,48 @@ describe('registerFileSessionsIpc host routing', () => {
       { sessionId: 'sess-1', fileId: 'ino-1', path: '/host/only.md', title: 'Host note' }
     ])
   })
+
+  it('notifies listeners after a local create', async () => {
+    const handlers = new Map<string, (...args: unknown[]) => unknown>()
+    const ipcMain = {
+      handle: (channel: string, fn: (...args: unknown[]) => unknown) => {
+        handlers.set(channel, fn)
+      }
+    }
+    let changed = 0
+    registerFileSessionsIpc(
+      ipcMain as never,
+      {
+        listAll: () => [],
+        open: async () => {
+          throw new Error('unused')
+        },
+        createSession: async () => ({
+          fileId: 'ino-1',
+          activeSessionId: 'sess-1',
+          sessions: [{ id: 'sess-1', title: 'New session' }]
+        }),
+        setActive: () => null,
+        list: () => null,
+        resolve: () => null,
+        forceDelete: () => ({ ok: true, removed: [] }),
+        rename: () => null,
+        deleteSessions: () => null
+      } as never,
+      {
+        defaultModel: () => 'm',
+        defaultApprovalMode: () => 'auto',
+        defaultThinkingLevel: () => 'off',
+        setReadOnly: () => undefined,
+        onSessionsDeleted: () => undefined,
+        onChanged: () => {
+          changed += 1
+        }
+      }
+    )
+    const create = handlers.get(IPC.fileSessionsCreate)
+    assert.ok(create)
+    await create({}, '/notes/a.md')
+    assert.equal(changed, 1)
+  })
 })

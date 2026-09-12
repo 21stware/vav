@@ -12,6 +12,7 @@ import {
   net,
   powerMonitor,
   protocol,
+  safeStorage,
   screen,
   session,
   shell,
@@ -187,6 +188,15 @@ import { registerAgentIpc } from '@main/ipc/registerAgentIpc'
 import { registerConversationMetaIpc } from '@main/ipc/registerConversationMetaIpc'
 import { registerConversationMutateIpc } from '@main/ipc/registerConversationMutateIpc'
 import { registerScreenshotIpc } from '@main/ipc/registerScreenshotIpc'
+import {
+  registerComputerIpc,
+  macComputerPermissionsReady,
+  macAccessibilityState,
+  macScreenRecordingState
+} from '@main/ipc/registerComputerIpc'
+import { createEmbeddedCua } from '@main/computer/embeddedCua'
+import { createCuaComputerHost } from '@main/computer/CuaComputerHost'
+import { VAV_CUA_CONNECTION_ENV } from '@shared/computerUse'
 import { registerSecretsIpc } from '@main/ipc/registerSecretsIpc'
 import { registerSessionSecretsIpc } from '@main/ipc/registerSessionSecretsIpc'
 import { evaluateOwner } from '@main/auth/localOwnerAuth'
@@ -199,6 +209,7 @@ import { registerDbIpc } from '@main/ipc/registerDbIpc'
 import { createConnectorRegistry } from '@main/connectors/registry'
 import { TimerStore } from '@main/store/TimerStore'
 import { DbConnectionStore } from '@main/store/DbConnectionStore'
+import { createChainedDbPasswordVault } from '@main/store/dbPasswordVault'
 import { PostgresService } from '@main/fs/PostgresService'
 import { defaultVavServerStateDir } from '@main/store/vavServerStateDir'
 import { TimerScheduler } from '@main/timer/TimerScheduler'
@@ -580,6 +591,21 @@ let sessionNavigateSeq = 0
 let sessionOpenT0 = 0
 
 const settingsStore = new SettingsStore()
+const embeddedCua = createEmbeddedCua({ userDataDir: app.getPath('userData') })
+process.env[VAV_CUA_CONNECTION_ENV] = embeddedCua.connectionPath
+
+async function syncEmbeddedCua(): Promise<void> {
+  const enabled = settingsStore.get().computerUseEnabled
+  if (enabled && macComputerPermissionsReady()) {
+    try {
+      await embeddedCua.start()
+    } catch (err) {
+      console.warn('[computer] embed failed', err)
+    }
+    return
+  }
+  embeddedCua.stop()
+}
 const secretStore = new SecretStore()
 const sessionSecretStore = new SessionSecretStore({
   dir: join(app.getPath('userData'), 'session-secrets'),
@@ -594,11 +620,32 @@ const conversationStore = new ConversationStore()
 const timerStore = new TimerStore(defaultVavServerStateDir(), {
   migrateFrom: app.getPath('userData')
 })
-const dbConnectionStore = new DbConnectionStore(defaultVavServerStateDir(), {
-  get: (id) => secretStore.getAccountKey(`db:${id}`),
-  set: (id, password) => secretStore.setAccountKey(`db:${id}`, password),
-  clear: (id) => secretStore.clearAccountKey(`db:${id}`)
-})
+const dbConnectionStore = new DbConnectionStore(
+  defaultVavServerStateDir(),
+  createChainedDbPasswordVault({
+    stateDir: defaultVavServerStateDir(),
+    userData: app.getPath('userData'),
+    unlock: () => {
+      secretStore.unlock()
+    },
+    crypt: {
+      available: () => {
+        try {
+          return safeStorage.isEncryptionAvailable()
+        } catch {
+          return false
+        }
+      },
+      encrypt: (value) => safeStorage.encryptString(value),
+      decrypt: (buf) => safeStorage.decryptString(buf)
+    },
+    primary: {
+      get: (id) => secretStore.getAccountKey(`db:${id}`),
+      set: (id, password) => secretStore.setAccountKey(`db:${id}`, password),
+      clear: (id) => secretStore.clearAccountKey(`db:${id}`)
+    }
+  })
+)
 const postgres = new PostgresService(dbConnectionStore)
 const connectorRegistry = createConnectorRegistry({
   creds: () => ({
@@ -1452,6 +1499,7 @@ const agent = new AgentRuntime({
   plugins: pluginService,
   fileSessions: fileSessionStore,
   connectors: connectorRegistry,
+  computer: createCuaComputerHost(),
   emit: handleAgentEvent,
   onFileReadOnlyChange: (conversationId, readOnly) => {
     broadcast(IPC.fileSessionReadOnlyChanged, { sessionId: conversationId, readOnly })
@@ -6903,14 +6951,11 @@ function vavModelListOptions(force?: boolean): PreloadHostModelsOptions {
   const allAccounts = accountStore.listAll()
   for (const account of allAccounts) {
     if (account.provider === 'vav' || agentIdOf(account) === 'vav') {
-      const vendorId = vendorIdFromEndpoint(account.endpoint || settingsStore.get().apiEndpoint)
-      if (vendorId && vendorId !== 'custom') {
-        const accountId = account.id
-        vavAccounts[accountId] = {
-          apiKey: accountSecret(account, secretStore),
-          endpoint: account.endpoint?.trim() || settingsStore.get().apiEndpoint,
-          accountId
-        }
+      const accountId = account.id
+      vavAccounts[accountId] = {
+        apiKey: accountSecret(account, secretStore),
+        endpoint: account.endpoint?.trim() || settingsStore.get().apiEndpoint,
+        accountId
       }
     }
   }
@@ -7043,6 +7088,21 @@ function registerIpc(): void {
   registerHapticsIpc()
   screenshotController ??= createScreenshotController({ loadScreenshotRenderer })
   registerScreenshotIpc(ipcMain, screenshotController!)
+  registerComputerIpc(ipcMain, {
+    status: () => {
+      const st = embeddedCua.status()
+      const enabled = settingsStore.get().computerUseEnabled
+      return {
+        enabled,
+        available: enabled && st.running && st.binaryPresent,
+        binaryPresent: st.binaryPresent,
+        running: st.running,
+        error: st.error,
+        accessibility: macAccessibilityState(),
+        screenRecording: macScreenRecordingState()
+      }
+    }
+  })
   registerSecretsIpc(ipcMain, secretStore, () => {
     invalidateAnalysisCache()
     void serveAnalysisSnapshot({ refresh: false }).catch((err) => {
@@ -7156,6 +7216,9 @@ function registerIpc(): void {
       }
       if (patch.windowVibrancyEnabled !== undefined) {
         syncVibrancyShellWindows()
+      }
+      if (patch.computerUseEnabled !== undefined) {
+        void syncEmbeddedCua().finally(() => cliHost.reapIdle(0))
       }
       if (patch.uiZoom !== undefined) {
         applyUiZoomToAllWindows()
@@ -7426,7 +7489,15 @@ return c as text`
     retargetEmpty: retargetEmptyConversations,
     broadcastSettings: () => broadcast(IPC.settingsChanged, currentSettings()),
     publishSettings: () => publishMergedSettings(),
-    broadcastAccounts: (page) => broadcast(IPC.accountsUpdated, page),
+    broadcastAccounts: (page) => {
+      broadcast(IPC.accountsUpdated, page)
+      void preloadHostModels(settingsStore, {
+        ...vavModelListOptions(false),
+        onProgress: publishModelCatalog
+      })
+        .then(publishModelCatalog)
+        .catch((err) => console.warn('[agents] model catalog after accounts failed', err))
+    },
     rememberLiveOAuth: (host, name) => {
       lastLiveOAuth.set(host, name)
     },
@@ -8013,6 +8084,7 @@ return c as text`
       conversationStore.updateMeta(sessionId, { fileReadOnly: readOnly })
       broadcast(IPC.fileSessionReadOnlyChanged, { sessionId, readOnly })
     },
+    onChanged: () => broadcast(IPC.fileSessionsChanged, null),
     onSessionsDeleted: (ids) => {
       for (const id of ids) {
         agent.disposeConversation(id)
@@ -8420,6 +8492,7 @@ if (singleInstance) {
     macLidSleep?.stop()
     daemonAttach.dispose()
     stopVavServerLogs?.()
+    embeddedCua.stop()
     stopSpawnedVavServer?.()
     stopDesktopWeb?.()
     remoteControl.dispose()
@@ -8638,6 +8711,7 @@ if (singleInstance) {
     }
 
     mainWindow ??= createWindow()
+    await syncEmbeddedCua()
     let vavServerPairing = resolveVavServerPairing(process.env, process.argv)
     if (resolveVavServerSpawn(process.env, process.argv, { packaged: app.isPackaged })) {
       try {
@@ -8649,10 +8723,12 @@ if (singleInstance) {
           stubTurn: isE2eRuntime() && !liveAcp,
           stubStream: isE2eRuntime() && !liveAcp,
           stubApprove: isE2eRuntime() && process.env.VAV_E2E_STUB_APPROVE === '1',
-          extraEnv:
-            isE2eRuntime() && process.env.VAV_E2E_STUB_ASK === '1'
+          extraEnv: {
+            [VAV_CUA_CONNECTION_ENV]: embeddedCua.connectionPath,
+            ...(isE2eRuntime() && process.env.VAV_E2E_STUB_ASK === '1'
               ? { VAV_E2E_STUB_ASK: '1' }
-              : undefined,
+              : {})
+          },
           noWeb: false,
           webPort: 4752,
           webListen: '127.0.0.1'

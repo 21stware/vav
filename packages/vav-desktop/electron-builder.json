@@ -97,7 +97,7 @@
       "NSBonjourServices": [
         "_vav-daemon._tcp"
       ],
-      "NSScreenCaptureUsageDescription": "VAV hides its windows so you can capture the screen, annotate the image, and attach it to a conversation.",
+      "NSScreenCaptureUsageDescription": "VAV captures the screen so you can annotate a screenshot, and so the agent can observe a window you asked it to operate — without moving your pointer.",
       "NSServices": [
         {
           "NSMenuItem": {

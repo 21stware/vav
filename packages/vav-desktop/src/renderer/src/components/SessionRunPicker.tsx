@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   BookOpen,
   Bot,
@@ -24,7 +24,7 @@ import { agentModelHostKey } from '@shared/agentModels'
 import { useSessionStore } from '../state/sessionStore'
 import { useT } from '../i18n/useT'
 import { createMenuNonceGate } from '../lib/menuNonce'
-import { menuAnchorIfVisible, showMenu, type MenuItem } from '../lib/nativeMenu'
+import { menuAnchor, menuAnchorIfVisible, showMenu, type MenuItem } from '../lib/nativeMenu'
 import {
   menuIconKeyForMode,
   warmMenuIcons,
@@ -234,46 +234,125 @@ export function SessionRunPicker({
         </button>
       </span>
       {children}
-      {showThinking || showFast ? (
-        <span className="session-run-options">
-          {showThinking ? (
-            <button
-              type="button"
-              className="model-picker session-run-btn is-icon"
-              data-testid="session-run-thinking"
-              aria-label={`${t('composer.thinkingLevel')} · ${thinkingLabel}`}
-              aria-haspopup="menu"
-              title={`${t('composer.thinkingLevel')} · ${thinkingLabel}`}
-              onClick={(event) => {
-                event.preventDefault()
-                event.stopPropagation()
-                openMenu(thinkingItems, event.currentTarget)
-              }}
-            >
-              <ThinkingIcon level={thinking} />
-            </button>
-          ) : null}
-          {showFast ? (
-            <button
-              type="button"
-              className="model-picker session-run-btn"
-              data-testid="session-run-fast"
-              aria-pressed={fast}
-              aria-label={`${t('composer.fast')} · ${fast ? t('composer.fast.on') : t('composer.fast.off')}`}
-              title={`${t('composer.fast')} · ${fast ? t('composer.fast.on') : t('composer.fast.off')}`}
-              onClick={(event) => {
-                event.preventDefault()
-                event.stopPropagation()
-                if (!conversation) return
-                void setFast(conversation.id, !fast)
-              }}
-            >
-              <span className="session-run-level">{t('composer.fast')}</span>
-            </button>
-          ) : null}
-        </span>
-      ) : null}
+      <span className="session-run-options">
+        {showThinking ? (
+          <button
+            type="button"
+            className="model-picker session-run-btn is-icon"
+            data-testid="session-run-thinking"
+            aria-label={`${t('composer.thinkingLevel')} · ${thinkingLabel}`}
+            aria-haspopup="menu"
+            title={`${t('composer.thinkingLevel')} · ${thinkingLabel}`}
+            onClick={(event) => {
+              event.preventDefault()
+              event.stopPropagation()
+              openMenu(thinkingItems, event.currentTarget)
+            }}
+          >
+            <ThinkingIcon level={thinking} />
+          </button>
+        ) : null}
+        {showFast ? (
+          <button
+            type="button"
+            className="model-picker session-run-btn"
+            data-testid="session-run-fast"
+            aria-pressed={fast}
+            aria-label={`${t('composer.fast')} · ${fast ? t('composer.fast.on') : t('composer.fast.off')}`}
+            title={`${t('composer.fast')} · ${fast ? t('composer.fast.on') : t('composer.fast.off')}`}
+            onClick={(event) => {
+              event.preventDefault()
+              event.stopPropagation()
+              if (!conversation) return
+              void setFast(conversation.id, !fast)
+            }}
+          >
+            <span className="session-run-level">{t('composer.fast')}</span>
+          </button>
+        ) : null}
+        <ComputerUseButton />
+      </span>
     </div>
+  )
+}
+
+function ComputerUseButton(): React.JSX.Element {
+  const t = useT()
+  const enabled = useSessionStore((s) => s.settings.computerUseEnabled === true)
+  const updateSettings = useSessionStore((s) => s.updateSettings)
+  const openSettings = useSessionStore((s) => s.openSettings)
+  const [status, setStatus] = useState<import('@shared/computerUse').ComputerUseStatus | null>(
+    null
+  )
+
+  useEffect(() => {
+    let alive = true
+    const refresh = (): void => {
+      const probe = window.vav.computer?.status
+      if (typeof probe !== 'function') return
+      void probe().then((next) => {
+        if (alive) setStatus(next)
+      })
+    }
+    refresh()
+    const later = window.setTimeout(refresh, 1600)
+    window.addEventListener('focus', refresh)
+    return () => {
+      alive = false
+      window.clearTimeout(later)
+      window.removeEventListener('focus', refresh)
+    }
+  }, [enabled])
+
+  const running = enabled && status?.running === true
+  const stateLabel = !enabled
+    ? t('composer.computerUse.off')
+    : running
+      ? t('appearance.computerUseRunning')
+      : status?.error || t('appearance.computerUseStopped')
+
+  const toggle = (): void => {
+    if (enabled) {
+      void updateSettings({ computerUseEnabled: false })
+      return
+    }
+    void updateSettings({ computerUseEnabled: true }).then(() => {
+      if (status?.accessibility === 'granted') return
+      void window.vav.computer.requestAccessibility().then((ok) => {
+        if (!ok) void window.vav.computer.openAccessibilitySettings()
+      })
+    })
+  }
+
+  return (
+    <button
+      type="button"
+      className="model-picker session-run-btn"
+      data-testid="session-run-computer"
+      aria-pressed={enabled}
+      aria-label={`${t('appearance.computerUse')} · ${stateLabel}`}
+      title={`${t('composer.computerUseTitle')} · ${stateLabel}`}
+      onClick={(event) => {
+        event.preventDefault()
+        event.stopPropagation()
+        toggle()
+      }}
+      onContextMenu={(event) => {
+        event.preventDefault()
+        event.stopPropagation()
+        void showMenu(
+          [
+            {
+              label: t('composer.computerUseSettings'),
+              onSelect: () => openSettings('appearance', 'computer-use')
+            }
+          ],
+          menuAnchor(event.currentTarget)
+        )
+      }}
+    >
+      <span className="session-run-level">{t('composer.computerUse')}</span>
+    </button>
   )
 }
 

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import {
   builtinCatalogVendorId,
+  catalogEntryForChatHost,
   chatHostPickerModels,
   coercedChatHostModel,
   defaultModelSettingsPatch,
@@ -35,6 +36,36 @@ describe('chatHostPickerModels / coercedChatHostModel', () => {
       undefined
     )
     assert.equal(byAccount, 'openrouter')
+  })
+
+  it('falls back to the workspace vav row when the vendor key is missing', () => {
+    const entry = catalogEntryForChatHost(
+      {
+        vav: {
+          models: [{ id: 'flash', label: 'Flash' }],
+          endpoint: 'https://api.deepseek.com'
+        }
+      },
+      null,
+      'deepseek',
+      'acc-new'
+    )
+    assert.deepEqual(entry?.models.map((m) => m.id), ['flash'])
+  })
+
+  it('falls back to a same-vendor account catalogue when the exact key is missing', () => {
+    const entry = catalogEntryForChatHost(
+      {
+        'vav:deepseek:acc-1': {
+          models: [{ id: 'keep', label: 'Keep' }],
+          endpoint: 'https://api.deepseek.com'
+        }
+      },
+      null,
+      'deepseek',
+      null
+    )
+    assert.deepEqual(entry?.models.map((m) => m.id), ['keep'])
   })
 
   it('prefers the live catalogue and filters disabled ids', () => {

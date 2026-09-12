@@ -17,16 +17,42 @@ const lastPathByMachine = new Map<string, string>()
  * Workbench Files browser for the active window machine (File category).
  * Same tree / column chrome as the session Files tray; rooted at that host's home.
  */
+function applyListing(
+  dir: string,
+  listing: { entries: FileEntry[]; error?: string }
+): {
+  loading: (current: string[]) => string[]
+  errors: (current: Record<string, string>) => Record<string, string>
+  dirs: (current: FilePickDirs) => FilePickDirs
+} {
+  return {
+    loading: (current) => current.filter((item) => item !== dir),
+    errors: (current) => {
+      const next = { ...current }
+      if (listing.error) next[dir] = listing.error
+      else delete next[dir]
+      return next
+    },
+    dirs: (current) => ({ ...current, [dir]: listing.entries })
+  }
+}
+
+function markLoading(dir: string): (current: string[]) => string[] {
+  return (current) => (current.includes(dir) ? current : [...current, dir])
+}
+
 export function MachineFilesBrowser(): React.JSX.Element {
   const t = useT()
   const machineId = normalizeMachineId(useSessionStore((s) => s.windowMachineId))
-  const homeSeed = useSessionStore((s) => s.home)
+  const hostHome = useSessionStore(
+    (s) => s.hosts.find((host) => normalizeMachineId(host.id) === machineId)?.home ?? ''
+  )
   const recentDirs = useSessionStore((s) => s.settings.recentWorkspaceDirectories)
   const fileViewMode = useSessionStore((s) => s.settings.fileViewMode ?? 'tree')
   const recents = recentsForMachine(recentDirs, machineId)
 
-  const [path, setPath] = useState(lastPathByMachine.get(machineId) ?? homeSeed)
-  const [home, setHome] = useState(homeSeed)
+  const [path, setPath] = useState(lastPathByMachine.get(machineId) ?? hostHome)
+  const [home, setHome] = useState(hostHome)
   const [dirs, setDirs] = useState<FilePickDirs>({})
   const [loadingDirs, setLoadingDirs] = useState<string[]>([])
   const [dirErrors, setDirErrors] = useState<Record<string, string>>({})
@@ -50,37 +76,39 @@ export function MachineFilesBrowser(): React.JSX.Element {
       setDirs({})
       setDirErrors({})
     }
-    if (homeSeed) {
-      applyHome(homeSeed)
-      return () => {
-        alive = false
-      }
-    }
     void window.vav.hosts.home(machineId).then((value) => {
-      applyHome(value)
+      applyHome(value || hostHome)
     })
     return () => {
       alive = false
     }
-  }, [homeSeed, machineId])
+  }, [hostHome, machineId])
 
   useEffect(() => {
     if (!path) return
     let alive = true
-    setLoadingDirs((current) => (current.includes(path) ? current : [...current, path]))
-    void window.vav.hosts.listDir(machineId, path).then((listing) => {
-      if (!alive) return
-      setLoadingDirs((current) => current.filter((dir) => dir !== path))
-      setDirErrors((current) => {
-        const next = { ...current }
-        if (listing.error) next[path] = listing.error
-        else delete next[path]
-        return next
+    const dir = path
+    setLoadingDirs(markLoading(dir))
+    void window.vav.hosts
+      .listDir(machineId, dir)
+      .then((listing) => {
+        if (!alive) return
+        const next = applyListing(dir, listing)
+        setLoadingDirs(next.loading)
+        setDirErrors(next.errors)
+        setDirs(next.dirs)
       })
-      setDirs((current) => ({ ...current, [path]: listing.entries }))
-    })
+      .catch((err: unknown) => {
+        if (!alive) return
+        setLoadingDirs((current) => current.filter((item) => item !== dir))
+        setDirErrors((current) => ({
+          ...current,
+          [dir]: err instanceof Error ? err.message : String(err)
+        }))
+      })
     return () => {
       alive = false
+      setLoadingDirs((current) => current.filter((item) => item !== dir))
     }
   }, [path, machineId])
 
@@ -92,40 +120,53 @@ export function MachineFilesBrowser(): React.JSX.Element {
   useEffect(() => {
     if (columnPath.length === 0) return
     let alive = true
-    for (const dir of columnPath) {
-      setLoadingDirs((current) => (current.includes(dir) ? current : [...current, dir]))
-      void window.vav.hosts.listDir(machineId, dir).then((listing) => {
-        if (!alive) return
-        setLoadingDirs((current) => current.filter((item) => item !== dir))
-        setDirErrors((current) => {
-          const next = { ...current }
-          if (listing.error) next[dir] = listing.error
-          else delete next[dir]
-          return next
+    const dirsToLoad = [...columnPath]
+    for (const dir of dirsToLoad) {
+      setLoadingDirs(markLoading(dir))
+      void window.vav.hosts
+        .listDir(machineId, dir)
+        .then((listing) => {
+          if (!alive) return
+          const next = applyListing(dir, listing)
+          setLoadingDirs(next.loading)
+          setDirErrors(next.errors)
+          setDirs(next.dirs)
         })
-        setDirs((current) => ({ ...current, [dir]: listing.entries }))
-      })
+        .catch((err: unknown) => {
+          if (!alive) return
+          setLoadingDirs((current) => current.filter((item) => item !== dir))
+          setDirErrors((current) => ({
+            ...current,
+            [dir]: err instanceof Error ? err.message : String(err)
+          }))
+        })
     }
     return () => {
       alive = false
+      setLoadingDirs((current) => current.filter((item) => !dirsToLoad.includes(item)))
     }
     // columnsKey is the stable listing of columnPath.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [columnsKey])
+  }, [columnsKey, machineId])
 
   const loadDir = (dir: string): void => {
     if (dirs[dir] || loadingDirs.includes(dir)) return
     setLoadingDirs((current) => [...current, dir])
-    void window.vav.hosts.listDir(machineId, dir).then((listing) => {
-      setLoadingDirs((current) => current.filter((item) => item !== dir))
-      setDirErrors((current) => {
-        const next = { ...current }
-        if (listing.error) next[dir] = listing.error
-        else delete next[dir]
-        return next
+    void window.vav.hosts
+      .listDir(machineId, dir)
+      .then((listing) => {
+        const next = applyListing(dir, listing)
+        setLoadingDirs(next.loading)
+        setDirErrors(next.errors)
+        setDirs(next.dirs)
       })
-      setDirs((current) => ({ ...current, [dir]: listing.entries }))
-    })
+      .catch((err: unknown) => {
+        setLoadingDirs((current) => current.filter((item) => item !== dir))
+        setDirErrors((current) => ({
+          ...current,
+          [dir]: err instanceof Error ? err.message : String(err)
+        }))
+      })
   }
 
   const enterDir = (next: string): void => {
@@ -216,22 +257,28 @@ export function MachineFilesBrowser(): React.JSX.Element {
           </div>
         </div>
       )}
-      <FilePickBrowser
-        root={path}
-        dirs={dirs}
-        loadingDirs={loadingDirs}
-        dirErrors={dirErrors}
-        selectedPath={selected?.path ?? null}
-        expanded={expanded}
-        viewMode={viewMode}
-        columnPath={columnPath}
-        filter={filter}
-        onSelect={setSelected}
-        onToggleExpand={toggleExpand}
-        onEnterDir={enterDir}
-        onColumnPath={setColumnPath}
-        onOpenFile={(filePath) => void openFileSessionFromPath(filePath)}
-      />
+      {!path ? (
+        <div className="muted tiny" style={{ padding: 8 }}>
+          {t('common.loading')}
+        </div>
+      ) : (
+        <FilePickBrowser
+          root={path}
+          dirs={dirs}
+          loadingDirs={loadingDirs}
+          dirErrors={dirErrors}
+          selectedPath={selected?.path ?? null}
+          expanded={expanded}
+          viewMode={viewMode}
+          columnPath={columnPath}
+          filter={filter}
+          onSelect={setSelected}
+          onToggleExpand={toggleExpand}
+          onEnterDir={enterDir}
+          onColumnPath={setColumnPath}
+          onOpenFile={(filePath) => void openFileSessionFromPath(filePath)}
+        />
+      )}
     </div>
   )
 }

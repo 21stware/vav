@@ -71,7 +71,18 @@ export function registerAccountsIpc(
 
   const afterRemote = async <T>(result: T): Promise<T> => {
     if (host.publishSettings) await host.publishSettings()
+    if (result && typeof result === 'object') {
+      if ('groups' in result) host.broadcastAccounts?.(result as unknown as AccountsPagePayload)
+      else if ('page' in result) {
+        const page = (result as { page?: AccountsPagePayload }).page
+        if (page) host.broadcastAccounts?.(page)
+      }
+    }
     return result
+  }
+  const publishPage = <T extends AccountsPagePayload>(page: T): T => {
+    host.broadcastAccounts?.(page)
+    return page
   }
 
   ipcMain.handle(
@@ -131,7 +142,7 @@ export function registerAccountsIpc(
         oauthHost: null
       })
       secrets.setAccountKey(created.id, apiKey)
-      return host.page(page.workspaceKey)
+      return publishPage(host.page(page.workspaceKey))
     }
   )
   ipcMain.handle(
@@ -168,7 +179,8 @@ export function registerAccountsIpc(
         keyStatus: 'unknown',
         oauthHost: kind === 'oauth' ? agentId : null
       })
-      return { page: await host.page(page.workspaceKey), id: created.id }
+      const next = await host.page(page.workspaceKey)
+      return { page: publishPage(next), id: created.id }
     }
   )
   ipcMain.handle(
@@ -203,7 +215,7 @@ export function registerAccountsIpc(
         accounts.update(id, { usesLegacyApiKey: false, keyStatus: 'unknown' })
       }
       host.broadcastSettings()
-      return host.page(account.workspaceKey)
+      return publishPage(host.page(account.workspaceKey))
     }
   )
   ipcMain.handle(IPC.accountsSetCurrent, async (_event, id: string) => {
@@ -213,7 +225,7 @@ export function registerAccountsIpc(
     const account = accounts.setCurrent(id, viewing)
     if (account) host.retargetEmpty(account, viewing)
     host.broadcastSettings()
-    return host.page(viewing)
+    return publishPage(host.page(viewing))
   })
   ipcMain.handle(IPC.accountsActivate, async (_event, id: string) => {
     const client = remote()
@@ -236,7 +248,7 @@ export function registerAccountsIpc(
       }
     }
     host.broadcastSettings()
-    return { page: host.page(viewing), result }
+    return { page: publishPage(host.page(viewing)), result }
   })
   ipcMain.handle(IPC.accountsRemove, async (_event, id: string) => {
     const client = remote()
@@ -269,11 +281,18 @@ export function registerAccountsIpc(
     if (!account || account.kind !== 'vav_key') {
       return { ok: false, message: t('accounts.error.missing') }
     }
-    const key = apiKey?.trim() || accountSecret(account, secrets)
+    const incoming = apiKey?.trim()
+    if (incoming) {
+      secrets.setAccountKey(id, incoming)
+      accounts.update(id, { usesLegacyApiKey: false, keyStatus: 'unknown' })
+    }
+    const key = incoming || accountSecret(account, secrets)
     const endpoint = account.endpoint?.trim() || host.settings().apiEndpoint
     if (!key) return { ok: false, message: t('error.noApiKeyShort') }
     const result = await host.validateKey(endpoint, key)
     accounts.setKeyStatus(id, result.ok ? 'ok' : result.authFailed ? 'invalid' : 'unknown')
+    host.broadcastSettings()
+    publishPage(host.page(account.workspaceKey))
     return { ok: result.ok, message: result.message, authFailed: result.authFailed }
   })
   ipcMain.handle(IPC.accountsRevealKey, async (event, id: string) => {

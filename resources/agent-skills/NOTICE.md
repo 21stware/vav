@@ -35,6 +35,12 @@ From [iOfficeAI/OfficeCLI](https://github.com/iOfficeAI/OfficeCLI) (Apache-2.0):
 
 Prefer `officecli` for OOXML create/edit. MiniMax `docx` / `xlsx` / `pptx` skills remain as fallbacks.
 
+### Computer use (VAV + Cua Driver)
+
+VAV skill `computer-use/` (MIT) documents the first-class `computer_*` tools.
+The bundled `cua-driver` binary is fetched at build time from
+[trycua/cua](https://github.com/trycua/cua) (MIT) into `resources/bin/`.
+
 ## Included — MIT License
 
 From [MiniMax-AI/skills](https://github.com/MiniMax-AI/skills):

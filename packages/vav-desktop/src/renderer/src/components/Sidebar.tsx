@@ -12,7 +12,7 @@ import {
 } from 'lucide-react'
 import { enabledCliAgents, type ConversationMeta } from '@shared/types'
 import type { DbConnection } from '@shared/dbConnection'
-import type { FileSessionListEntry, SqliteDatabaseInfo, SqliteTableInfo } from '@shared/ipc'
+import type { FileSessionListEntry } from '@shared/ipc'
 import { useSessionStore } from '../state/sessionStore'
 import { useWorkspaceStore } from '../state/workspaceStore'
 import { isTemporaryWorkspace, middleTruncate, relativeTime, workdirShortLabel } from '../lib/format'
@@ -54,7 +54,6 @@ import {
   shouldReconcileSidebarSelection
 } from '../lib/sidebarList'
 import { ConvBracket, type SwarmBracketKind } from './sidebar/ConvBracket'
-import { isDraftDbConnection } from '../lib/draftEditorTitle'
 import { TimerJobsPanel } from './sidebar/TimerJobsPanel'
 import { SidebarCategoryBar } from './sidebar/SidebarCategoryBar'
 import { SidebarServiceBar } from './sidebar/SidebarServiceBar'
@@ -88,18 +87,6 @@ function sessionSecondLine(
       {edited ? <span className="conv-edited">{editedLabel}</span> : null}
     </span>
   )
-}
-
-function dbSchemaTables(
-  info: SqliteDatabaseInfo | { error: string } | undefined
-): SqliteTableInfo[] {
-  return info && 'tables' in info ? info.tables : []
-}
-
-function dbSchemaError(
-  info: SqliteDatabaseInfo | { error: string } | undefined
-): string | null {
-  return info && 'error' in info ? info.error : null
 }
 
 export function Sidebar({
@@ -163,9 +150,9 @@ export function Sidebar({
   const setSidebarQuery = useSessionStore((s) => s.setSidebarQuery)
   const selectConversation = useSessionStore((s) => s.selectConversation)
   const createConversation = useSessionStore((s) => s.createConversation)
+  const createDbConversation = useSessionStore((s) => s.createDbConversation)
   const ensureScheduledConversation = useSessionStore((s) => s.ensureScheduledConversation)
   const ensureDbConversation = useSessionStore((s) => s.ensureDbConversation)
-  const activeDbTable = useSessionStore((s) => s.activeDbTable)
   const dbSchemas = useSessionStore((s) => s.dbSchemas)
   const setDbSchema = useSessionStore((s) => s.setDbSchema)
   const duplicateConversation = useSessionStore((s) => s.duplicateConversation)
@@ -233,14 +220,10 @@ export function Sidebar({
   const fileSessionsView = listMode === 'fileSessions'
   const timersView = listMode === 'timers'
   const databasesView = listMode === 'databases'
-  const scheduledCreating = useSessionStore((s) => s.scheduledCreating)
-  const dbCreating = useSessionStore((s) => s.dbCreating)
-  const [dbDraftIds, setDbDraftIds] = useState<Set<string>>(() => new Set())
   const [dbConnections, setDbConnections] = useState<DbConnection[]>([])
 
   useEffect(() => {
     if (!databasesView || !window.vav?.db?.list) return
-    const untitled = t('db.untitled')
     let cancelled = false
     const refresh = async (): Promise<void> => {
       const rows = await window.vav.db.list()
@@ -252,26 +235,6 @@ export function Sidebar({
         )
         return extra.length ? { conversations: [...state.conversations, ...extra] } : state
       })
-      const ids = new Set<string>()
-      for (const row of rows) {
-        if (row.conversationId && isDraftDbConnection(row, untitled)) ids.add(row.conversationId)
-      }
-      setDbDraftIds(ids)
-      const state = useSessionStore.getState()
-      if (state.sidebarListMode !== 'databases') return
-      if (state.activeId && ids.has(state.activeId) && !state.dbCreating) {
-        const committed = rows.find(
-          (row) =>
-            row.lastStatus === 'ok' &&
-            row.conversationId &&
-            !isDraftDbConnection(row, untitled)
-        )
-        if (committed?.conversationId) {
-          void state.selectConversation(committed.conversationId)
-        } else {
-          useSessionStore.setState({ dbCreating: true })
-        }
-      }
       for (const row of rows.filter((item) => item.lastStatus === 'ok')) {
         void window.vav.db
           .schema(row.id)
@@ -290,7 +253,7 @@ export function Sidebar({
     return window.vav.db.onChanged(() => {
       void refresh()
     })
-  }, [databasesView, setDbSchema, t])
+  }, [databasesView, setDbSchema])
 
   // Rasterize the foot-menu glyphs ahead of the first open.
   useEffect(() => {
@@ -304,21 +267,37 @@ export function Sidebar({
   }, [])
 
   const windowMachineId = normalizeMachineId(useSessionStore((s) => s.windowMachineId))
-  const refreshFileSessions = useCallback(async (): Promise<void> => {
-    setFileSessionsLoading(true)
+  const refreshFileSessions = useCallback(async (opts?: { silent?: boolean }): Promise<void> => {
+    if (!opts?.silent) setFileSessionsLoading(true)
     try {
       const rows = await window.vav.fileSessions.listAll()
       setFileSessionRows(rows)
     } catch {
       setFileSessionRows([])
     } finally {
-      setFileSessionsLoading(false)
+      if (!opts?.silent) setFileSessionsLoading(false)
     }
   }, [windowMachineId])
 
   useEffect(() => {
     if (!fileSessionsView) return
     void refreshFileSessions()
+    const offSessions = window.vav.fileSessions.onChanged?.(() => {
+      void refreshFileSessions({ silent: true })
+    })
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const offConv = window.vav.conversations.onChanged(() => {
+      if (timer) clearTimeout(timer)
+      timer = setTimeout(() => {
+        timer = null
+        void refreshFileSessions({ silent: true })
+      }, 200)
+    })
+    return () => {
+      offSessions?.()
+      offConv()
+      if (timer) clearTimeout(timer)
+    }
   }, [fileSessionsView, refreshFileSessions])
 
   useEffect(() => {
@@ -342,7 +321,15 @@ export function Sidebar({
     const current = conversations.find((row) => row.id === activeId)
     const currentFits = !!current && conversationFitsListMode(current, listMode)
     // Task complete only reorders the list. Do not pick the new first row.
-    if (!shouldReconcileSidebarSelection({ currentFits, listScopeChanged })) return
+    if (
+      !shouldReconcileSidebarSelection({
+        currentFits,
+        listScopeChanged,
+        keepEmptyFileList: listMode === 'fileSessions' && !activeId
+      })
+    ) {
+      return
+    }
     if (listMode === 'timers') {
       ensureScheduledConversation()
       return
@@ -396,13 +383,13 @@ export function Sidebar({
         fileSessionsView,
         archiveView,
         databasesView,
-        excludeIds: dbDraftIds,
         query,
         windowMachineId,
         sessionFilter,
         running: isSessionRunning,
         unread: isSessionUnread,
         favoriteIds: favoriteSet,
+        focusedId: activeId,
         searching,
         groupingMode,
         tmp,
@@ -422,11 +409,6 @@ export function Sidebar({
           dbConnections
             .filter((row) => row.conversationId)
             .map((row) => [row.conversationId!, stableDatabaseTitle(row, t('db.untitled'))])
-        ),
-        connectedConversationIds: new Set(
-          dbConnections
-            .filter((row) => row.lastStatus === 'ok' && row.conversationId)
-            .map((row) => row.conversationId!)
         )
       }),
     [
@@ -437,12 +419,12 @@ export function Sidebar({
     groupingMode,
     sessionFilterRaw,
     favoriteSet,
+    activeId,
     tmp,
     pinnedWorkspaces,
     archiveView,
     fileSessionsView,
     databasesView,
-    dbDraftIds,
     dbConnections,
     dbSchemas,
     turnBusyKey,
@@ -685,11 +667,7 @@ export function Sidebar({
         }
         if (event.key === 'Backspace' || event.key === 'Delete') {
           event.preventDefault()
-          const ids = selectedIds.length
-            ? selectedIds
-            : activeId && !scheduledCreating
-              ? [activeId]
-              : []
+          const ids = selectedIds.length ? selectedIds : activeId ? [activeId] : []
           if (ids.length) requestDelete(ids)
           return
         }
@@ -749,10 +727,7 @@ export function Sidebar({
       } else if (event.key === 'Backspace' || event.key === 'Delete') {
         event.preventDefault()
         const current = conversations.find((row) => row.id === activeId)
-        const canDeleteActive =
-          !!current &&
-          conversationFitsListMode(current, listMode) &&
-          !(databasesView && dbCreating)
+        const canDeleteActive = !!current && conversationFitsListMode(current, listMode)
         const ids = selectedIds.length ? selectedIds : canDeleteActive && activeId ? [activeId] : []
         if (ids.length) requestDelete(ids)
       } else if (event.key === 'a' && event.metaKey) {
@@ -780,8 +755,6 @@ export function Sidebar({
     filteredFileSessions,
     deleteSelectedFileSessions,
     activateSidebarListMode,
-    scheduledCreating,
-    dbCreating,
     databasesView,
     conversations
   ])
@@ -1074,23 +1047,9 @@ export function Sidebar({
   }
 
   const renderGroup = (group: ConversationGroup, groupIndex: number): React.JSX.Element => {
-    const collapsible = group.kind === 'workspace' || group.kind === 'database'
+    const collapsible = group.kind === 'workspace'
     const collapsed = collapsible && collapsedKeys.has(group.key)
     const groupWorkdir = group.workdir ?? group.conversations[0]?.workingDirectory ?? null
-    const databaseConversation = group.kind === 'database' ? group.conversations[0] : undefined
-    const databaseConnectionId =
-      group.connectionId ??
-      dbConnections.find((row) => row.conversationId === databaseConversation?.id)?.id
-    const databaseSchema = databaseConnectionId ? dbSchemas[databaseConnectionId] : undefined
-    const databaseSchemaError = dbSchemaError(databaseSchema)
-    const databaseTables = dbSchemaTables(databaseSchema)
-    const databaseSchemaPending =
-      group.kind === 'database' && !!databaseConnectionId && databaseSchema === undefined
-    const databaseSelected =
-      !!databaseConversation &&
-      databaseConversation.id === activeId &&
-      !activeDbTable &&
-      !dbCreating
     // A Temporary Workspace is minted per session and has no durable path to pin.
     const pinnableWorkdir = pinnableWorkspaceDir({
       groupKind: group.kind,
@@ -1101,25 +1060,18 @@ export function Sidebar({
     })
     const workspacePinnable = pinnableWorkdir != null
     const workspacePinned = !!pinnableWorkdir && pinnedWorkspaces.includes(pinnableWorkdir)
-    const databasePinned = !!databaseConversation?.pinned
+    const showGroupHeader = !!group.label && group.kind !== 'database'
     return (
       <div
-        className={`conv-group${collapsible ? ' is-workspace' : ''}${group.kind === 'database' ? ' is-database' : ''}${group.pinned ? ' pinned' : ''}${workspacePinnable ? '' : ' is-default-workspace'}`}
+        className={`conv-group${collapsible ? ' is-workspace' : ''}${group.pinned ? ' pinned' : ''}${workspacePinnable ? '' : ' is-default-workspace'}`}
         key={group.key || `group-${groupIndex}`}
       >
         {groupIndex > 0 && <div className="conv-group-divider" />}
-        {group.label &&
+        {showGroupHeader &&
           (collapsible ? (
             <div
-              className={`conv-group-header interactive${databaseSelected ? ' selected' : ''}`}
-              data-testid={group.kind === 'database' ? 'db-group-header' : undefined}
-              data-conversation-id={databaseConversation?.id}
+              className="conv-group-header interactive"
               onContextMenu={(event) => {
-                if (group.kind === 'database' && databaseConversation) {
-                  event.preventDefault()
-                  void showMenu(menuItems([databaseConversation.id]))
-                  return
-                }
                 if (!workspacePinnable || !groupWorkdir) return
                 event.preventDefault()
                 void showMenu([
@@ -1143,44 +1095,17 @@ export function Sidebar({
                 type="button"
                 className="conv-group-title-hit"
                 title={
-                  group.kind === 'database'
-                    ? group.label
-                    : groupWorkdir
-                      ? groupWorkdir
-                      : collapsed
-                        ? t('common.expand')
-                        : t('common.collapse')
+                  groupWorkdir
+                    ? groupWorkdir
+                    : collapsed
+                      ? t('common.expand')
+                      : t('common.collapse')
                 }
-                onClick={() => {
-                  if (group.kind === 'database' && databaseConversation) {
-                    void selectConversation(databaseConversation.id, { dbTable: null })
-                    onNavigate?.()
-                    return
-                  }
-                  toggleGroup(group.key)
-                }}
+                onClick={() => toggleGroup(group.key)}
               >
                 <span className="conv-group-title">{group.label}</span>
               </button>
-              {group.kind === 'database' && databaseConversation ? (
-                <button
-                  type="button"
-                  className={`conv-group-pin-hit${databasePinned ? ' pinned' : ''}`}
-                  title={
-                    databasePinned ? t('sidebar.menu.unpin') : t('sidebar.menu.pin')
-                  }
-                  aria-label={
-                    databasePinned ? t('sidebar.menu.unpin') : t('sidebar.menu.pin')
-                  }
-                  aria-pressed={databasePinned}
-                  onClick={(event) => {
-                    event.stopPropagation()
-                    void setPinned(databaseConversation.id, !databasePinned)
-                  }}
-                >
-                  <Pin size={11} strokeWidth={1.75} aria-hidden />
-                </button>
-              ) : pinnableWorkdir ? (
+              {pinnableWorkdir ? (
                 <button
                   type="button"
                   className={`conv-group-pin-hit${workspacePinned ? ' pinned' : ''}`}
@@ -1213,37 +1138,33 @@ export function Sidebar({
                   toggleGroup(group.key)
                 }}
               >
-                <span className="conv-group-count">
-                  {group.kind === 'database' ? databaseTables.length : group.conversations.length}
-                </span>
+                <span className="conv-group-count">{group.conversations.length}</span>
                 {collapsed ? (
                   <ChevronRight className="conv-group-chevron" size={12} aria-hidden />
                 ) : (
                   <ChevronDown className="conv-group-chevron" size={12} aria-hidden />
                 )}
               </button>
-              {group.kind === 'database' ? null : (
-                <button
-                  type="button"
-                  className="conv-group-add-hit"
-                  title={t('sidebar.menu.newSessionInDir')}
-                  aria-label={t('sidebar.menu.newSessionInDir')}
-                  onClick={(event) => {
-                    event.stopPropagation()
-                    if (groupWorkdir) {
-                      void createConversation({
-                        workingDirectory: groupWorkdir
-                      })
-                    } else {
-                      // Empty Temporary Workspace — mint on demand.
-                      void createConversation()
-                    }
-                    onNavigate?.()
-                  }}
-                >
-                  <Plus size={12} aria-hidden />
-                </button>
-              )}
+              <button
+                type="button"
+                className="conv-group-add-hit"
+                title={t('sidebar.menu.newSessionInDir')}
+                aria-label={t('sidebar.menu.newSessionInDir')}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  if (groupWorkdir) {
+                    void createConversation({
+                      workingDirectory: groupWorkdir
+                    })
+                  } else {
+                    // Empty Temporary Workspace — mint on demand.
+                    void createConversation()
+                  }
+                  onNavigate?.()
+                }}
+              >
+                <Plus size={12} aria-hidden />
+              </button>
             </div>
           ) : (
             <div className="conv-group-header">
@@ -1253,70 +1174,7 @@ export function Sidebar({
             </div>
           ))}
 
-        {!collapsed && group.kind === 'database' && databaseConversation
-          ? (
-              databaseSchemaError ? (
-                <div className="conv-row is-db-table muted" data-testid="db-schema-error">
-                  <span className="conv-text">
-                    <span className="conv-title">{t('db.schemaFailed')}</span>
-                    <span className="conv-subtitle">
-                      <span className="conv-subtitle-text">{databaseSchemaError}</span>
-                    </span>
-                  </span>
-                </div>
-              ) : databaseSchemaPending ? (
-                <div className="conv-row is-db-table muted" data-testid="db-schema-loading">
-                  <span className="conv-text">
-                    <span className="conv-title">{t('common.loading')}</span>
-                  </span>
-                </div>
-              ) : databaseTables.length === 0 ? (
-                <div className="conv-row is-db-table muted" data-testid="db-schema-empty">
-                  <span className="conv-text">
-                    <span className="conv-title">{t('db.noTables')}</span>
-                  </span>
-                </div>
-              ) : (
-                databaseTables
-                  .filter((table) => {
-                    const needle = query.trim().toLowerCase()
-                    if (!needle) return true
-                    if (group.label.toLowerCase().includes(needle)) return true
-                    return table.name.toLowerCase().includes(needle)
-                  })
-                  .map((table) => {
-                    const selected =
-                      databaseConversation.id === activeId && activeDbTable === table.name
-                    return (
-                      <div
-                        key={table.name}
-                        className={`conv-row is-db-table${selected ? ' selected' : ''}`}
-                        data-testid="db-table-row"
-                        data-table-name={table.name}
-                        data-conversation-id={databaseConversation.id}
-                        title={table.name}
-                        onClick={(event) => {
-                          if (event.detail > 1) return
-                          void selectConversation(databaseConversation.id, {
-                            dbTable: table.name
-                          })
-                          onNavigate?.()
-                        }}
-                      >
-                        <span className="conv-text">
-                          <span className="conv-title">{middleTruncate(table.name)}</span>
-                          <span className="conv-subtitle">
-                            <span className="conv-subtitle-text">
-                              {t('preview.dbRowCount', { n: table.rowCount })}
-                            </span>
-                          </span>
-                        </span>
-                      </div>
-                    )
-                  })
-              )
-            )
-          : !collapsed &&
+        {!collapsed &&
           group.conversations.flatMap((conversation) => {
             const nested = swarmEnabled ? swarmChildrenOf(conversations, conversation.id) : []
             const rows: {
@@ -1364,12 +1222,16 @@ export function Sidebar({
               isTemporaryWorkspace,
               workdirShortLabel
             })
+            const displayTitle =
+              group.kind === 'database' && group.label
+                ? group.label
+                : conversation.title
             const rowTitle =
               conversation.workingDirectory &&
               !isTemporaryWorkspace(conversation.workingDirectory, tmp) &&
               group.kind !== 'workspace'
-                ? `${conversation.title}\n${conversation.workingDirectory}`
-                : conversation.title
+                ? `${displayTitle}\n${conversation.workingDirectory}`
+                : displayTitle
 
             return (
               <div
@@ -1379,6 +1241,7 @@ export function Sidebar({
                 }${swarmBracket === 'first' ? ' is-swarm-parent' : ''}${isSwarmChild ? ' is-swarm-child' : ''}`}
                 data-testid="session-row"
                 data-conversation-id={conversation.id}
+                data-db-connection={group.kind === 'database' ? 'true' : undefined}
                 title={rowTitle}
                 onClick={(event) => {
                   // detail: ignore the second half of a double-click pair
@@ -1443,7 +1306,7 @@ export function Sidebar({
                   <span className="conv-text">
                     <span className="conv-title">
                       {middleTruncate(
-                        isSwarmChild && agentLabel ? agentLabel : conversation.title
+                        isSwarmChild && agentLabel ? agentLabel : displayTitle
                       )}
                     </span>
                     {sessionSecondLine(
@@ -1646,6 +1509,21 @@ export function Sidebar({
               onClick={() => setSidebarQuery('')}
             >
               {t('sidebar.clearFilter')}
+            </button>
+          </EmptyState>
+        )}
+        {databasesView && !searching && visible.length === 0 && (
+          <EmptyState title={t('sidebar.dbEmptyTitle')} description={t('sidebar.dbEmptyDesc')}>
+            <button
+              className="btn secondary"
+              data-testid="sidebar-create-db"
+              title={t('db.new')}
+              onClick={() => {
+                void createDbConversation()
+                onNavigate?.()
+              }}
+            >
+              {t('db.new')}
             </button>
           </EmptyState>
         )}

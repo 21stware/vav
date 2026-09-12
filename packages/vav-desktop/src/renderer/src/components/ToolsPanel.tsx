@@ -1,10 +1,19 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent
+} from 'react'
 import {
   ArrowLeftRight,
   Bot,
   ChevronDown,
   ChevronUp,
   Download,
+  Ellipsis,
   Folder,
   GitBranch,
   Maximize2,
@@ -20,8 +29,9 @@ import {
   PANEL_MIN_HEIGHT,
   PANEL_SNAP_RATIO
 } from '../state/sessionStore'
+import { startCapturedPointerDrag } from '../lib/capturedPointerDrag'
 import { useConversationArtifacts } from '../lib/useConversationArtifacts'
-import { useWorkspaceStore } from '../state/workspaceStore'
+import { useWorkspaceStore, type NewBashOptions } from '../state/workspaceStore'
 import { isTemporaryWorkspace, truncatePathLabel, workspaceChromeLabel } from '../lib/format'
 import { useGitRepoSyncEpoch } from '../lib/gitRepoSync'
 import { FilesPanel } from './FilesPanel'
@@ -29,7 +39,7 @@ import { TerminalPanel } from './TerminalPanel'
 import { bashGroupChips } from '../lib/bashTabGroups'
 import { focusBashPane, getUiFocusScope, resolveUiFocusScope } from '../lib/uiFocus'
 import { createMenuNonceGate } from '../lib/menuNonce'
-import { menuAnchor, showMenu, type MenuItem } from '../lib/nativeMenu'
+import { menuAnchor, menuAnchorIfVisible, showMenu, type MenuItem } from '../lib/nativeMenu'
 import { workspaceSwitchMenuItems } from '../lib/workspaceSwitchMenu'
 import { matchingKeyBindingId, resolveKeyBindings } from '@shared/keyBindings'
 import { fileManagerLabel, keys, PLATFORM } from '../lib/platform'
@@ -37,6 +47,11 @@ import { allowWorkdirSwitch as workdirSwitchAllowed, isSwarmSurfaceActive } from
 import { useT } from '../i18n/useT'
 import { Button, Chip } from './ui'
 import { useInstallRunStore } from '../state/installRunStore'
+import {
+  loadWorkspaceRunScripts,
+  type WorkspaceRunScript
+} from '../lib/scanWorkspaceRunScripts'
+import { asSingleShellLine, type WorkspaceRunKind } from '@shared/workspaceRunScripts.ts'
 
 const consumeWorkspaceMenuNonce = createMenuNonceGate()
 
@@ -105,17 +120,13 @@ export function ToolsPanel({
   const tabStatus = useWorkspaceStore((s) => s.ptyStatus[activeId])
 
   const [dragHeight, setDragHeight] = useState<number | null>(null)
-  const dragState = useRef<{
-    startY: number
-    startHeight: number
-    maxHeight: number
-  } | null>(null)
   const pathChipRef = useRef<HTMLDivElement>(null)
   const bodyRef = useRef<HTMLDivElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
   const headerBarRef = useRef<HTMLDivElement>(null)
   const headerNewRef = useRef<HTMLDivElement>(null)
   const headerTabsRef = useRef<HTMLDivElement>(null)
+  const scriptsMenuBusy = useRef(false)
   /** Height before the last snap-to-70%. Restored on a second double-click. */
   const restoreHeightRef = useRef<{ id: string; height: number } | null>(null)
   /** Path chip glyph: git branch when the workdir is a repository. */
@@ -238,24 +249,32 @@ export function ToolsPanel({
   }, [])
 
   const onResizeStart = useCallback(
-    (event: React.MouseEvent) => {
+    (event: ReactPointerEvent<HTMLElement>) => {
       // Second click of a double-click must not start a drag.
       if (event.detail > 1) {
         event.preventDefault()
         return
       }
-      event.preventDefault()
-      dragState.current = {
-        startY: event.clientY,
-        startHeight: panelHeight,
-        maxHeight: snapHeight()
-      }
-      // Mark live tray drag: xterm still fits (tracks the pointer), but
-      // terminalRegistry holds SIGWINCH until settle (ghost TUI frames).
-      document.documentElement.dataset.resizing = 'true'
+      const startY = event.clientY
+      const startHeight = panelHeight
+      const maxHeight = snapHeight()
       setDragHeight(panelHeight)
+      startCapturedPointerDrag(event, {
+        cursor: 'row-resize',
+        onMove: (move) => {
+          const next = startHeight - (move.clientY - startY)
+          setDragHeight(Math.min(maxHeight, Math.max(PANEL_MIN_HEIGHT, next)))
+        },
+        onUp: () => {
+          setDragHeight((height) => {
+            if (height !== null) setPanelHeight(height)
+            return null
+          })
+          window.dispatchEvent(new Event('vav:resize-end'))
+        }
+      })
     },
-    [panelHeight, snapHeight]
+    [panelHeight, setPanelHeight, snapHeight]
   )
 
   const snapOrRestoreHeight = useCallback(
@@ -297,35 +316,6 @@ export function ToolsPanel({
     },
     [snapOrRestoreHeight]
   )
-
-  useEffect(() => {
-    if (dragHeight === null) return
-    const onMove = (event: MouseEvent): void => {
-      const state = dragState.current
-      if (!state) return
-      // Grip sits above the tray body: drag up → taller, drag down → shorter.
-      const next = state.startHeight - (event.clientY - state.startY)
-      setDragHeight(Math.min(state.maxHeight, Math.max(PANEL_MIN_HEIGHT, next)))
-    }
-    const onUp = (): void => {
-      setDragHeight((height) => {
-        if (height !== null) setPanelHeight(height)
-        return null
-      })
-      dragState.current = null
-      delete document.documentElement.dataset.resizing
-      // One settled fit after the tray height is committed.
-      window.dispatchEvent(new Event('vav:resize-end'))
-    }
-    window.addEventListener('mousemove', onMove)
-    window.addEventListener('mouseup', onUp)
-    return () => {
-      window.removeEventListener('mousemove', onMove)
-      window.removeEventListener('mouseup', onUp)
-      // Unmount mid-drag must not leave the global resize gate stuck.
-      delete document.documentElement.dataset.resizing
-    }
-  }, [dragHeight, setPanelHeight])
 
   // Persisted / snapped height can outgrow a smaller window — clamp to 70%.
   useLayoutEffect(() => {
@@ -507,7 +497,7 @@ export function ToolsPanel({
   const openHeight = dragHeight ?? panelHeight
   const atSnapHeight = !collapsed && openHeight >= snapHeight() - 12
 
-  const createBash = (): void => {
+  const createBash = (extras?: NewBashOptions, command?: string): void => {
     void (async () => {
       let id = useSessionStore.getState().activeId
       if (!id) {
@@ -516,8 +506,73 @@ export function ToolsPanel({
       }
       if (!id) return
       setPanelSegment('terminal')
-      const tabId = await newBash(id, 80, 24)
-      if (tabId) focusBashPane(tabId)
+      const tabId = await newBash(id, 80, 24, extras)
+      if (!tabId) return
+      focusBashPane(tabId)
+      const line = command ? asSingleShellLine(command) : ''
+      if (!line) return
+      window.setTimeout(() => {
+        window.vav.pty.write(tabId, `${line}\r`)
+      }, 280)
+    })()
+  }
+
+  const runWorkspaceScript = (script: WorkspaceRunScript): void => {
+    createBash({ title: script.label }, script.command)
+  }
+
+  const runScriptGroupLabel = (kind: WorkspaceRunKind, runner?: string): string => {
+    if (kind === 'node') return t('tools.runScriptsNode', { runner: runner || 'npm' })
+    if (kind === 'python') return t('tools.runScriptsPython')
+    if (kind === 'go') return t('tools.runScriptsGo')
+    if (kind === 'rust') return t('tools.runScriptsRust')
+    return t('tools.runScriptsMake')
+  }
+
+  const openRunScriptsMenu = (): void => {
+    if (scriptsMenuBusy.current) return
+    scriptsMenuBusy.current = true
+    void (async () => {
+      try {
+        const root = useWorkspaceStore.getState().workspaces[useSessionStore.getState().activeId]
+          ?.root
+        if (!root) {
+          await showMenu(
+            [{ label: t('tools.runScriptsNeedWorkdir'), disabled: true }],
+            menuAnchorIfVisible(headerNewRef.current)
+          )
+          return
+        }
+        const { scripts } = await loadWorkspaceRunScripts(
+          root,
+          useSessionStore.getState().activeId || undefined
+        )
+        if (scripts.length === 0) {
+          await showMenu(
+            [{ label: t('tools.runScriptsEmpty'), disabled: true }],
+            menuAnchorIfVisible(headerNewRef.current)
+          )
+          return
+        }
+        const items: MenuItem[] = []
+        let lastKind = ''
+        for (const script of scripts) {
+          if (script.kind !== lastKind) {
+            lastKind = script.kind
+            items.push({
+              label: runScriptGroupLabel(script.kind, script.runner),
+              header: true
+            })
+          }
+          items.push({
+            label: script.label,
+            onSelect: () => runWorkspaceScript(script)
+          })
+        }
+        await showMenu(items, menuAnchorIfVisible(headerNewRef.current))
+      } finally {
+        scriptsMenuBusy.current = false
+      }
     })()
   }
 
@@ -818,13 +873,16 @@ export function ToolsPanel({
         </div>
 
         <div className="tools-header-new" ref={headerNewRef}>
-          <Button
+          <Chip
             label={t('tools.newBashShort')}
             icon={<TerminalIcon size={12} />}
-            size="sm"
             testId="new-bash"
             title={`${t('tools.newBash')} ${keys('⌘T')}`}
-            onClick={createBash}
+            onClick={() => createBash()}
+            onAction={openRunScriptsMenu}
+            actionIcon={<Ellipsis size={11} />}
+            actionTitle={t('tools.runScriptsTitle')}
+            actionTestId="new-bash-scripts"
           />
         </div>
 
@@ -854,7 +912,7 @@ export function ToolsPanel({
           aria-orientation="horizontal"
           aria-label={t('tools.resizePanel')}
           title={t('tools.resizePanel')}
-          onMouseDown={onResizeStart}
+          onPointerDown={onResizeStart}
           onDoubleClick={onResizerDoubleClick}
         />
       )}

@@ -137,7 +137,7 @@ import {
   swarmRootId
 } from '@shared/swarmLayout'
 import { patchAcpConfigOption, patchAcpSessionMode } from '@shared/acpSession'
-import { inheritCreateWorkingDirectory, nextConversationForMachine, pickBootstrapActiveId, seedCliAgentCatalogue, seedEmptyConversationPatch, shouldSpawnDetachedConversation, claimDetachedSessionPatch } from './sessionBootstrap'
+import { inheritCreateWorkingDirectory, nextConversationForMachine, nextFileCategoryForMachine, pickBootstrapActiveId, seedCliAgentCatalogue, seedEmptyConversationPatch, shouldSpawnDetachedConversation, claimDetachedSessionPatch } from './sessionBootstrap'
 import { notifyImageAttachPlan, trimAttachmentPathsForHost } from './sessionAttach'
 import { persistSwarmLayout, setLeaf } from './sessionSwarm'
 import { swarmBlocksWorkdirSwitch as swarmSurfaceBlocksWorkdir } from '../lib/workdirSwitch'
@@ -199,16 +199,6 @@ interface SessionState {
    * file so Back to file list can restore the same source.
    */
   filesSource: 'recent' | 'thisMac'
-  /**
-   * Scheduled category: the create form is up and is not a left-list row.
-   * Selecting a task or a run clears this.
-   */
-  scheduledCreating: boolean
-  /**
-   * Database category: the create form is up and is not a left-list row.
-   * Selecting a connection or a table clears this.
-   */
-  dbCreating: boolean
   /** Selected table inside the active database session. Null = connection info. */
   activeDbTable: string | null
   /** Cached live-DB schema by connection id. */
@@ -476,16 +466,15 @@ interface SessionState {
      */
     openIn?: 'here' | 'detached' | 'none'
   }): Promise<string | void>
-  /** New scheduled task: open the create form. Does not mint a sidebar row. */
+  /** New scheduled task: mint the group, select it, then edit in the form. */
   createScheduledConversation(): Promise<void>
   /**
-   * Scheduled category: keep a task selected when one exists, otherwise the
-   * empty-state create form. Never mints a draft row.
+   * Scheduled category: keep the selected group or run. Empty list stays empty.
    */
   ensureScheduledConversation(): void
-  /** New database connection: configure in the current window's right panel. */
+  /** New database connection: mint the row, select it, then edit in the form. */
   createDbConversation(): Promise<void>
-  /** DB category: keep a connection editor open. */
+  /** DB category: keep a connection selected. Empty list stays empty. */
   ensureDbConversation(): void
   /** ⌘D / ⌘⇧D: mint a sibling agent session and split the Thread surface. */
   splitSwarmPane(axis?: TerminalSplitAxis): Promise<void>
@@ -735,8 +724,6 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   sidebarVisible: globalLayout.sidebarVisible,
   sidebarListMode: 'main',
   filesSource: 'recent',
-  scheduledCreating: false,
-  dbCreating: false,
   activeDbTable: null,
   dbSchemas: {},
   toolsLayouts: sessionToolsLayouts,
@@ -1080,8 +1067,6 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       activeId: id,
       selectedIds: nextSelection,
       activeGroupId: null,
-      scheduledCreating: false,
-      dbCreating: false,
       activeDbTable: nextDbTable,
       sessionPreview: { kind: 'file' },
       ...(toolsLayoutsPatch ? { toolsLayouts: toolsLayoutsPatch } : {}),
@@ -1196,37 +1181,60 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   async createScheduledConversation() {
-    set({ sidebarListMode: 'timers', scheduledCreating: true, selectedIds: [] })
-    get().focusComposer()
+    if (!window.vav?.timers?.createScheduled) return
+    set({ sidebarListMode: 'timers' })
+    try {
+      const result = await window.vav.timers.createScheduled()
+      set((state) => ({
+        ...seedEmptyConversationPatch(state, result.conversation),
+        sidebarListMode: 'timers'
+      }))
+      await get().selectConversation(result.conversation.id)
+      get().focusComposer()
+    } catch (err) {
+      get().showToast({
+        kind: 'error',
+        title: tt('timer.createFailed'),
+        description: err instanceof Error ? err.message : String(err)
+      })
+    }
   },
 
   ensureScheduledConversation() {
-    if (get().scheduledCreating) return
     const { conversations, activeId, windowMachineId } = get()
     const machineId = normalizeMachineId(windowMachineId)
     const current = conversations.find((row) => row.id === activeId)
     if (current && conversationFitsListMode(current, 'timers')) return
     const nextId = nextConversationForListMode(conversations, 'timers', activeId, machineId)
-    if (nextId) {
-      if (nextId !== activeId) void get().selectConversation(nextId)
-      return
-    }
-    set({ scheduledCreating: true })
+    if (nextId && nextId !== activeId) void get().selectConversation(nextId)
   },
 
   async createDbConversation() {
-    set({
-      sidebarListMode: 'databases',
-      dbCreating: true,
-      selectedIds: [],
-      activeDbTable: null
-    })
+    if (!window.vav?.db?.create) return
+    set({ sidebarListMode: 'databases', activeDbTable: null })
+    try {
+      const result = await window.vav.db.create()
+      set((state) => ({
+        ...seedEmptyConversationPatch(state, result.conversation),
+        sidebarListMode: 'databases',
+        activeDbTable: null
+      }))
+      await get().selectConversation(result.conversation.id)
+    } catch (err) {
+      get().showToast({
+        kind: 'error',
+        title: tt('db.createFailed'),
+        description: err instanceof Error ? err.message : String(err)
+      })
+    }
   },
 
   setActiveDbTable(table) {
-    set({ activeDbTable: table, dbCreating: false })
+    const next = table?.trim() || null
+    if (get().activeDbTable === next) return
+    set({ activeDbTable: next })
     const id = get().activeId
-    if (id) void get().setFocusedDbTable(id, table)
+    if (id) void get().setFocusedDbTable(id, next)
   },
 
   setDbSchema(connectionId, info) {
@@ -1236,17 +1244,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   ensureDbConversation() {
-    if (get().dbCreating) return
     const { conversations, activeId, windowMachineId } = get()
     const machineId = normalizeMachineId(windowMachineId)
     const current = conversations.find((row) => row.id === activeId)
     if (current && conversationFitsListMode(current, 'databases')) return
     const nextId = nextConversationForListMode(conversations, 'databases', activeId, machineId)
-    if (nextId) {
-      if (nextId !== activeId) void get().selectConversation(nextId)
-      return
-    }
-    set({ dbCreating: true })
+    if (nextId && nextId !== activeId) void get().selectConversation(nextId)
   },
 
   async splitSwarmPane(axis = 'row') {
@@ -1509,9 +1512,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
             set({
               activeId: '',
               selectedIds: [],
-              activeGroupId: null,
-              scheduledCreating: get().sidebarListMode === 'timers',
-              dbCreating: get().sidebarListMode === 'databases'
+              activeGroupId: null
             })
           }
         }
@@ -2772,9 +2773,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     set({
       sidebarListMode: mode,
       sidebarQuery: '',
-      sidebarSearchOpen: false,
-      scheduledCreating: mode === 'timers' ? get().scheduledCreating : false,
-      dbCreating: mode === 'databases' ? get().dbCreating : false
+      sidebarSearchOpen: false
     })
     // AppKit leaves the workdir / path-chip menu up when only the renderer swaps.
     void window.vav?.window?.closePopupMenu?.()
@@ -3004,6 +3003,12 @@ async function syncActiveConversationToMachine(): Promise<void> {
   const state = useSessionStore.getState()
   if (!state.ready) return
   const machineId = normalizeMachineId(state.windowMachineId)
+  if (state.sidebarListMode === 'fileSessions') {
+    const fileDecision = nextFileCategoryForMachine(state.conversations, state.activeId, machineId)
+    if (fileDecision.action === 'keep') return
+    useSessionStore.setState({ activeId: '', selectedIds: [] })
+    return
+  }
   const decision = nextConversationForMachine(state.conversations, state.activeId, machineId)
   if (decision.action === 'keep') return
   syncingMachine = true

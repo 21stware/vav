@@ -81,6 +81,52 @@ describe('registerDbIpc', () => {
     assert.equal(store.get(created.id)?.lastStatus, 'ok')
   })
 
+  it('mints another conversation on the same connection', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'vav-db-ipc-'))
+    const store = new DbConnectionStore(dir, memoryVault())
+    const conversations = new Map<string, Conversation>()
+    const handlers = new Map<string, (...args: unknown[]) => unknown>()
+    const ipcMain = {
+      handle: (channel: string, fn: (...args: unknown[]) => unknown) => {
+        handlers.set(channel, fn)
+      }
+    }
+    let minted = 0
+    registerDbIpc(
+      ipcMain as never,
+      store,
+      { evict: () => undefined, test: async () => ({ ok: true }) } as never,
+      {
+        get: (id: string) => conversations.get(id),
+        updateMeta: (id: string, patch: { dbConnectionId?: string; sessionKind?: string }) => {
+          const row = conversations.get(id)
+          if (row) Object.assign(row, patch)
+        }
+      } as never,
+      () => undefined,
+      {
+        createDefinitionConversation: () => {
+          minted += 1
+          const conversation = { id: `c-new-${minted}`, title: 'Untitled' } as Conversation
+          conversations.set(conversation.id, conversation)
+          return conversation
+        },
+        publishConversations: () => undefined
+      }
+    )
+    const first = (await handlers.get(IPC.dbCreate)?.({})) as {
+      connection: { id: string; conversationId: string }
+      conversation: { id: string }
+    }
+    const second = (await handlers.get(IPC.dbCreateSession)?.({}, first.connection.id)) as {
+      connection: { conversationId: string }
+      conversation: { id: string }
+    }
+    assert.equal(second.conversation.id, 'c-new-2')
+    assert.equal(second.connection.conversationId, 'c-new-2')
+    assert.equal(store.get(first.connection.id)?.conversationId, 'c-new-2')
+  })
+
   it('does not mark a connection ready when the probe fails', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'vav-db-ipc-'))
     const store = new DbConnectionStore(dir, memoryVault())

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSessionStore } from './state/sessionStore'
 import {
+  installAgentModelCatalogBridge,
   installCompactionsBridge,
   installSettingsBridge,
   installTurnEventBridge,
@@ -168,6 +169,8 @@ export default function SessionWindow({
     const offWindow = installWindowBridge()
     const offActivity = installActivityBridge()
     const offUpdates = installUpdateBridge()
+    const offModels = installAgentModelCatalogBridge()
+    void useSessionStore.getState().refreshAgentModelCatalog(false)
     const offMenu = installDefaultContextMenu()
     const offInstall = installInstallRunBridge()
     const offHistory = installSwarmHistoryBridge()
@@ -198,6 +201,7 @@ export default function SessionWindow({
       offWindow()
       offActivity()
       offUpdates()
+      offModels()
       offMenu()
       offCli()
       offHistory()

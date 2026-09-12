@@ -63,6 +63,21 @@ const opts = {
 }
 
 describe('listedSidebarGroups', () => {
+  it('keeps the focused session visible under Running and unread', () => {
+    const rows = [
+      conv({ id: 'idle', updatedAt: 3 }),
+      conv({ id: 'run', updatedAt: 2 }),
+      conv({ id: 'other', updatedAt: 1 })
+    ]
+    const ids = listedSidebarGroups(rows, {
+      ...opts,
+      sessionFilter: { kind: 'active' },
+      running: (id) => id === 'run',
+      focusedId: 'idle'
+    }).flatMap((g) => g.conversations.map((c) => c.id))
+    assert.deepEqual(ids, ['idle', 'run'])
+  })
+
   it('keeps timer sessions out of the main project list and archive', () => {
     const rows = [
       conv({ id: 'live', title: 'Chat' }),
@@ -76,13 +91,7 @@ describe('listedSidebarGroups', () => {
       g.conversations.map((c) => c.id)
     )
     assert.deepEqual(archived, [])
-    const hidden = listedSidebarGroups(rows, { ...opts, databasesView: true })
-    assert.deepEqual(hidden, [])
-    const databases = listedSidebarGroups(rows, {
-      ...opts,
-      databasesView: true,
-      connectedConversationIds: new Set(['db'])
-    })
+    const databases = listedSidebarGroups(rows, { ...opts, databasesView: true })
     assert.deepEqual(
       databases.map((g) => ({ key: g.key, kind: g.kind, ids: g.conversations.map((c) => c.id) })),
       [{ key: 'db:db', kind: 'database', ids: ['db'] }]
@@ -94,11 +103,7 @@ describe('listedSidebarGroups', () => {
       conv({ id: 'a', title: 'Analytics', sessionKind: 'db', pinned: true, pinTime: 2, updatedAt: 1 }),
       conv({ id: 'b', title: 'Billing', sessionKind: 'db', updatedAt: 9 })
     ]
-    const groups = listedSidebarGroups(rows, {
-      ...opts,
-      databasesView: true,
-      connectedConversationIds: new Set(['a', 'b'])
-    })
+    const groups = listedSidebarGroups(rows, { ...opts, databasesView: true })
     assert.deepEqual(
       groups.map((g) => ({ key: g.key, pinned: !!g.pinned, label: g.label })),
       [
@@ -120,21 +125,19 @@ describe('listedSidebarGroups', () => {
     const miss = listedSidebarGroups(rows, {
       ...opts,
       databasesView: true,
-      connectedConversationIds: new Set(['db']),
       query: 'xref'
     })
     assert.deepEqual(miss, [])
     const hit = listedSidebarGroups(rows, {
       ...opts,
       databasesView: true,
-      connectedConversationIds: new Set(['db']),
       query: 'xref',
       dbTableNames: { 'conn-1': ['rnc_database', 'xref'] }
     })
     assert.deepEqual(hit.map((g) => g.key), ['db:db'])
   })
 
-  it('synthesizes a connected db row when listMeta omitted the session', () => {
+  it('synthesizes a db row when listMeta omitted the session', () => {
     const merged = mergeConnectedDbConversations([], [
       {
         id: 'conn',
@@ -163,12 +166,41 @@ describe('listedSidebarGroups', () => {
     const groups = listedSidebarGroups(merged, {
       ...opts,
       databasesView: true,
-      connectedConversationIds: new Set(['db-1']),
       dbConnectionIds: { 'db-1': 'conn' }
     })
     assert.deepEqual(
       groups.map((g) => ({ key: g.key, connectionId: g.connectionId })),
       [{ key: 'db:db-1', connectionId: 'conn' }]
+    )
+  })
+
+  it('lists a newly minted unconnected database', () => {
+    const merged = mergeConnectedDbConversations([], [
+      {
+        id: 'draft',
+        title: '',
+        conversationId: 'db-new',
+        driver: 'postgres',
+        host: 'localhost',
+        port: 5432,
+        database: '',
+        user: '',
+        ssl: false,
+        useUrl: false,
+        url: '',
+        hasPassword: false,
+        createdAt: 1,
+        updatedAt: 1,
+        lastConnectedAt: null,
+        lastStatus: null,
+        lastError: null
+      }
+    ])
+    assert.equal(merged[0]?.id, 'db-new')
+    const groups = listedSidebarGroups(merged, { ...opts, databasesView: true })
+    assert.deepEqual(
+      groups.map((g) => g.conversations.map((c) => c.id)),
+      [['db-new']]
     )
   })
 
@@ -184,7 +216,6 @@ describe('listedSidebarGroups', () => {
     const groups = listedSidebarGroups(rows, {
       ...opts,
       databasesView: true,
-      connectedConversationIds: new Set(['db']),
       dbTitles: { db: 'pfmegrnargs@hh-pgsql-public.ebi.ac.uk' }
     })
     assert.equal(groups[0]?.label, 'pfmegrnargs@hh-pgsql-public.ebi.ac.uk')

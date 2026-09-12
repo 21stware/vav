@@ -119,7 +119,7 @@ describe('sortTimerJobs', () => {
 })
 
 describe('isDraftTimerJob', () => {
-  it('hides empty untitled jobs that were minted for the create form', () => {
+  it('detects empty untitled jobs', () => {
     const untitled = 'Untitled-scheduled-task'
     assert.equal(
       isDraftTimerJob({ title: untitled, prompt: '', enabled: false }, untitled),

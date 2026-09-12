@@ -49,6 +49,8 @@ import {
   nextExpandedPaths,
   normalizeDirListError,
   planDirListingPatch,
+  queuePendingDirReload,
+  takePendingDirReload,
   planWorkingDirectorySlice,
   type WorkspaceSlice
 } from '../lib/workspaceSlice'
@@ -632,7 +634,12 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     const quiet = options?.quiet === true
     const slice = get().workspaces[id]
     if (!slice) return
-    if (slice.loadingDirs.includes(path)) return
+    // A watch tick during an in-flight list would otherwise be dropped, and the
+    // listing that started first wins with a stale tree.
+    if (slice.loadingDirs.includes(path)) {
+      queuePendingDirReload(id, path)
+      return
+    }
     // Watch refresh: never flash skeleton rows — keep the previous listing until
     // the new one arrives, and bail if nothing changed.
     if (!quiet) {
@@ -661,6 +668,9 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     }
 
     patch(set, id, (s) => planDirListingPatch(s, path, nextEntries, listing, error))
+    if (takePendingDirReload(id, path)) {
+      await get().loadDirectory(id, path, { quiet: true })
+    }
   },
 
   async refreshDirectories(id, dirs) {

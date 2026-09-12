@@ -55,6 +55,8 @@ import {
   projectChecklistInput
 } from '@shared/planDoc'
 import { enabledCliAgents } from '@shared/types'
+import { cuaEmbeddedMcpServer } from '../../shared/computerUse.ts'
+import { loadCuaConnection } from '../computer/CuaComputerHost.ts'
 import type { AcpSessionState, GoalAction } from '@shared/acpSession'
 import { patchAcpConfigOption, patchAcpSessionMode } from '@shared/acpSession'
 import { planSessionGoal } from './sessionGoal'
@@ -102,6 +104,7 @@ import { sealCliPlanBlocks, planSealMode } from './planSeal'
 import { composeCliPrompt } from './cliPrompt'
 import { cursorLockedFamilyThinkingPatch, nextAllowedThinkingLevel } from './thinkingClamp'
 import { estimatedContextFill } from './contextFill'
+import { coalesceStreamChunk, foldSnapshotText } from '../../shared/streamCoalesce.ts'
 import { stampReasoningDurations } from './reasoningStamp'
 import { userTurnMessage } from './agentMessage'
 import { allocateCliDeltaSlot } from './cliDelta'
@@ -265,6 +268,12 @@ export interface CliAgentHostDeps {
     identity?(host: CliHostKind): string | null
     forceRefresh(host: CliHostKind): Promise<QuotaWindow[]>
   }
+}
+
+function computerMcpServers(enabled: boolean): unknown[] {
+  if (!enabled) return []
+  const conn = loadCuaConnection()
+  return conn ? [cuaEmbeddedMcpServer(conn)] : []
 }
 
 function openExternalUrl(url: string): void {
@@ -936,6 +945,7 @@ export class CliAgentHost {
         cursor,
         env: { ...agent?.envVars, ...this.deps.sessionSecrets?.getEnv(conversationId) },
         extraArgs: agent?.defaultArgs,
+        mcpServers: computerMcpServers(settings.computerUseEnabled === true),
         hostProcess: this.hostProcessFor(conversationId),
         files: this.deps.files
           ? {
@@ -1290,7 +1300,10 @@ export class CliAgentHost {
       if (!text) continue
       const block = turn.blocks[index]
       if (!block || (block.kind !== 'text' && block.kind !== 'reasoning')) continue
-      block.text += text
+      block.text =
+        block.kind === 'reasoning'
+          ? foldSnapshotText(coalesceStreamChunk(block.text, text))
+          : block.text + text
       turn.buffers.set(index, '')
       this.deps.emit({
         type: 'delta',

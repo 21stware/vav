@@ -371,7 +371,16 @@ export function FilesPanel({
   }, [hasVercel, trayView])
 
   useEffect(() => {
-    if (visible && activeId && trayView === 'files') void ensureFilesLoaded(activeId)
+    if (!visible || !activeId || trayView !== 'files') return
+    const slice = useWorkspaceStore.getState().workspaces[activeId]
+    if (slice?.root && slice.dirs[slice.root]) {
+      void useWorkspaceStore.getState().refreshDirectories(activeId, [
+        slice.root,
+        ...slice.expanded
+      ])
+      return
+    }
+    void ensureFilesLoaded(activeId)
   }, [visible, activeId, ensureFilesLoaded, trayView])
 
   // Restore Finder sort prefs into the active workspace once when it appears.

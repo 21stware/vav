@@ -25,8 +25,10 @@ import {
   applyFileDraftContent,
   blockToRef,
   collectBlocks,
+  dbConversationIdForFilePath,
   filesHostConversationId,
   fileViewerAgentPanelOpen,
+  resolveOpenedFileSessionId,
   isOpenFilePath as filePathIsOpen,
   loadPanelWidth,
   mergeIncomingTextBody,
@@ -521,7 +523,19 @@ export function FileViewer({
         if (st?.dirty) {
           setHasUnsavedChanges(true)
           setPreviewRevision((n) => n + 1)
-          await reloadInfo(filePathRef.current)
+          const result = await reloadInfo(filePathRef.current)
+          // Office reloads from disk on the revision bump; text/csv/html render
+          // from workingContent, so pull the agent's on-disk edits into it or
+          // the canvas keeps painting the stale body (no visible refresh).
+          if (
+            result.text != null &&
+            (result.kind === 'text' ||
+              result.kind === 'csv' ||
+              result.kind === 'html' ||
+              result.kind === 'html-clip')
+          ) {
+            setWorkingContent(result.text)
+          }
         }
       })()
     })
@@ -630,6 +644,15 @@ export function FileViewer({
       setReadOnly(next)
     })
   }, [agentConversationId, forcedReadOnly])
+
+  useEffect(() => {
+    if (!fileId || typeof window.vav.fileSessions?.onChanged !== 'function') return
+    return window.vav.fileSessions.onChanged(() => {
+      void window.vav.fileSessions.list(fileId).then((state) => {
+        if (state) setFileSessions(state.sessions)
+      })
+    })
+  }, [fileId])
 
   const syncBlocks = useMemo(
     (): PreviewBlock[] =>
@@ -824,32 +847,53 @@ export function FileViewer({
       return null
     }
 
+    // File-backed DB connections already own an agent — reuse it.
+    if (typeof window.vav.db?.list === 'function') {
+      try {
+        const dbId = dbConversationIdForFilePath(await window.vav.db.list(), filePath)
+        if (dbId && (!parentConversationId || parentConversationId === dbId)) {
+          setAgentConversationId(dbId)
+          await selectConversation(dbId)
+          const meta = useSessionStore.getState().conversations.find((c) => c.id === dbId)
+          setSessionTitle(meta?.title || t('common.session'))
+          await prepareFileWorkspace(dbId, filePath)
+          return dbId
+        }
+      } catch {
+        // fall through to FileSessionStore
+      }
+    }
+
     // 1) FileSessionStore (preferred — multi-session, hidden from sidebar)
     try {
       if (typeof window.vav.fileSessions?.open === 'function') {
-        const state = await window.vav.fileSessions.open(filePath)
+        let state = await window.vav.fileSessions.open(filePath)
         if (state) {
+          const activeId = resolveOpenedFileSessionId(
+            state.sessions,
+            state.activeSessionId,
+            parentConversationId
+          )
+          if (activeId !== state.activeSessionId) {
+            const pinned = await window.vav.fileSessions.setActive(state.fileId, activeId)
+            if (pinned) state = pinned
+          }
           setFileId(state.fileId)
           setFileSessions(state.sessions)
-          setAgentConversationId(state.activeSessionId)
-          const active = state.sessions.find((s) => s.id === state.activeSessionId)
+          setAgentConversationId(activeId)
+          const active = state.sessions.find((s) => s.id === activeId)
           setSessionTitle(active?.title || 'New session')
-          await selectConversation(state.activeSessionId)
-          const meta = useSessionStore
-            .getState()
-            .conversations.find((c) => c.id === state.activeSessionId)
+          await selectConversation(activeId)
+          const meta = useSessionStore.getState().conversations.find((c) => c.id === activeId)
           if (meta?.title) setSessionTitle(meta.title)
           try {
             // Prefer effectiveReadOnly (format lock / forced RO), not the stale local flag.
-            await window.vav.fileSessions.setReadOnly(
-              state.activeSessionId,
-              forcedReadOnly || readOnly
-            )
+            await window.vav.fileSessions.setReadOnly(activeId, forcedReadOnly || readOnly)
           } catch {
             // optional on older main
           }
-          await prepareFileWorkspace(state.activeSessionId, filePath)
-          return state.activeSessionId
+          await prepareFileWorkspace(activeId, filePath)
+          return activeId
         }
       }
     } catch (err) {
@@ -915,6 +959,23 @@ export function FileViewer({
     setAgentConversationId(parentConversationId ?? null)
     if (parentConversationId && filePath) {
       void prepareFileWorkspace(parentConversationId, filePath)
+      if (typeof window.vav.fileSessions?.open === 'function' && !isClipPath(filePath)) {
+        void window.vav.fileSessions.open(filePath).then(async (state) => {
+          if (!state) return
+          setFileId(state.fileId)
+          const activeId = resolveOpenedFileSessionId(
+            state.sessions,
+            state.activeSessionId,
+            parentConversationId
+          )
+          if (activeId !== state.activeSessionId) {
+            const pinned = await window.vav.fileSessions.setActive(state.fileId, activeId)
+            setFileSessions(pinned?.sessions ?? state.sessions)
+            return
+          }
+          setFileSessions(state.sessions)
+        })
+      }
     }
     // prepareFileWorkspace is recreated each render; only re-bind on identity change.
     // eslint-disable-next-line react-hooks/exhaustive-deps

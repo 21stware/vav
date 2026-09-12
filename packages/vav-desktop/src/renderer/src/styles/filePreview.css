@@ -2443,6 +2443,7 @@
   bottom: 0;
   width: 4px;
   cursor: col-resize;
+  touch-action: none;
   z-index: 2;
 }
 
@@ -2692,6 +2693,48 @@
 
 .sqlite-root.hide-nav {
   flex: 1;
+}
+
+.sqlite-root.nav-side {
+  flex-direction: row;
+}
+
+.sqlite-root.nav-side .structured-doc-nav {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 200px;
+  max-width: 260px;
+  min-width: 148px;
+  min-height: 0;
+  border-bottom: none;
+  border-right: 1px solid var(--border);
+}
+
+.sqlite-root.nav-side .structured-doc-nav-scroll {
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  padding: 8px;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.sqlite-root.nav-side .structured-doc-nav-item {
+  max-width: none;
+  width: 100%;
+  justify-content: space-between;
+  border-radius: 7px;
+  border-color: transparent;
+}
+
+.sqlite-root.nav-side .structured-doc-nav-item:hover {
+  border-color: transparent;
+}
+
+.sqlite-root.nav-side .structured-doc-nav-item.active {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
 }
 
 .sqlite-panel {
@@ -3020,31 +3063,26 @@
   flex: 0 0 auto;
 }
 
-/* Save + … as a joined secondary control (not primary emphasis).
+/* Save + … sits with the other header ghosts — no frame, no join stroke.
    Save can be disabled while … stays fully interactive for Save As. */
 .preview-save-group {
   display: inline-flex;
   align-items: stretch;
   flex: 0 0 auto;
-  border-radius: var(--radius-sm, 6px);
-  overflow: hidden;
-  box-shadow: inset 0 0 0 1px var(--border);
 }
 
 .preview-save-group .btn {
-  border-radius: 0;
   box-shadow: none;
   border: 0;
 }
 
 .preview-save-group .preview-save-main {
-  padding-inline: 10px;
+  padding-inline: 8px;
 }
 
 .preview-save-group .preview-save-more {
-  width: 28px;
+  width: 22px;
   padding-inline: 0;
-  border-left: 1px solid var(--border);
   /* Never inherit a "group looks disabled" wash from the Save half. */
   opacity: 1;
   pointer-events: auto;
@@ -3054,13 +3092,18 @@
   opacity: 0.45;
 }
 
-/* Dirty Save group uses primary; keep the join seam readable. */
+/* Dirty: one filled control, still no outline — a soft seam marks the menu. */
 .preview-save-group.is-dirty {
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, var(--border));
+  border-radius: var(--radius-sm, 6px);
+  overflow: hidden;
+}
+
+.preview-save-group.is-dirty .btn {
+  border-radius: 0;
 }
 
 .preview-save-group.is-dirty .preview-save-more {
-  border-left-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+  border-left: 1px solid color-mix(in srgb, var(--accent-fg) 22%, transparent);
 }
 
 .assoc-settings {
@@ -3181,8 +3224,9 @@
   transition: none !important;
 }
 
-.workspace-view.is-col-resizing .workspace-view-preview {
-  /* Still reflows via flex; block input so drag doesn't steal focus into PDF. */
+.workspace-view.is-col-resizing .workspace-view-preview,
+.file-preview-shell.is-col-resizing .file-preview-file-col {
+  /* Still reflows via flex; block input so drag doesn't steal focus into PDF/HTML. */
   pointer-events: none;
 }
 

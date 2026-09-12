@@ -15,12 +15,10 @@ import {
   visualWeekdays,
   type VisualSchedule
 } from '@shared/cronUi'
-import { seedEmptyConversationPatch } from '../state/sessionBootstrap'
 import { useSessionStore } from '../state/sessionStore'
 import { useT } from '../i18n/useT'
 import { useSidebarFloatMode } from '../lib/sidebarLayout'
 import { isDraftScheduledTitle } from '../lib/draftEditorTitle'
-import { isDraftTimerJob } from '../lib/timerSessions'
 import { isTemporaryWorkspace, relativeTime } from '../lib/format'
 import { basename } from '../lib/path'
 import { ShellLeadingControls } from './ShellLeadingControls'
@@ -83,11 +81,11 @@ function visualWithMode(current: VisualSchedule, mode: VisualSchedule['mode']): 
 export function ScheduleEditor({
   conversationId
 }: {
-  conversationId: string | null
+  conversationId: string
 }): React.JSX.Element {
   const t = useT()
   const conversation = useSessionStore((s) =>
-    conversationId ? s.conversations.find((row) => row.id === conversationId) : undefined
+    s.conversations.find((row) => row.id === conversationId)
   )
   const renameConversation = useSessionStore((s) => s.renameConversation)
   const showToast = useSessionStore((s) => s.showToast)
@@ -106,10 +104,9 @@ export function ScheduleEditor({
   const [workdirPolicy, setWorkdirPolicy] = useState<TimerJob['workdirPolicy']>('mint')
   const [sourceWorkdir, setSourceWorkdir] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
-  const creating = !conversationId
 
   const loadJob = useCallback(async (): Promise<TimerJob | null> => {
-    if (!conversationId || !window.vav?.timers?.getJobForConversation) {
+    if (!window.vav?.timers?.getJobForConversation) {
       setJob(null)
       return null
     }
@@ -140,16 +137,6 @@ export function ScheduleEditor({
   }, [conversationId])
 
   useEffect(() => {
-    if (conversationId) return
-    setJob(null)
-    setTitle('')
-    setPrompt('')
-    setVisual(defaultVisualSchedule())
-    setWorkdirPolicy('mint')
-    setSourceWorkdir(null)
-  }, [conversationId])
-
-  useEffect(() => {
     void loadJob()
     return window.vav.timers?.onChanged(() => {
       void loadJob()
@@ -168,7 +155,7 @@ export function ScheduleEditor({
     workdirPolicy?: TimerJob['workdirPolicy']
     sourceWorkdir?: string | null
   }): Promise<TimerJob | null> => {
-    const current = job
+    const current = job ?? (await loadJob())
     if (!current) return null
     const nextPrompt = (patch.prompt ?? prompt).trim()
     const enabled = patch.enabled ?? current.enabled
@@ -206,14 +193,6 @@ export function ScheduleEditor({
   }
 
   const pickWorkspace = async (): Promise<void> => {
-    if (!conversationId) {
-      const path = await window.vav.settings?.pickDirectory()
-      if (path) {
-        setWorkdirPolicy('source')
-        setSourceWorkdir(path)
-      }
-      return
-    }
     const before = useSessionStore
       .getState()
       .conversations.find((row) => row.id === conversationId)?.workingDirectory
@@ -258,76 +237,6 @@ export function ScheduleEditor({
     }
   }
 
-  const commitCreate = async (enabled: boolean): Promise<TimerJob | null> => {
-    if (!prompt.trim()) {
-      showToast({ kind: 'error', title: t('timer.promptRequired') })
-      return null
-    }
-    if (!window.vav?.timers?.createScheduled || !window.vav.timers.updateJob) return null
-    const untitled = t('timer.untitled')
-    const jobs = window.vav.timers.listJobs ? await window.vav.timers.listJobs() : []
-    const draft = jobs.find((row) => isDraftTimerJob(row, untitled) && row.conversationId)
-    let current = draft ?? null
-    let nextConversationId = draft?.conversationId ?? null
-    if (!current) {
-      const result = await window.vav.timers.createScheduled()
-      useSessionStore.setState((state) => ({
-        ...seedEmptyConversationPatch(state, result.conversation),
-        sidebarListMode: 'timers'
-      }))
-      current = result.job
-      nextConversationId = result.conversation.id
-    }
-    const updated = await window.vav.timers.updateJob(current.id, {
-      title: title.trim() || untitled,
-      prompt: prompt.trim(),
-      schedule: scheduleFromVisual(visual),
-      enabled,
-      workdirPolicy,
-      sourceWorkdir
-    })
-    if (updated) setJob(updated)
-    if (nextConversationId) {
-      if (title.trim() && title.trim() !== untitled) {
-        await renameConversation(nextConversationId, title.trim())
-      }
-      if (workdirPolicy === 'source' && sourceWorkdir) {
-        await setWorkingDirectory(nextConversationId, sourceWorkdir)
-      }
-      await useSessionStore.getState().selectConversation(nextConversationId)
-    }
-    return updated
-  }
-
-  const create = async (): Promise<void> => {
-    if (job) {
-      if (!prompt.trim() && !job.prompt.trim()) {
-        showToast({ kind: 'error', title: t('timer.promptRequired') })
-        return
-      }
-      setBusy(true)
-      try {
-        await commitTitle()
-        await persist({ prompt, enabled: true })
-      } finally {
-        setBusy(false)
-      }
-      return
-    }
-    setBusy(true)
-    try {
-      await commitCreate(true)
-    } catch (err) {
-      showToast({
-        kind: 'error',
-        title: t('timer.createFailed'),
-        description: err instanceof Error ? err.message : String(err)
-      })
-    } finally {
-      setBusy(false)
-    }
-  }
-
   const runNow = async (): Promise<void> => {
     if (!prompt.trim() && !job?.prompt.trim()) {
       showToast({ kind: 'error', title: t('timer.promptRequired') })
@@ -335,9 +244,9 @@ export function ScheduleEditor({
     }
     setBusy(true)
     try {
-      const current = job ?? (await commitCreate(false))
+      const current = job ?? (await loadJob())
       if (!current) return
-      if (job) await persist({ prompt })
+      await persist({ prompt })
       const result = await window.vav.timers.runNow(current.id)
       if (result?.conversationId) {
         await useSessionStore.getState().selectConversation(result.conversationId)
@@ -612,32 +521,21 @@ export function ScheduleEditor({
             onCommit={(next) => void persist({ prompt: next })}
           />
 
-          {creating ? null : (
-            <label className="settings-field row">
-              <span>{t('timer.enabled')}</span>
-              <Toggle
-                checked={job?.enabled ?? false}
-                title={t('timer.enabled')}
-                testId="timer-enabled"
-                onChange={(enabled) => void persist({ enabled, prompt })}
-              />
-            </label>
-          )}
+          <label className="settings-field row">
+            <span>{t('timer.enabled')}</span>
+            <Toggle
+              checked={job?.enabled ?? false}
+              title={t('timer.enabled')}
+              testId="timer-enabled"
+              onChange={(enabled) => void persist({ enabled, prompt })}
+            />
+          </label>
 
           <div className="schedule-editor-actions">
-            {creating ? (
-              <Button
-                label={t('timer.create')}
-                variant="primary"
-                disabled={busy}
-                testId="timer-create"
-                onClick={() => void create()}
-              />
-            ) : null}
             <Button
               icon={<Play size={13} />}
               label={t('timer.runNow')}
-              variant={creating ? 'secondary' : 'primary'}
+              variant="primary"
               disabled={busy}
               testId="timer-run-now"
               onClick={() => void runNow()}

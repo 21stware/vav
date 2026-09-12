@@ -45,8 +45,11 @@ export function conversationMatchesFilter(
     running: boolean
     unread: boolean
     favoriteIds: ReadonlySet<string>
+    /** Focused row stays listed — a new session is neither running nor unread. */
+    focused?: boolean
   }
 ): boolean {
+  if (ctx.focused) return true
   switch (filter.kind) {
     case 'none':
       return true

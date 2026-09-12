@@ -1,10 +1,20 @@
-import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react'
+import {
+  Suspense,
+  lazy,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent
+} from 'react'
 import type { FileSessionListEntry } from '@shared/ipc'
 import { FILE_SESSION_AGENT_MIN_WIDTH } from '@shared/shellMinSize'
 import { useSessionStore } from '../state/sessionStore'
 import { useT } from '../i18n/useT'
 import { basename } from '../lib/path'
+import { useFileSessionHistory } from '../lib/useBoundSessionHistory'
 import { useSidebarFloatMode } from '../lib/sidebarLayout'
+import { startCapturedPointerDrag } from '../lib/capturedPointerDrag'
 import { reportFileSessionAgentOpen } from '../lib/useWindowMinSize'
 import { Button, EmptyState } from './ui'
 import { SessionDetail } from './SessionDetail'
@@ -53,6 +63,7 @@ export function FileSessionView({
 
   const sidebarVisible = useSessionStore((s) => s.sidebarVisible)
   const showFileList = useSessionStore((s) => s.showFileList)
+  const fileHistory = useFileSessionHistory(fileId, conversationId, resolved?.path ?? null)
   const sidebarFloating = useSidebarFloatMode()
   const showShellLeading = !(sidebarVisible && !sidebarFloating)
   const shellLeading = showShellLeading ? <ShellLeadingControls /> : null
@@ -74,41 +85,45 @@ export function FileSessionView({
   useEffect(() => {
     let cancelled = false
     setLoading(true)
-    void window.vav.fileSessions.resolve(fileId).then((next) => {
-      if (cancelled) return
-      setResolved(next)
-      setLoading(false)
-    })
+    setResolved(null)
+    void window.vav.fileSessions
+      .resolve(fileId)
+      .then((next) => {
+        if (!cancelled) setResolved(next)
+      })
+      .catch(() => {
+        if (!cancelled) setResolved(null)
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
     return () => {
       cancelled = true
     }
   }, [fileId])
 
-  const startResize = useCallback(
-    (event: React.MouseEvent): void => {
-      event.preventDefault()
-      const startX = event.clientX
-      const startW = agentWidthRef.current
-      const onMove = (ev: MouseEvent): void => {
+  const startResize = useCallback((event: ReactPointerEvent<HTMLElement>): void => {
+    const startX = event.clientX
+    const startW = agentWidthRef.current
+    startCapturedPointerDrag(event, {
+      cursor: 'col-resize',
+      classTarget: rootRef.current,
+      className: 'is-col-resizing',
+      onMove: (ev) => {
         const total = rootRef.current?.clientWidth ?? 800
         const max = Math.max(AGENT_MIN, Math.floor(total * 0.7))
         const next = Math.min(max, Math.max(AGENT_MIN, startW - (ev.clientX - startX)))
         setAgentWidth(next)
-      }
-      const onUp = (): void => {
-        window.removeEventListener('mousemove', onMove)
-        window.removeEventListener('mouseup', onUp)
+      },
+      onUp: () => {
         try {
           localStorage.setItem(AGENT_WIDTH_KEY, String(agentWidthRef.current))
         } catch {
           // ignore
         }
       }
-      window.addEventListener('mousemove', onMove)
-      window.addEventListener('mouseup', onUp)
-    },
-    []
-  )
+    })
+  }, [])
 
   const pathOk = resolved?.pathStatus === 'ok' && !!resolved.path
   // Canvas is always about the *file* — even when the parent folder is gone.
@@ -185,11 +200,10 @@ export function FileSessionView({
             role="separator"
             aria-orientation="vertical"
             aria-label={t('workspace.resizeAgentPanel')}
-            onMouseDown={startResize}
+            onPointerDown={startResize}
           />
-          {/* No “Open chat” title strip — session list is the sidebar; AgentModeChrome
-              is the sole top row (aligned with the file header). */}
-          <SessionDetail variant="workspace" />
+          {/* Context agent for this file — same instance as FileViewer history. */}
+          <SessionDetail variant="preview-edit" fileSessionChrome={fileHistory} />
         </div>
       </aside>
     </div>

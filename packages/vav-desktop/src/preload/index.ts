@@ -412,6 +412,7 @@ const api: VavApi = {
   db: {
     list: () => ipcRenderer.invoke(IPC.dbList),
     create: () => ipcRenderer.invoke(IPC.dbCreate),
+    createSession: (connectionId) => ipcRenderer.invoke(IPC.dbCreateSession, connectionId),
     getForConversation: (conversationId) =>
       ipcRenderer.invoke(IPC.dbGetForConversation, conversationId),
     ensureForConversation: (conversationId) =>
@@ -441,6 +442,7 @@ const api: VavApi = {
         IPC.fileSessionReadOnlyChanged,
         handler
       ),
+    onChanged: (handler) => subscribe(IPC.fileSessionsChanged, handler),
     rename: (fileId: string, sessionId: string, title: string) =>
       ipcRenderer.invoke(IPC.fileSessionsRename, fileId, sessionId, title),
     delete: (fileId: string, sessionIds: string[]) =>
@@ -685,7 +687,14 @@ const api: VavApi = {
   onAccountsUpdated: (handler) =>
     subscribe<import('@shared/ipc').AccountsPagePayload>(IPC.accountsUpdated, handler),
   onCliOpen: (handler) => subscribe(IPC.cliOpen, handler),
-  onFullscreen: (handler) => subscribe<boolean>(IPC.windowFullscreen, handler)
+  onFullscreen: (handler) => subscribe<boolean>(IPC.windowFullscreen, handler),
+
+  computer: {
+    status: () => ipcRenderer.invoke(IPC.computerStatus),
+    requestAccessibility: () => ipcRenderer.invoke(IPC.computerRequestAccessibility),
+    openAccessibilitySettings: () => ipcRenderer.invoke(IPC.computerOpenAccessibilitySettings),
+    openScreenRecordingSettings: () => ipcRenderer.invoke(IPC.computerOpenScreenRecordingSettings)
+  }
 }
 
 contextBridge.exposeInMainWorld('vav', api)

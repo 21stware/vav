@@ -9,7 +9,8 @@ import {
 import { vendorIdFromEndpoint } from '@shared/llmVendors.ts'
 import type { AgentModelCatalogEntry } from './sessionTypes.ts'
 
-type CatalogEntry = Pick<AgentModelCatalogEntry, 'models' | 'endpoint'>
+type CatalogEntry = Pick<AgentModelCatalogEntry, 'models'> &
+  Partial<Pick<AgentModelCatalogEntry, 'endpoint' | 'source' | 'error'>>
 
 export function builtinCatalogVendorId(
   catalog: Record<string, Pick<AgentModelCatalogEntry, 'endpoint'>>,
@@ -21,6 +22,39 @@ export function builtinCatalogVendorId(
   )
   const entry = catalogKey ? catalog[catalogKey] : undefined
   return vendorIdFromEndpoint(entry?.endpoint ?? fallbackEndpoint)
+}
+
+/**
+ * Live catalogue row for this host. Account keys are preferred; fall back to
+ * the same vendor (any account) so a missing conversation.accountId does not
+ * hide an already-probed list.
+ */
+export function catalogEntryForChatHost(
+  catalog: Record<string, CatalogEntry>,
+  host: CliHostKind | null | undefined,
+  vendorId?: string | null,
+  accountId?: string | null
+): CatalogEntry | undefined {
+  const exact = catalog[agentModelHostKey(host, vendorId, accountId)]
+  if (exact?.models && exact.models.length > 0) return exact
+  if (host) return exact
+  if (vendorId) {
+    const vendor = catalog[agentModelHostKey(null, vendorId)]
+    if (vendor?.models && vendor.models.length > 0) return vendor
+    const prefix = `vav:${vendorId}:`
+    for (const [key, entry] of Object.entries(catalog)) {
+      if (key.startsWith(prefix) && entry.models && entry.models.length > 0) return entry
+    }
+    const seeded = catalog.vav
+    if (seeded?.models && seeded.models.length > 0) {
+      const seededVendor = vendorIdFromEndpoint(seeded.endpoint)
+      if (!seeded.endpoint || seededVendor === vendorId || seededVendor === 'custom') return seeded
+    }
+    return exact
+  }
+  const seeded = catalog.vav
+  if (seeded?.models && seeded.models.length > 0) return seeded
+  return exact
 }
 
 /** Enabled model rows for the picker (live catalogue, then sync fallback). */
@@ -37,8 +71,7 @@ export function chatHostPickerModels(opts: {
     opts.cliHost == null
       ? builtinCatalogVendorId(opts.catalog, opts.accountId, opts.apiEndpoint)
       : null
-  const key = agentModelHostKey(opts.cliHost, vendorId, opts.accountId)
-  const entry = opts.catalog[key]
+  const entry = catalogEntryForChatHost(opts.catalog, opts.cliHost, vendorId, opts.accountId)
   const raw =
     entry?.models && entry.models.length > 0
       ? entry.models
@@ -70,8 +103,8 @@ export function coercedChatHostModel(opts: {
   const catalogue =
     opts.catalogue !== undefined
       ? opts.catalogue
-      : (opts.catalog?.[agentModelHostKey(opts.host, opts.vendorId, opts.accountId)]?.models ??
-        null)
+      : (catalogEntryForChatHost(opts.catalog ?? {}, opts.host, opts.vendorId, opts.accountId)
+          ?.models ?? null)
   return resolveModelForChatHost(opts.host, opts.currentModel, {
     customModels: opts.customModels,
     vavDefaultModel: opts.vavDefaultModel,

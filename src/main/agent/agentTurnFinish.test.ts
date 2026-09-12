@@ -50,6 +50,16 @@ describe('persistableTurnBlocks', () => {
     assert.equal(blocks[0]?.kind, 'text')
     assert.equal(blocks[1]?.kind, 'toolCall')
   })
+
+  it('folds snapshot reprints on persisted reasoning', () => {
+    const later =
+      '正在检查工作区环境、浏览器自动化技能及历史记录，确定如何操作日历。用户要求操作日历至12月份。'
+    const blocks = persistableTurnBlocks([
+      { kind: 'reasoning', text: ['用户要求操作日历至12月。', later, later].join('\n\n') }
+    ] as MessageBlock[])
+    assert.equal(blocks.length, 1)
+    assert.equal(blocks[0]?.kind === 'reasoning' ? blocks[0].text : '', later)
+  })
 })
 
 describe('assistantSnapshotFromTurn', () => {

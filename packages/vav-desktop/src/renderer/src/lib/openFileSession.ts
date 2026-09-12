@@ -2,6 +2,7 @@ import type { FileSessionListEntry } from '@shared/ipc'
 import { tt } from '../i18n/useT'
 import { useSessionStore } from '../state/sessionStore'
 import type { FileSessionSelectHint } from '../state/sessionListMerge'
+import { dbConversationIdForFilePath } from './fileViewerHelpers'
 import { dirname } from './path'
 import { normalizeMachineId } from '@shared/workspaceHost'
 
@@ -22,10 +23,27 @@ export function fileSessionSelectHint(
   }
 }
 
+async function revealInMainShell(
+  conversationId: string,
+  mode: 'fileSessions' | 'databases',
+  hint?: FileSessionSelectHint
+): Promise<void> {
+  const store = useSessionStore.getState()
+  store.setSidebarListMode(mode)
+  await store.selectConversation(conversationId, hint ? { fileSession: hint } : undefined)
+}
+
 /** Open or create a file session for `path` and show it in the File category. */
 export async function openFileSessionFromPath(path: string): Promise<string | null> {
-  const { selectConversation, showToast } = useSessionStore.getState()
+  const { showToast } = useSessionStore.getState()
   try {
+    if (typeof window.vav.db?.list === 'function') {
+      const dbId = dbConversationIdForFilePath(await window.vav.db.list(), path)
+      if (dbId) {
+        await revealInMainShell(dbId, 'databases')
+        return dbId
+      }
+    }
     const state = await window.vav.fileSessions.open(path)
     if (!state?.activeSessionId) return null
     const hint: FileSessionSelectHint = {
@@ -34,12 +52,7 @@ export async function openFileSessionFromPath(path: string): Promise<string | nu
       workingDirectory: dirname(path) || null,
       machineId: normalizeMachineId(useSessionStore.getState().windowMachineId)
     }
-    void window.vav.window.openFilePreview(path, {
-      origin: 'session',
-      conversationId: state.activeSessionId,
-      surface: 'file'
-    })
-    void selectConversation(state.activeSessionId, { fileSession: hint })
+    await revealInMainShell(state.activeSessionId, 'fileSessions', hint)
     return state.activeSessionId
   } catch (err) {
     showToast({
@@ -51,7 +64,7 @@ export async function openFileSessionFromPath(path: string): Promise<string | nu
   }
 }
 
-/** Picker → file session + standalone preview. Returns the last opened session id. */
+/** Picker → file session in the main File category. Returns the last opened session id. */
 export async function openPickedFileSessions(): Promise<string | null> {
   const picked = await window.vav.files.pickAttachments()
   if (!picked.ok || picked.paths.length === 0) return null
@@ -70,18 +83,20 @@ export function openExistingFileSession(
 ): void {
   void (async () => {
     try {
-      await window.vav.fileSessions.open(path)
+      if (typeof window.vav.db?.list === 'function') {
+        const dbId = dbConversationIdForFilePath(await window.vav.db.list(), path)
+        if (dbId) {
+          await revealInMainShell(dbId, 'databases')
+          return
+        }
+      }
+      const opened = await window.vav.fileSessions.open(path)
+      if (opened && opened.sessions.some((session) => session.id === conversationId)) {
+        await window.vav.fileSessions.setActive(opened.fileId, conversationId)
+      }
     } catch {
-      // Preview still tries; open() also seeds the host conversation row.
+      // Main-shell FileSessionView still mounts from the sidebar hint.
     }
-    void window.vav.window.openFilePreview(path, {
-      origin: 'session',
-      conversationId,
-      surface: 'file'
-    })
-    void useSessionStore.getState().selectConversation(
-      conversationId,
-      hint ? { fileSession: hint } : undefined
-    )
+    await revealInMainShell(conversationId, 'fileSessions', hint)
   })()
 }

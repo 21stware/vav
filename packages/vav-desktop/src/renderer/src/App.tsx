@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import { useSessionStore } from './state/sessionStore'
 import {
   installAgentModelCatalogBridge,
@@ -20,7 +20,6 @@ import { WorkspaceView } from './components/WorkspaceView'
 import { FileSessionView } from './components/FileSessionView'
 import { FileRecentsPanel } from './components/FileRecentsPanel'
 import { ScheduleEditor } from './components/ScheduleEditor'
-import { DbConnectEditor } from './components/DbConnectEditor'
 import { AppToast } from './components/AppToast'
 import { RemoteFolderPicker } from './components/RemoteFolderPicker'
 import { UpdateCorner } from './components/UpdateCorner'
@@ -32,6 +31,7 @@ import { useMenuCommands } from './lib/menuCommands'
 import { installDefaultContextMenu } from './lib/nativeMenu'
 import { installInstallRunBridge } from './state/installRunStore'
 import { useSidebarFloatMode } from './lib/sidebarLayout'
+import { startCapturedPointerDrag } from './lib/capturedPointerDrag'
 import { useWindowMinSize } from './lib/useWindowMinSize'
 import {
   SIDEBAR_WIDTH_DEFAULT,
@@ -245,10 +245,12 @@ export default function App(): React.JSX.Element {
 
 function CategoryEmpty({
   title,
-  description
+  description,
+  children
 }: {
   title: string
   description: string
+  children?: ReactNode
 }): React.JSX.Element {
   const sidebarVisible = useSessionStore((s) => s.sidebarVisible)
   const floating = useSidebarFloatMode()
@@ -267,7 +269,9 @@ function CategoryEmpty({
           <span className="spacer" />
         </div>
       </header>
-      <EmptyState title={title} description={description} />
+      <EmptyState title={title} description={description}>
+        {children}
+      </EmptyState>
     </main>
   )
 }
@@ -275,8 +279,8 @@ function CategoryEmpty({
 function DetailSlot(): React.JSX.Element {
   const t = useT()
   const listMode = useSessionStore((s) => s.sidebarListMode)
-  const scheduledCreating = useSessionStore((s) => s.scheduledCreating)
-  const dbCreating = useSessionStore((s) => s.dbCreating)
+  const createScheduledConversation = useSessionStore((s) => s.createScheduledConversation)
+  const createDbConversation = useSessionStore((s) => s.createDbConversation)
   const activeConversation = useSessionStore((s) =>
     s.conversations.find((c) => c.id === s.activeId)
   )
@@ -292,9 +296,38 @@ function DetailSlot(): React.JSX.Element {
       />
     )
   }
-  // Scheduled: empty create form, selected-task config, or a run's agent log.
+  // Scheduled task (group) → config. Task (run session) → agent log. Empty → create.
   if (listMode === 'timers') {
-    if (!scheduledCreating && activeConversation && fits && !isTimerDefinition(activeConversation)) {
+    if (activeConversation && fits && !isTimerDefinition(activeConversation)) {
+      const wd = activeConversation.workingDirectory
+      return (
+        <WorkspaceView
+          conversationId={activeConversation.id}
+          workdir={wd && !wd.startsWith('__') ? wd : null}
+        />
+      )
+    }
+    if (activeConversation && fits && isTimerDefinition(activeConversation)) {
+      return <ScheduleEditor conversationId={activeConversation.id} />
+    }
+    return (
+      <CategoryEmpty
+        title={t('sidebar.timersEmptyTitle')}
+        description={t('sidebar.timersEmptyDesc')}
+      >
+        <button
+          className="btn secondary"
+          data-testid="empty-create-scheduled"
+          title={t('timer.new')}
+          onClick={() => void createScheduledConversation()}
+        >
+          {t('timer.new')}
+        </button>
+      </CategoryEmpty>
+    )
+  }
+  if (listMode === 'databases') {
+    if (activeConversation && fits) {
       const wd = activeConversation.workingDirectory
       return (
         <WorkspaceView
@@ -304,24 +337,17 @@ function DetailSlot(): React.JSX.Element {
       )
     }
     return (
-      <ScheduleEditor
-        conversationId={
-          scheduledCreating || !activeConversation || !fits ? null : activeConversation.id
-        }
-      />
+      <CategoryEmpty title={t('sidebar.dbEmptyTitle')} description={t('sidebar.dbEmptyDesc')}>
+        <button
+          className="btn secondary"
+          data-testid="empty-create-db"
+          title={t('db.new')}
+          onClick={() => void createDbConversation()}
+        >
+          {t('db.new')}
+        </button>
+      </CategoryEmpty>
     )
-  }
-  if (listMode === 'databases') {
-    if (!dbCreating && activeConversation && fits) {
-      const wd = activeConversation.workingDirectory
-      return (
-        <WorkspaceView
-          conversationId={activeConversation.id}
-          workdir={wd && !wd.startsWith('__') ? wd : null}
-        />
-      )
-    }
-    return <DbConnectEditor conversationId={null} />
   }
   // Session surface + optional right file preview (session state).
   // Workspace groups only aggregate/pin in the sidebar — no group selection.
@@ -382,43 +408,31 @@ function SidebarSlot({
   const columnRef = useRef<HTMLDivElement>(null)
 
   /** Drag the docked column edge; clamp to [MIN, MAX], persist on release. */
-  const startSidebarResize = (event: React.MouseEvent): void => {
-    if (event.button !== 0) return
-    event.preventDefault()
+  const startSidebarResize = (event: ReactPointerEvent<HTMLElement>): void => {
     const startX = event.clientX
     const startWidth = sidebarWidth
     let latest = startWidth
     let raf = 0
     let pendingX = startX
 
-    document.documentElement.dataset.resizing = 'true'
-    document.body.style.cursor = 'col-resize'
-    document.body.style.userSelect = 'none'
-
-    const onMove = (e: MouseEvent): void => {
-      pendingX = e.clientX
-      if (raf) return
-      raf = requestAnimationFrame(() => {
-        raf = 0
-        latest = clampSidebarWidth(startWidth + (pendingX - startX))
-        if (columnRef.current) columnRef.current.style.width = `${latest}px`
-      })
-    }
-
-    const onUp = (): void => {
-      if (raf) cancelAnimationFrame(raf)
-      window.removeEventListener('mousemove', onMove)
-      window.removeEventListener('mouseup', onUp)
-      document.body.style.cursor = ''
-      document.body.style.userSelect = ''
-      delete document.documentElement.dataset.resizing
-      setSidebarWidth(latest)
-      persistSidebarWidth(latest)
-      window.dispatchEvent(new Event('vav:resize-end'))
-    }
-
-    window.addEventListener('mousemove', onMove)
-    window.addEventListener('mouseup', onUp)
+    startCapturedPointerDrag(event, {
+      cursor: 'col-resize',
+      onMove: (e) => {
+        pendingX = e.clientX
+        if (raf) return
+        raf = requestAnimationFrame(() => {
+          raf = 0
+          latest = clampSidebarWidth(startWidth + (pendingX - startX))
+          if (columnRef.current) columnRef.current.style.width = `${latest}px`
+        })
+      },
+      onUp: () => {
+        if (raf) cancelAnimationFrame(raf)
+        setSidebarWidth(latest)
+        persistSidebarWidth(latest)
+        window.dispatchEvent(new Event('vav:resize-end'))
+      }
+    })
   }
 
   const resetSidebarWidth = (): void => {
@@ -487,7 +501,7 @@ function SidebarSlot({
           aria-orientation="vertical"
           aria-label={t('sidebar.resize')}
           title={t('sidebar.resize')}
-          onMouseDown={startSidebarResize}
+          onPointerDown={startSidebarResize}
           onDoubleClick={resetSidebarWidth}
         />
       </div>

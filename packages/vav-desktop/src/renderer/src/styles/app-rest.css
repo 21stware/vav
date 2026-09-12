@@ -858,12 +858,15 @@
    .detail radius + border was double-rounding the Claude/agent surface. */
 .workspace-view-agent > .detail,
 .workspace-view-agent > .session-detail-workspace,
+.workspace-view-agent > .preview-edit-session,
 .workspace-view-agent > .terminal-host-session,
 .workspace-view-agent-inner > .detail,
 .workspace-view-agent-inner > .session-detail-workspace,
+.workspace-view-agent-inner > .preview-edit-session,
 .workspace-view-agent-inner > .terminal-host-session,
 .workspace-floating-agent-body > .detail,
 .workspace-floating-agent-body > .session-detail-workspace,
+.workspace-floating-agent-body > .preview-edit-session,
 .workspace-floating-agent-body > .terminal-host-session {
   flex: 1 1 auto;
   min-height: 0;
@@ -3277,7 +3280,8 @@ html:has(.provider-account-popup) #root {
   flex: 0 0 auto;
 }
 
-.session-run-btn[data-testid="session-run-fast"][aria-pressed="true"] {
+.session-run-btn[data-testid="session-run-fast"][aria-pressed="true"],
+.session-run-btn[data-testid="session-run-computer"][aria-pressed="true"] {
   color: var(--accent);
 }
 

@@ -1,7 +1,7 @@
 {
   "name": "vav",
   "productName": "VAV",
-  "version": "1.26.0",
+  "version": "1.27.0",
   "description": "Local-first agent workbench: open files, ask and edit beside them, and run VAV or Claude/Codex in the same thread — with a real terminal on the side.",
   "license": "PolyForm-Noncommercial-1.0.0",
   "author": "Oboo Cheng",
@@ -13,8 +13,9 @@
     "preinstall": "node scripts/ensure-setuptools.mjs",
     "postinstall": "node scripts/fix-pty-permissions.mjs",
     "fetch:officecli": "node scripts/fetch-officecli.mjs",
+    "fetch:cua-driver": "node scripts/fetch-cua-driver.mjs",
     "build:sidecar": "node scripts/build-tailcat-sidecar.mjs",
-    "dev": "node scripts/fetch-officecli.mjs && node scripts/build-tailcat-sidecar.mjs && node scripts/run-dev.mjs",
+    "dev": "node scripts/fetch-officecli.mjs && node scripts/fetch-cua-driver.mjs && node scripts/build-tailcat-sidecar.mjs && node scripts/run-dev.mjs",
     "dev:kill": "node scripts/kill-dev.mjs",
     "start": "node scripts/run-preview.mjs",
     "build:mac-screencap": "node scripts/build-mac-screencap.mjs",
@@ -42,9 +43,9 @@
     "test:file-path-mentions": "node --test --experimental-strip-types src/shared/filePathMentions.test.ts",
     "site:images": "node scripts/optimize-site-images.mjs",
     "brand:icons": "python3 scripts/sync-brand-icons.py",
-    "dist": "node scripts/fetch-officecli.mjs --target darwin-arm64 --clean && node scripts/build-tailcat-sidecar.mjs --target darwin-arm64 && npm run pack:vav-server && npm run build && electron-builder --mac --config packages/vav-desktop/electron-builder.json --project .",
-    "dist:win": "node scripts/fetch-officecli.mjs --target win32-x64 --clean && node scripts/build-tailcat-sidecar.mjs --target win32-x64 && npm run pack:vav-server && npm run build && electron-builder --win --config packages/vav-desktop/electron-builder.json --project .",
-    "release": "node scripts/fetch-officecli.mjs --target darwin-arm64 --clean && node scripts/build-tailcat-sidecar.mjs --target darwin-arm64 && npm run pack:vav-server && npm run build && electron-builder --publish always --config packages/vav-desktop/electron-builder.json --project .",
+    "dist": "node scripts/fetch-officecli.mjs --target darwin-arm64 --clean && node scripts/fetch-cua-driver.mjs --target darwin-arm64 && node scripts/build-tailcat-sidecar.mjs --target darwin-arm64 && npm run pack:vav-server && npm run build && electron-builder --mac --config packages/vav-desktop/electron-builder.json --project .",
+    "dist:win": "node scripts/fetch-officecli.mjs --target win32-x64 --clean && node scripts/fetch-cua-driver.mjs --target win32-x64 && node scripts/build-tailcat-sidecar.mjs --target win32-x64 && npm run pack:vav-server && npm run build && electron-builder --win --config packages/vav-desktop/electron-builder.json --project .",
+    "release": "node scripts/fetch-officecli.mjs --target darwin-arm64 --clean && node scripts/fetch-cua-driver.mjs --target darwin-arm64 && node scripts/build-tailcat-sidecar.mjs --target darwin-arm64 && npm run pack:vav-server && npm run build && electron-builder --publish always --config packages/vav-desktop/electron-builder.json --project .",
     "pack:release-sidecars": "node scripts/pack-release-sidecars.mjs"
   },
   "dependencies": {

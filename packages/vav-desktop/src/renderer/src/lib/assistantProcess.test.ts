@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import type { MessageBlock } from '@shared/types'
 import {
+  hasToolResult,
   isHollowToolCard,
   isVisibleAssistantBlock,
   previewProcessText,
@@ -89,6 +90,37 @@ describe('splitAssistantProcess', () => {
     assert.equal(split.conclusion[0]?.block.kind, 'text')
   })
 
+  it('moves mid-answer think onto the process trail in stream order', () => {
+    const split = splitAssistantProcess([
+      think('first'),
+      text('Start.'),
+      think('middle'),
+      text('End.')
+    ])
+    assert.deepEqual(
+      split.process.map((item) => item.block.kind === 'reasoning' ? item.block.text : ''),
+      ['first', 'middle']
+    )
+    assert.deepEqual(
+      split.conclusion.map((item) => (item.block.kind === 'text' ? item.block.text : '')),
+      ['Start.', 'End.']
+    )
+  })
+
+  it('folds snapshot reprints on the process trail', () => {
+    const later =
+      '正在检查工作区环境、浏览器自动化技能及历史记录，确定如何操作日历。用户要求操作日历至12月份。'
+    const split = splitAssistantProcess([
+      think('用户要求操作日历至12月。'),
+      think(later),
+      think(later),
+      text('已调到 12 月。')
+    ])
+    assert.equal(split.process.length, 1)
+    assert.equal(split.process[0]?.block.kind === 'reasoning' ? split.process[0].block.text : '', later)
+    assert.equal(split.conclusion[0]?.block.kind === 'text' ? split.conclusion[0].block.text : '', '已调到 12 月。')
+  })
+
   it('keeps leading and trailing think out of a no-tool answer', () => {
     const split = splitAssistantProcess([
       think('first'),
@@ -167,6 +199,24 @@ describe('splitAssistantProcess', () => {
     assert.equal(isHollowToolCard(doc), false)
     assert.equal(isVisibleAssistantBlock(doc), true)
     assert.equal(isVisibleAssistantBlock(checklist), false)
+  })
+
+  it('treats empty output as no result even when the summary is a query', () => {
+    const search: MessageBlock = {
+      kind: 'toolCall',
+      id: 's1',
+      tool: 'web_search',
+      summary: 'Web Search: "兆创新"',
+      input: '{"query":"兆创新"}',
+      output: '',
+      status: 'completed'
+    }
+    assert.equal(isHollowToolCard(search), false)
+    assert.equal(hasToolResult(search), false)
+    assert.equal(
+      hasToolResult({ ...search, output: '1. Example\nhttps://example.com' }),
+      true
+    )
   })
 })
 

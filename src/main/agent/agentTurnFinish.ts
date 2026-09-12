@@ -1,3 +1,4 @@
+import { foldSnapshotText } from '../../shared/streamCoalesce.ts'
 import type { ChatMessage, MessageBlock, TurnRecovery, TurnStatus } from '../../shared/types.ts'
 
 /** pi stopReason on the final assistant message. */
@@ -93,13 +94,17 @@ export function collectParkedWaiters<T>(
 
 /** Drop empty text/reasoning slots that opened before any token landed. */
 export function persistableTurnBlocks(blocks: MessageBlock[]): MessageBlock[] {
-  return blocks.filter(
-    (b) =>
-      b.kind === 'toolCall' ||
-      b.kind === 'plan' ||
-      (b.kind === 'text' && b.text.length > 0) ||
-      (b.kind === 'reasoning' && b.text.length > 0)
-  )
+  return blocks
+    .filter(
+      (b) =>
+        b.kind === 'toolCall' ||
+        b.kind === 'plan' ||
+        (b.kind === 'text' && b.text.length > 0) ||
+        (b.kind === 'reasoning' && b.text.length > 0)
+    )
+    .map((b) =>
+      b.kind === 'reasoning' ? { ...b, text: foldSnapshotText(b.text) } : b
+    )
 }
 
 export function assistantSnapshotFromTurn(

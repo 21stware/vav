@@ -75,6 +75,14 @@ jobs:
         if: runner.os == 'Windows'
         run: node scripts/fetch-officecli.mjs --target win32-x64 --clean
 
+      - name: Fetch Cua Driver (macOS)
+        if: runner.os == 'macOS'
+        run: node scripts/fetch-cua-driver.mjs --target darwin-arm64
+
+      - name: Fetch Cua Driver (Windows)
+        if: runner.os == 'Windows'
+        run: node scripts/fetch-cua-driver.mjs --target win32-x64
+
       - name: Build tailcat sidecar (macOS)
         if: runner.os == 'macOS'
         run: node scripts/build-tailcat-sidecar.mjs --target darwin-arm64

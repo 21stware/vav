@@ -1,3 +1,4 @@
+import { coalesceStreamChunk, foldSnapshotText } from '@shared/streamCoalesce'
 import type { MessageBlock, ToolCallBlock } from '@shared/types'
 
 export interface IndexedBlock {
@@ -30,6 +31,16 @@ export function isHollowToolCard(block: ToolCallBlock): boolean {
   return false
 }
 
+const EMPTY_TOOL_OUTPUT = /^(?:\{\}|\[\]|\(no output\)|（无输出）)$/i
+
+/** Something the user can open: a body, hits, a nested transcript — not just args. */
+export function hasToolResult(block: ToolCallBlock): boolean {
+  if (block.children?.some((child) => isVisibleAssistantBlock(child))) return true
+  const output = block.output.trim()
+  if (!output || EMPTY_TOOL_OUTPUT.test(output)) return false
+  return true
+}
+
 export function isVisibleAssistantBlock(block: MessageBlock): boolean {
   if (block.kind === 'plan') return false
   if (block.kind === 'toolCall') {
@@ -47,8 +58,9 @@ export function isVisibleAssistantBlock(block: MessageBlock): boolean {
  *
  * After the last tool, first trailing text is the conclusion. With no tools,
  * first text is the answer and leading reasoning is the process — otherwise
- * the last think sits next to the result every turn. Trailing reasoning after
- * the answer is peeled back into the process. No concluding text → ungrouped.
+ * the last think sits next to the result every turn. Reasoning after or
+ * between answer texts is peeled back onto the process in stream order.
+ * No concluding text → ungrouped.
  */
 export function splitAssistantProcess(blocks: MessageBlock[]): {
   process: IndexedBlock[]
@@ -90,21 +102,60 @@ export function splitAssistantProcess(blocks: MessageBlock[]): {
 
   const process = visible.slice(0, cut)
   const conclusion = visible.slice(cut)
-  peelTrailingReasoning(process, conclusion)
+  peelReasoningFromConclusion(process, conclusion)
 
   if (process.length === 0 || conclusion.length === 0) {
     return { process: [], conclusion: visible }
   }
 
-  return { process, conclusion }
+  return { process: prepareProcessSteps(process), conclusion }
 }
 
-/** Move leftover think after the answer back onto the process trail. */
-function peelTrailingReasoning(process: IndexedBlock[], conclusion: IndexedBlock[]): void {
-  let end = conclusion.length
-  while (end > 0 && conclusion[end - 1]!.block.kind === 'reasoning') end--
-  if (end === conclusion.length) return
-  process.push(...conclusion.splice(end))
+/**
+ * Thinking belongs on the process trail, including leftover think after the
+ * answer and think that landed between two answer texts. Leaving it in the
+ * conclusion reprints it next to the result and in the wrong order.
+ */
+function peelReasoningFromConclusion(process: IndexedBlock[], conclusion: IndexedBlock[]): void {
+  const kept: IndexedBlock[] = []
+  const moved: IndexedBlock[] = []
+  for (const item of conclusion) {
+    if (item.block.kind === 'reasoning') moved.push(item)
+    else kept.push(item)
+  }
+  if (moved.length === 0) return
+  process.push(...moved)
+  process.sort((a, b) => a.index - b.index)
+  conclusion.length = 0
+  conclusion.push(...kept)
+}
+
+/** Fold snapshot reprints and keep steps in stream order. */
+export function prepareProcessSteps(items: IndexedBlock[]): IndexedBlock[] {
+  const out: IndexedBlock[] = []
+  for (const item of items) {
+    const block =
+      item.block.kind === 'reasoning' || item.block.kind === 'text'
+        ? { ...item.block, text: foldSnapshotText(item.block.text) }
+        : item.block
+    const prev = out[out.length - 1]
+    if (
+      prev &&
+      (block.kind === 'reasoning' || block.kind === 'text') &&
+      prev.block.kind === block.kind
+    ) {
+      const prevText =
+        prev.block.kind === 'reasoning' || prev.block.kind === 'text' ? prev.block.text : ''
+      const merged = coalesceStreamChunk(prevText, block.text)
+      if (merged === prevText) continue
+      if (merged !== prevText + block.text) {
+        out[out.length - 1] = { index: item.index, block: { ...block, text: merged } }
+        continue
+      }
+    }
+    out.push({ index: item.index, block })
+  }
+  return out
 }
 
 /**
@@ -136,7 +187,7 @@ export function splitLiveAssistantProcess(blocks: MessageBlock[]): {
   if (!hadTextAfterATool) return { process: [], live: visible }
 
   return {
-    process: visible.slice(0, -1),
+    process: prepareProcessSteps(visible.slice(0, -1)),
     live: visible.slice(-1)
   }
 }

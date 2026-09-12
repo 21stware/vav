@@ -27,6 +27,10 @@ function officecliName(): string {
   return process.platform === 'win32' ? 'officecli.exe' : 'officecli'
 }
 
+function cuaDriverName(): string {
+  return process.platform === 'win32' ? 'cua-driver.exe' : 'cua-driver'
+}
+
 function appPathSafe(): string | null {
   try {
     const electron = require('electron') as { app?: { getAppPath: () => string } }
@@ -49,8 +53,8 @@ export function bundledBinDir(): string | null {
     join(here, '../../../resources/bin'),
     join(process.cwd(), 'resources', 'bin')
   ].filter(Boolean)
-  const name = officecliName()
-  const hit = candidates.find((p) => existsSync(join(p, name)))
+  const names = [officecliName(), cuaDriverName()]
+  const hit = candidates.find((p) => names.some((name) => existsSync(join(p, name))))
   cachedDir = hit ?? null
   return cachedDir
 }

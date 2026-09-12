@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { ChevronDown } from 'lucide-react'
 import type { DbConnection, DbDriver } from '@shared/dbConnection'
 import {
@@ -17,26 +17,58 @@ import {
   setDbUrlSsl
 } from '@shared/dbConnection'
 import { isDefaultSessionTitle } from '@shared/i18n'
-import { seedEmptyConversationPatch } from '../state/sessionBootstrap'
 import { useSessionStore } from '../state/sessionStore'
 import type { MessageKey } from '@shared/i18n'
 import { useT } from '../i18n/useT'
-import { isDraftDbConnection, isDraftDbTitle } from '../lib/draftEditorTitle'
+import {
+  dbEditorTitlePatch,
+  dbEditorTitleValue,
+  isDraftDbTitle
+} from '../lib/draftEditorTitle'
 import { useSidebarFloatMode } from '../lib/sidebarLayout'
 import { ShellLeadingControls } from './ShellLeadingControls'
 import { Button, Toggle } from './ui'
 
 const DRIVERS: DbDriver[] = [...DB_DRIVERS]
 
+function formFromConnection(row: DbConnection): {
+  driver: DbDriver
+  host: string
+  port: string
+  database: string
+  user: string
+  ssl: boolean
+  useUrl: boolean
+  url: string
+  title: string
+} {
+  return {
+    driver: row.driver,
+    host: row.host,
+    port: String(row.port || defaultDbPort(row.driver)),
+    database: row.database,
+    user: row.user,
+    ssl: row.ssl,
+    useUrl: row.useUrl,
+    url: row.url,
+    title: row.title
+  }
+}
+
 export function DbConnectEditor({
   conversationId,
   onConnected,
-  embedded = false
+  embedded = false,
+  notice = null,
+  initialConnection = null
 }: {
   conversationId: string | null
   onConnected?: () => void
   /** Form only — used inside the DB workspace preview next to Agent. */
   embedded?: boolean
+  notice?: string | null
+  /** Already-loaded row — open edit on this, do not flash defaults. */
+  initialConnection?: DbConnection | null
 }): React.JSX.Element {
   const t = useT()
   const conversation = useSessionStore((s) =>
@@ -49,35 +81,57 @@ export function DbConnectEditor({
   const sidebarFloating = useSidebarFloatMode()
   const showShellLeading = !(sidebarVisible && !sidebarFloating)
 
-  const [connection, setConnection] = useState<DbConnection | null>(null)
-  const [driver, setDriver] = useState<DbDriver>('postgres')
-  const [host, setHost] = useState('localhost')
-  const [port, setPort] = useState(String(defaultDbPort('postgres')))
-  const [database, setDatabase] = useState('')
-  const [user, setUser] = useState('')
+  const seeded = initialConnection ? formFromConnection(initialConnection) : null
+  const untitled = t('db.untitled')
+  const [connection, setConnection] = useState<DbConnection | null>(initialConnection)
+  const [driver, setDriver] = useState<DbDriver>(seeded?.driver ?? 'postgres')
+  const [host, setHost] = useState(seeded?.host ?? 'localhost')
+  const [port, setPort] = useState(seeded?.port ?? String(defaultDbPort('postgres')))
+  const [database, setDatabase] = useState(seeded?.database ?? '')
+  const [user, setUser] = useState(seeded?.user ?? '')
   const [password, setPassword] = useState('')
-  const [ssl, setSsl] = useState(false)
-  const [useUrl, setUseUrl] = useState(false)
-  const [url, setUrl] = useState('')
-  const [title, setTitle] = useState('')
+  const [ssl, setSsl] = useState(seeded?.ssl ?? false)
+  const [useUrl, setUseUrl] = useState(seeded?.useUrl ?? false)
+  const [url, setUrl] = useState(seeded?.url ?? '')
+  const [title, setTitle] = useState(() =>
+    initialConnection
+      ? dbEditorTitleValue(
+          initialConnection.title,
+          untitled,
+          dbConnectionTitle({ ...initialConnection, title: '' })
+        )
+      : ''
+  )
   const [busy, setBusy] = useState<'connect' | 'test' | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(notice)
   const [testedOk, setTestedOk] = useState(false)
+  const hydratedRef = useRef(!!initialConnection)
 
   useEffect(() => {
-    if (conversationId) return
-    setConnection(null)
-    setDriver('postgres')
-    setHost('localhost')
-    setPort(String(defaultDbPort('postgres')))
-    setDatabase('')
-    setUser('')
-    setPassword('')
-    setSsl(false)
-    setTitle('')
-    setError(null)
-    setTestedOk(false)
-  }, [conversationId])
+    if (notice) setError(notice)
+  }, [notice])
+
+  const applyRow = useCallback(
+    (next: DbConnection, preserveFocused: boolean): void => {
+      const active = document.activeElement
+      const field =
+        preserveFocused &&
+        (active instanceof HTMLInputElement || active instanceof HTMLSelectElement)
+          ? active.dataset.testid
+          : null
+      const auto = dbConnectionTitle({ ...next, title: '' })
+      if (field !== 'db-title') setTitle(dbEditorTitleValue(next.title, untitled, auto))
+      if (field !== 'db-driver') setDriver(next.driver)
+      if (field !== 'db-host') setHost(next.host)
+      if (field !== 'db-port') setPort(String(next.port || defaultDbPort(next.driver)))
+      if (field !== 'db-database') setDatabase(next.database)
+      if (field !== 'db-user') setUser(next.user)
+      if (field !== 'db-ssl') setSsl(next.ssl)
+      if (field !== 'db-use-url') setUseUrl(next.useUrl)
+      if (field !== 'db-url') setUrl(next.url)
+    },
+    [untitled]
+  )
 
   const load = useCallback(async (): Promise<DbConnection | null> => {
     if (!conversationId || !window.vav?.db?.getForConversation) {
@@ -87,65 +141,59 @@ export function DbConnectEditor({
     const next = await window.vav.db.getForConversation(conversationId)
     setConnection(next)
     if (!next) return null
-    const active = document.activeElement
-    const field =
-      active instanceof HTMLInputElement || active instanceof HTMLSelectElement
-        ? active.dataset.testid
-        : null
-    if (field !== 'db-title') setTitle(next.title)
-    if (field !== 'db-driver') setDriver(next.driver)
-    if (field !== 'db-host') setHost(next.host)
-    if (field !== 'db-port') setPort(String(next.port))
-    if (field !== 'db-database') setDatabase(next.database)
-    if (field !== 'db-user') setUser(next.user)
-    if (field !== 'db-ssl') setSsl(next.ssl)
-    if (field !== 'db-use-url') setUseUrl(next.useUrl)
-    if (field !== 'db-url') setUrl(next.url)
+    applyRow(next, hydratedRef.current)
+    hydratedRef.current = true
     return next
-  }, [conversationId])
+  }, [applyRow, conversationId])
 
+  const seedId = initialConnection?.id ?? null
+  const seedRef = useRef(initialConnection)
+  seedRef.current = initialConnection
   useEffect(() => {
+    hydratedRef.current = false
+    const seed = seedRef.current
+    if (seed) {
+      applyRow(seed, false)
+      setConnection(seed)
+      hydratedRef.current = true
+    }
     void load()
     return window.vav.db?.onChanged(() => {
       void load()
     })
-  }, [load])
+  }, [applyRow, conversationId, load, seedId])
 
   useEffect(() => {
+    if (initialConnection) return
     document.querySelector<HTMLInputElement>('[data-testid="db-host"]')?.focus()
-  }, [])
+  }, [initialConnection])
 
   const resolveConnection = async (): Promise<DbConnection | null> => {
     if (connection) return connection
-    if (!window.vav?.db) {
+    if (!conversationId || !window.vav?.db) {
       setError(t('db.createFailed'))
       return null
     }
-    if (conversationId && window.vav.db.ensureForConversation) {
+    const existing = window.vav.db.getForConversation
+      ? await window.vav.db.getForConversation(conversationId)
+      : null
+    if (existing) {
+      setConnection(existing)
+      applyRow(existing, false)
+      hydratedRef.current = true
+      return existing
+    }
+    if (window.vav.db.ensureForConversation) {
       const ensured = await window.vav.db.ensureForConversation(conversationId)
       if (ensured) {
         setConnection(ensured)
+        applyRow(ensured, false)
+        hydratedRef.current = true
         return ensured
       }
     }
-    const untitled = t('db.untitled')
-    const existing = window.vav.db.list ? await window.vav.db.list() : []
-    const draft = existing.find((row) => isDraftDbConnection(row, untitled) && row.conversationId)
-    if (draft) {
-      setConnection(draft)
-      return draft
-    }
-    if (!window.vav.db.create) {
-      setError(t('db.createFailed'))
-      return null
-    }
-    const result = await window.vav.db.create()
-    useSessionStore.setState((state) => ({
-      ...seedEmptyConversationPatch(state, result.conversation),
-      sidebarListMode: 'databases'
-    }))
-    setConnection(result.connection)
-    return result.connection
+    setError(t('db.createFailed'))
+    return null
   }
 
   const persist = async (
@@ -168,25 +216,14 @@ export function DbConnectEditor({
       setError(t('db.createFailed'))
       return null
     }
+    if (!hydratedRef.current) return row
     setTestedOk(false)
     if (!window.vav?.db?.update) {
       setError(t('db.saveFailed'))
       return null
     }
     try {
-      const nextUseUrl = patch.useUrl ?? useUrl
-      const updated = await window.vav.db.update(row.id, {
-        title: patch.title ?? title,
-        driver: patch.driver ?? driver,
-        host: patch.host ?? host,
-        port: patch.port ?? clampDbPort(Number(port) || 0, patch.driver ?? driver),
-        database: patch.database ?? database,
-        user: patch.user ?? user,
-        ssl: patch.ssl ?? ssl,
-        useUrl: nextUseUrl,
-        ...(nextUseUrl || patch.url !== undefined ? { url: patch.url ?? url } : {}),
-        ...(patch.password !== undefined ? { password: patch.password } : {})
-      })
+      const updated = await window.vav.db.update(row.id, patch)
       if (updated) setConnection(updated)
       return updated
     } catch (err) {
@@ -201,6 +238,14 @@ export function DbConnectEditor({
     }
   }
 
+  const autoTitle = dbConnectionTitle({
+    title: '',
+    driver,
+    host,
+    database,
+    user
+  })
+
   const saveCurrent = async (): Promise<DbConnection | null> => {
     if (useUrl && !parseDbUrl(url, driver)) {
       setError(t('db.urlInvalid'))
@@ -213,6 +258,15 @@ export function DbConnectEditor({
     }
     const saved = await persist(
       {
+        title: dbEditorTitlePatch(title, untitled, autoTitle),
+        driver,
+        host,
+        port: clampDbPort(Number(port) || 0, driver),
+        database,
+        user,
+        ssl,
+        useUrl,
+        ...(useUrl ? { url } : {}),
         password: password || undefined
       },
       current
@@ -222,8 +276,8 @@ export function DbConnectEditor({
       return null
     }
       const sessionId = saved.conversationId ?? conversationId
-      const named = title.trim()
-      if (named && sessionId && !isDraftDbTitle(named, t('db.untitled')) && named !== conversation?.title) {
+      const named = dbEditorTitlePatch(title, untitled, autoTitle)
+      if (named && sessionId && named !== conversation?.title) {
         await renameConversation(sessionId, named)
       }
       return saved
@@ -249,14 +303,18 @@ export function DbConnectEditor({
       }
       setPassword('')
       const sessionId = opened.conversationId ?? conversationId
-      const untitled = t('db.untitled')
+      const storedTitle = dbEditorTitlePatch(title, untitled, autoTitle)
       const display = dbConnectionTitle({
         ...opened,
-        title: isDraftDbTitle(title, untitled) ? '' : title
+        title: storedTitle
       })
-      if (isDraftDbTitle(title, untitled) || !title.trim()) {
+      if (!storedTitle) {
         setTitle(display)
-        if (isDraftDbTitle(opened.title, untitled) || isDefaultSessionTitle(opened.title)) {
+        if (
+          isDraftDbTitle(opened.title, untitled) ||
+          isDefaultSessionTitle(opened.title) ||
+          opened.title === display
+        ) {
           await persist({ title: '' }, opened)
         }
         if (sessionId && display && display !== conversation?.title) {
@@ -318,21 +376,24 @@ export function DbConnectEditor({
           <div className="db-connect-intro">
             <input
               className={`text-field db-connect-title${
-                isDraftDbTitle(title, t('db.untitled')) ? ' is-untitled' : ''
+                isDraftDbTitle(title, untitled) || title === autoTitle ? ' is-untitled' : ''
               }`}
               data-testid="db-title"
               value={title}
-              placeholder={t('db.untitled')}
+              placeholder={autoTitle || untitled}
               autoComplete="off"
               spellCheck={false}
               aria-label={t('db.name')}
               onChange={(event) => {
                 const next = event.currentTarget.value
                 setTitle(next)
-                void persist({ title: next })
+                void persist({ title: dbEditorTitlePatch(next, untitled, autoTitle) })
               }}
               onFocus={(event) => {
-                if (isDraftDbTitle(event.currentTarget.value, t('db.untitled'))) {
+                if (
+                  isDraftDbTitle(event.currentTarget.value, untitled) ||
+                  event.currentTarget.value === autoTitle
+                ) {
                   event.currentTarget.select()
                 }
               }}

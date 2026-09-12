@@ -2,6 +2,7 @@ import { Suspense, lazy, type RefObject } from 'react'
 import { Clock, Plus } from 'lucide-react'
 import type { ConversationMeta } from '@shared/types'
 import type { FileSessionMeta } from '@shared/ipc'
+import { startCapturedPointerDrag } from '../../lib/capturedPointerDrag'
 import { clampPanelWidth, persistPanelWidth } from '../../lib/fileViewerHelpers'
 import { Button, EmptyState } from '../ui'
 import { SessionHistoryPopover } from '../SessionHistoryPopover'
@@ -73,26 +74,26 @@ export function FileViewerAgentColumn({
     <aside className="preview-agent-panel" style={{ width: panelWidth }}>
       <div
         className="preview-agent-resizer"
-        onMouseDown={(event) => {
-          event.preventDefault()
+        onPointerDown={(event) => {
           const startX = event.clientX
           const startW = panelWidth
-          const onMove = (e: MouseEvent): void => {
-            const next = clampPanelWidth(startW + (startX - e.clientX))
-            panelWidthRef.current = next
-            setPanelWidth(next)
-          }
-          const onUp = (): void => {
-            window.removeEventListener('mousemove', onMove)
-            window.removeEventListener('mouseup', onUp)
-            try {
-              persistPanelWidth(panelWidthRef.current)
-            } catch {
-              // ignore
+          startCapturedPointerDrag(event, {
+            cursor: 'col-resize',
+            classTarget: event.currentTarget.closest<HTMLElement>('.file-preview-shell'),
+            className: 'is-col-resizing',
+            onMove: (e) => {
+              const next = clampPanelWidth(startW + (startX - e.clientX))
+              panelWidthRef.current = next
+              setPanelWidth(next)
+            },
+            onUp: () => {
+              try {
+                persistPanelWidth(panelWidthRef.current)
+              } catch {
+                // ignore
+              }
             }
-          }
-          window.addEventListener('mousemove', onMove)
-          window.addEventListener('mouseup', onUp)
+          })
         }}
       />
       {showSeparateSessionBar && (

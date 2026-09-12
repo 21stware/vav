@@ -40,6 +40,7 @@ import {
 } from '@shared/agentModels'
 import { useSessionStore } from '../../state/sessionStore'
 import { useT } from '../../i18n/useT'
+import { catalogEntryForChatHost } from '../../state/sessionModels'
 import { useAccountGroups, vavAccountsOf } from '../../lib/accountGroups'
 import { menuAnchor, showMenu } from '../../lib/nativeMenu'
 import { AgentBrandMark } from '../AgentBrandMark'
@@ -462,7 +463,6 @@ export function AgentsSettings(): React.JSX.Element {
     selectedIsModel ? currentVav?.id : null
   )
   const modelHost = (selectedIsModel ? null : selected?.id) as CliHostKind | null
-  const vavCatalog = catalog[modelHostKey]
   const selectedAgentId = selectedIsModel ? 'vav' : selected?.id ?? null
   const agentProfiles = selectedIsModel
     ? selectedVendor?.accounts ?? []
@@ -472,9 +472,17 @@ export function AgentsSettings(): React.JSX.Element {
   const selectedVendorName = selectedVendor?.vendor.name ?? t('agents.customModel')
   const vavEndpointKey = (currentVav?.endpoint ?? selectedVendor?.vendor.endpoint ?? settings.apiEndpoint).trim()
   const vavEndpointNorm = vavEndpointKey.replace(/\/+$/, '').toLowerCase()
+  const vavCatalog = catalogEntryForChatHost(
+    catalog,
+    modelHost,
+    selectedIsModel ? selectedVendor?.vendor.id : null,
+    selectedIsModel ? currentVav?.id : null
+  )
   const catalogMatchesVav =
+    !selectedIsModel ||
     !vavEndpointNorm ||
-    (Boolean(vavCatalog?.endpoint) && vavCatalog.endpoint === vavEndpointNorm)
+    !vavCatalog?.endpoint ||
+    vavCatalog.endpoint === vavEndpointNorm
   useEffect(() => {
     if (!vavEndpointKey) return
     void refreshCatalog(true)
@@ -487,24 +495,21 @@ export function AgentsSettings(): React.JSX.Element {
   const vavLoading = selectedIsModel && vavCanFetch && !vavLive && !vavFetchError
   const modelList = useMemo(() => {
     if (!modelHostKey) return []
-    const entry = catalog[modelHostKey]
     if (selectedIsModel) {
-      if (!catalogMatchesVav) return []
-      const models = entry?.models ?? []
+      const models = vavCatalog?.models ?? []
       return isOfficialDeepSeekEndpoint(vavEndpointKey)
         ? nativeDeepSeekModels(models)
         : models
     }
-    if (entry?.models?.length) return entry.models
+    if (vavCatalog?.models?.length) return vavCatalog.models
     return modelsForChatHost(modelHost, settings.customModels, settings.defaultModel)
   }, [
-    catalog,
-    catalogMatchesVav,
     modelHost,
     modelHostKey,
     selectedIsModel,
     settings.customModels,
     settings.defaultModel,
+    vavCatalog,
     vavEndpointKey
   ])
 

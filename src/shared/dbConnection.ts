@@ -515,7 +515,7 @@ export function dbUrlWithPassword(raw: string, password: string | null, driver?:
     const parsedDriver = driverFromProtocol(parsed.protocol)
     if (driver && parsedDriver && parsedDriver !== driver) return trimmed
     if (!parsedDriver && driver !== 'clickhouse') return trimmed
-    if (!parsed.password) parsed.password = password
+    parsed.password = password
     return parsed.toString()
   } catch {
     return trimmed
@@ -524,4 +524,12 @@ export function dbUrlWithPassword(raw: string, password: string | null, driver?:
 
 export function postgresUrlWithPassword(raw: string, password: string | null): string {
   return dbUrlWithPassword(raw, password, 'postgres')
+}
+
+const DB_AUTH_ERROR =
+  /password is missing|password must be a string|password authentication|SASL|SCRAM|28P01|fe_sendauth/i
+
+/** Vault empty or driver rejected the secret — show the connection form, not a catalog error. */
+export function isDbAuthError(message: string): boolean {
+  return DB_AUTH_ERROR.test(message)
 }

@@ -283,14 +283,14 @@ export function stableDatabaseTitle(
   return dbConnectionTitle({ ...row, title: '' })
 }
 
-/** Connected DBs must appear even when listMeta omitted the session row. */
+/** DB connections must appear even when listMeta omitted the session row. */
 export function mergeConnectedDbConversations(
   conversations: ConversationMeta[],
   connections: readonly DbConnection[]
 ): ConversationMeta[] {
   const extra: ConversationMeta[] = []
   for (const row of connections) {
-    if (row.lastStatus !== 'ok' || !row.conversationId) continue
+    if (!row.conversationId) continue
     if (conversations.some((conversation) => conversation.id === row.conversationId)) continue
     extra.push({
       id: row.conversationId,
@@ -329,27 +329,25 @@ export function listedSidebarGroups(
     running: (id: string) => boolean
     unread: (id: string) => boolean
     favoriteIds: ReadonlySet<string>
+    /** Current selection — never hidden by the session filter. */
+    focusedId?: string | null
     searching: boolean
     groupingMode: SidebarGroupingMode
     tmp: string
     pinnedWorkspaces: readonly string[]
-    /** Table names by connection id — used to keep a DB group visible while searching. */
+    /** Table names by connection id — search still matches tables even though they live in the preview. */
     dbTableNames?: Record<string, string[]>
     /** Conversation id → live connection id when meta omitted `dbConnectionId`. */
     dbConnectionIds?: Record<string, string>
     /** Conversation id → stable connection title (never the auto-titled chat). */
     dbTitles?: Record<string, string>
-    /** Only connected DBs appear in the list. Missing/empty = none. */
-    connectedConversationIds?: ReadonlySet<string>
   }
 ): ConversationGroup[] {
   if (opts.fileSessionsView) return []
   const needle = opts.query.trim().toLowerCase()
   if (opts.databasesView) {
-    const connected = opts.connectedConversationIds ?? new Set<string>()
     const rows = conversations
       .filter((c) => sessionKindOf(c) === 'db' && !c.archived)
-      .filter((c) => connected.has(c.id))
       .filter((c) => !opts.excludeIds?.has(c.id))
       .filter((c) => conversationOnMachine(c, opts.windowMachineId))
       .filter((c) => {
@@ -364,6 +362,7 @@ export function listedSidebarGroups(
     const rest = rows.filter((c) => !c.pinned).sort(byUpdatedDesc)
     const toGroup = (conversation: ConversationMeta, isPinned: boolean): ConversationGroup => ({
       key: `db:${conversation.id}`,
+      // Connection title for the session row. Tables render in the preview, not here.
       label: opts.dbTitles?.[conversation.id] || conversation.title,
       kind: 'database',
       connectionId: conversation.dbConnectionId ?? opts.dbConnectionIds?.[conversation.id],
@@ -392,7 +391,8 @@ export function listedSidebarGroups(
       conversationMatchesFilter(c, opts.sessionFilter, {
         running: opts.running(c.id),
         unread: opts.unread(c.id),
-        favoriteIds: opts.favoriteIds
+        favoriteIds: opts.favoriteIds,
+        focused: c.id === opts.focusedId
       })
     )
   const keep = new Set(matched.map((c) => c.id))

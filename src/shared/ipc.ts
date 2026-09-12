@@ -1442,6 +1442,11 @@ export interface VavApi {
       connection: import('./dbConnection').DbConnection
       conversation: import('./types').ConversationMeta
     }>
+    /** Another chat bound to an existing connection (history). */
+    createSession(connectionId: string): Promise<{
+      connection: import('./dbConnection').DbConnection
+      conversation: import('./types').ConversationMeta
+    } | null>
     getForConversation(conversationId: string): Promise<import('./dbConnection').DbConnection | null>
     ensureForConversation(
       conversationId: string
@@ -1481,6 +1486,8 @@ export interface VavApi {
     onReadOnlyChanged(
       handler: (payload: { sessionId: string; readOnly: boolean }) => void
     ): () => void
+    /** Create / rename / delete / title bump — sidebar file-session list. */
+    onChanged(handler: () => void): () => void
     rename(fileId: string, sessionId: string, title: string): Promise<FileSessionsState | null>
     delete(
       fileId: string,
@@ -1927,6 +1934,14 @@ export interface VavApi {
     /** Whether this OS + hardware can perform trackpad haptics. */
     available(): Promise<boolean>
   }
+
+  /** Embedded Cua Driver — permissions and daemon status (this Mac). */
+  computer: {
+    status(): Promise<import('./computerUse').ComputerUseStatus>
+    requestAccessibility(): Promise<boolean>
+    openAccessibilitySettings(): Promise<void>
+    openScreenRecordingSettings(): Promise<void>
+  }
 }
 
 export type MenuCommand =
@@ -2137,6 +2152,10 @@ export const IPC = {
   filesCaptureScreenshot: 'vav:files:capture-screenshot',
   filesScreenshotPermission: 'vav:files:screenshot-permission',
   filesOpenScreenshotPermissionSettings: 'vav:files:screenshot-permission-open',
+  computerStatus: 'vav:computer:status',
+  computerRequestAccessibility: 'vav:computer:request-accessibility',
+  computerOpenAccessibilitySettings: 'vav:computer:open-accessibility-settings',
+  computerOpenScreenRecordingSettings: 'vav:computer:open-screen-recording-settings',
   screenshotReady: 'vav:screenshot:ready',
   screenshotInit: 'vav:screenshot:init',
   screenshotPainted: 'vav:screenshot:painted',
@@ -2166,6 +2185,7 @@ export const IPC = {
   fileSessionsResolve: 'vav:file-sessions:resolve',
   fileSessionsSetReadOnly: 'vav:file-sessions:set-read-only',
   fileSessionReadOnlyChanged: 'vav:file-sessions:read-only-changed',
+  fileSessionsChanged: 'vav:file-sessions:changed',
   fileSessionsRename: 'vav:file-sessions:rename',
   fileSessionsDelete: 'vav:file-sessions:delete',
   fileSessionsForceDelete: 'vav:file-sessions:force-delete',
@@ -2221,6 +2241,7 @@ export const IPC = {
   timersChanged: 'vav:timers:changed',
   dbList: 'vav:db:list',
   dbCreate: 'vav:db:create',
+  dbCreateSession: 'vav:db:create-session',
   dbGetForConversation: 'vav:db:get-for-conversation',
   dbEnsureForConversation: 'vav:db:ensure-for-conversation',
   dbUpdate: 'vav:db:update',

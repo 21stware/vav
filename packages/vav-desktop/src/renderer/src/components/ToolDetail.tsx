@@ -12,8 +12,6 @@ import {
   outcomeFor,
   parseFetchedPage,
   presentToolArgs,
-  prettyToolInput,
-  shouldShowTechnical,
   type PresentableFact,
   type ToolOutcome
 } from '../lib/toolPresentation'
@@ -354,19 +352,14 @@ function WebFetchView({ block }: { block: ToolCallBlock }): React.JSX.Element {
 
 /**
  * Default expanded view: the thing it tried (link, path, query) and a sentence
- * about what happened. Implementation JSON is one click further.
+ * about what happened.
  */
 function StoryView({ block }: { block: ToolCallBlock }): React.JSX.Element {
-  const t = useT()
   const presented = useMemo(
     () => presentToolArgs(block.tool, block.input, block.summary),
     [block.tool, block.input, block.summary]
   )
   const outcome = useMemo(() => outcomeFor(block), [block])
-  const pretty = useMemo(() => prettyToolInput(block.input), [block.input])
-  const unusedOutput = outcome.kind === 'body' ? '' : block.output || ''
-  const showTech = shouldShowTechnical(presented.extraArgs, unusedOutput)
-
   return (
     <div className="detail-story">
       {presented.facts.length > 0 && (
@@ -377,13 +370,6 @@ function StoryView({ block }: { block: ToolCallBlock }): React.JSX.Element {
         </div>
       )}
       <OutcomeBlock outcome={outcome} />
-      {showTech && (
-        <details className="story-tech">
-          <summary>{t('tool.detail.technical')}</summary>
-          {pretty ? <pre className="story-tech-pre">{pretty}</pre> : null}
-          {unusedOutput.trim() ? <pre className="story-tech-pre">{unusedOutput}</pre> : null}
-        </details>
-      )}
     </div>
   )
 }

@@ -165,6 +165,39 @@ export function provisionalInspect(path: string): FileInspectResult | null {
   return base
 }
 
+/**
+ * FileSessionStore.open() returns the last-indexed active session for a path.
+ * When the user (or parent surface) already opened a specific conversation,
+ * keep that instance instead of jumping to the stale index.
+ */
+export function resolveOpenedFileSessionId(
+  sessions: ReadonlyArray<{ id: string }>,
+  indexedActiveId: string,
+  preferredId?: string | null
+): string {
+  if (preferredId && sessions.some((session) => session.id === preferredId)) {
+    return preferredId
+  }
+  return indexedActiveId
+}
+
+/** File-backed DB connections (DuckDB / SQLite) share the file's agent. */
+export function dbConversationIdForFilePath(
+  connections: ReadonlyArray<{
+    driver: string
+    database: string
+    conversationId: string | null
+  }>,
+  path: string
+): string | null {
+  for (const row of connections) {
+    if (row.driver !== 'duckdb' && row.driver !== 'sqlite') continue
+    if (!row.conversationId || !row.database) continue
+    if (pathsEqual(row.database, path)) return row.conversationId
+  }
+  return null
+}
+
 /** Prefer the file-session agent, then the parent session, then the sidebar. */
 export function filesHostConversationId(
   agentConversationId?: string | null,

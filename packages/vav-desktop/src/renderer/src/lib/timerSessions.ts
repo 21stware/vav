@@ -89,7 +89,7 @@ export function timerListConversationIds(
   return ids
 }
 
-/** Empty untitled job that only exists because the create form used to mint a row first. */
+/** Empty untitled job — still a real sidebar row after mint-on-create. */
 export function isDraftTimerJob(
   job: { title: string; prompt: string; enabled: boolean },
   untitled: string

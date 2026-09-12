@@ -19,6 +19,19 @@ export function isDraftDbTitle(value: string, untitled: string): boolean {
   return isDraftEditorTitle(value, untitled, DB_LEGACY_UNTITLED)
 }
 
+/** Shown in the editor when the stored title is still a draft. */
+export function dbEditorTitleValue(stored: string, untitled: string, autoTitle: string): string {
+  if (!isDraftDbTitle(stored, untitled)) return stored
+  return autoTitle.trim()
+}
+
+/** Persist empty when the user left the auto / untitled label. */
+export function dbEditorTitlePatch(value: string, untitled: string, autoTitle: string): string {
+  const next = value.trim()
+  if (!next || isDraftDbTitle(next, untitled) || next === autoTitle.trim()) return ''
+  return next
+}
+
 /** Empty untitled connection that only exists because the form used to mint a row first. */
 export function isDraftDbConnection(
   connection: {

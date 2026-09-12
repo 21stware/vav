@@ -159,10 +159,18 @@ describe('cliToolBlock', () => {
     assert.equal(appendNestedChildDelta(children, 'text', ''), false)
     assert.equal(appendNestedChildDelta(children, 'text', 'Hello'), true)
     assert.equal(appendNestedChildDelta(children, 'text', ' world'), true)
-    assert.equal(appendNestedChildDelta(children, 'reasoning', 'think'), true)
+    assert.equal(appendNestedChildDelta(children, 'reasoning', '用户要求操作日历至12月。'), true)
     assert.equal(children.length, 2)
     assert.equal(children[0]?.kind === 'text' ? children[0].text : '', 'Hello world')
-    assert.equal(children[1]?.kind === 'reasoning' ? children[1].text : '', 'think')
+    assert.equal(
+      children[1]?.kind === 'reasoning' ? children[1].text : '',
+      '用户要求操作日历至12月。'
+    )
+    const later =
+      '正在检查工作区环境、浏览器自动化技能及历史记录，确定如何操作日历。用户要求操作日历至12月份。'
+    assert.equal(appendNestedChildDelta(children, 'reasoning', later), true)
+    assert.equal(appendNestedChildDelta(children, 'reasoning', later), true)
+    assert.equal(children[1]?.kind === 'reasoning' ? children[1].text : '', later)
   })
 
   it('ensures a pending tool card and builds a parent task', () => {

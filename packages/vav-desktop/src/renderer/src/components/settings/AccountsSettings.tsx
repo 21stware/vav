@@ -746,12 +746,26 @@ function AccountInspector({
                     void (async () => {
                       onBusy(true)
                       setValidated(false)
-                      const result = await window.vav.accounts.verify(account.id, draftKey)
+                      const key = draftRef.current.trim()
+                      if (key) {
+                        try {
+                          onApply(await window.vav.accounts.updateVav(account.id, { apiKey: key }))
+                          setDraftKey('')
+                        } catch (err) {
+                          onBusy(false)
+                          setValidated(false)
+                          setStatus(err instanceof Error ? err.message : String(err))
+                          return
+                        }
+                      }
+                      const result = await window.vav.accounts.verify(account.id)
                       onBusy(false)
                       if (result.ok) {
                         setStatus(null)
                         setValidated(true)
                         onKeyStatus('ok')
+                        const page = await window.vav.accounts.getPage().catch(() => null)
+                        if (page) onApply(page)
                         return
                       }
                       setValidated(false)

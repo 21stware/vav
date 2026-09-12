@@ -13,7 +13,6 @@ import { isCompanionSessionShell } from './windowKind'
 
 let fileSessionAgentOpen: boolean | null = null
 let fileSessionAgentWidth: number | null = null
-let workspacePreviewWidth: number | null = null
 const columnListeners = new Set<() => void>()
 
 function emitColumns(): void {
@@ -26,14 +25,6 @@ export function reportFileSessionAgentOpen(open: boolean | null, width?: number)
   if (fileSessionAgentOpen === open && fileSessionAgentWidth === nextWidth) return
   fileSessionAgentOpen = open
   fileSessionAgentWidth = nextWidth
-  emitColumns()
-}
-
-/** Workspace right-hand preview drawer width while it is open. */
-export function reportWorkspacePreviewWidth(width: number | null): void {
-  const next = width != null && Number.isFinite(width) ? width : null
-  if (workspacePreviewWidth === next) return
-  workspacePreviewWidth = next
   emitColumns()
 }
 
@@ -59,7 +50,6 @@ export function useWindowMinSize(): void {
   const [sidebarWidth, setSidebarWidth] = useState(loadSidebarWidth)
   const [fileAgentOpen, setFileAgentOpen] = useState(() => fileSessionAgentOpen)
   const [fileAgentWidth, setFileAgentWidth] = useState(() => fileSessionAgentWidth)
-  const [previewWidth, setPreviewWidth] = useState(() => workspacePreviewWidth)
 
   useEffect(() => {
     const onWidth = (event: Event): void => {
@@ -79,7 +69,6 @@ export function useWindowMinSize(): void {
       subscribeShellColumns(() => {
         setFileAgentOpen(fileSessionAgentOpen)
         setFileAgentWidth(fileSessionAgentWidth)
-        setPreviewWidth(workspacePreviewWidth)
       }),
     []
   )
@@ -96,7 +85,10 @@ export function useWindowMinSize(): void {
     agentMinWidth: isFileSession ? FILE_SESSION_AGENT_MIN_WIDTH : AGENT_MIN_WIDTH,
     agentWidth: isFileSession ? (fileAgentWidth ?? undefined) : undefined,
     previewVisible,
-    previewWidth: isFileSession || isDbSession(conversation ?? {}) ? undefined : previewWidth ?? undefined,
+    // Floor only — never the live drawer width. applyWindowMinSize grows the
+    // frame when it is below the floor; WorkspaceView then gives that delta
+    // to the preview, which raises the floor again (window walks off-screen).
+    previewWidth: undefined,
     shell
   })
   const height = windowMinHeight({

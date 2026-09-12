@@ -480,6 +480,12 @@ html[data-resizing='true'] .banner.error {
   transition: none !important;
 }
 
+/* Guest frames swallow window mouseup; ignore them while a splitter is live. */
+html[data-resizing='true'] iframe,
+html[data-resizing='true'] webview {
+  pointer-events: none !important;
+}
+
 .titlebar {
   height: var(--toolbar-height);
   flex: 0 0 auto;
@@ -730,6 +736,55 @@ html[data-resizing='true'] .banner.error {
 .preview-file-session-actions .btn.icon-only svg {
   width: 14px;
   height: 14px;
+}
+
+.icon-with-plus {
+  position: relative;
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+}
+
+.icon-with-plus > svg {
+  display: block;
+  /* Punch the plus corner out of the glyph so chrome / glass shows through. */
+  -webkit-mask-image: linear-gradient(#000 0 0), linear-gradient(#000 0 0);
+  -webkit-mask-size: 100% 100%, 5px 5px;
+  -webkit-mask-position: 0 0, 100% 100%;
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-composite: xor;
+  mask-image: linear-gradient(#000 0 0), linear-gradient(#000 0 0);
+  mask-size: 100% 100%, 5px 5px;
+  mask-position: 0 0, 100% 100%;
+  mask-repeat: no-repeat;
+  mask-composite: exclude;
+}
+
+.icon-with-plus-mark {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  width: 9px;
+  height: 9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 2px;
+  background: none;
+  color: inherit;
+  pointer-events: none;
+}
+
+.titlebar .btn.icon-only .icon-with-plus-mark svg,
+.shell-leading-controls .btn.icon-only .icon-with-plus-mark svg,
+.agent-mode-chrome-trailing .btn.icon-only .icon-with-plus-mark svg,
+.file-viewer-header .btn.icon-only .icon-with-plus-mark svg,
+.workspace-preview-chrome .btn.icon-only .icon-with-plus-mark svg,
+.workspace-preview-empty-bar .btn.icon-only .icon-with-plus-mark svg,
+.preview-file-session-actions .btn.icon-only .icon-with-plus-mark svg {
+  width: 9px;
+  height: 9px;
 }
 
 .agent-mode-shell-leading {
@@ -1318,6 +1373,8 @@ button.chip:active {
   justify-content: center;
   height: 18px;
   flex: 0 0 auto;
+  appearance: none;
+  -webkit-appearance: none;
   border: 0;
   border-radius: 8px;
   background: transparent;
@@ -1812,8 +1869,7 @@ kbd {
 }
 
 /* Sessions nest under their workspace label. */
-.conv-group.is-workspace .conv-row,
-.conv-group.is-database .conv-row {
+.conv-group.is-workspace .conv-row {
   padding-left: 22px;
 }
 
@@ -5955,10 +6011,18 @@ mark {
   cursor: default;
 }
 
+button.tool-row {
+  cursor: pointer;
+}
+
+.tool-call.is-line > .tool-row {
+  cursor: default;
+  padding-left: 8px;
+}
+
 .tool-row .tool-name,
 .tool-row .tool-summary,
-.tool-row .tool-chevron,
-.tool-row .tool-glyph {
+.tool-row .tool-chevron {
   transition: color var(--dur-hover) ease;
 }
 
@@ -5996,38 +6060,20 @@ mark {
   transform: rotate(90deg);
 }
 
-/* The glyph is the only colour on a collapsed row, and it is categorical: the
-   hue tells you what kind of thing happened before you read the name. */
+.tool-glyph-hit {
+  flex: 0 0 auto;
+  display: inline-flex;
+  line-height: 0;
+}
+
 .tool-glyph {
   flex: 0 0 auto;
   color: var(--text-tertiary);
 }
 
-.tool-call[data-tool='terminal'] .tool-glyph {
-  color: color-mix(in srgb, var(--tone-shell) 48%, var(--text-tertiary));
-}
-.tool-call[data-tool='fs_read'] .tool-glyph {
-  color: color-mix(in srgb, var(--tone-read) 48%, var(--text-tertiary));
-}
-.tool-call[data-tool='fs_write'] .tool-glyph {
-  color: color-mix(in srgb, var(--tone-write) 48%, var(--text-tertiary));
-}
-.tool-call[data-tool='fs_list'] .tool-glyph {
-  color: color-mix(in srgb, var(--tone-list) 48%, var(--text-tertiary));
-}
-.tool-call[data-tool='web_search'] .tool-glyph,
-.tool-call[data-tool='web_fetch'] .tool-glyph {
-  color: color-mix(in srgb, var(--tone-web) 46%, var(--text-tertiary));
-}
 .tool-call[data-tool='web_search'] .tool-name,
 .tool-call[data-tool='web_fetch'] .tool-name {
   color: color-mix(in srgb, var(--tone-web) 46%, var(--text-tertiary));
-}
-.tool-call[data-tool='request'] .tool-glyph {
-  color: color-mix(in srgb, var(--warning) 48%, var(--text-tertiary));
-}
-.tool-call[data-tool='ask_user_question'] .tool-glyph {
-  color: color-mix(in srgb, var(--accent-text) 48%, var(--text-tertiary));
 }
 .tool-call[data-tool='task'] .tool-name {
   color: color-mix(in srgb, var(--accent-text) 52%, var(--text-tertiary));
@@ -6038,39 +6084,19 @@ mark {
 }
 
 @media (hover: hover) and (pointer: fine) {
-  .tool-row:hover:not(:disabled) .tool-name {
+  button.tool-row:hover:not(:disabled) .tool-name {
     color: var(--text-secondary);
   }
-  .tool-row:hover:not(:disabled) .tool-summary,
-  .tool-row:hover:not(:disabled) .tool-chevron {
+  button.tool-row:hover:not(:disabled) .tool-summary,
+  button.tool-row:hover:not(:disabled) .tool-chevron {
     color: var(--text-secondary);
   }
-  .tool-call[data-tool='terminal'] .tool-row:hover:not(:disabled) .tool-glyph {
-    color: var(--tone-shell);
-  }
-  .tool-call[data-tool='fs_read'] .tool-row:hover:not(:disabled) .tool-glyph {
-    color: var(--tone-read);
-  }
-  .tool-call[data-tool='fs_write'] .tool-row:hover:not(:disabled) .tool-glyph {
-    color: var(--tone-write);
-  }
-  .tool-call[data-tool='fs_list'] .tool-row:hover:not(:disabled) .tool-glyph {
-    color: var(--tone-list);
-  }
-  .tool-call[data-tool='web_search'] .tool-row:hover:not(:disabled) .tool-glyph,
-  .tool-call[data-tool='web_fetch'] .tool-row:hover:not(:disabled) .tool-glyph,
   .tool-call[data-tool='task'] .tool-row:hover:not(:disabled) .tool-name {
     color: var(--accent-text);
   }
   .tool-call[data-tool='web_search'] .tool-row:hover:not(:disabled) .tool-name,
   .tool-call[data-tool='web_fetch'] .tool-row:hover:not(:disabled) .tool-name {
     color: var(--tone-web);
-  }
-  .tool-call[data-tool='request'] .tool-row:hover:not(:disabled) .tool-glyph {
-    color: var(--warning);
-  }
-  .tool-call[data-tool='ask_user_question'] .tool-row:hover:not(:disabled) .tool-glyph {
-    color: var(--accent-text);
   }
   .tool-call[data-status='error'] .tool-row:hover:not(:disabled) .tool-glyph {
     color: var(--danger);
@@ -6084,29 +6110,9 @@ mark {
 .tool-row:active:not(:disabled) .tool-chevron {
   color: var(--text-secondary);
 }
-.tool-call[data-tool='terminal'] .tool-row:active:not(:disabled) .tool-glyph {
-  color: var(--tone-shell);
-}
-.tool-call[data-tool='fs_read'] .tool-row:active:not(:disabled) .tool-glyph {
-  color: var(--tone-read);
-}
-.tool-call[data-tool='fs_write'] .tool-row:active:not(:disabled) .tool-glyph {
-  color: var(--tone-write);
-}
-.tool-call[data-tool='fs_list'] .tool-row:active:not(:disabled) .tool-glyph {
-  color: var(--tone-list);
-}
-.tool-call[data-tool='web_search'] .tool-row:active:not(:disabled) .tool-glyph,
-.tool-call[data-tool='web_fetch'] .tool-row:active:not(:disabled) .tool-glyph,
 .tool-call[data-tool='web_search'] .tool-row:active:not(:disabled) .tool-name,
 .tool-call[data-tool='web_fetch'] .tool-row:active:not(:disabled) .tool-name {
   color: var(--tone-web);
-}
-.tool-call[data-tool='request'] .tool-row:active:not(:disabled) .tool-glyph {
-  color: var(--warning);
-}
-.tool-call[data-tool='ask_user_question'] .tool-row:active:not(:disabled) .tool-glyph {
-  color: var(--accent-text);
 }
 .tool-call[data-status='error'] .tool-row:active:not(:disabled) .tool-glyph {
   color: var(--danger);
@@ -7834,6 +7840,11 @@ mark {
   }
 }
 
+.db-preview-swap > .sqlite-root {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
 .db-connect-card input,
 .db-connect-card select,
 .db-connect-card button,
@@ -9510,20 +9521,42 @@ mark {
   margin-left: auto;
 }
 
-/* Soft pill for New so it matches path chip weight when the strip is idle. */
-.tools-header-new .btn.sm:not(.icon-only) {
-  height: 24px;
-  padding: 0 9px 0 7px;
+/* Ghost pill like the trail icon buttons — not a filled tab chip. */
+.tools-header-new .chip {
+  max-width: none;
+  background: transparent;
   border-radius: 999px;
-  gap: 4px;
-  font-size: 12px;
   font-weight: 550;
   color: var(--text-secondary);
 }
 
-.tools-header-new .btn.sm:not(.icon-only):hover {
-  color: var(--text);
+.tools-header-new .chip:hover {
   background: var(--bg-hover);
+  color: var(--text);
+}
+
+.tools-header-new .chip.has-trailing {
+  padding: 0 6px 0 8px;
+  gap: 4px;
+}
+
+.tools-header-new .chip svg {
+  opacity: 1;
+  color: inherit;
+}
+
+.tools-header-new .chip-action {
+  min-width: 18px;
+  padding: 0 2px;
+}
+
+.tools-header-new .chip-action,
+.tools-header-new .chip-action:hover {
+  background: transparent;
+}
+
+.tools-header-new .chip-action:hover {
+  opacity: 1;
 }
 
 .tools-header-trail .btn.sm.icon-only {

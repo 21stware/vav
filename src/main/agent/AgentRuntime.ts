@@ -91,6 +91,7 @@ import { buildSystemPrompt } from './systemPrompt'
 import { summarizeToolInput } from './toolSummarize'
 import { McpToolBridge } from '../plugins/mcpClient.ts'
 import { runPluginHooks } from '../plugins/hooksRunner.ts'
+import { coalesceStreamChunk, foldSnapshotText } from '../../shared/streamCoalesce.ts'
 import { stampReasoningDurations } from './reasoningStamp'
 import { applyToolRuntimePatch, applyToolStatePatch, ensureToolCallBlock, rememberSentToolCard, toolCallBlockIndex } from './cliToolBlock'
 import { compactClearGate, planConversationCompact } from './compactPlan'
@@ -213,6 +214,7 @@ export interface AgentRuntimeDeps {
   connectors?: ConnectorRegistry
   /** Per-conversation env secrets from `request_for_secret`. */
   sessionSecrets?: SessionSecretStore
+  computer?: import('../computer/CuaComputerHost').ComputerHost
 }
 
 /**
@@ -710,6 +712,15 @@ export class AgentRuntime {
       ? toPiReasoning(parseThinkingLevel(conversation.thinkingLevel))
       : undefined
 
+    const dbSession = conversation.sessionKind === 'db'
+    const dbId = conversation.dbConnectionId?.trim() || ''
+    const dbRow = dbSession && dbId ? this.deps.postgres?.connection(dbId) : undefined
+    let dbSchema: Array<{ name: string; columns: string[]; rowCount: number }> | null = null
+    if (dbSession && dbId && this.deps.postgres) {
+      const inspected = await this.deps.postgres.schema(dbId)
+      if ('tables' in inspected) dbSchema = inspected.tables
+    }
+
     try {
       for (;;) {
         try {
@@ -730,20 +741,12 @@ export class AgentRuntime {
                   : null,
                 skillCatalog: this.deps.skills?.catalogForPrompt() ?? null,
                 pluginContext: turn.pluginContext || null,
-                dbSession: conversation.sessionKind === 'db',
-                dbDriver: (() => {
-                  const id = conversation.dbConnectionId?.trim()
-                  if (!id || !this.deps.postgres) return undefined
-                  const driver = this.deps.postgres.connection(id)?.driver
-                  return driver ? DB_DRIVER_DEFAULTS[driver].label : undefined
-                })(),
-                dbTitle: (() => {
-                  const id = conversation.dbConnectionId?.trim()
-                  if (!id || !this.deps.postgres) return null
-                  const row = this.deps.postgres.connection(id)
-                  return row ? dbConnectionTitle(row) : null
-                })(),
-                dbTable: conversation.focusedDbTable ?? null
+                dbSession,
+                dbDriver: dbRow ? DB_DRIVER_DEFAULTS[dbRow.driver].label : undefined,
+                dbTitle: dbRow ? dbConnectionTitle(dbRow) : null,
+                dbTable: conversation.focusedDbTable ?? null,
+                dbSchema,
+                computerUse: Boolean(this.deps.computer?.available())
               }),
               messages: history,
               tools: this.toolsFor(conversation, turn)
@@ -1254,7 +1257,11 @@ export class AgentRuntime {
   ): void {
     if (!text) return
     const block = turn.blocks[slot]
-    if (block?.kind === 'text' || block?.kind === 'reasoning') block.text += text
+    if (block?.kind === 'reasoning') {
+      block.text = foldSnapshotText(coalesceStreamChunk(block.text, text))
+    } else if (block?.kind === 'text') {
+      block.text += text
+    }
     turn.buffers.set(slot, (turn.buffers.get(slot) ?? '') + text)
     if (turn.flushTimer) return
     turn.flushTimer = setTimeout(() => {
@@ -1391,7 +1398,8 @@ export class AgentRuntime {
         !!this.deps.conversations.get(conversationId)?.fileReadOnly,
       setFileReadOnly: (readOnly) => this.setConversationFileReadOnly(conversationId, readOnly),
       connectors: this.deps.connectors,
-      isTimerSession: () => this.deps.conversations.get(conversationId)?.sessionKind === 'timer'
+      isTimerSession: () => this.deps.conversations.get(conversationId)?.sessionKind === 'timer',
+      computer: this.deps.computer
     })
     // Keep fs_write offered in Read mode so the same turn can write after
     // switch_mode; execute-time gates still refuse until Edit is on.

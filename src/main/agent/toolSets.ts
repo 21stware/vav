@@ -14,11 +14,14 @@ export const READONLY_TOOLS: ReadonlySet<ToolName> = new Set([
   'web_fetch',
   'sql_query',
   'load_skill',
-  'connector'
+  'connector',
+  'computer_list',
+  'computer_observe'
 ])
 /** Auto-mode tools that pause for Approve / Deny. */
 export const HIGH_RISK_TOOLS: ReadonlySet<ToolName> = new Set([
   'fs_write',
   'terminal',
-  'switch_mode'
+  'switch_mode',
+  'computer_act'
 ])

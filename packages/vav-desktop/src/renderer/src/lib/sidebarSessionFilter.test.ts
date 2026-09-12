@@ -43,7 +43,7 @@ describe('sidebarSessionFilter', () => {
     assert.equal(encodeSidebarSessionFilter({ kind: 'workspace', path: '/a' }), 'ws:/a')
   })
 
-  it('matches running or unread for Active Session', () => {
+  it('matches running or unread for Running and unread', () => {
     const row = conv({ id: 'a' })
     assert.equal(
       conversationMatchesFilter(row, { kind: 'active' }, {
@@ -68,6 +68,28 @@ describe('sidebarSessionFilter', () => {
         favoriteIds: new Set()
       }),
       false
+    )
+  })
+
+  it('keeps the focused row visible even when it fails the filter', () => {
+    const row = conv({ id: 'focus' })
+    assert.equal(
+      conversationMatchesFilter(row, { kind: 'active' }, {
+        running: false,
+        unread: false,
+        favoriteIds: new Set(),
+        focused: true
+      }),
+      true
+    )
+    assert.equal(
+      conversationMatchesFilter(row, { kind: 'favorite' }, {
+        running: false,
+        unread: false,
+        favoriteIds: new Set(),
+        focused: true
+      }),
+      true
     )
   })
 

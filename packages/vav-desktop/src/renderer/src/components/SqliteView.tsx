@@ -101,7 +101,9 @@ export function SqliteView({
   onSelect,
   query,
   activeTable,
-  hideNav
+  hideNav,
+  navSide,
+  onActiveTableChange
 }: {
   path: string
   info: SqliteDatabaseInfo
@@ -114,10 +116,13 @@ export function SqliteView({
   ) => void
   /** Override table paging — live PG connections use this instead of a file path. */
   query?: (table: string, offset: number, limit: number) => Promise<SqliteQueryResult>
-  /** Controlled table — sidebar DB groups drive this. */
+  /** Controlled table — the DB workspace persists this as the focused table. */
   activeTable?: string
-  /** Hide the in-preview table list when tables live in the sidebar. */
+  onActiveTableChange?: (table: string) => void
+  /** Hide the in-preview table list (file SQLite can keep it). */
   hideNav?: boolean
+  /** Vertical table list beside the grid — live DB connections use this. */
+  navSide?: boolean
 }): React.JSX.Element {
   const t = useT()
   const tables = info.tables
@@ -143,6 +148,9 @@ export function SqliteView({
   const selected = useMemo(() => new Set(selectedIds), [selectedIds])
 
   const activeMeta = tables.find((tb) => tb.name === active) ?? tables[0]
+  const schemaKey = tables
+    .map((tb) => `${tb.name}:${tb.rowCount}:${tb.columns.join(',')}`)
+    .join('|')
 
   const {
     rowStart,
@@ -154,12 +162,21 @@ export function SqliteView({
     resetScroll
   } = useSheetVirtualWindow(wrapRef, total, `${path}\0${active}`)
 
+  const selectTable = useCallback(
+    (name: string): void => {
+      if (!name || name === active) return
+      setActive(name)
+      onActiveTableChange?.(name)
+    },
+    [active, onActiveTableChange]
+  )
+
   useEffect(() => {
     if (activeTable && activeTable !== active) setActive(activeTable)
     else if (!active && tables[0]) setActive(tables[0].name)
   }, [tables, active, activeTable])
 
-  // Table switch: drop cache and jump to top.
+  // Table switch or schema change: drop cache and jump to top.
   useEffect(() => {
     genRef.current += 1
     setChunks(new Map())
@@ -173,7 +190,7 @@ export function SqliteView({
     setReady(false)
     resetScroll()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, path])
+  }, [active, path, schemaKey])
 
   const ensureChunks = useCallback(
     async (table: string, start: number, end: number) => {
@@ -386,7 +403,11 @@ export function SqliteView({
   }
 
   return (
-    <div className={`sqlite-root${selecting ? ' selecting' : ''}${hideNav ? ' hide-nav' : ''}`}>
+    <div
+      className={`sqlite-root${selecting ? ' selecting' : ''}${hideNav ? ' hide-nav' : ''}${
+        navSide ? ' nav-side' : ''
+      }`}
+    >
       {!hideNav ? (
         <nav className="structured-doc-nav">
           <div className="structured-doc-nav-scroll">
@@ -397,12 +418,16 @@ export function SqliteView({
                 className={`structured-doc-nav-item${tb.name === active ? ' active' : ''}${
                   selected.has(`db-table-${tb.name}`) ? ' selected' : ''
                 }`}
-                title={tb.name}
-                onClick={() => setActive(tb.name)}
+                data-testid="db-table-tab"
+                data-table-name={tb.name}
+                title={
+                  tb.columns.length ? `${tb.name}\n${tb.columns.join(', ')}` : tb.name
+                }
+                onClick={() => selectTable(tb.name)}
                 onMouseDown={
                   selecting
                     ? (e) => {
-                        if (tb.name !== active) setActive(tb.name)
+                        if (tb.name !== active) selectTable(tb.name)
                         const text = [
                           `TABLE ${tb.name}`,
                           `columns: ${tb.columns.join(', ')}`,

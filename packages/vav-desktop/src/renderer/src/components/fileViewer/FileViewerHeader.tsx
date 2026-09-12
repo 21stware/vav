@@ -190,7 +190,7 @@ export function FileViewerHeader({
             <Button
               icon={<Save size={14} />}
               label={t('preview.save')}
-              variant={hasUnsavedChanges ? 'primary' : 'secondary'}
+              variant={hasUnsavedChanges ? 'primary' : 'ghost'}
               className="preview-save-main"
               disabled={!hasUnsavedChanges}
               title={`${t('preview.save')} (⌘S)`}
@@ -198,7 +198,7 @@ export function FileViewerHeader({
             />
             <Button
               icon={<ChevronDown size={14} />}
-              variant={hasUnsavedChanges ? 'primary' : 'secondary'}
+              variant={hasUnsavedChanges ? 'primary' : 'ghost'}
               className="preview-save-more"
               title={t('preview.moreActions')}
               onClick={(event) => {

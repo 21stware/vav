@@ -13,6 +13,7 @@ import { basename, join } from 'node:path'
 import { createAccountsCatalog } from '../accounts/daemonCatalog.ts'
 import { resolveVavCredentials } from '../accounts/vavCredentials.ts'
 import { AgentRuntime } from '../agent/AgentRuntime.ts'
+import { createCuaComputerHost } from '../computer/CuaComputerHost.ts'
 import { SkillService } from '../agent/SkillService.ts'
 import { pluginHostKind } from '../../shared/plugins.ts'
 import { PluginService } from '../plugins/PluginService.ts'
@@ -243,7 +244,8 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
     plugins: pluginService,
     connectors: connectorRegistry,
     fileSessions,
-    emit: handleAgentEvent
+    emit: handleAgentEvent,
+    computer: createCuaComputerHost()
   })
 
   type CliRuntime = {

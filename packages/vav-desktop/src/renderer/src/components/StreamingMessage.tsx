@@ -12,6 +12,7 @@ import { useT } from '../i18n/useT'
 import { handleMarkdownOverlayDoubleClick, MarkdownView } from './MarkdownView'
 import { ReasoningBlock } from './ReasoningBlock'
 import { StreamStatus } from './StreamStatus'
+import { ProcessText } from './ProcessText'
 import { ThinkingProcess } from './ThinkingProcess'
 import { ToolCard } from './ToolCard'
 
@@ -45,15 +46,7 @@ export function StreamingMessage({ conversationId }: { conversationId: string })
     const block = snapshot.blocks[item.index]
     if (!block) return null
     if (block.kind === 'reasoning') {
-      const active = snapshot.phase === 'thinking' && item.index === snapshot.blocks.length - 1
-      return (
-        <ReasoningBlock
-          key={block.key}
-          text={block.text}
-          live={active}
-          durationMs={block.durationMs}
-        />
-      )
+      return <ReasoningBlock key={block.key} text={block.text} flat />
     }
     if (block.kind === 'tool') {
       if (block.block.tool === 'plan') return null
@@ -82,7 +75,7 @@ export function StreamingMessage({ conversationId }: { conversationId: string })
       return <ToolCard key={block.id} block={block} startCollapsed />
     }
     if (block.kind === 'text') {
-      return <MarkdownView key={`t${index}`} source={block.text} />
+      return <ProcessText key={`t${index}`} text={block.text} />
     }
     return null
   }

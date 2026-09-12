@@ -282,6 +282,8 @@ export function HtmlNativeView({
         syncSelected(doc, selectedIdsRef.current)
       }
       restamp()
+      // Gate the hover ring to selection mode (selected outline always shows).
+      doc.documentElement.classList.toggle('vav-pick-selecting', selectingRef.current)
 
       const onDown = (event: MouseEvent): void => {
         if (!selectingRef.current) return
@@ -379,6 +381,13 @@ export function HtmlNativeView({
     if (!doc?.body) return
     syncSelected(doc, selectedIds)
   }, [selectedIds])
+
+  // Toggle the selecting gate live (no srcdoc reload).
+  useEffect(() => {
+    const doc = iframeRef.current?.contentDocument
+    if (!doc?.documentElement) return
+    doc.documentElement.classList.toggle('vav-pick-selecting', selecting)
+  }, [selecting])
 
   return (
     <div className={`office-native-root html-root${selecting ? ' selecting' : ''}`}>

@@ -34,6 +34,19 @@
       "dir": "canvas-design"
     },
     {
+      "id": "computer-use",
+      "name": "computer-use",
+      "description": "Drive native desktop windows through VAV's embedded Cua Driver. Use when the user asks to click, type, verify, or launch a GUI app that has no useful CLI or API. Not for files, git, terminals, or ordinary web pages.",
+      "license": "MIT",
+      "source": "vav",
+      "tags": [
+        "desktop",
+        "gui",
+        "computer-use"
+      ],
+      "dir": "computer-use"
+    },
+    {
       "id": "doc-coauthoring",
       "name": "doc-coauthoring",
       "description": "Guide users through a structured workflow for co-authoring documentation. Use when user wants to write documentation, proposals, technical specs, decision docs, or similar structured content. This workflow helps users efficiently transfer context, refine content through iteration, and verify the doc works for readers. Trigger when user mentions writing docs, creating proposals, drafting specs, or similar documentation tasks.",

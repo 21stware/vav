@@ -144,7 +144,8 @@ export function Transcript({
   const accountId = useSessionStore(
     (s) => s.conversations.find((c) => c.id === activeId)?.accountId ?? null
   )
-  const needsVavKey = !apiKeyPresent && !cliHost && !hostHoldsKeys
+  const vavKeyReady = vavAccountsOf(accountGroups).some((row) => row.keyPresent)
+  const needsVavKey = !apiKeyPresent && !vavKeyReady && !cliHost && !hostHoldsKeys
   const archived = useSessionStore(
     (s) => !!s.conversations.find((c) => c.id === activeId)?.archived
   )

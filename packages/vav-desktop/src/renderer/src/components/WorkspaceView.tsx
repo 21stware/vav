@@ -8,14 +8,15 @@ import {
   useRef,
   useState,
   type ErrorInfo,
+  type PointerEvent as ReactPointerEvent,
   type ReactNode
 } from 'react'
 import { PanelRight, X } from 'lucide-react'
 import { useSessionStore } from '../state/sessionStore'
 import { useWorkspaceStore } from '../state/workspaceStore'
 import { useT } from '../i18n/useT'
+import { startCapturedPointerDrag } from '../lib/capturedPointerDrag'
 import { prefetchForPath } from '../lib/prefetchHeavy'
-import { reportWorkspacePreviewWidth } from '../lib/useWindowMinSize'
 import {
   PREVIEW_FALLBACK_PX,
   PREVIEW_MIN,
@@ -146,11 +147,6 @@ export function WorkspaceView({
   }, [setFilePreviewHost])
 
   useEffect(() => {
-    reportWorkspacePreviewWidth(previewOpen ? previewWidth : null)
-    return () => reportWorkspacePreviewWidth(null)
-  }, [previewOpen, previewWidth])
-
-  useEffect(() => {
     if (activeId) void ensureFilesLoaded(activeId)
   }, [activeId, ensureFilesLoaded, workdir])
 
@@ -217,8 +213,7 @@ export function WorkspaceView({
     return () => ro.disconnect()
   }, [fitToShell])
 
-  const startResize = (event: React.MouseEvent): void => {
-    event.preventDefault()
+  const startResize = (event: ReactPointerEvent<HTMLElement>): void => {
     const startX = event.clientX
     const startPreview = previewWidth
     const shellW = rootRef.current?.clientWidth ?? 0
@@ -227,10 +222,6 @@ export function WorkspaceView({
     let pendingX = startX
 
     colDraggingRef.current = true
-    document.documentElement.dataset.resizing = 'true'
-    rootRef.current?.classList.add('is-col-resizing')
-    document.body.style.cursor = 'col-resize'
-    document.body.style.userSelect = 'none'
 
     const applyDom = (preview: number): void => {
       if (previewRef.current && previewOpen) {
@@ -238,34 +229,29 @@ export function WorkspaceView({
       }
     }
 
-    const onMove = (e: MouseEvent): void => {
-      pendingX = e.clientX
-      if (raf) return
-      raf = requestAnimationFrame(() => {
-        raf = 0
-        const total = rootRef.current?.clientWidth || shellW
-        const raw = startPreview + (startX - pendingX)
-        latestPreview = clampPreviewWidth(raw, PREVIEW_MIN, maxPreviewForShell(total))
-        applyDom(latestPreview)
-      })
-    }
-
-    const onUp = (): void => {
-      if (raf) cancelAnimationFrame(raf)
-      window.removeEventListener('mousemove', onMove)
-      window.removeEventListener('mouseup', onUp)
-      document.body.style.cursor = ''
-      document.body.style.userSelect = ''
-      rootRef.current?.classList.remove('is-col-resizing')
-      colDraggingRef.current = false
-      delete document.documentElement.dataset.resizing
-      setPreviewWidth(latestPreview)
-      persistWidth(latestPreview)
-      notifyTerminalResize()
-    }
-
-    window.addEventListener('mousemove', onMove)
-    window.addEventListener('mouseup', onUp)
+    startCapturedPointerDrag(event, {
+      cursor: 'col-resize',
+      classTarget: rootRef.current,
+      className: 'is-col-resizing',
+      onMove: (e) => {
+        pendingX = e.clientX
+        if (raf) return
+        raf = requestAnimationFrame(() => {
+          raf = 0
+          const total = rootRef.current?.clientWidth || shellW
+          const raw = startPreview + (startX - pendingX)
+          latestPreview = clampPreviewWidth(raw, PREVIEW_MIN, maxPreviewForShell(total))
+          applyDom(latestPreview)
+        })
+      },
+      onUp: () => {
+        if (raf) cancelAnimationFrame(raf)
+        colDraggingRef.current = false
+        setPreviewWidth(latestPreview)
+        persistWidth(latestPreview)
+        notifyTerminalResize()
+      }
+    })
   }
 
   /**
@@ -341,7 +327,7 @@ export function WorkspaceView({
             role="separator"
             aria-orientation="vertical"
             aria-label={t('workspace.resizePreviewPanel')}
-            onMouseDown={startResize}
+            onPointerDown={startResize}
             onDoubleClick={() => {
               const total = rootRef.current?.clientWidth ?? 0
               const next = defaultPreviewForShell(total)

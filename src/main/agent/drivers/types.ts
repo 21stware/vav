@@ -137,6 +137,11 @@ export interface DriverStartOptions {
   resumeHandoff?: () => string | null
   /** Deadline for ACP `initialize` + `session/new` (or load/resume). Default 30s. */
   bootstrapTimeoutMs?: number
+  /**
+   * ACP `session/new` / `session/load` MCP servers. Cursor / Grok spawn these
+   * as stdio children — used to attach VAV's embedded computer-use driver.
+   */
+  mcpServers?: unknown[]
 }
 
 export interface DriverControl {

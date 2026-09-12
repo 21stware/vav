@@ -1,6 +1,6 @@
 {
   "name": "@21stware/vav-desktop",
-  "version": "1.26.0",
+  "version": "1.27.0",
   "private": true,
   "type": "module",
   "description": "VAV desktop workbench. Same sidebar for a local vav-server and a paired remote. Electron source is packages/vav-desktop/src.",

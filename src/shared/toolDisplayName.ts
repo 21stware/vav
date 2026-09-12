@@ -17,6 +17,9 @@ const TOOL_NAME_KEYS: Partial<Record<ToolName, MessageKey>> = {
   request: 'tool.ask',
   request_for_secret: 'tool.secret',
   switch_mode: 'tool.switchMode',
+  computer_list: 'tool.computerList',
+  computer_observe: 'tool.computerObserve',
+  computer_act: 'tool.computerAct',
   task: 'tool.task',
   plan_doc: 'tool.planDoc'
 }

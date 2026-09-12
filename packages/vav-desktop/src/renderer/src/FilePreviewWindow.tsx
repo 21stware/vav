@@ -4,6 +4,7 @@ import { useAppearance } from './lib/appearance'
 import { installDefaultContextMenu } from './lib/nativeMenu'
 import { useSessionStore } from './state/sessionStore'
 import {
+  installAgentModelCatalogBridge,
   installSettingsBridge,
   installTurnEventBridge,
   installUpdateBridge
@@ -123,7 +124,9 @@ export default function FilePreviewWindow({
     const offFs = installFsWatchBridge()
     const offPty = installPtyBridge()
     const offUpdates = installUpdateBridge()
+    const offModels = installAgentModelCatalogBridge()
     const offInstall = installInstallRunBridge()
+    void useSessionStore.getState().refreshAgentModelCatalog(false)
     return () => {
       offSettings()
       offMenu()
@@ -131,6 +134,7 @@ export default function FilePreviewWindow({
       offFs()
       offPty()
       offUpdates()
+      offModels()
       offInstall()
     }
   }, [])

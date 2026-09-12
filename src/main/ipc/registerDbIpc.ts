@@ -37,6 +37,20 @@ export function registerDbIpc(
     const next = conversations.get(conversation.id) ?? conversation
     return { connection, conversation: conversationToMeta(next) }
   })
+  ipcMain.handle(IPC.dbCreateSession, async (_event, connectionId: string) => {
+    const existing = store.get(connectionId.trim())
+    if (!existing) return null
+    const conversation = host.createDefinitionConversation()
+    conversations.updateMeta(conversation.id, {
+      dbConnectionId: existing.id,
+      sessionKind: 'db'
+    })
+    const connection = store.update(existing.id, { conversationId: conversation.id }) ?? existing
+    host.publishConversations()
+    broadcast()
+    const next = conversations.get(conversation.id) ?? conversation
+    return { connection, conversation: conversationToMeta(next) }
+  })
   ipcMain.handle(IPC.dbGetForConversation, async (_event, conversationId: string) => {
     return store.getForConversation(conversationId) ?? null
   })

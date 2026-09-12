@@ -110,6 +110,20 @@ export function summarizeToolInput(
         120
       )
     }
+    case 'computer_list':
+      return 'apps + windows'
+    case 'computer_observe':
+      return truncateToolSummary(
+        `pid ${String(input.pid ?? '')} window ${String(input.window_id ?? '')}`,
+        120
+      )
+    case 'computer_act': {
+      const kind = String(input.kind ?? 'act')
+      const target = input.bundle_id
+        ? String(input.bundle_id)
+        : `pid ${String(input.pid ?? '')} window ${String(input.window_id ?? '')}`
+      return truncateToolSummary(`${kind} · ${target}`, 120)
+    }
     case 'switch_mode': {
       const reason = String(input.reason ?? '').trim()
       return reason ? truncateToolSummary(`Switch to Edit · ${reason}`, 120) : 'Switch to Edit'

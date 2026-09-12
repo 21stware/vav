@@ -10,7 +10,6 @@ import {
 import {
   RECENT_AGENT_MODELS_MAX,
   RECENT_AGENT_MODELS_PINNED,
-  agentModelHostKey,
   defaultModelForChatHost,
   filterEnabledModels,
   hostIdForChatHost,
@@ -29,6 +28,7 @@ import {
 } from '@shared/llmVendors'
 import { isAgentPickerLocked } from '../lib/agentPickerLock'
 import { useAccountGroups, vavAccountsOf } from '../lib/accountGroups'
+import { catalogEntryForChatHost } from '../state/sessionModels'
 import { useSessionStore } from '../state/sessionStore'
 import { useT } from '../i18n/useT'
 import { createMenuNonceGate } from '../lib/menuNonce'
@@ -310,8 +310,7 @@ export function AgentModelPicker({
   }, [hostOptions])
 
   const modelsFor = (host: CliHostKind | null, vendorId?: string | null, accountId?: string | null) => {
-    const key = agentModelHostKey(host, vendorId, accountId)
-    const entry = catalog[key]
+    const entry = catalogEntryForChatHost(catalog, host, vendorId, accountId)
     const raw =
       entry?.models && entry.models.length > 0
         ? entry.models

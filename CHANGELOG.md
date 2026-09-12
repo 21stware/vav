@@ -4,6 +4,20 @@ User-facing changes by release. Unreleased work lives at the top until the next 
 
 ## Unreleased
 
+## 1.27.0
+
+Computer use is an opt-in embedded Cua Driver: VAV.app owns the daemon so Accessibility and Screen Recording stay on VAV, and the agent lists / observes / acts on a bound window in the background — it does not move the real pointer or steal focus. Turn it on in Settings → Appearance after granting those permissions.
+
+The session filter keeps the focused conversation visible, so a newly created task does not disappear under Running and unread. That filter is labeled Running and unread. The New-session plus mark no longer paints a content-colored square over the titlebar.
+
+Opening the right-hand preview on a regular conversation no longer grows the window without bound — the frame min-size uses the preview floor, not the live drawer width.
+
+The DB sidebar lists connections only. Tables move into the connection preview — switch them there, and the agent turn includes the live catalog (all table names and columns when known) plus the focused table.
+
+Empty Scheduled and DB categories show a create button instead of an unbound form. New / the top add button mint the item, select it, and open the existing editor. The add glyphs are Task, Scheduled, and DB with a plus in the corner. A scheduled task is the selectable group you configure; each run under it is a task named by run time. Editing a database connection keeps the saved host, database, and title — it no longer flashes the blank create form or writes those defaults back.
+
+New bash has a … menu that lists runnable workspace scripts and starts the chosen one in a new tab. Node scripts pick npm / pnpm / yarn / bun from `packageManager` then lockfiles (`bun.lock` / `bun.lockb` beat npm); `bunfig.toml` alone is not enough when a lockfile is present. Python (uv / poetry / pipenv / python3), Go, Rust, and Make targets are listed the same way.
+
 ## 1.26.0
 
 MySQL, ClickHouse, BigQuery, and DuckDB join PostgreSQL as first-class database connections (SQL Server stays coming soon). Paste a connection URL instead of filling in host, port, and credentials one field at a time — the password is stripped from the URL and kept in the vault. BigQuery connects by project, dataset, and location. PostgreSQL schema inspect lists tables and columns without a per-table `COUNT(*)`, so a large or permission-restricted catalog no longer stalls the whole read.

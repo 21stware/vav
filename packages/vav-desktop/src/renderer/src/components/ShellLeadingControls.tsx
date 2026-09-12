@@ -1,7 +1,8 @@
-import { PanelLeft, Plus } from 'lucide-react'
+import { Clock, Database, MessageSquare, PanelLeft } from 'lucide-react'
 import { useSessionStore } from '../state/sessionStore'
 import { keys } from '../lib/platform'
 import { useT } from '../i18n/useT'
+import { IconWithPlus } from './IconWithPlus'
 import { Button } from './ui'
 
 /**
@@ -24,18 +25,21 @@ export function ShellLeadingControls(): React.JSX.Element {
       ? {
           testId: 'new-scheduled',
           title: t('timer.new'),
+          icon: <IconWithPlus icon={Clock} />,
           onClick: () => void createScheduledConversation()
         }
       : listMode === 'databases'
         ? {
             testId: 'new-db',
             title: t('db.new'),
+            icon: <IconWithPlus icon={Database} />,
             onClick: () => void createDbConversation()
           }
         : listMode === 'main' || listMode === 'archive'
           ? {
               testId: 'new-session',
               title: t('app.newSessionTitle', { shortcut: keys('⌘N') }),
+              icon: <IconWithPlus icon={MessageSquare} />,
               onClick: () => void createConversation({ machineId: windowMachineId })
             }
           : null
@@ -51,7 +55,7 @@ export function ShellLeadingControls(): React.JSX.Element {
       {create ? (
         <Button
           id={create.testId === 'new-session' ? 'create' : undefined}
-          icon={<Plus size={14} />}
+          icon={create.icon}
           testId={create.testId}
           title={create.title}
           onClick={create.onClick}

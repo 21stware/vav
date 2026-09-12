@@ -16,7 +16,7 @@ import {
 import { useSessionStore } from '../state/sessionStore'
 import { useT, tt } from '../i18n/useT'
 import { extractCiteKeys } from '@shared/mdMarks'
-import { isHollowToolCard } from '../lib/assistantProcess'
+import { hasToolResult, isHollowToolCard } from '../lib/assistantProcess'
 import { REVEAL_CITE_EVENT } from '../lib/mdMarks'
 import { MarkdownView } from './MarkdownView'
 import { ReasoningBlock } from './ReasoningBlock'
@@ -42,6 +42,7 @@ function localizedToolName(tool: ToolName, t: ReturnType<typeof useT>): string {
   return key ? t(key) : (TOOL_LABELS[tool] ?? tool)
 }
 import { ToolDetail } from './ToolDetail'
+import { ToolGlyph } from './ToolGlyph'
 import { Button, InlineAlert } from './ui'
 
 /** Collapsed header truncates the argument summary past this length. */
@@ -132,43 +133,47 @@ export const ToolCard = memo(function ToolCard({
   }
 
   const label = statusLabel(block.status)
-  const canToggle = !fireAndForget && block.status !== 'pending'
+  const canToggle =
+    hasToolResult(block) && !fireAndForget && block.status !== 'pending'
   const showDetail = canToggle && expanded
   const backgroundTag = fireAndForget ? backgroundLabel(block) : null
+  const row = (
+    <>
+      {canToggle ? <ChevronRight className="tool-chevron" size={11} /> : null}
+      <ToolGlyph tool={block.tool} title={toolName} />
+      <span className="tool-summary" title={headline}>
+        {truncate(headline, SUMMARY_MAX)}
+      </span>
+      {backgroundTag && <span className="tool-bg-tag">{backgroundTag}</span>}
+      {block.status === 'executing' && <Loader2 className="spin tool-mark" size={11} />}
+      {block.status === 'error' && <CircleAlert className="tool-mark failed" size={12} />}
+      {label && <span className={`tool-state ${block.status}`}>{label}</span>}
+    </>
+  )
 
   return (
     <div
       ref={rootRef}
-      className={`tool-call${showDetail ? ' expanded' : ''}`}
+      className={`tool-call${showDetail ? ' expanded' : ''}${canToggle ? '' : ' is-line'}`}
       data-testid="tool-card"
       data-tool={block.tool}
       data-status={block.status}
       data-expandable={canToggle}
       data-cite-keys={citeKeys || undefined}
     >
-      <button
-        type="button"
-        className="tool-row"
-        disabled={!canToggle}
-        title={canToggle ? t('tool.toggleDetail') : undefined}
-        aria-expanded={canToggle ? showDetail : undefined}
-        onClick={() => {
-          if (canToggle) setExpanded((value) => !value)
-        }}
-      >
-        {canToggle ? <ChevronRight className="tool-chevron" size={11} /> : <span className="tool-chevron-spacer" />}
-        <span className="tool-name" title={toolName}>
-          {toolName}
-        </span>
-        <span className="tool-summary" title={headline}>
-          {truncate(headline, SUMMARY_MAX)}
-        </span>
-        {backgroundTag && <span className="tool-bg-tag">{backgroundTag}</span>}
-        {block.status === 'executing' && <Loader2 className="spin tool-mark" size={11} />}
-        {block.status === 'completed' && !fireAndForget && <Check className="tool-mark done" size={12} />}
-        {block.status === 'error' && <CircleAlert className="tool-mark failed" size={12} />}
-        {label && <span className={`tool-state ${block.status}`}>{label}</span>}
-      </button>
+      {canToggle ? (
+        <button
+          type="button"
+          className="tool-row"
+          title={t('tool.toggleDetail')}
+          aria-expanded={showDetail}
+          onClick={() => setExpanded((value) => !value)}
+        >
+          {row}
+        </button>
+      ) : (
+        <div className="tool-row">{row}</div>
+      )}
 
       {/* Kept mounted and collapsed by grid rows, so reopening mid-close
           retargets from where it is instead of restarting. */}
@@ -213,8 +218,7 @@ function defaultExpanded(block: ToolCallBlock): boolean {
 }
 
 function TaskChildren({
-  blocks,
-  live
+  blocks
 }: {
   blocks: MessageBlock[]
   live: boolean
@@ -223,14 +227,7 @@ function TaskChildren({
     <div className="task-children" data-testid="task-children">
       {blocks.map((child, index) => {
         if (child.kind === 'reasoning') {
-          return (
-            <ReasoningBlock
-              key={`r${index}`}
-              text={child.text}
-              live={live && index === blocks.length - 1}
-              durationMs={child.durationMs}
-            />
-          )
+          return <ReasoningBlock key={`r${index}`} text={child.text} flat />
         }
         if (child.kind === 'toolCall') {
           return <ToolCard key={child.id} block={child} />

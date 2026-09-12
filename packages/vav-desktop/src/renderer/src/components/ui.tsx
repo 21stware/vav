@@ -267,7 +267,9 @@ export function Chip({
   closeTitle,
   onAction,
   actionIcon,
-  actionTitle
+  actionTitle,
+  testId,
+  actionTestId
 }: {
   label: string
   icon?: ReactNode
@@ -292,6 +294,8 @@ export function Chip({
   onAction?: () => void
   actionIcon?: ReactNode
   actionTitle?: string
+  testId?: string
+  actionTestId?: string
 }): React.JSX.Element {
   const resolvedCloseTitle = closeTitle ?? tt('common.close')
   const trailing = Boolean(onClose || onAction)
@@ -314,6 +318,7 @@ export function Chip({
         className={classes}
         title={title ?? label}
         disabled={disabled}
+        data-testid={testId}
         onClick={disabled ? undefined : onClick}
         onContextMenu={disabled ? undefined : onContextMenu}
       >
@@ -327,6 +332,7 @@ export function Chip({
     <div
       className={classes}
       title={title ?? label}
+      data-testid={testId}
       onContextMenu={disabled ? undefined : onContextMenu}
     >
       <button
@@ -342,7 +348,7 @@ export function Chip({
         <button
           type="button"
           className="chip-action"
-          data-testid="chip-action"
+          data-testid={actionTestId ?? 'chip-action'}
           title={actionTitle}
           disabled={disabled}
           onClick={(event) => {

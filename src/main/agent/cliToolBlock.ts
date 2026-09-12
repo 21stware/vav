@@ -1,3 +1,4 @@
+import { coalesceStreamChunk, foldSnapshotText } from '../../shared/streamCoalesce.ts'
 import type { MessageBlock, ToolCallBlock, ToolCallStatus, ToolName } from '../../shared/types.ts'
 import { findToolBlock } from '../../shared/subtask.ts'
 
@@ -213,7 +214,8 @@ export function appendNestedChildDelta(
   if (!text) return false
   const last = children[children.length - 1]
   if (last && last.kind === kind) {
-    last.text += text
+    last.text =
+      kind === 'reasoning' ? foldSnapshotText(coalesceStreamChunk(last.text, text)) : last.text + text
   } else {
     children.push(kind === 'text' ? { kind: 'text', text } : { kind: 'reasoning', text })
   }

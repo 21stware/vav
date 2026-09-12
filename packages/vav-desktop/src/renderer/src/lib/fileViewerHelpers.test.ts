@@ -6,7 +6,9 @@ import {
   clampPanelWidth,
   collectBlocks,
   countNewlinesLocal,
+  dbConversationIdForFilePath,
   filesHostConversationId,
+  resolveOpenedFileSessionId,
   formatCommentCardLabel,
   isOpenFilePath,
   isSilentPreviewWindowWarning,
@@ -183,6 +185,41 @@ describe('isSilentPreviewWindowWarning / provisionalInspect', () => {
     assert.equal(provisionalInspect('/docs/pack.zip')?.kind, 'zip')
     assert.equal(provisionalInspect('/docs/pic.png')?.kind, 'image')
     assert.equal(provisionalInspect('/docs/blob.bin'), null)
+  })
+})
+
+describe('resolveOpenedFileSessionId', () => {
+  const sessions = [{ id: 'indexed' }, { id: 'opened' }]
+
+  it('keeps the conversation that opened the file over the store index', () => {
+    assert.equal(resolveOpenedFileSessionId(sessions, 'indexed', 'opened'), 'opened')
+  })
+
+  it('falls back to the indexed active session when the preferred id is not in the list', () => {
+    assert.equal(resolveOpenedFileSessionId(sessions, 'indexed', 'other'), 'indexed')
+    assert.equal(resolveOpenedFileSessionId(sessions, 'indexed', null), 'indexed')
+  })
+})
+
+describe('dbConversationIdForFilePath', () => {
+  it('returns the live DuckDB / SQLite conversation for that file', () => {
+    assert.equal(
+      dbConversationIdForFilePath(
+        [
+          { driver: 'postgres', database: 'app', conversationId: 'pg' },
+          { driver: 'duckdb', database: '/data/sales.duckdb', conversationId: 'db-1' }
+        ],
+        '/data/sales.duckdb'
+      ),
+      'db-1'
+    )
+    assert.equal(
+      dbConversationIdForFilePath(
+        [{ driver: 'sqlite', database: '/tmp/a.db', conversationId: 's1' }],
+        '/tmp/b.db'
+      ),
+      null
+    )
   })
 })
 

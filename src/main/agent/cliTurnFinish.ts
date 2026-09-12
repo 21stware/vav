@@ -1,4 +1,5 @@
 import { classifyCliError, splitStreamedRetriableError } from '../../shared/cliErrors.ts'
+import { foldSnapshotText } from '../../shared/streamCoalesce.ts'
 import type { ChatMessage, MessageBlock } from '../../shared/types.ts'
 
 /** Cancelled turns skip the retry ladder and seal immediately. */
@@ -78,7 +79,9 @@ export function cliAssistantMessage(
     parentId: turn.parentId,
     role: 'assistant',
     content: cliAssistantContent(turn.blocks),
-    blocks: turn.blocks.map((b) => ({ ...b })),
+    blocks: turn.blocks.map((b) =>
+      b.kind === 'reasoning' ? { ...b, text: foldSnapshotText(b.text) } : { ...b }
+    ),
     createdAt: now,
     cancelled: turn.cancelled || undefined,
     errorText: turn.error,

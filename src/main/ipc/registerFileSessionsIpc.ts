@@ -56,6 +56,8 @@ export type FileSessionsIpcHost = {
   defaultThinkingLevel: () => string | undefined
   setReadOnly: (sessionId: string, readOnly: boolean) => void
   onSessionsDeleted: (ids: string[]) => void
+  /** Sidebar + other windows should re-list after create / rename / delete. */
+  onChanged?: () => void
   /**
    * Active window's daemon. Local loopback vav-server, or the paired remote
    * the main shell is currently showing.
@@ -123,6 +125,9 @@ export function registerFileSessionsIpc(
   const remember = (rows: RemoteFileSessionSeed[]): void => {
     if (rows.length) host.rememberRemoteSessions?.(rows)
   }
+  const notifyChanged = (): void => {
+    host.onChanged?.()
+  }
   const rememberOpened = (path: string, value: unknown): unknown => {
     const state = asRemoteState(value)
     if (state?.fileId && state.activeSessionId) {
@@ -131,6 +136,7 @@ export function registerFileSessionsIpc(
         'New session'
       remember([{ sessionId: state.activeSessionId, fileId: state.fileId, path, title }])
     }
+    notifyChanged()
     return value
   }
 
@@ -141,6 +147,7 @@ export function registerFileSessionsIpc(
     if (remoteOnly()) return null
     const [model, approval, thinking] = defaults()
     const opened = await store.open(path, model, approval, thinking)
+    notifyChanged()
     return toFileSessionsState(opened.fileId, opened.activeSessionId, opened.sessions)
   })
 
@@ -151,15 +158,21 @@ export function registerFileSessionsIpc(
     if (remoteOnly()) return null
     const [model, approval, thinking] = defaults()
     const created = await store.createSession(path, model, approval, thinking)
+    notifyChanged()
     return toFileSessionsState(created.fileId, created.activeSessionId, created.sessions)
   })
 
   ipcMain.handle(IPC.fileSessionsSetActive, async (_event, fileId: string, sessionId: string) => {
     const client = remote()
-    if (client) return client.request('fileSessions.setActive', { fileId, sessionId })
+    if (client) {
+      const result = await client.request('fileSessions.setActive', { fileId, sessionId })
+      notifyChanged()
+      return result
+    }
     if (remoteOnly()) return null
     const sessions = store.setActive(fileId, sessionId)
     if (!sessions) return null
+    notifyChanged()
     return toFileSessionsState(fileId, sessionId, sessions)
   })
 
@@ -194,10 +207,13 @@ export function registerFileSessionsIpc(
         removed?: string[]
       } | null
       host.onSessionsDeleted(result?.removed ?? sessionIds)
+      notifyChanged()
       return result
     }
     if (remoteOnly()) return { ok: true, removed: [] }
-    return store.forceDelete(fileId, sessionIds)
+    const removed = store.forceDelete(fileId, sessionIds)
+    notifyChanged()
+    return removed
   })
 
   ipcMain.handle(IPC.fileSessionsSetReadOnly, async (_event, sessionId: string, readOnly: boolean) => {
@@ -210,12 +226,17 @@ export function registerFileSessionsIpc(
     IPC.fileSessionsRename,
     async (_event, fileId: string, sessionId: string, title: string) => {
       const client = remote()
-      if (client) return client.request('fileSessions.rename', { fileId, sessionId, title })
+      if (client) {
+        const result = await client.request('fileSessions.rename', { fileId, sessionId, title })
+        notifyChanged()
+        return result
+      }
       if (remoteOnly()) return null
       const sessions = store.rename(fileId, sessionId, title)
       if (!sessions) return null
       const listed = store.list(fileId)
       if (!listed) return null
+      notifyChanged()
       return toFileSessionsState(fileId, listed.activeSessionId, sessions)
     }
   )
@@ -232,6 +253,7 @@ export function registerFileSessionsIpc(
       } | null
       if (!result) return null
       host.onSessionsDeleted(result.removed ?? [])
+      notifyChanged()
       return {
         ok: result.ok,
         error: result.error,
@@ -245,6 +267,7 @@ export function registerFileSessionsIpc(
     const result = store.deleteSessions(fileId, sessionIds)
     if (!result) return null
     host.onSessionsDeleted(result.removed)
+    notifyChanged()
     return {
       ok: result.ok,
       error: result.error,

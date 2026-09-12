@@ -6,7 +6,9 @@ import {
   nextExpandedPaths,
   normalizeDirListError,
   planDirListingPatch,
-  planWorkingDirectorySlice
+  planWorkingDirectorySlice,
+  queuePendingDirReload,
+  takePendingDirReload
 } from './workspaceSlice.ts'
 
 describe('emptySlice', () => {
@@ -101,6 +103,16 @@ describe('planWorkingDirectorySlice', () => {
     assert.equal(next.cliMode, true)
     assert.equal(next.activeHostAgentId, '__cli__')
     assert.equal(next.agentHostSessions, prev.agentHostSessions)
+  })
+})
+
+describe('pending dir reload', () => {
+  it('replays a skipped watch refresh once', () => {
+    queuePendingDirReload('c1', '/proj')
+    queuePendingDirReload('c1', '/proj')
+    assert.equal(takePendingDirReload('c1', '/other'), false)
+    assert.equal(takePendingDirReload('c1', '/proj'), true)
+    assert.equal(takePendingDirReload('c1', '/proj'), false)
   })
 })
 

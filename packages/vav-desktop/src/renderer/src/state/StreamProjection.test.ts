@@ -60,6 +60,20 @@ describe('StreamProjection recovery', () => {
     assert.equal(projection.getSnapshot().recovery, null)
   })
 
+  it('folds reasoning snapshots instead of reprinting them', async () => {
+    projection = new StreamProjection()
+    projection.start()
+    projection.appendReasoning(0, '用户要求操作日历至12月。')
+    const later =
+      '正在检查工作区环境、浏览器自动化技能及历史记录，确定如何操作日历。用户要求操作日历至12月份。'
+    projection.appendReasoning(0, later)
+    projection.appendReasoning(0, later)
+    await new Promise((resolve) => setTimeout(resolve, 120))
+    const block = projection.getSnapshot().blocks[0]
+    assert.equal(block?.kind, 'reasoning')
+    if (block?.kind === 'reasoning') assert.equal(block.text, later)
+  })
+
   it('end drops live recovery so the sealed transcript takes over', () => {
     projection = new StreamProjection()
     projection.start()

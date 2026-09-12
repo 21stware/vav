@@ -7,7 +7,9 @@
 import { existsSync } from 'node:fs'
 import type { SqliteDatabaseInfo, SqliteQueryResult, SqliteTableInfo } from '../../shared/ipc.ts'
 import {
+  dbDriverUsesAuth,
   dbUrlWithPassword,
+  isDbAuthError,
   isDbDriverImplemented,
   isReadOnlySql,
   isSingleSqlStatement,
@@ -19,6 +21,7 @@ import type { DbConnectionStore } from '../store/DbConnectionStore.ts'
 import {
   assemblePostgresSchema,
   PG_CONNECT_TIMEOUT_MS,
+  PG_SCHEMA_COLUMNS_SQL,
   PG_SCHEMA_TABLES_SQL,
   PG_STATEMENT_TIMEOUT_MS,
   PG_TABLE_ESTIMATE_SQL,
@@ -144,6 +147,22 @@ function emptySql(error: string): PostgresQueryResult {
   return { columns: [], rows: [], rowCount: 0, truncated: false, error }
 }
 
+const PASSWORD_REQUIRED = 'Password is missing. Edit the connection and Connect again.'
+
+function resolvePassword(row: DbConnection, password: string | null): string | null {
+  if (typeof password === 'string' && password.length > 0) return password
+  if (row.useUrl) {
+    const parsed = parseDbUrl(row.url, row.driver)
+    if (parsed?.password) return parsed.password
+  }
+  return null
+}
+
+function explainConnectError(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err)
+  return isDbAuthError(message) ? PASSWORD_REQUIRED : message
+}
+
 function guardSql(sql: string): PostgresQueryResult | null {
   const statement = sql.trim()
   if (!statement) return emptySql('Missing sql')
@@ -179,7 +198,7 @@ export class PostgresService {
       return { ok: true }
     } catch (err) {
       this.evict(id)
-      const message = (err as Error).message
+      const message = explainConnectError(err)
       this.store.markStatus(id, 'failed', message)
       return { ok: false, error: message }
     }
@@ -189,6 +208,9 @@ export class PostgresService {
     const row = this.store.get(id)
     if (!row) return { error: 'Connection not found' }
     if (!isDbDriverImplemented(row.driver)) return { error: `${row.driver} is not implemented yet` }
+    if (dbDriverUsesAuth(row.driver) && !resolvePassword(row, this.store.password(id))) {
+      return { error: PASSWORD_REQUIRED }
+    }
     try {
       const tables = await withTimeout(
         this.listTables(row),
@@ -198,7 +220,7 @@ export class PostgresService {
       return { tables }
     } catch (err) {
       this.evict(id)
-      return { error: (err as Error).message }
+      return { error: explainConnectError(err) }
     }
   }
 
@@ -504,13 +526,22 @@ export class PostgresService {
       const listed = await client.query<{ nsp: string; name: string; estimate: string }>(
         PG_SCHEMA_TABLES_SQL
       )
-      return assemblePostgresSchema(
-        listed.rows.map((item) => ({
-          schema: item.nsp,
-          name: item.name,
-          estimate: Number(item.estimate ?? 0)
-        }))
-      ).tables
+      const tables = listed.rows.map((item) => ({
+        schema: item.nsp,
+        name: item.name,
+        estimate: Number(item.estimate ?? 0)
+      }))
+      try {
+        const columns = await client.query<{ nsp: string; name: string; col: string }>(
+          PG_SCHEMA_COLUMNS_SQL
+        )
+        return assemblePostgresSchema(
+          tables,
+          columns.rows.map((item) => ({ schema: item.nsp, name: item.name, col: item.col }))
+        ).tables
+      } catch {
+        return assemblePostgresSchema(tables).tables
+      }
     })
   }
 
@@ -762,7 +793,10 @@ export class PostgresService {
     row: DbConnection,
     create: (password: string | null) => Promise<CachedHandle>
   ): Promise<CachedHandle> {
-    const password = this.store.password(row.id)
+    const password = resolvePassword(row, this.store.password(row.id))
+    if (dbDriverUsesAuth(row.driver) && !password) {
+      throw new Error(PASSWORD_REQUIRED)
+    }
     const fingerprint = fingerprintOf(row, password)
     let entry = this.cache.get(row.id)
     if (!entry || entry.fingerprint !== fingerprint) {

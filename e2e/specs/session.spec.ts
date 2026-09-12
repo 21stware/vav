@@ -52,7 +52,9 @@ test('sidebar lists the session, groups by workspace, and archives stay reachabl
     await page.locator('[data-testid="sidebar-list-menu"]').click()
     await expect
       .poll(async () => (await peekNativeMenu(page))?.map((item) => item.label) ?? [])
-      .toEqual(expect.arrayContaining(['Group by', 'Workspace', 'Filter', 'None']))
+      .toEqual(
+        expect.arrayContaining(['Group by', 'Workspace', 'Filter', 'None', 'Running and unread'])
+      )
     await chooseNativeMenu(page, 'None')
     await expect(page.locator('[data-testid="sidebar-list-menu"]')).toHaveAttribute(
       'data-grouping',
@@ -184,7 +186,7 @@ test('File list Back to file list returns to This Mac or Recent files', async ()
   }
 })
 
-test('Scheduled category switches the list and the detail pane', async () => {
+test('Scheduled category starts empty, then create selects the group for editing', async () => {
   const harness = await launchWorkbench()
   try {
     const { page } = harness
@@ -198,13 +200,17 @@ test('Scheduled category switches the list and the detail pane', async () => {
     await expect(page.getByText('No scheduled tasks')).toBeVisible()
     await expect(page.locator('[data-testid="timer-job-row"]')).toHaveCount(0)
     await expect(page.locator('[data-testid="timer-session-row"]')).toHaveCount(0)
+    await expect(page.locator('[data-testid="schedule-editor"]')).toHaveCount(0)
+    await expect(page.locator('[data-testid="empty-create-scheduled"]')).toBeVisible()
+    await page.locator('[data-testid="new-scheduled"]').click()
+    await expect(page.locator('[data-testid="timer-job-row"]')).toHaveCount(1)
+    await expect(page.locator('[data-testid="timer-job-row"]')).toHaveClass(/selected/)
     await expect(page.locator('[data-testid="schedule-editor"]')).toBeVisible()
     await expect(page.locator('[data-testid="timer-mode"]')).toBeVisible()
     await expect(page.locator('[data-testid="timer-workspace"]')).toBeVisible()
     await expect(page.locator('[data-testid="timer-workspace"]')).toHaveValue('mint')
     await expect(page.locator('[data-testid="timer-prompt"]')).toBeVisible()
-    await expect(page.locator('[data-testid="timer-enabled"]')).toHaveCount(0)
-    await expect(page.locator('[data-testid="timer-create"]')).toBeVisible()
+    await expect(page.locator('[data-testid="timer-enabled"]')).toBeVisible()
     await expect(page.locator('[data-testid="timer-run-now"]')).toBeVisible()
     await expect(page.locator('[data-testid="composer-input"]')).toHaveCount(0)
     await page.locator('[data-testid="sidebar-category-task"]').click()
@@ -215,7 +221,7 @@ test('Scheduled category switches the list and the detail pane', async () => {
   }
 })
 
-test('DB category opens the connection form', async () => {
+test('DB category starts empty, then create selects the connection for editing', async () => {
   const harness = await launchWorkbench()
   try {
     const { page } = harness
@@ -225,9 +231,16 @@ test('DB category opens the connection form', async () => {
       'true'
     )
     await expect(page.locator('[data-testid="new-db"]')).toBeVisible()
-    await expect(page.getByText('No database connections')).toHaveCount(0)
+    await expect(page.getByText('No database connections')).toBeVisible()
     await expect(page.locator('[data-testid="session-row"]')).toHaveCount(0)
     await expect(page.locator('[data-testid="db-table-row"]')).toHaveCount(0)
+    await expect(page.locator('[data-testid="db-group-header"]')).toHaveCount(0)
+    await expect(page.locator('[data-testid="db-table-tab"]')).toHaveCount(0)
+    await expect(page.locator('[data-testid="db-connect-editor"]')).toHaveCount(0)
+    await expect(page.locator('[data-testid="empty-create-db"]')).toBeVisible()
+    await page.locator('[data-testid="new-db"]').click()
+    await expect(page.locator('[data-testid="session-row"]')).toHaveCount(1)
+    await expect(page.locator('[data-testid="session-row"]')).toHaveClass(/selected/)
     await expect(page.locator('[data-testid="db-connect-editor"]')).toBeVisible()
     await expect(page.locator('[data-testid="db-driver"]')).toHaveValue('postgres')
     await expect(page.locator('[data-testid="db-use-url"]')).toBeVisible()

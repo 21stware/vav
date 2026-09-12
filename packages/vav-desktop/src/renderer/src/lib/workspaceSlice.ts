@@ -93,6 +93,27 @@ export function dirEntriesEqual(
   )
 }
 
+/** Watch refresh that arrived while this path was already listing. */
+const pendingDirReloads = new Map<string, Set<string>>()
+
+export function queuePendingDirReload(conversationId: string, path: string): void {
+  let set = pendingDirReloads.get(conversationId)
+  if (!set) {
+    set = new Set()
+    pendingDirReloads.set(conversationId, set)
+  }
+  set.add(path)
+}
+
+/** True when a skipped watch refresh should run again after the in-flight list. */
+export function takePendingDirReload(conversationId: string, path: string): boolean {
+  const set = pendingDirReloads.get(conversationId)
+  if (!set?.has(path)) return false
+  set.delete(path)
+  if (set.size === 0) pendingDirReloads.delete(conversationId)
+  return true
+}
+
 /** Apply a directory listing without flashing unchanged trees. */
 export function planDirListingPatch(
   s: {
