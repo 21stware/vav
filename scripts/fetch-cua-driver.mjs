@@ -10,6 +10,7 @@
 import { createHash } from 'node:crypto'
 import {
   chmodSync,
+  copyFileSync,
   createWriteStream,
   existsSync,
   mkdirSync,
@@ -76,6 +77,17 @@ function parseArgs(argv) {
   return { force, all, targets }
 }
 
+/** `rename` fails with EXDEV when TEMP and the dest volume differ (Windows CI). */
+function moveFile(from, to) {
+  try {
+    renameSync(from, to)
+  } catch (err) {
+    if (err?.code !== 'EXDEV') throw err
+    copyFileSync(from, to)
+    unlinkSync(from)
+  }
+}
+
 function hostKey() {
   const plat = process.platform
   const arch = process.arch === 'arm64' ? 'arm64' : 'x64'
@@ -107,7 +119,7 @@ async function download(url, dest) {
   const tmp = `${dest}.tmp`
   try {
     await pipeline(Readable.fromWeb(res.body), createWriteStream(tmp))
-    renameSync(tmp, dest)
+    moveFile(tmp, dest)
   } catch (err) {
     try {
       unlinkSync(tmp)
@@ -163,7 +175,7 @@ function extractArchive(archive, kind, outName) {
     const found = findBinary(scratch, outName)
     if (!found) throw new Error(`no ${outName} in ${archive}`)
     const dest = join(OUT_DIR, outName)
-    renameSync(found, dest)
+    moveFile(found, dest)
     if (!outName.endsWith('.exe')) chmodSync(dest, 0o755)
     return dest
   } finally {

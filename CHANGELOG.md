@@ -4,6 +4,10 @@ User-facing changes by release. Unreleased work lives at the top until the next 
 
 ## Unreleased
 
+## 1.27.1
+
+Windows release builds can fetch the embedded Cua Driver again — the binary is copied when TEMP and the workspace sit on different volumes (`EXDEV` on `rename`).
+
 ## 1.27.0
 
 Computer use is an opt-in embedded Cua Driver: VAV.app owns the daemon so Accessibility and Screen Recording stay on VAV, and the agent lists / observes / acts on a bound window in the background — it does not move the real pointer or steal focus. Turn it on in Settings → Appearance after granting those permissions.
