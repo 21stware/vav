@@ -3,6 +3,7 @@ import { describe, it } from 'node:test'
 import type { ChatMessage } from '@shared/types'
 import {
   applyCliHistoryHandoff,
+  formatCliCwdNotice,
   formatCliWorkspaceHandoff,
   shouldRecordHistoryHandoff
 } from './cliHistoryHandoff.ts'
@@ -171,6 +172,41 @@ describe('formatCliWorkspaceHandoff', () => {
     assert.match(text, /We looked at the first turn/)
     assert.doesNotMatch(text, /^User:\nfirst$/m)
     assert.match(text, /second/)
+  })
+})
+
+describe('formatCliWorkspaceHandoff cwd-notice', () => {
+  it('is only the location line — the live session already has the transcript', () => {
+    const messages = [
+      user('u1', 'what is in src?'),
+      assistant('a1', 'A TypeScript app.', 'u1'),
+      user('u2', 'now look at /other', 'a1')
+    ]
+    const text = formatCliWorkspaceHandoff({
+      messages,
+      leafId: 'u2',
+      excludeMessageId: 'u2',
+      previousCwd: '/old/project',
+      nextCwd: '/other',
+      reason: 'cwd-notice'
+    })
+    assert.equal(
+      text,
+      '[Working directory changed from /old/project to /other. Continue this session in the new directory.]'
+    )
+  })
+})
+
+describe('formatCliCwdNotice', () => {
+  it('names both paths when the folder moved', () => {
+    assert.equal(
+      formatCliCwdNotice('/old', '/new'),
+      '[Working directory changed from /old to /new. Continue this session in the new directory.]'
+    )
+  })
+
+  it('skips a no-op when both paths match', () => {
+    assert.equal(formatCliCwdNotice('/same', '/same'), null)
   })
 })
 

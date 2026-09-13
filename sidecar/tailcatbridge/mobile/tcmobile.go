@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/21stware/vav/sidecar/tailcatbridge/relays"
 	"github.com/tailscale/tailcat"
 	"tailscale.com/tailcfg"
 )
@@ -85,29 +86,20 @@ func enrichBlob(token string) (tailcat.ConnBlob, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
 	fetchStarted := time.Now()
-	dm, err := tailcat.FetchDERPMap(ctx)
+	dm, err := relays.FetchMerged(ctx, relays.Host, false)
 	if err != nil || dm == nil || len(dm.Regions) == 0 {
 		logf("derpmap fetch fail in %s err=%v (use QR home region only)", time.Since(fetchStarted).Round(time.Millisecond), err)
 		return raw, nil
 	}
-	logf("derpmap ok regions=%d in %s", len(dm.Regions), time.Since(fetchStarted).Round(time.Millisecond))
-	seen := map[int]bool{}
+	home := 0
 	for _, reg := range ci.Region {
 		if reg != nil {
-			seen[reg.RegionID] = true
+			home++
 		}
 	}
-	home := len(seen)
-	extra := 0
-	for id, reg := range dm.Regions {
-		if reg == nil || seen[id] {
-			continue
-		}
-		ci.Region = append(ci.Region, reg)
-		seen[id] = true
-		extra++
-	}
-	logf("derpmap merged extra=%d home=%d total=%d", extra, home, home+extra)
+	extra := relays.AppendUnseen(&ci, dm)
+	logf("derpmap ok regions=%d in %s merged extra=%d home=%d total=%d",
+		len(dm.Regions), time.Since(fetchStarted).Round(time.Millisecond), extra, home, home+extra)
 	return ci.ConnBlob(), nil
 }
 

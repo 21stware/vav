@@ -1,13 +1,10 @@
 /**
- * Whether a structured CLI runtime / resume cursor must be dropped.
+ * Whether the conversation root moved relative to a live / in-flight CLI.
  *
- * Drivers bind cwd at spawn. The next turn starts a fresh session in the
- * new tree; {@link CliAgentHost} hands the stored transcript across so the
- * conversation continues.
- *
- * An in-flight spawn is only replaced when its bound cwd actually moved.
- * Same-path re-asserts (Files watch, session bind, vav-server setWorkspace)
- * must not cancel the handshake — that was sealing empty
+ * Folder switches keep the native session. The next prompt carries a cwd
+ * notice instead of disposing the process. Same-path re-asserts (Files
+ * watch, session bind, vav-server setWorkspace) must not look like a move
+ * — that used to cancel the handshake and seal empty
  * "This turn was cancelled" leaves on the first Cursor prompt.
  */
 export function shouldReplaceCliRuntime(

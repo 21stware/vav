@@ -1946,6 +1946,8 @@ export interface VavApi {
     /** Running apps from the embedded cua daemon for @-mention. `[]` when off. */
     listApps(): Promise<import('./computerUse').ComputerApp[]>
     requestAccessibility(): Promise<boolean>
+    /** Raise the macOS Screen Recording prompt, then report the resulting state. */
+    requestScreenRecording(): Promise<import('./computerUse').ComputerPermissionState>
     openAccessibilitySettings(): Promise<void>
     openScreenRecordingSettings(): Promise<void>
   }
@@ -2162,6 +2164,7 @@ export const IPC = {
   computerStatus: 'vav:computer:status',
   computerListApps: 'vav:computer:list-apps',
   computerRequestAccessibility: 'vav:computer:request-accessibility',
+  computerRequestScreenRecording: 'vav:computer:request-screen-recording',
   computerOpenAccessibilitySettings: 'vav:computer:open-accessibility-settings',
   computerOpenScreenRecordingSettings: 'vav:computer:open-screen-recording-settings',
   screenshotReady: 'vav:screenshot:ready',

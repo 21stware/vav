@@ -4,6 +4,12 @@ User-facing changes by release. Unreleased work lives at the top until the next 
 
 ## Unreleased
 
+## 1.29.0
+
+Remote WAN pairing in mainland China uses the Shanghai relay `derp.vavapp.com` (region 900) together with Tailcat’s public map — the host pins whichever region is fastest. Desktop auto-update tries GitHub first and falls back to gh-proxy when that feed cannot be reached.
+
+Composer `@` can turn on computer use and walk through the macOS Accessibility / Screen Recording grants. A lost or retried CLI session keeps the transcript as a handoff preamble instead of starting blank.
+
 ## 1.28.0
 
 Picture in Picture shrinks the main window to a compact always-on-top task list. Enter it from the sidebar service menu; the bottom dock stays a new-conversation composer and workbench so you can start a task without leaving the monitor.

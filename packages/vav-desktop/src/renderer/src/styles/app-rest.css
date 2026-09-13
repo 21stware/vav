@@ -3280,8 +3280,7 @@ html:has(.provider-account-popup) #root {
   flex: 0 0 auto;
 }
 
-.session-run-btn[data-testid="session-run-fast"][aria-pressed="true"],
-.session-run-btn[data-testid="session-run-computer"][aria-pressed="true"] {
+.session-run-btn[data-testid="session-run-fast"][aria-pressed="true"] {
   color: var(--accent);
 }
 

@@ -39,6 +39,7 @@ import { vendorIdFromEndpoint } from '@shared/llmVendors'
 import { useAccountGroups, vavAccountsOf } from '../lib/accountGroups'
 import { useT } from '../i18n/useT'
 import { attachScreenshot } from '../lib/composerAttach'
+import { ensureComputerPermissions } from '../lib/computerPermissions'
 import { COMPOSER_MIN_ROWS, composerWheelStaysOnField } from '../lib/composerTextarea'
 import { collectClipboardImages, writeClipboardImage } from '../lib/pasteImages'
 import { menuAnchor, showMenu } from '../lib/nativeMenu'
@@ -207,6 +208,8 @@ export function Composer({
   const sendKeySetting = useSessionStore((s) => s.settings.sendKey)
   const keyBindings = useSessionStore((s) => s.settings.keyBindings)
   const openSettings = useSessionStore((s) => s.openSettings)
+  const updateSettings = useSessionStore((s) => s.updateSettings)
+  const computerUseEnabled = useSessionStore((s) => s.settings.computerUseEnabled === true)
   const focusTick = useSessionStore((s) => s.composerFocusTick)
   const focusId = useSessionStore((s) => s.composerFocusId)
 
@@ -376,17 +379,31 @@ export function Composer({
     }, 32)
   }
 
+  /** Turn on computer use from the composer, then guide the mac grants it needs. */
+  const enableComputerUse = (): void => {
+    void updateSettings({ computerUseEnabled: true }).then(async () => {
+      const outcome = await ensureComputerPermissions()
+      // 'pending' already surfaced a guided dialog; only confirm when it's live.
+      if (outcome === 'granted') {
+        showToast({ kind: 'info', title: t('composer.computerUseEnabledToast') })
+      }
+    })
+  }
+
   /** Native add-content menu — shared by the "+" button and the `@` trigger. */
   const openAddMenu = (anchor: { x: number; y: number }): void => {
     void (async () => {
-      const apps = await window.vav.computer.listApps().catch(() => [])
-      const appItems =
-        apps.length > 0
-          ? apps.map((app) => ({
-              label: app.name,
-              onSelect: () => mentionRef.current?.insertText(`${appMentionToken(app.name)} `)
-            }))
-          : [{ label: t('composer.mentionNoApps'), disabled: true }]
+      const appItems = !computerUseEnabled
+        ? [{ label: t('composer.mentionEnableComputer'), onSelect: enableComputerUse }]
+        : await (async () => {
+            const apps = await window.vav.computer.listApps().catch(() => [])
+            return apps.length > 0
+              ? apps.map((app) => ({
+                  label: app.name,
+                  onSelect: () => mentionRef.current?.insertText(`${appMentionToken(app.name)} `)
+                }))
+              : [{ label: t('composer.mentionNoApps'), disabled: true }]
+          })()
       await showMenu(
         [
           {

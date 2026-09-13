@@ -19,8 +19,14 @@ import {
   type AutoUpdatePolicy,
   type UpdateCheckReason
 } from '@shared/updatePolicy'
+import {
+  GITHUB_UPDATE_REPO,
+  githubLatestReleaseApiUrl,
+  githubProxyGenericFeedUrl,
+  viaGithubProxy
+} from '@shared/githubProxy'
 
-const REPO = '21stware/vav'
+const REPO = GITHUB_UPDATE_REPO
 
 /**
  * App updates via electron-updater (packaged builds) with a GitHub Releases
@@ -69,6 +75,8 @@ export class UpdateService {
   private followUpInFlight: Promise<void> | null = null
   private heartbeat: ReturnType<typeof setInterval> | null = null
   private launchTimer: ReturnType<typeof setTimeout> | null = null
+  /** Packaged feed: GitHub first, gh-proxy after a China-side failure. */
+  private usingProxyFeed = false
 
   constructor() {
     if (!app.isPackaged) return
@@ -266,40 +274,58 @@ export class UpdateService {
       return this.checkViaGithub()
     }
     try {
-      const result = await autoUpdater.checkForUpdates()
-      if (!result?.updateInfo) {
-        return this.patch({
-          phase: 'latest',
-          latestVersion: app.getVersion(),
-          message: null,
-          bytesPerSecond: null
-        })
+      return await this.readElectronUpdater()
+    } catch (err) {
+      console.warn('[updates] GitHub feed failed, retrying via gh-proxy', err)
+      try {
+        this.applyProxyFeed()
+        return await this.readElectronUpdater()
+      } catch (proxyErr) {
+        console.warn('[updates] gh-proxy feed failed, falling back to GitHub API', proxyErr)
+        return this.checkViaGithub()
       }
-      const latest = result.updateInfo.version
-      const current = app.getVersion()
-      if (compareSemver(latest, current) > 0) {
-        return this.patch({
-          phase: 'available',
-          latestVersion: latest,
-          releaseUrl: `https://github.com/${REPO}/releases/tag/v${latest}`,
-          downloadUrl: null,
-          message: null,
-          bytesPerSecond: null
-        })
-      }
+    }
+  }
+
+  private applyProxyFeed(): void {
+    if (this.usingProxyFeed) return
+    autoUpdater.setFeedURL({
+      provider: 'generic',
+      url: githubProxyGenericFeedUrl()
+    })
+    this.usingProxyFeed = true
+  }
+
+  private async readElectronUpdater(): Promise<UpdateState> {
+    const result = await autoUpdater.checkForUpdates()
+    if (!result?.updateInfo) {
       return this.patch({
         phase: 'latest',
+        latestVersion: app.getVersion(),
+        message: null,
+        bytesPerSecond: null
+      })
+    }
+    const latest = result.updateInfo.version
+    const current = app.getVersion()
+    if (compareSemver(latest, current) > 0) {
+      return this.patch({
+        phase: 'available',
         latestVersion: latest,
         releaseUrl: `https://github.com/${REPO}/releases/tag/v${latest}`,
         downloadUrl: null,
         message: null,
         bytesPerSecond: null
       })
-    } catch (err) {
-      // Network / feed missing (e.g. release without latest-mac.yml) — try API.
-      console.warn('[updates] electron-updater check failed, falling back to GitHub API', err)
-      return this.checkViaGithub()
     }
+    return this.patch({
+      phase: 'latest',
+      latestVersion: latest,
+      releaseUrl: `https://github.com/${REPO}/releases/tag/v${latest}`,
+      downloadUrl: null,
+      message: null,
+      bytesPerSecond: null
+    })
   }
 
   /**
@@ -357,7 +383,17 @@ export class UpdateService {
     this.cancelToken = new CancellationToken()
     this.patch({ phase: 'downloading', progress: 0, bytesPerSecond: 0, message: null })
     try {
-      await autoUpdater.downloadUpdate(this.cancelToken)
+      try {
+        await autoUpdater.downloadUpdate(this.cancelToken)
+      } catch (err) {
+        if (this.cancelRequested || isUpdateCancellationError(err)) throw err
+        if (this.usingProxyFeed) throw err
+        console.warn('[updates] GitHub download failed, retrying via gh-proxy', err)
+        this.applyProxyFeed()
+        await autoUpdater.checkForUpdates()
+        if (this.cancelRequested) return this.cancelledDownloadState()
+        await autoUpdater.downloadUpdate(this.cancelToken)
+      }
       if (this.cancelRequested) return this.cancelledDownloadState()
       // macOS: ZIP is local, but Squirrel may still be verifying/unzipping.
       // Surface an explicit "preparing" phase — Restart must wait for this.
@@ -469,40 +505,12 @@ export class UpdateService {
 
   private async checkViaGithub(): Promise<UpdateState> {
     try {
-      const res = await fetch(`https://api.github.com/repos/${REPO}/releases/latest`, {
-        headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'vav' }
-      })
-      if (!res.ok) throw new Error(`GitHub ${res.status}`)
-      const body = (await res.json()) as {
-        tag_name?: string
-        html_url?: string
-        assets?: { name: string; browser_download_url: string }[]
+      try {
+        return await this.readGithubLatest(false)
+      } catch (directErr) {
+        console.warn('[updates] GitHub API failed, retrying via gh-proxy', directErr)
+        return await this.readGithubLatest(true)
       }
-      const latest = (body.tag_name ?? '').replace(/^v/, '')
-      const current = app.getVersion()
-      if (!latest) throw new Error('No release tag')
-
-      const newer = compareSemver(latest, current) > 0
-      if (!newer) {
-        return this.patch({
-          phase: 'latest',
-          latestVersion: latest,
-          releaseUrl: body.html_url ?? null,
-          downloadUrl: null,
-          message: null,
-          bytesPerSecond: null
-        })
-      }
-
-      const downloadUrl = pickAsset(body.assets ?? []) ?? body.html_url ?? null
-      return this.patch({
-        phase: 'available',
-        latestVersion: latest,
-        releaseUrl: body.html_url ?? null,
-        downloadUrl,
-        message: null,
-        bytesPerSecond: null
-      })
     } catch (err) {
       return this.patch({
         phase: 'error',
@@ -510,6 +518,44 @@ export class UpdateService {
         bytesPerSecond: null
       })
     }
+  }
+
+  private async readGithubLatest(proxy: boolean): Promise<UpdateState> {
+    const res = await fetch(githubLatestReleaseApiUrl(proxy), {
+      headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'vav' }
+    })
+    if (!res.ok) throw new Error(`GitHub ${res.status}`)
+    const body = (await res.json()) as {
+      tag_name?: string
+      html_url?: string
+      assets?: { name: string; browser_download_url: string }[]
+    }
+    const latest = (body.tag_name ?? '').replace(/^v/, '')
+    const current = app.getVersion()
+    if (!latest) throw new Error('No release tag')
+
+    const newer = compareSemver(latest, current) > 0
+    if (!newer) {
+      return this.patch({
+        phase: 'latest',
+        latestVersion: latest,
+        releaseUrl: body.html_url ?? null,
+        downloadUrl: null,
+        message: null,
+        bytesPerSecond: null
+      })
+    }
+
+    const asset = pickAsset(body.assets ?? [])
+    const downloadUrl = asset ? (proxy ? viaGithubProxy(asset) : asset) : (body.html_url ?? null)
+    return this.patch({
+      phase: 'available',
+      latestVersion: latest,
+      releaseUrl: body.html_url ?? null,
+      downloadUrl,
+      message: null,
+      bytesPerSecond: null
+    })
   }
 
   private patch(partial: Partial<UpdateState>): UpdateState {

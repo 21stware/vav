@@ -4,6 +4,7 @@
  */
 
 import { spawn, type ChildProcess } from 'node:child_process'
+import { sidecarDerpHostArgs } from '../../shared/cnDerp.ts'
 import { drainJsonLines } from '../../shared/remoteControl.ts'
 import { resolveSidecarBinary } from '../remote/sidecarBinary.ts'
 
@@ -24,7 +25,9 @@ export function openTailcatDial(token: string): Promise<TailcatDialHandle> {
   return new Promise((resolve, reject) => {
     let child: ChildProcess
     try {
-      child = spawn(binary, ['--dial', trimmed], { stdio: ['pipe', 'pipe', 'pipe'] })
+      child = spawn(binary, ['--dial', trimmed, ...sidecarDerpHostArgs()], {
+        stdio: ['pipe', 'pipe', 'pipe']
+      })
     } catch (err) {
       reject(err instanceof Error ? err : new Error(String(err)))
       return

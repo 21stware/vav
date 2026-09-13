@@ -477,7 +477,13 @@ export function AppearanceSettings(): React.JSX.Element {
                   type="button"
                   className="btn ghost sm"
                   data-testid="settings-screenshot-authorize"
-                  onClick={() => void window.vav.files.openScreenshotPermissionSettings()}
+                  onClick={() => {
+                    void window.vav.computer.requestScreenRecording().then((state) => {
+                      if (state !== 'granted') {
+                        void window.vav.files.openScreenshotPermissionSettings()
+                      }
+                    })
+                  }}
                 >
                   {t('appearance.screenshotPermissionAuthorize')}
                 </button>
@@ -512,17 +518,20 @@ export function AppearanceSettings(): React.JSX.Element {
             : computerStatus.error || t('appearance.computerUseStopped')}
         </div>
       )}
-      {IS_MAC && (
+      {IS_MAC && settings.computerUseEnabled && (
         <>
           <div className="form-row" id="settings-accessibility-permission">
             <label>{t('appearance.accessibilityPermission')}</label>
             <div className="control">
               {computerStatus?.accessibility === 'granted' ? (
-                <span>{t('appearance.screenshotPermissionGranted')}</span>
+                <span data-testid="settings-accessibility-permission-status">
+                  {t('appearance.screenshotPermissionGranted')}
+                </span>
               ) : (
                 <button
                   type="button"
                   className="btn ghost sm"
+                  data-testid="settings-accessibility-authorize"
                   onClick={() => {
                     void window.vav.computer.requestAccessibility().then((ok) => {
                       if (!ok) void window.vav.computer.openAccessibilitySettings()
@@ -536,6 +545,34 @@ export function AppearanceSettings(): React.JSX.Element {
           </div>
           {computerStatus?.accessibility !== 'granted' && (
             <div className="form-hint">{t('appearance.accessibilityPermissionHint')}</div>
+          )}
+          <div className="form-row" id="settings-computer-screen-permission">
+            <label>{t('appearance.screenshotPermission')}</label>
+            <div className="control">
+              {computerStatus?.screenRecording === 'granted' ? (
+                <span data-testid="settings-computer-screen-permission-status">
+                  {t('appearance.screenshotPermissionGranted')}
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  className="btn ghost sm"
+                  data-testid="settings-computer-screen-authorize"
+                  onClick={() => {
+                    void window.vav.computer.requestScreenRecording().then((state) => {
+                      if (state !== 'granted') {
+                        void window.vav.computer.openScreenRecordingSettings()
+                      }
+                    })
+                  }}
+                >
+                  {t('appearance.screenshotPermissionAuthorize')}
+                </button>
+              )}
+            </div>
+          </div>
+          {computerStatus?.screenRecording !== 'granted' && (
+            <div className="form-hint">{t('appearance.computerUseScreenHint')}</div>
           )}
         </>
       )}

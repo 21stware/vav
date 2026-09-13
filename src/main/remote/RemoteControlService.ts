@@ -14,6 +14,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import { createServer, type Server, type Socket } from 'node:net'
 import { hostname } from 'node:os'
 import { dirname, join } from 'node:path'
+import { sidecarDerpHostArgs } from '@shared/cnDerp'
 import { resolveSidecarBinary } from './sidecarBinary.ts'
 import type { Readable, Writable } from 'node:stream'
 import {
@@ -319,7 +320,13 @@ export class RemoteControlService {
     try {
       child = spawn(
         binary,
-        ['--key-file', this.keyFile, '--forward', `127.0.0.1:${forwardPort}`],
+        [
+          '--key-file',
+          this.keyFile,
+          '--forward',
+          `127.0.0.1:${forwardPort}`,
+          ...sidecarDerpHostArgs()
+        ],
         { stdio: ['pipe', 'pipe', 'pipe'] }
       )
     } catch (err) {

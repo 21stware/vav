@@ -26,8 +26,10 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
+	"github.com/21stware/vav/sidecar/tailcatbridge/relays"
 	"github.com/tailscale/tailcat"
 	"tailscale.com/tailcfg"
 	"tailscale.com/types/key"
@@ -37,10 +39,6 @@ import (
 // bridgePort is the tunnel-side TCP port clients dial (any fixed value works;
 // it only has meaning inside the WireGuard tunnel).
 const bridgePort = 4747
-
-// fallbackDERPMapURL is Tailscale's main DERP map, used when the tailcat map
-// can't be fetched (e.g. resolvers that fail on tailcat.dev).
-const fallbackDERPMapURL = "https://login.tailscale.com/derpmap/default"
 
 // keyFile pins both the node key and the full DERP region, so restarts need
 // no network fetch and the connection token never changes.
@@ -60,10 +58,16 @@ func main() {
 	forward := flag.String("forward", "", "local TCP address to forward tunnel connections to (host:port)")
 	dial := flag.String("dial", "", "tailcat connection token; client mode for desktop pairing")
 	verbose := flag.Bool("verbose", false, "log tailcat internals to stderr")
+	derpHost := flag.String("derp-host", "", "optional extra DERP hostname (mainland relay)")
 	flag.Parse()
 
+	extraHost := strings.TrimSpace(*derpHost)
+	if extraHost == "" {
+		extraHost = strings.TrimSpace(os.Getenv("VAV_CN_DERP_HOST"))
+	}
+
 	if *dial != "" {
-		runDial(*dial, *verbose)
+		runDial(*dial, *verbose, extraHost)
 		return
 	}
 
@@ -74,7 +78,7 @@ func main() {
 	}
 	log.SetOutput(os.Stderr)
 
-	kf, err := loadOrCreateKey(*keyPath)
+	kf, err := loadOrCreateKey(*keyPath, extraHost)
 	if err != nil {
 		log.Fatalf("key file: %v", err)
 	}
@@ -121,7 +125,7 @@ func main() {
 
 // loadOrCreateKey reads the persistent identity, or creates one pinning the
 // lowest-latency DERP region so the connection token never changes.
-func loadOrCreateKey(path string) (*keyFile, error) {
+func loadOrCreateKey(path, extraHost string) (*keyFile, error) {
 	if data, err := os.ReadFile(path); err == nil {
 		var kf keyFile
 		if err := json.Unmarshal(data, &kf); err != nil {
@@ -130,20 +134,37 @@ func loadOrCreateKey(path string) (*keyFile, error) {
 		if kf.PrivateKey.IsZero() || kf.Region == nil {
 			return nil, fmt.Errorf("%s: missing key or region", path)
 		}
+		if extraHost != "" && relays.IsStockTailcat(kf.Region) {
+			if next, err := pickRegion(extraHost); err == nil && next != nil && next.RegionID == relays.ChinaRegionID {
+				log.Printf("repinning DERP home from %d to mainland %d", kf.Region.RegionID, next.RegionID)
+				kf.Region = next
+				if err := writeKeyFile(path, &kf); err != nil {
+					return nil, err
+				}
+			}
+		}
 		return &kf, nil
 	} else if !os.IsNotExist(err) {
 		return nil, err
 	}
 
+	region, err := pickRegion(extraHost)
+	if err != nil {
+		return nil, err
+	}
+	kf := &keyFile{PrivateKey: key.NewNode(), Region: region}
+	if err := writeKeyFile(path, kf); err != nil {
+		return nil, err
+	}
+	return kf, nil
+}
+
+func pickRegion(extraHost string) (*tailcfg.DERPRegion, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	dm, err := tailcat.FetchDERPMap(ctx, tailcat.ExpandForServer)
+	dm, err := relays.FetchMerged(ctx, extraHost, true)
 	if err != nil {
-		log.Printf("tailcat DERP map unavailable (%v); trying fallback", err)
-		dm, err = tailcat.FetchDERPMap(ctx, tailcat.ExpandForServer, tailcat.DERPMapURL(fallbackDERPMapURL))
-		if err != nil {
-			return nil, fmt.Errorf("fetch DERP map: %w", err)
-		}
+		return nil, fmt.Errorf("fetch DERP map: %w", err)
 	}
 	regionID, err := tailcat.PickBestRegion(ctx, dm)
 	if err != nil {
@@ -153,19 +174,18 @@ func loadOrCreateKey(path string) (*keyFile, error) {
 	if !ok || region == nil {
 		return nil, fmt.Errorf("no reachable DERP region")
 	}
+	return region, nil
+}
 
-	kf := &keyFile{PrivateKey: key.NewNode(), Region: region}
+func writeKeyFile(path string, kf *keyFile) error {
 	data, err := json.MarshalIndent(kf, "", "  ")
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return nil, err
+		return err
 	}
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		return nil, err
-	}
-	return kf, nil
+	return os.WriteFile(path, data, 0o600)
 }
 
 func waitDERP(srv *tailcat.Server, d time.Duration) {

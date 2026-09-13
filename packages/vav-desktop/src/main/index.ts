@@ -6442,6 +6442,15 @@ function watchSystemAccentColor(): void {
     }
     publishSystemAccentColor(false)
     notifications.acknowledgeFocusedWindow(window)
+    // Returning from System Settings after granting the grants computer use
+    // needs: start the daemon now instead of waiting for a settings toggle.
+    if (
+      settingsStore.get().computerUseEnabled &&
+      !embeddedCua.status().running &&
+      macComputerPermissionsReady()
+    ) {
+      void syncEmbeddedCua()
+    }
   })
   app.on('browser-window-created', (_event, window) => {
     window.on('closed', () => notifications.forgetWindow(window.id))

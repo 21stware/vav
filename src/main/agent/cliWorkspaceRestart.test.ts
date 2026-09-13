@@ -7,7 +7,7 @@ describe('shouldReplaceCliRuntime', () => {
     assert.equal(shouldReplaceCliRuntime('/a', '/a', false), false)
   })
 
-  it('replaces when the conversation root moved', () => {
+  it('detects when the conversation root moved (session stays; next prompt notices)', () => {
     assert.equal(shouldReplaceCliRuntime('/a', '/b', false), true)
   })
 
@@ -16,7 +16,7 @@ describe('shouldReplaceCliRuntime', () => {
     assert.equal(shouldReplaceCliRuntime(undefined, '/a', true, '/a'), false)
   })
 
-  it('replaces an in-flight spawn when the conversation root moved', () => {
+  it('detects an in-flight spawn whose conversation root moved', () => {
     assert.equal(shouldReplaceCliRuntime('/a', '/b', true), true)
     assert.equal(shouldReplaceCliRuntime(undefined, '/b', true, '/a'), true)
     assert.equal(shouldReplaceCliRuntime(undefined, '/b', true), true)
@@ -26,7 +26,7 @@ describe('shouldReplaceCliRuntime', () => {
     assert.equal(shouldReplaceCliRuntime(undefined, '/a', false, '/a'), false)
   })
 
-  it('replaces when there is no live process (fresh session in the new cwd)', () => {
+  it('detects a move when there is no live process', () => {
     assert.equal(shouldReplaceCliRuntime(undefined, '/b', false), true)
     assert.equal(shouldReplaceCliRuntime(undefined, '/b', false, '/a'), true)
   })

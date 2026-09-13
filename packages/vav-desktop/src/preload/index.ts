@@ -695,6 +695,7 @@ const api: VavApi = {
     status: () => ipcRenderer.invoke(IPC.computerStatus),
     listApps: () => ipcRenderer.invoke(IPC.computerListApps),
     requestAccessibility: () => ipcRenderer.invoke(IPC.computerRequestAccessibility),
+    requestScreenRecording: () => ipcRenderer.invoke(IPC.computerRequestScreenRecording),
     openAccessibilitySettings: () => ipcRenderer.invoke(IPC.computerOpenAccessibilitySettings),
     openScreenRecordingSettings: () => ipcRenderer.invoke(IPC.computerOpenScreenRecordingSettings)
   }

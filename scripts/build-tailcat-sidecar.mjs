@@ -38,15 +38,27 @@ if (!target) {
   process.exit(1)
 }
 
+function listGoSources(dir, prefix = '') {
+  const files = []
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (entry.name === 'vendor' || entry.name.startsWith('.')) continue
+    const rel = prefix ? `${prefix}/${entry.name}` : entry.name
+    if (entry.isDirectory()) {
+      files.push(...listGoSources(join(dir, entry.name), rel))
+    } else if (entry.name.endsWith('.go')) {
+      files.push(rel)
+    }
+  }
+  return files.sort()
+}
+
 function sourceStamp() {
   const hash = createHash('sha256')
   for (const name of ['go.mod', 'go.sum']) {
     hash.update(readFileSync(join(sidecarDir, name)))
     hash.update('\0')
   }
-  for (const name of readdirSync(sidecarDir)
-    .filter((entry) => entry.endsWith('.go'))
-    .sort()) {
+  for (const name of listGoSources(sidecarDir)) {
     hash.update(name)
     hash.update('\0')
     hash.update(readFileSync(join(sidecarDir, name)))

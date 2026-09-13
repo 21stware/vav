@@ -138,6 +138,7 @@ import {
 } from './cliUsage'
 import {
   applyCliHistoryHandoff,
+  formatCliCwdNotice,
   formatCliWorkspaceHandoff,
   shouldRecordHistoryHandoff,
   type CliHistoryHandoffMark,
@@ -253,7 +254,7 @@ interface HostTurn {
 interface HostRuntime {
   kind: CliHostKind
   driver: DriverControl
-  /** Directory the driver process was spawned in. */
+  /** Conversation root last applied to this runtime (process may predate it). */
   cwd: string
   cursor: ProviderResumeCursor | null
   authIdentity: string | null
@@ -313,11 +314,16 @@ export class CliAgentHost {
    */
   private cwdEpoch = new Map<string, number>()
   /**
-   * Native session was dropped (workspace switch, lost resume, or retry/edit).
-   * The next prompt gets the stored transcript prepended so the new session
-   * keeps the conversation — without the turn being replaced, for retry.
+   * Native session was dropped (lost resume, or retry/edit). The next prompt
+   * gets the stored transcript prepended so the new session keeps the
+   * conversation — without the turn being replaced, for retry.
    */
   private historyHandoff = new Map<string, CliHistoryHandoffMark>()
+  /**
+   * Folder switch while the native session stays alive. The next prompt
+   * gets a short location line; the process is not replaced.
+   */
+  private pendingCwdNotice = new Map<string, { previousCwd: string | null }>
   /** Model picked while a turn is live — apply when that turn ends. */
   private pendingModel = new Map<string, string>()
   /**
@@ -602,6 +608,7 @@ export class CliAgentHost {
     this.spawnGeneration.delete(conversationId)
     this.starting.delete(conversationId)
     this.historyHandoff.delete(conversationId)
+    this.pendingCwdNotice.delete(conversationId)
     this.pendingModel.delete(conversationId)
   }
 
@@ -690,10 +697,8 @@ export class CliAgentHost {
   }
 
   /**
-   * Conversation root changed. Live drivers and resume cursors belong to the
-   * old workspace — the next turn must spawn a fresh session in `cwd`.
-   * The stored transcript is handed off on that first prompt so the
-   * conversation continues.
+   * Conversation root changed. Keep the live native session — the next
+   * prompt carries a location notice so the agent follows the new folder.
    */
   setWorkingDirectory(
     conversationId: string,
@@ -713,12 +718,8 @@ export class CliAgentHost {
       return
     }
 
-    this.markHistoryHandoff(conversationId, previousCwd ?? runtime?.cwd ?? null)
-    this.cwdEpoch.set(conversationId, (this.cwdEpoch.get(conversationId) ?? 0) + 1)
-    this.clearResumeCursor(conversationId)
-    this.invalidateInFlightSpawn(conversationId)
-    if (this.turns.has(conversationId)) this.cancel(conversationId)
-    this.disposeRuntime(conversationId, { replacing: true })
+    this.markCwdNotice(conversationId, previousCwd ?? runtime?.cwd ?? null)
+    if (runtime) runtime.cwd = wanted
   }
 
   disposeAll(): void {
@@ -858,7 +859,7 @@ export class CliAgentHost {
       // Send and retry both pin the chips as they are now, not the model
       // the native session was spawned with.
       if (latest) this.flushModel(conversationId, latest.model ?? '')
-      const handed = this.consumeHistoryHandoff(conversationId, turn.parentId)
+      const handed = this.consumePromptPrefixes(conversationId, turn.parentId)
       if (handed !== prompt) {
         turn.prompt = handed
       }
@@ -898,18 +899,16 @@ export class CliAgentHost {
         existing.authIdentity !== identity
       )
       const cwdChanged = existing.cwd !== wanted
+      if (cwdChanged && !authChanged) {
+        this.markCwdNotice(conversationId, existing.cwd)
+        existing.cwd = wanted
+        existing.driver.setCwd?.(wanted)
+        return existing
+      }
       if (cwdChanged || authChanged) {
-        if (cwdChanged) {
-          this.markHistoryHandoff(conversationId, existing.cwd)
-          this.cwdEpoch.set(
-            conversationId,
-            (this.cwdEpoch.get(conversationId) ?? 0) + 1
-          )
-        } else {
-          // Login switched — the old session is unreachable; carry the
-          // transcript into the replacement session.
-          this.markHistoryHandoff(conversationId, existing.cwd, 'session-lost')
-        }
+        // Login switched — the old session is unreachable; carry the
+        // transcript into the replacement session.
+        this.markHistoryHandoff(conversationId, existing.cwd, 'session-lost')
         this.clearResumeCursor(conversationId)
         this.disposeRuntime(conversationId, { replacing: true })
       } else {
@@ -1962,7 +1961,36 @@ export class CliAgentHost {
   ): void {
     const conversation = this.deps.conversations.get(conversationId)
     if (!shouldRecordHistoryHandoff(conversation?.messages.length)) return
-    this.historyHandoff.set(conversationId, { previousCwd, reason })
+    const pending = this.pendingCwdNotice.get(conversationId)
+    this.historyHandoff.set(conversationId, {
+      previousCwd: pending?.previousCwd ?? previousCwd,
+      reason
+    })
+  }
+
+  private markCwdNotice(conversationId: string, previousCwd: string | null): void {
+    const conversation = this.deps.conversations.get(conversationId)
+    if (!shouldRecordHistoryHandoff(conversation?.messages.length)) return
+    const existing = this.pendingCwdNotice.get(conversationId)
+    if (existing) return
+    this.pendingCwdNotice.set(conversationId, { previousCwd })
+  }
+
+  private consumePromptPrefixes(conversationId: string, leafId: string | null): string {
+    const handed = this.consumeHistoryHandoff(conversationId, leafId)
+    return this.consumeCwdNotice(conversationId, handed)
+  }
+
+  private consumeCwdNotice(conversationId: string, prompt: string): string {
+    const mark = this.pendingCwdNotice.get(conversationId)
+    if (!mark) return prompt
+    this.pendingCwdNotice.delete(conversationId)
+    const nextCwd = this.conversationCwd(conversationId)
+    const notice = formatCliCwdNotice(mark.previousCwd, nextCwd)
+    const runtime = this.runtimes.get(conversationId)
+    runtime?.driver.setCwd?.(nextCwd)
+    if (runtime) runtime.cwd = nextCwd
+    return applyCliHistoryHandoff(prompt, notice)
   }
 
   private consumeHistoryHandoff(conversationId: string, leafId: string | null): string {
@@ -1971,6 +1999,7 @@ export class CliAgentHost {
     const mark = this.historyHandoff.get(conversationId)
     if (!mark) return prompt
     this.historyHandoff.delete(conversationId)
+    if (mark.reason !== 'retry') this.pendingCwdNotice.delete(conversationId)
     const conversation = this.deps.conversations.get(conversationId)
     if (!conversation) return prompt
     const handoff = formatCliWorkspaceHandoff({
@@ -2002,7 +2031,7 @@ export class CliAgentHost {
       leafId,
       excludeMessageId: turn?.parentId ?? null,
       compactions: conversation.compactions,
-      previousCwd: cwd,
+      previousCwd: this.pendingCwdNotice.get(conversationId)?.previousCwd ?? cwd,
       nextCwd: cwd,
       reason: 'session-lost'
     })
@@ -2159,7 +2188,7 @@ export class CliAgentHost {
           turn.replay.open()
           // A respawn during the retry may have replaced the native session
           // (auth switch) — carry the transcript if one was marked.
-          turn.prompt = this.consumeHistoryHandoff(conversationId, turn.parentId)
+          turn.prompt = this.consumePromptPrefixes(conversationId, turn.parentId)
           next.driver.prompt(turn.prompt, { attachments: turn.attachments })
         }
         return
@@ -2212,7 +2241,7 @@ export class CliAgentHost {
         next.lastTouch = Date.now()
         // New session has no previous-turn dump to strip.
         turn.replay.open()
-        turn.prompt = this.consumeHistoryHandoff(conversationId, turn.parentId)
+        turn.prompt = this.consumePromptPrefixes(conversationId, turn.parentId)
         next.driver.prompt(turn.prompt, { attachments: turn.attachments })
         return
       } catch (err) {

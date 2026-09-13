@@ -375,6 +375,7 @@ export const zhCN = {
   'composer.computerUse.off': '关',
   'composer.computerUseTitle': '让 Agent 后台操作本机窗口（日历、App）。开了再说「把日历切到 12 月」。',
   'composer.computerUseSettings': '电脑操控设置…',
+  'composer.computerUseEnabledToast': '已开启电脑操控，再次点击 @ 选择要操作的 App。',
   'composer.dragHint': '{shortcut} 聚焦',
   'composer.sendHint': '{shortcut} 发送',
   'composer.placeholderHints': '{send} 发送 · {focus} 聚焦',
@@ -1257,6 +1258,12 @@ export const zhCN = {
   'appearance.computerUseBinaryMissing': '未找到内置 cua-driver。在仓库运行 npm run fetch:cua-driver。',
   'appearance.computerUseRunning': '驱动已运行',
   'appearance.computerUseStopped': '驱动未运行',
+  'appearance.computerUseScreenHint':
+    '电脑操控需要「屏幕录制」权限。点上方按钮唤起系统授权，或前往 系统设置 → 隐私与安全性 → 屏幕录制 勾选 VAV 后返回。',
+  'computerUse.permissionTitle': '开启电脑操控还需授权',
+  'computerUse.permissionBody':
+    '电脑操控需要以下 macOS 权限：{permissions}。在系统设置中勾选 VAV 后返回，即会自动生效。',
+  'computerUse.permissionOpenSettings': '打开设置去授权',
   'appearance.accessibilityPermission': '辅助功能权限',
   'appearance.accessibilityPermissionHint':
     '后台点击与读窗口需要「辅助功能」权限。点上方按钮打开系统设置 → 隐私与安全性 → 辅助功能，勾选 VAV 后返回。',
@@ -1435,7 +1442,8 @@ export const zhCN = {
   'composer.attachFileTitle': '附加文件',
   'composer.mentionAddFile': '添加文件…',
   'composer.mentionAddApp': 'App（电脑操作）',
-  'composer.mentionNoApps': '没有可用的 App（未开启电脑操作）',
+  'composer.mentionNoApps': '没有可用的 App',
+  'composer.mentionEnableComputer': '开启电脑操控以选择 App…',
   'composer.dropFiles': '松开以添加到对话',
   'composer.previewFile': '预览文件',
   'composer.screenshotDenied': '需要屏幕录制权限才能截屏',
@@ -2952,6 +2960,7 @@ export const en: Record<MessageKey, string> = {
   'composer.computerUseTitle':
     'Let the agent operate native windows in the background. Turn on, then ask it to switch Calendar to December.',
   'composer.computerUseSettings': 'Computer use settings…',
+  'composer.computerUseEnabledToast': 'Computer use is on — open @ again to pick an app.',
   'composer.dragHint': '{shortcut} Focus',
   'composer.sendHint': '{shortcut} Send',
   'composer.placeholderHints': '{send} Send · {focus} Focus',
@@ -3855,6 +3864,12 @@ export const en: Record<MessageKey, string> = {
     'Bundled cua-driver is missing. In the repo run npm run fetch:cua-driver.',
   'appearance.computerUseRunning': 'Driver running',
   'appearance.computerUseStopped': 'Driver stopped',
+  'appearance.computerUseScreenHint':
+    'Computer use needs Screen Recording. Click above to raise the system prompt, or open System Settings → Privacy & Security → Screen Recording, enable VAV, then come back.',
+  'computerUse.permissionTitle': 'Computer use needs permission',
+  'computerUse.permissionBody':
+    'Computer use needs these macOS permissions: {permissions}. Enable VAV in System Settings, then come back — it takes effect automatically.',
+  'computerUse.permissionOpenSettings': 'Open settings to grant',
   'appearance.accessibilityPermission': 'Accessibility permission',
   'appearance.accessibilityPermissionHint':
     'Background clicks and window reads need Accessibility. Open System Settings → Privacy & Security → Accessibility, enable VAV, then come back.',
@@ -4023,7 +4038,8 @@ export const en: Record<MessageKey, string> = {
   'composer.attachFileTitle': 'Attach files',
   'composer.mentionAddFile': 'Add file…',
   'composer.mentionAddApp': 'App (computer use)',
-  'composer.mentionNoApps': 'No apps (computer use is off)',
+  'composer.mentionNoApps': 'No apps found',
+  'composer.mentionEnableComputer': 'Turn on computer use to pick apps…',
   'composer.dropFiles': 'Drop to add to the conversation',
   'composer.previewFile': 'Preview file',
   'composer.screenshotDenied': 'Screen Recording permission is required to capture',

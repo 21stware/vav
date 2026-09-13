@@ -151,6 +151,8 @@ export interface DriverControl {
   supportsSteer(): boolean
   cancel(): void
   respond(requestId: string, optionId: 'allow' | 'deny', message?: string): void
+  /** Point client-side fs / later prompts at a new conversation root. */
+  setCwd?(cwd: string): void
   applyOptions?(opts: {
     model?: string | null
     thinkingLevel?: ThinkingLevel | null

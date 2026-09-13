@@ -25,12 +25,12 @@ const dialTimeout = 45 * time.Second
 // A probe dial must succeed before ready, then that conn is closed. Each
 // Accept opens a fresh remote stream — holding the probe would leave a
 // dead pipe after idle (local listen stays up, hello never returns).
-func runDial(token string, verbose bool) {
+func runDial(token string, verbose bool, extraHost string) {
 	logf := logger.Discard
 	if verbose {
 		logf = log.Printf
 	}
-	blob, err := enrichBlob(token)
+	blob, err := enrichBlob(token, extraHost)
 	if err != nil {
 		blob = tailcat.ConnBlob(token)
 	}

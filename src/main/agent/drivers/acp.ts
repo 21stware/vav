@@ -936,6 +936,9 @@ export function wireAcp(
     supportsSteer(): boolean {
       return true
     },
+    setCwd(cwd: string): void {
+      options.cwd = cwd
+    },
     cancel(): void {
       if (sessionId) send('session/cancel', { sessionId })
       cancelPending('cancelled')

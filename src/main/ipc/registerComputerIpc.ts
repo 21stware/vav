@@ -1,5 +1,5 @@
 import type { IpcMain } from 'electron'
-import { shell, systemPreferences } from 'electron'
+import { desktopCapturer, shell, systemPreferences } from 'electron'
 import { IPC } from '@shared/ipc'
 import type { ComputerApp, ComputerPermissionState, ComputerUseStatus } from '@shared/computerUse'
 
@@ -47,6 +47,19 @@ export function registerComputerIpc(ipcMain: IpcMain, host: ComputerIpcHost): vo
     } catch {
       return false
     }
+  })
+  ipcMain.handle(IPC.computerRequestScreenRecording, async (): Promise<ComputerPermissionState> => {
+    if (process.platform !== 'darwin') return 'granted'
+    // No `askForMediaAccess('screen')` exists; a real capture probe is what
+    // raises the macOS Screen Recording prompt (only while 'not-determined').
+    // Once 'denied', the prompt never returns — the caller falls back to the
+    // System Settings deep-link.
+    try {
+      await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 1, height: 1 } })
+    } catch {
+      /* denied / probe failed — status read below reflects it */
+    }
+    return macScreenRecordingState()
   })
   ipcMain.handle(IPC.computerOpenAccessibilitySettings, async () => {
     if (process.platform !== 'darwin') return
