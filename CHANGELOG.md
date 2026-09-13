@@ -4,6 +4,10 @@ User-facing changes by release. Unreleased work lives at the top until the next 
 
 ## Unreleased
 
+## 1.29.1
+
+macOS “Unpacking update” can be cancelled or retried. A leftover ShipIt cache no longer traps the About page or the corner chip after a failed unzip, and the same version will not auto-download again after a relaunch until you retry.
+
 ## 1.29.0
 
 Remote WAN pairing in mainland China uses the Shanghai relay `derp.vavapp.com` (region 900) together with Tailcat’s public map — the host pins whichever region is fastest. Desktop auto-update tries GitHub first and falls back to gh-proxy when that feed cannot be reached.

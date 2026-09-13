@@ -1,7 +1,7 @@
 import { app, autoUpdater as electronAutoUpdater, shell } from 'electron'
 import { CancellationToken } from 'builder-util-runtime'
 import { autoUpdater } from 'electron-updater'
-import { existsSync, rmSync } from 'node:fs'
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { execFileSync } from 'node:child_process'
@@ -10,12 +10,18 @@ import {
   DEFAULT_AUTO_UPDATE_POLICY,
   UPDATE_HEARTBEAT_MS,
   UPDATE_LAUNCH_DELAY_MS,
+  UPDATE_STAGING_DEAD_GRACE_MS,
+  UPDATE_STAGING_TIMEOUT_MS,
+  canCancelUpdateDownload,
+  nativeStagingWaitDecision,
   isUpdateBusyPhase,
   isUpdateCancellationError,
   isUpdateSettledPhase,
   nextUpdateFollowUp,
+  parseSkippedUpdateVersion,
   shouldAutoInstall,
   shouldRunAutomaticCheck,
+  shouldSkipAutoFollowUp,
   type AutoUpdatePolicy,
   type UpdateCheckReason
 } from '@shared/updatePolicy'
@@ -38,7 +44,9 @@ const REPO = GITHUB_UPDATE_REPO
  * macOS note: electron-updater marks the ZIP downloaded before Squirrel.Mac
  * finishes staging (verify + ditto unzip). Showing "Restart" too early makes
  * quitAndInstall appear to no-op. We wait for Electron's native
- * `update-downloaded` before flipping to `ready`.
+ * `update-downloaded` before flipping to `ready`. The `preparing` wait is
+ * cancellable — Squirrel can hang (proxy feed, leftover ShipIt), and hide-on-
+ * close would otherwise leave "Unpacking update" on screen with no escape.
  *
  * Also: a failed Squirrel.Mac install can leave launchd job `com.vav.app.ShipIt`
  * restarting every ~2s without ShipItState.plist. That loop re-triggers app
@@ -65,10 +73,13 @@ export class UpdateService {
   private cancelToken: CancellationToken | null = null
   /** User stopped an in-flight download — do not auto-restart until they retry. */
   private skipAutoDownload = false
+  /** Version whose in-app staging/download the user abandoned (survives relaunch). */
+  private skippedVersion: string | null = null
+  private readonly userDataDir: string | null
   private cancelRequested = false
   /** Squirrel.Mac has finished staging (native update-downloaded). */
   private nativeUpdateReady = false
-  private nativeReadyWaiters: Array<() => void> = []
+  private nativeReadyWaiters: Array<(ready: boolean) => void> = []
   private policy: AutoUpdatePolicy = DEFAULT_AUTO_UPDATE_POLICY
   private lastCheckAt = 0
   private checkInFlight: Promise<UpdateState> | null = null
@@ -78,7 +89,9 @@ export class UpdateService {
   /** Packaged feed: GitHub first, gh-proxy after a China-side failure. */
   private usingProxyFeed = false
 
-  constructor() {
+  constructor(userDataDir?: string) {
+    this.userDataDir = userDataDir ?? tryUserDataDir()
+    this.skippedVersion = this.readSkippedVersion()
     if (!app.isPackaged) return
     clearOrphanedMacShipIt()
     autoUpdater.autoDownload = false
@@ -105,6 +118,11 @@ export class UpdateService {
         this.state.phase === 'preparing' ||
         this.state.phase === 'ready'
       ) {
+        if (this.state.phase === 'preparing') {
+          this.rememberSkippedVersion(this.state.latestVersion)
+          this.finishNativeReadyWait(false)
+          clearOrphanedMacShipIt()
+        }
         this.patch({
           phase: 'error',
           message: err.message,
@@ -120,8 +138,7 @@ export class UpdateService {
       // electron-updater's own update-downloaded.
       electronAutoUpdater.on('update-downloaded', () => {
         this.nativeUpdateReady = true
-        const waiters = this.nativeReadyWaiters.splice(0)
-        for (const resolve of waiters) resolve()
+        this.finishNativeReadyWait(true)
       })
     }
   }
@@ -240,7 +257,15 @@ export class UpdateService {
         // (opening the GitHub asset is the About-page Download button).
         if (!app.isPackaged) return
         if (action === 'download') {
-          if (this.skipAutoDownload) return
+          if (
+            shouldSkipAutoFollowUp({
+              sessionSkip: this.skipAutoDownload,
+              skippedVersion: this.skippedVersion,
+              latestVersion: this.state.latestVersion
+            })
+          ) {
+            return
+          }
           await this.openDownload()
           if (nextUpdateFollowUp(this.policy, this.state.phase) === 'install') {
             this.install()
@@ -338,6 +363,8 @@ export class UpdateService {
       if (this.cancelRequested) await this.downloadInFlight.catch(() => undefined)
       else return this.downloadInFlight
     }
+    // Explicit Download / Retry — allow auto-follow-up again for this version.
+    this.clearSkippedVersion()
     this.downloadInFlight = this.performDownload().finally(() => {
       this.downloadInFlight = null
     })
@@ -345,20 +372,20 @@ export class UpdateService {
   }
 
   /**
-   * Abort an in-flight package download and return to Available so the user
-   * can retry. Auto-download policies stay paused until they click Download.
+   * Abort an in-flight download or macOS unpack and return to Available so
+   * the user can retry. Auto-download stays paused for this version until
+   * they click Download (persisted across relaunch).
    */
   cancelDownload(): UpdateState {
-    if (!this.downloading || this.state.phase !== 'downloading') return this.getState()
+    if (!canCancelUpdateDownload(this.state.phase)) return this.getState()
     this.cancelRequested = true
-    this.skipAutoDownload = true
+    this.rememberSkippedVersion(this.state.latestVersion)
     this.cancelToken?.cancel()
-    return this.patch({
-      phase: 'available',
-      progress: 0,
-      bytesPerSecond: null,
-      message: null
-    })
+    if (this.state.phase === 'preparing') {
+      this.finishNativeReadyWait(false)
+      clearOrphanedMacShipIt()
+    }
+    return this.cancelledDownloadState()
   }
 
   private async performDownload(): Promise<UpdateState> {
@@ -376,7 +403,7 @@ export class UpdateService {
       })
     }
 
-    this.skipAutoDownload = false
+    this.clearSkippedVersion()
     this.cancelRequested = false
     this.downloading = true
     this.nativeUpdateReady = false
@@ -405,13 +432,16 @@ export class UpdateService {
           message: null
         })
         const staged = await this.waitForNativeUpdateReady()
+        if (this.cancelRequested) return this.cancelledDownloadState()
         if (!staged || !this.nativeUpdateReady) {
+          this.rememberSkippedVersion(this.state.latestVersion)
+          clearOrphanedMacShipIt()
           return this.patch({
             phase: 'error',
             progress: 0,
             bytesPerSecond: null,
             message:
-              'Update download finished but macOS staging timed out. Try again, or install from the GitHub release DMG.'
+              'Update download finished but macOS unpacking stalled. Cancelled leftovers were cleared — retry, or install from the GitHub release DMG.'
           })
         }
       }
@@ -484,23 +514,89 @@ export class UpdateService {
   }
 
   /** @returns true when Squirrel.Mac emitted native update-downloaded. */
-  private waitForNativeUpdateReady(timeoutMs = 180_000): Promise<boolean> {
+  private waitForNativeUpdateReady(
+    timeoutMs = UPDATE_STAGING_TIMEOUT_MS
+  ): Promise<boolean> {
     if (this.nativeUpdateReady) return Promise.resolve(true)
     return new Promise((resolve) => {
-      const done = (): void => {
+      const startedAt = Date.now()
+      let settled = false
+      const finish = (ready: boolean): void => {
+        if (settled) return
+        settled = true
         clearTimeout(timer)
-        resolve(true)
-      }
-      const timer = setTimeout(() => {
-        const idx = this.nativeReadyWaiters.indexOf(done)
+        clearInterval(poll)
+        const idx = this.nativeReadyWaiters.indexOf(finish)
         if (idx >= 0) this.nativeReadyWaiters.splice(idx, 1)
+        resolve(ready)
+      }
+      const tick = (): void => {
+        const decision = nativeStagingWaitDecision({
+          nativeReady: this.nativeUpdateReady,
+          shipItRunning: isMacShipItRunning(),
+          elapsedMs: Date.now() - startedAt,
+          deadGraceMs: UPDATE_STAGING_DEAD_GRACE_MS,
+          timeoutMs
+        })
+        if (decision === 'ready') {
+          finish(true)
+          return
+        }
+        if (decision === 'wait') return
         console.warn(
-          '[updates] timed out waiting for Squirrel.Mac update-downloaded; not enabling Restart'
+          `[updates] Squirrel.Mac staging ${decision}; not enabling Restart`
         )
-        resolve(false)
-      }, timeoutMs)
-      this.nativeReadyWaiters.push(done)
+        finish(false)
+      }
+      const timer = setTimeout(tick, timeoutMs)
+      const poll = setInterval(tick, 2_000)
+      poll.unref?.()
+      timer.unref?.()
+      this.nativeReadyWaiters.push(finish)
     })
+  }
+
+  private finishNativeReadyWait(ready: boolean): void {
+    const waiters = this.nativeReadyWaiters.splice(0)
+    for (const resolve of waiters) resolve(ready)
+  }
+
+  private skipFile(): string | null {
+    return this.userDataDir ? join(this.userDataDir, 'update-skip.json') : null
+  }
+
+  private readSkippedVersion(): string | null {
+    const file = this.skipFile()
+    if (!file || !existsSync(file)) return null
+    try {
+      return parseSkippedUpdateVersion(JSON.parse(readFileSync(file, 'utf8')) as unknown)
+    } catch {
+      return null
+    }
+  }
+
+  private rememberSkippedVersion(version: string | null): void {
+    this.skipAutoDownload = true
+    this.skippedVersion = version
+    const file = this.skipFile()
+    if (!file || !version) return
+    try {
+      writeFileSync(file, JSON.stringify({ skippedVersion: version }))
+    } catch {
+      // ignore
+    }
+  }
+
+  private clearSkippedVersion(): void {
+    this.skipAutoDownload = false
+    this.skippedVersion = null
+    const file = this.skipFile()
+    if (!file || !existsSync(file)) return
+    try {
+      rmSync(file)
+    } catch {
+      // ignore
+    }
   }
 
   private async checkViaGithub(): Promise<UpdateState> {
@@ -592,12 +688,11 @@ function compareSemver(a: string, b: string): number {
 export function clearOrphanedMacShipIt(): void {
   if (process.platform !== 'darwin') return
   const cacheDir = join(homedir(), 'Library/Caches/com.vav.app.ShipIt')
-  const statePath = join(cacheDir, 'ShipItState.plist')
 
-  // Always unload the job on a normal launch. A finished update leaves
-  // ShipItState.plist behind; the old early-return kept `com.vav.app.ShipIt`
-  // in Login Items as “Allow in the Background” forever. quitAndInstall
-  // re-registers the job when a real update is applied.
+  // Always unload the job on a normal launch so a finished update does not
+  // linger in Login Items. Also drop the cache: a leftover ShipItState.plist
+  // from a previous install poisons the next unzip — native update-downloaded
+  // never fires and the UI sticks on “Unpacking update”.
   try {
     execFileSync('launchctl', ['bootout', `gui/${process.getuid?.() ?? 501}/com.vav.app.ShipIt`], {
       stdio: 'ignore'
@@ -605,11 +700,27 @@ export function clearOrphanedMacShipIt(): void {
   } catch {
     // Job may not be loaded — fine.
   }
-  if (existsSync(statePath)) return
   try {
-    // Drop empty/broken cache so the next real update starts clean.
     rmSync(cacheDir, { recursive: true, force: true })
   } catch {
     // ignore
+  }
+}
+
+function isMacShipItRunning(): boolean {
+  if (process.platform !== 'darwin') return false
+  try {
+    execFileSync('pgrep', ['-f', 'com.vav.app.ShipIt'], { stdio: 'ignore' })
+    return true
+  } catch {
+    return false
+  }
+}
+
+function tryUserDataDir(): string | null {
+  try {
+    return app.getPath('userData')
+  } catch {
+    return null
   }
 }

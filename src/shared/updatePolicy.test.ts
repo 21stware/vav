@@ -9,8 +9,12 @@ import {
   isUpdateCancellationError,
   isUpdateSettledPhase,
   canCancelUpdateDownload,
+  canRetryUpdateDownload,
+  nativeStagingWaitDecision,
   nextUpdateFollowUp,
+  parseSkippedUpdateVersion,
   resolveAutoUpdatePolicy,
+  shouldSkipAutoFollowUp,
   shouldAutoCheck,
   shouldAutoDownload,
   shouldAutoInstall,
@@ -180,10 +184,109 @@ describe('phase helpers', () => {
     assert.equal(isUpdateSettledPhase('available'), false)
   })
 
-  it('allows cancel only while the package is downloading', () => {
+  it('allows cancel while downloading or unpacking', () => {
     assert.equal(canCancelUpdateDownload('downloading'), true)
-    assert.equal(canCancelUpdateDownload('preparing'), false)
+    assert.equal(canCancelUpdateDownload('preparing'), true)
     assert.equal(canCancelUpdateDownload('available'), false)
+    assert.equal(canCancelUpdateDownload('ready'), false)
+  })
+
+  it('allows retry after a failed transfer when a newer version is known', () => {
+    assert.equal(canRetryUpdateDownload('error', '1.2.3'), true)
+    assert.equal(canRetryUpdateDownload('error', null), false)
+    assert.equal(canRetryUpdateDownload('preparing', '1.2.3'), false)
+    assert.equal(canRetryUpdateDownload('available', '1.2.3'), false)
+  })
+})
+
+describe('shouldSkipAutoFollowUp', () => {
+  it('skips after an in-session cancel, or when this version already failed staging', () => {
+    assert.equal(
+      shouldSkipAutoFollowUp({
+        sessionSkip: true,
+        skippedVersion: null,
+        latestVersion: '1.2.3'
+      }),
+      true
+    )
+    assert.equal(
+      shouldSkipAutoFollowUp({
+        sessionSkip: false,
+        skippedVersion: '1.2.3',
+        latestVersion: '1.2.3'
+      }),
+      true
+    )
+    assert.equal(
+      shouldSkipAutoFollowUp({
+        sessionSkip: false,
+        skippedVersion: '1.2.3',
+        latestVersion: '1.2.4'
+      }),
+      false
+    )
+    assert.equal(
+      shouldSkipAutoFollowUp({
+        sessionSkip: false,
+        skippedVersion: null,
+        latestVersion: '1.2.3'
+      }),
+      false
+    )
+  })
+})
+
+describe('parseSkippedUpdateVersion', () => {
+  it('reads a persisted skip payload', () => {
+    assert.equal(parseSkippedUpdateVersion({ skippedVersion: '1.29.0' }), '1.29.0')
+    assert.equal(parseSkippedUpdateVersion({ skippedVersion: '  ' }), null)
+    assert.equal(parseSkippedUpdateVersion({}), null)
+    assert.equal(parseSkippedUpdateVersion(null), null)
+  })
+})
+
+describe('nativeStagingWaitDecision', () => {
+  it('waits while ShipIt is working, fails fast when it is dead', () => {
+    assert.equal(
+      nativeStagingWaitDecision({
+        nativeReady: true,
+        shipItRunning: false,
+        elapsedMs: 60_000
+      }),
+      'ready'
+    )
+    assert.equal(
+      nativeStagingWaitDecision({
+        nativeReady: false,
+        shipItRunning: true,
+        elapsedMs: 5 * 60_000
+      }),
+      'wait'
+    )
+    assert.equal(
+      nativeStagingWaitDecision({
+        nativeReady: false,
+        shipItRunning: false,
+        elapsedMs: 10_000
+      }),
+      'wait'
+    )
+    assert.equal(
+      nativeStagingWaitDecision({
+        nativeReady: false,
+        shipItRunning: false,
+        elapsedMs: 45_000
+      }),
+      'dead'
+    )
+    assert.equal(
+      nativeStagingWaitDecision({
+        nativeReady: false,
+        shipItRunning: true,
+        elapsedMs: 10 * 60_000
+      }),
+      'timeout'
+    )
   })
 })
 

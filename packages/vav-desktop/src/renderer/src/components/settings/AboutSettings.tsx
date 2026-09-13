@@ -3,6 +3,7 @@ import { ChevronDown, Download, LoaderCircle, RefreshCw, RotateCw } from 'lucide
 import type { MessageKey } from '@shared/i18n'
 import {
   AUTO_UPDATE_POLICIES,
+  canRetryUpdateDownload,
   resolveAutoUpdatePolicy,
   type AutoUpdatePolicy
 } from '@shared/updatePolicy'
@@ -51,13 +52,15 @@ export function AboutSettings(): React.JSX.Element {
   const checking = phase === 'checking'
   const transferring = phase === 'downloading' || phase === 'preparing'
   const canDownload = phase === 'available'
+  const canRetry = canRetryUpdateDownload(phase, latestVersion)
   const canRestart = phase === 'ready'
   const showLatestRow =
     !!latestVersion &&
     (phase === 'available' ||
       phase === 'downloading' ||
       phase === 'preparing' ||
-      phase === 'ready')
+      phase === 'ready' ||
+      phase === 'error')
   const releaseUrl = updateState.releaseUrl
   const autoUpdatePolicy = resolveAutoUpdatePolicy(settings)
 
@@ -221,12 +224,20 @@ export function AboutSettings(): React.JSX.Element {
               onClick={() => void downloadUpdate()}
             />
           ) : null}
-          {phase === 'downloading' ? (
+          {phase === 'downloading' || phase === 'preparing' ? (
             <Button
               label={t('update.cancel')}
               variant="secondary"
               testId="settings-about-update-cancel"
               onClick={() => void cancelUpdateDownload()}
+            />
+          ) : null}
+          {canRetry ? (
+            <Button
+              icon={<Download size={14} />}
+              label={t('update.retry')}
+              variant="primary"
+              onClick={() => void downloadUpdate()}
             />
           ) : null}
           {canRestart ? (
@@ -237,7 +248,8 @@ export function AboutSettings(): React.JSX.Element {
               onClick={() => void installUpdate()}
             />
           ) : null}
-          {releaseUrl && (canDownload || canRestart || phase === 'latest') ? (
+          {releaseUrl &&
+          (canDownload || canRetry || canRestart || phase === 'latest' || phase === 'preparing') ? (
             <Button
               label={t('about.updateReleaseNotes')}
               variant="ghost"

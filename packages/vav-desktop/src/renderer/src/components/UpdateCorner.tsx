@@ -32,13 +32,24 @@ export function UpdateCorner({
     phase !== 'available' &&
     phase !== 'downloading' &&
     phase !== 'preparing' &&
-    phase !== 'ready'
+    phase !== 'ready' &&
+    !(phase === 'error' && latestVersion)
   ) {
     return null
   }
 
   const body =
-    phase === 'available' ? (
+    phase === 'error' ? (
+      <button
+        type="button"
+        className="update-corner-btn"
+        title={t('update.retry')}
+        onClick={() => void downloadUpdate()}
+      >
+        <Download size={13} strokeWidth={2} aria-hidden />
+        <span>{t('update.retry')}</span>
+      </button>
+    ) : phase === 'available' ? (
       <button
         type="button"
         className="update-corner-btn"
@@ -81,6 +92,16 @@ export function UpdateCorner({
         <div className="update-corner-progress-meta">
           <LoaderCircle size={13} strokeWidth={2} className="update-corner-spin" aria-hidden />
           <span>{t('update.preparing')}</span>
+          <button
+            type="button"
+            className="update-corner-cancel"
+            data-testid="update-cancel"
+            title={t('update.cancel')}
+            aria-label={t('update.cancel')}
+            onClick={() => void cancelUpdateDownload()}
+          >
+            <X size={12} strokeWidth={2.25} aria-hidden />
+          </button>
         </div>
         <div className="update-corner-hint">{t('update.preparingHint')}</div>
         <div className="update-corner-track is-indeterminate" aria-hidden>

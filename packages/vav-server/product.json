@@ -1,6 +1,6 @@
 {
   "name": "@21stware/vav-server",
-  "version": "1.29.0",
+  "version": "1.29.1",
   "role": "vav-server",
   "kind": "service",
   "sources": [

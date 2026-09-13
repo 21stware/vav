@@ -92,6 +92,64 @@ export function isUpdateCancellationError(err: unknown): boolean {
   return name === 'CancellationError' || /cancell?ed/i.test(message)
 }
 
+/** Download bytes or macOS Squirrel staging — both must be abortable. */
 export function canCancelUpdateDownload(phase: UpdatePhase): boolean {
-  return phase === 'downloading'
+  return phase === 'downloading' || phase === 'preparing'
+}
+
+/** After a failed check/download/staging, retry the package if we still know the target. */
+export function canRetryUpdateDownload(
+  phase: UpdatePhase,
+  latestVersion: string | null
+): boolean {
+  return phase === 'error' && Boolean(latestVersion)
+}
+
+/**
+ * User cancelled, or macOS staging failed for this version. Auto-download
+ * must not immediately re-enter `preparing` after a relaunch.
+ */
+export function shouldSkipAutoFollowUp(opts: {
+  sessionSkip: boolean
+  skippedVersion: string | null
+  latestVersion: string | null
+}): boolean {
+  if (opts.sessionSkip) return true
+  return (
+    opts.skippedVersion != null &&
+    opts.latestVersion != null &&
+    opts.skippedVersion === opts.latestVersion
+  )
+}
+
+export function parseSkippedUpdateVersion(raw: unknown): string | null {
+  if (!raw || typeof raw !== 'object') return null
+  const version = (raw as { skippedVersion?: unknown }).skippedVersion
+  return typeof version === 'string' && version.trim().length > 0 ? version.trim() : null
+}
+
+/** How long to wait for Squirrel.Mac after the ZIP is local. Real unzips can take minutes. */
+export const UPDATE_STAGING_TIMEOUT_MS = 10 * 60 * 1000
+/** If ShipIt never starts, fail instead of sitting on “Unpacking…” until the full timeout. */
+export const UPDATE_STAGING_DEAD_GRACE_MS = 45_000
+
+export type NativeStagingWait = 'ready' | 'wait' | 'dead' | 'timeout'
+
+/**
+ * Native `update-downloaded` is the only safe “Restart” signal, but ShipIt
+ * can die (or never start) while leftover cache keeps the UI in `preparing`.
+ */
+export function nativeStagingWaitDecision(opts: {
+  nativeReady: boolean
+  shipItRunning: boolean
+  elapsedMs: number
+  deadGraceMs?: number
+  timeoutMs?: number
+}): NativeStagingWait {
+  if (opts.nativeReady) return 'ready'
+  const timeoutMs = opts.timeoutMs ?? UPDATE_STAGING_TIMEOUT_MS
+  const deadGraceMs = opts.deadGraceMs ?? UPDATE_STAGING_DEAD_GRACE_MS
+  if (opts.elapsedMs >= timeoutMs) return 'timeout'
+  if (!opts.shipItRunning && opts.elapsedMs >= deadGraceMs) return 'dead'
+  return 'wait'
 }

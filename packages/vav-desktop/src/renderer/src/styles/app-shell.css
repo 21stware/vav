@@ -7338,6 +7338,10 @@ button.tool-row {
   color: var(--text);
 }
 
+.update-corner-progress.is-preparing .update-corner-cancel {
+  margin-left: auto;
+}
+
 .update-corner-hint {
   font-size: 11px;
   font-weight: 500;
