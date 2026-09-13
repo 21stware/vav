@@ -20,3 +20,5 @@ Required GitHub Release assets (see `scripts/release-assets.mjs`):
 Windows Authenticode signing is not configured; the Windows build ships unsigned until a cert is added to the workflow secrets.
 
 Requires Node 22. macOS runners need `setuptools` for `electron-trackpad-utils` (the workflow installs it).
+
+Root `package.json` `dependencies` are what electron-builder copies into the app. Renderer-only libraries stay in `devDependencies` — Vite already bundles them. Do not add Mermaid, Vega, React, or other UI packages back to `dependencies` or the asar balloons again.

@@ -14,6 +14,7 @@ import {
   isUpdateCancellationError,
   isUpdateSettledPhase,
   nextUpdateFollowUp,
+  shouldAutoInstall,
   shouldRunAutomaticCheck,
   type AutoUpdatePolicy,
   type UpdateCheckReason
@@ -73,7 +74,11 @@ export class UpdateService {
     if (!app.isPackaged) return
     clearOrphanedMacShipIt()
     autoUpdater.autoDownload = false
-    autoUpdater.autoInstallOnAppQuit = true
+    // Install-on-quit belongs to `auto` only. Forcing it on breaks `download`'s
+    // contract ("Restart to install when you are ready"): a staged package would
+    // otherwise be applied by Squirrel.Mac / NSIS on the *next* quit, killing the
+    // app mid-turn. Kept in sync with the live policy in {@link applyPolicy}.
+    autoUpdater.autoInstallOnAppQuit = shouldAutoInstall(this.policy)
     autoUpdater.allowDowngrade = false
     // Public GitHub Releases — no token required for check/download.
     autoUpdater.on('download-progress', (p) => {
@@ -150,6 +155,7 @@ export class UpdateService {
     source: 'start' | 'change'
   ): Promise<void> {
     this.policy = policy
+    if (app.isPackaged) autoUpdater.autoInstallOnAppQuit = shouldAutoInstall(policy)
     this.syncHeartbeat()
     if (source === 'start') {
       this.clearLaunchTimer()

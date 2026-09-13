@@ -163,6 +163,14 @@ import {
 const COALESCE_MS = 32
 
 /**
+ * How often a streaming (pre-turn-end) reply is checkpointed to disk. Bridges
+ * long text stretches so an abrupt quit (app update install, crash) can't drop
+ * the reply and reopen the conversation at the last user message. Coarse on
+ * purpose — a crash-safety net, not the per-token write path.
+ */
+const PERSIST_STREAM_MS = 2_000
+
+/**
  * Did this turn produce anything worth sealing? Reasoning alone does not
  * count — when the answer text was eaten by a leaked stream error, the retry
  * regenerates the thinking along with the reply.
@@ -196,6 +204,8 @@ interface HostTurn {
   toolIndex: Map<string, number>
   buffers: Map<number, string>
   flushTimer: NodeJS.Timeout | null
+  /** Debounced crash-safety checkpoint of the in-flight reply. */
+  persistTimer: NodeJS.Timeout | null
   toolCount: number
   cancelled: boolean
   error?: string
@@ -715,6 +725,50 @@ export class CliAgentHost {
     for (const id of [...this.runtimes.keys()]) this.dispose(id)
   }
 
+  /**
+   * Checkpoint every in-flight reply into the conversation store. Call before a
+   * quit/flush (normal exit, or Squirrel/NSIS update install) so streamed text
+   * that hasn't reached turn end yet survives the restart. The caller owns the
+   * subsequent {@link ConversationStore.flush}.
+   */
+  persistInFlight(): void {
+    for (const [conversationId, turn] of this.turns) {
+      this.flushBuffers(conversationId, turn)
+      this.persistPartial(conversationId, turn)
+    }
+  }
+
+  /** Write the current turn snapshot into the store (no flush; caller owns it). */
+  private persistPartial(conversationId: string, turn: HostTurn): void {
+    if (turn.persistTimer) {
+      clearTimeout(turn.persistTimer)
+      turn.persistTimer = null
+    }
+    const message = cliAssistantMessage(turn)
+    const existing = this.deps.conversations
+      .get(conversationId)
+      ?.messages.find((m) => m.id === message.id)
+    if (existing) this.deps.conversations.replaceMessage(conversationId, message)
+    else if (shouldPersistAssistantTurn(message)) {
+      this.deps.conversations.appendMessage(conversationId, message)
+    }
+  }
+
+  /**
+   * Debounced disk checkpoint of the in-flight reply so a mid-stream quit
+   * (update install / crash) doesn't discard streamed text. Turn end still owns
+   * the authoritative write; this only bridges long text stretches before it.
+   */
+  private scheduleStreamCheckpoint(conversationId: string, turn: HostTurn): void {
+    if (turn.persistTimer) return
+    turn.persistTimer = setTimeout(() => {
+      turn.persistTimer = null
+      if (this.turns.get(conversationId) !== turn) return
+      this.persistPartial(conversationId, turn)
+    }, PERSIST_STREAM_MS)
+    turn.persistTimer.unref?.()
+  }
+
   /** Drop idle runtimes (no turn, untouched for 30 min). */
   reapIdle(maxIdleMs = 30 * 60_000): void {
     const now = Date.now()
@@ -751,6 +805,7 @@ export class CliAgentHost {
       toolIndex: new Map(),
       buffers: new Map(),
       flushTimer: null,
+      persistTimer: null,
       toolCount: 0,
       cancelled: false,
       prompt,
@@ -1285,6 +1340,7 @@ export class CliAgentHost {
     const buf = (turn.buffers.get(index) ?? '') + text
     turn.buffers.set(index, buf)
     this.setPhase(conversationId, turn, kind === 'reasoning' ? 'thinking' : 'outputting')
+    this.scheduleStreamCheckpoint(conversationId, turn)
     if (!turn.flushTimer) {
       turn.flushTimer = setTimeout(() => this.flushBuffers(conversationId, turn), COALESCE_MS)
     }
@@ -1793,6 +1849,10 @@ export class CliAgentHost {
     this.invalidateInFlightSpawn(conversationId)
     // Prevent double-finish from cancel grace + turn-finished race.
     this.turns.delete(conversationId)
+    if (turn.persistTimer) {
+      clearTimeout(turn.persistTimer)
+      turn.persistTimer = null
+    }
     const pendingModel = this.pendingModel.get(conversationId)
     if (pendingModel) {
       this.pendingModel.delete(conversationId)

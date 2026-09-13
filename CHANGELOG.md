@@ -4,6 +4,16 @@ User-facing changes by release. Unreleased work lives at the top until the next 
 
 ## Unreleased
 
+## 1.28.0
+
+Picture in Picture shrinks the main window to a compact always-on-top task list. Enter it from the sidebar service menu; the bottom dock stays a new-conversation composer and workbench so you can start a task without leaving the monitor.
+
+Composer `@` mentions files and running apps as pills. Computer use can list those apps for the mention menu.
+
+Desktop installers no longer pack renderer libraries (Mermaid, Vega, React, and the rest) a second time beside the Vite bundle. macOS signing and notarization have less to upload; the download is smaller.
+
+Streaming replies are checkpointed to disk every few seconds, so an update install or crash no longer drops an in-flight answer back to the last user message.
+
 ## 1.27.1
 
 Windows release builds can fetch the embedded Cua Driver again — the binary is copied when TEMP and the workspace sit on different volumes (`EXDEV` on `rename`).

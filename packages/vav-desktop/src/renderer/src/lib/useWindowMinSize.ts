@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import {
   AGENT_MIN_WIDTH,
   FILE_SESSION_AGENT_MIN_WIDTH,
+  PIP_WINDOW_MIN_HEIGHT,
+  PIP_WINDOW_MIN_WIDTH,
   windowMinHeight,
   windowMinWidth,
   type WindowShellKind
@@ -40,6 +42,7 @@ function subscribeShellColumns(listener: () => void): () => void {
  * cannot be dragged smaller than the visible chrome actually occupies.
  */
 export function useWindowMinSize(): void {
+  const pictureInPicture = useSessionStore((s) => s.pictureInPicture)
   const shell: WindowShellKind = isCompanionSessionShell() ? 'session' : 'main'
   const sidebarVisible = useSessionStore((s) => s.sidebarVisible)
   const previewOpen = useSessionStore((s) => s.filePreviewOpen)
@@ -78,23 +81,27 @@ export function useWindowMinSize(): void {
     shell === 'main' && (isFileSession || isDbSession(conversation ?? {}) || previewOpen)
   const agentVisible = isFileSession ? fileAgentOpen !== false : true
 
-  const width = windowMinWidth({
-    sidebarVisible: shell === 'main' && sidebarVisible,
-    sidebarWidth,
-    agentVisible,
-    agentMinWidth: isFileSession ? FILE_SESSION_AGENT_MIN_WIDTH : AGENT_MIN_WIDTH,
-    agentWidth: isFileSession ? (fileAgentWidth ?? undefined) : undefined,
-    previewVisible,
-    // Floor only — never the live drawer width. applyWindowMinSize grows the
-    // frame when it is below the floor; WorkspaceView then gives that delta
-    // to the preview, which raises the floor again (window walks off-screen).
-    previewWidth: undefined,
-    shell
-  })
-  const height = windowMinHeight({
-    workbenchExpanded: !toolsCollapsed,
-    shell
-  })
+  const width = pictureInPicture
+    ? PIP_WINDOW_MIN_WIDTH
+    : windowMinWidth({
+        sidebarVisible: shell === 'main' && sidebarVisible,
+        sidebarWidth,
+        agentVisible,
+        agentMinWidth: isFileSession ? FILE_SESSION_AGENT_MIN_WIDTH : AGENT_MIN_WIDTH,
+        agentWidth: isFileSession ? (fileAgentWidth ?? undefined) : undefined,
+        previewVisible,
+        // Floor only — never the live drawer width. applyWindowMinSize grows the
+        // frame when it is below the floor; WorkspaceView then gives that delta
+        // to the preview, which raises the floor again (window walks off-screen).
+        previewWidth: undefined,
+        shell
+      })
+  const height = pictureInPicture
+    ? PIP_WINDOW_MIN_HEIGHT
+    : windowMinHeight({
+        workbenchExpanded: !toolsCollapsed,
+        shell
+      })
 
   useEffect(() => {
     const api = window.vav?.window?.setMinSize

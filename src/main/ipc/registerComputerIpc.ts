@@ -1,7 +1,7 @@
 import type { IpcMain } from 'electron'
 import { shell, systemPreferences } from 'electron'
 import { IPC } from '@shared/ipc'
-import type { ComputerPermissionState, ComputerUseStatus } from '@shared/computerUse'
+import type { ComputerApp, ComputerPermissionState, ComputerUseStatus } from '@shared/computerUse'
 
 const ACCESSIBILITY_SETTINGS_URL =
   'x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility'
@@ -10,6 +10,7 @@ const SCREEN_RECORDING_SETTINGS_URL =
 
 export type ComputerIpcHost = {
   status: () => ComputerUseStatus
+  listApps: () => Promise<ComputerApp[]>
 }
 
 export function macAccessibilityState(): ComputerPermissionState {
@@ -32,6 +33,13 @@ export function macComputerPermissionsReady(): boolean {
 
 export function registerComputerIpc(ipcMain: IpcMain, host: ComputerIpcHost): void {
   ipcMain.handle(IPC.computerStatus, () => host.status())
+  ipcMain.handle(IPC.computerListApps, async () => {
+    try {
+      return await host.listApps()
+    } catch {
+      return []
+    }
+  })
   ipcMain.handle(IPC.computerRequestAccessibility, async () => {
     if (process.platform !== 'darwin') return true
     try {

@@ -7,7 +7,6 @@ import {
   Plus,
   Search,
   Star,
-  Terminal as TerminalIcon,
   X
 } from 'lucide-react'
 import { enabledCliAgents, type ConversationMeta } from '@shared/types'
@@ -76,13 +75,20 @@ function sessionSecondLine(
   text: string | null,
   running: boolean,
   edited: boolean,
-  editedLabel: string
+  editedLabel: string,
+  shellName?: string | null
 ): React.JSX.Element | null {
-  if (!text && !edited) return null
+  if (!text && !edited && !shellName) return null
   return (
     <span className="conv-subtitle">
       {text ? (
         <span className={`conv-subtitle-text${running ? ' is-running' : ''}`}>{text}</span>
+      ) : null}
+      {shellName ? (
+        <span className="conv-shell-name">
+          {text ? '· ' : ''}
+          {shellName}
+        </span>
       ) : null}
       {edited ? <span className="conv-edited">{editedLabel}</span> : null}
     </span>
@@ -123,18 +129,30 @@ export function Sidebar({
   )
   // Same trick for terminals: collapse the whole status map to the set of
   // conversations with a live command, so a chatty PTY repaints at most the
-  // rows whose rollup actually flipped.
+  // rows whose rollup actually flipped. We also carry the running tab's name so
+  // the row can print it (in accent) at the end of the second line.
   const shellBusyKey = useWorkspaceStore((s) => {
-    const ids: string[] = []
+    const parts: string[] = []
     for (const [conversationId, tabs] of Object.entries(s.ptyStatus)) {
-      if (Object.values(tabs).some((status) => status === 'running')) ids.push(conversationId)
+      const runningTabId = Object.entries(tabs).find(([, status]) => status === 'running')?.[0]
+      if (!runningTabId) continue
+      const tab = s.workspaces[conversationId]?.tabs.find((row) => row.id === runningTabId)
+      const name = tab?.title?.trim() || 'bash'
+      parts.push(`${conversationId}\u0001${name}`)
     }
-    return ids.sort().join('|')
+    return parts.sort().join('|')
   })
-  const shellBusy = useMemo(
-    () => new Set(shellBusyKey ? shellBusyKey.split('|') : []),
-    [shellBusyKey]
-  )
+  const shellBusy = useMemo(() => {
+    const map = new Map<string, string>()
+    if (shellBusyKey) {
+      for (const part of shellBusyKey.split('|')) {
+        const sep = part.indexOf('\u0001')
+        if (sep === -1) continue
+        map.set(part.slice(0, sep), part.slice(sep + 1))
+      }
+    }
+    return map
+  }, [shellBusyKey])
   const activityById = useSessionStore((s) => s.activityById)
   const tmp = useSessionStore((s) => s.tmp)
   const renamingId = useSessionStore((s) => s.renamingId)
@@ -261,7 +279,8 @@ export function Sidebar({
       lucideMenuIcon('file-sessions'),
       lucideMenuIcon('archive'),
       lucideMenuIcon('import'),
-      lucideMenuIcon('settings')
+      lucideMenuIcon('settings'),
+      lucideMenuIcon('picture-in-picture')
     ])
     warmSessionContextMenuIcons()
   }, [])
@@ -1319,7 +1338,8 @@ export function Sidebar({
                         : null,
                       running,
                       editedIds.has(conversation.id),
-                      t('sidebar.edited')
+                      t('sidebar.edited'),
+                      shellBusy.get(conversation.id) ?? null
                     )}
                   </span>
                 )}
@@ -1366,16 +1386,6 @@ export function Sidebar({
                   </button>
                 )}
 
-                {/* Unlike the agent badge this stays up on the active
-                    row: the tools tray is often collapsed over it. */}
-                {shellBusy.has(conversation.id) && (
-                  <span
-                    className="conv-shell-badge"
-                    title={t('sidebar.badge.terminalRunning')}
-                  >
-                    <TerminalIcon size={11} aria-hidden />
-                  </span>
-                )}
                 {unreadBadge === 'awaiting' && (
                   <span className="conv-badge awaiting" title={t('sidebar.badge.pending')} />
                 )}

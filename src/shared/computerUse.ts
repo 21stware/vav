@@ -247,3 +247,72 @@ export function sanitizeComputerAct(
   payload.key = key
   return { ok: true, tool: COMPUTER_ACT_TOOLS.key, payload }
 }
+
+/** A running application the composer can @-mention for computer use. */
+export type ComputerApp = {
+  name: string
+  bundleId: string | null
+  pid: number | null
+}
+
+function pickString(rec: Record<string, unknown>, keys: string[]): string | null {
+  for (const key of keys) {
+    const value = asNonEmptyString(rec[key])
+    if (value) return value
+  }
+  return null
+}
+
+/**
+ * Normalize the cua daemon's `list_apps` output into a stable app list.
+ *
+ * The daemon's exact JSON shape is owned by cua-driver and may evolve, so this
+ * parser is deliberately permissive: it accepts a bare array, `{ apps: [...] }`,
+ * or `{ items/windows: [...] }`, and reads the app name / bundle id / pid from
+ * any of several common field spellings. Anything unparseable yields `[]` so
+ * the menu degrades to empty rather than throwing.
+ */
+export function parseComputerApps(raw: unknown): ComputerApp[] {
+  let data: unknown = raw
+  if (typeof raw === 'string') {
+    try {
+      data = JSON.parse(raw)
+    } catch {
+      return []
+    }
+  }
+  let rows: unknown[]
+  if (Array.isArray(data)) {
+    rows = data
+  } else if (data && typeof data === 'object') {
+    const rec = data as Record<string, unknown>
+    const list = rec.apps ?? rec.applications ?? rec.items ?? rec.windows ?? rec.result
+    rows = Array.isArray(list) ? list : []
+  } else {
+    rows = []
+  }
+
+  const byKey = new Map<string, ComputerApp>()
+  for (const row of rows) {
+    if (!row || typeof row !== 'object') continue
+    const rec = row as Record<string, unknown>
+    const name = pickString(rec, [
+      'name',
+      'app_name',
+      'appName',
+      'localizedName',
+      'localized_name',
+      'title',
+      'app',
+      'owner'
+    ])
+    if (!name) continue
+    const bundleId = pickString(rec, ['bundleId', 'bundle_id', 'bundle', 'bundle_identifier'])
+    const pid = asFiniteInt(rec.pid ?? rec.process_id ?? rec.processId)
+    const dedupeKey = bundleId ?? name.toLowerCase()
+    if (!byKey.has(dedupeKey)) {
+      byKey.set(dedupeKey, { name, bundleId, pid: pid ?? null })
+    }
+  }
+  return [...byKey.values()].sort((a, b) => a.name.localeCompare(b.name))
+}

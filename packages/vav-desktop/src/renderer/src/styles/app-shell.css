@@ -991,6 +991,79 @@ html[data-resizing='true'] webview {
   text-underline-offset: 3px;
 }
 
+.session-window.pip-window {
+  overflow: hidden;
+}
+
+.pip-window .pip-body {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  padding-top: var(--session-titlebar-h);
+  overflow: auto;
+  overscroll-behavior: contain;
+  box-sizing: border-box;
+}
+
+.pip-window .pip-body > .empty-state {
+  min-height: calc(100% - 8px);
+  padding: 24px 16px;
+}
+
+.pip-window > .dock.pip-dock {
+  flex: 0 0 auto;
+  z-index: 4;
+  background: var(--bg-window);
+}
+
+.pip-task-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 8px 12px;
+}
+
+.pip-task-group-label {
+  padding: 8px 8px 4px;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.pip-task {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.pip-task-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  height: 32px;
+  margin: 0;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+.pip-task-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.2;
+}
+
 /* Drop the main-window “card” chrome so content is flush with the title bar. */
 .session-window > .detail,
 .session-window > .terminal-host-session,
@@ -2262,16 +2335,20 @@ kbd {
   background: var(--warning);
 }
 
-/* A terminal in this session has a live command (tools tray may be collapsed). */
-.conv-shell-badge {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
+/* A terminal in this session has a live command: name it inline (accent),
+   at the tail of the second line, instead of a right-edge icon. */
+.conv-shell-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: #34c759;
+  font-variant-numeric: tabular-nums;
 }
 
-.conv-row.selected .conv-shell-badge,
-.conv-row.multi .conv-shell-badge {
+.conv-row.selected .conv-shell-name,
+.conv-row.multi .conv-shell-name {
   color: currentColor;
 }
 
@@ -7025,9 +7102,15 @@ button.tool-row {
 .sidebar-foot {
   flex: 0 0 auto;
   display: flex;
-  align-items: center;
-  gap: 2px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
   padding: 6px 8px 10px;
+}
+
+.sidebar-foot .sidebar-service-bar {
+  flex: 0 0 auto;
+  width: 100%;
 }
 
 .sidebar-update-slot {

@@ -60,7 +60,24 @@ jobs:
 
       - run: npm ci
 
+      - uses: actions/cache@v4
+        id: host-bins
+        with:
+          path: |
+            resources/bin/officecli
+            resources/bin/officecli.exe
+            resources/bin/officecli.version
+            resources/bin/cua-driver
+            resources/bin/cua-driver.exe
+            resources/bin/cua-driver.version
+            resources/bin/tailcatbridge
+            resources/bin/tailcatbridge.exe
+            resources/bin/tailcatbridge.stamp
+            resources/bin/tailcatbridge.exe.stamp
+          key: host-bins-${{ runner.os }}-${{ hashFiles('scripts/fetch-officecli.mjs', 'scripts/fetch-cua-driver.mjs', 'scripts/build-tailcat-sidecar.mjs', 'sidecar/tailcatbridge/go.sum', 'sidecar/tailcatbridge/*.go') }}
+
       - uses: actions/setup-go@v5
+        if: steps.host-bins.outputs.cache-hit != 'true'
         with:
           go-version: 'stable'
           cache-dependency-path: sidecar/tailcatbridge/go.sum
@@ -69,11 +86,11 @@ jobs:
       # resources/bin so electron-builder extraResources can ship them.
       - name: Fetch OfficeCLI (macOS)
         if: runner.os == 'macOS'
-        run: node scripts/fetch-officecli.mjs --target darwin-arm64 --clean
+        run: node scripts/fetch-officecli.mjs --target darwin-arm64
 
       - name: Fetch OfficeCLI (Windows)
         if: runner.os == 'Windows'
-        run: node scripts/fetch-officecli.mjs --target win32-x64 --clean
+        run: node scripts/fetch-officecli.mjs --target win32-x64
 
       - name: Fetch Cua Driver (macOS)
         if: runner.os == 'macOS'
@@ -93,7 +110,7 @@ jobs:
 
       - run: npm run pack:vav-server
 
-      - run: npm run build
+      - run: npm run build:bundle
 
       # macOS: Developer ID sign + notarytool. Secrets are repo Actions secrets.
       # APPLE_API_KEY is the .p8 file body; write it to disk for notarytool.

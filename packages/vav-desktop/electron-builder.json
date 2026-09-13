@@ -36,7 +36,8 @@
       "to": "bin",
       "filter": [
         "**/*",
-        "!README.md"
+        "!README.md",
+        "!*.stamp"
       ]
     },
     {
@@ -54,8 +55,8 @@
   ],
   "asarUnpack": [
     "**/node_modules/node-pty/**",
-    "**/node_modules/@duckdb/**",
-    "**/node_modules/electron-trackpad-utils/**"
+    "**/node_modules/electron-trackpad-utils/**",
+    "**/node_modules/@duckdb/node-bindings-*/**"
   ],
   "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
   "publish": [

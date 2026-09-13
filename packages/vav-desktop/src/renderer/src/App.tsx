@@ -15,6 +15,7 @@ import {
 import { installFsWatchBridge, installPtyBridge } from './state/workspaceStore'
 import { Sidebar } from './components/Sidebar'
 import { SessionDetail } from './components/SessionDetail'
+import { PipView } from './components/PipView'
 import { useTerminalAppearance } from './lib/useTerminalAppearance'
 import { WorkspaceView } from './components/WorkspaceView'
 import { FileSessionView } from './components/FileSessionView'
@@ -190,6 +191,7 @@ export default function App(): React.JSX.Element {
 
   const floating = useSidebarFloatMode()
   const sidebarVisible = useSessionStore((s) => s.sidebarVisible)
+  const pictureInPicture = useSessionStore((s) => s.pictureInPicture)
   // Docked sidebar owns traffic-light chrome. Collapsed: session parks toggle
   // on the agent row; workspace parks it on the preview file header.
   const panelFlushTop = sidebarVisible && !floating
@@ -220,6 +222,16 @@ export default function App(): React.JSX.Element {
 
   if (phase === 'checking' || phase === 'booting' || !ready) {
     return <div className="app-shell" />
+  }
+
+  if (pictureInPicture) {
+    return (
+      <>
+        <PipView />
+        <AppToast />
+        <RemoteFolderPicker />
+      </>
+    )
   }
 
   // Change review is inline in the transcript (not a full-screen takeover).

@@ -62,6 +62,11 @@ export function SidebarServiceBar({
         label: t('common.settingsEllipsis'),
         icon: lucideMenuIcon('settings'),
         onSelect: () => useSessionStore.getState().openSettings('appearance', undefined, machineId)
+      },
+      {
+        label: t('sidebar.pictureInPicture'),
+        icon: lucideMenuIcon('picture-in-picture'),
+        onSelect: () => void useSessionStore.getState().setPictureInPicture(true)
       }
     )
     void showMenu(items, menuAnchor(anchor))

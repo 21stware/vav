@@ -2,6 +2,7 @@ import { cpSync, existsSync, mkdirSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
 import react from '@vitejs/plugin-react'
+import type { Plugin } from 'vite'
 
 /**
  * The pi packages are ESM-only, and the main bundle is CJS (node-pty and the
@@ -17,6 +18,30 @@ const PI_PACKAGES = ['@earendil-works/pi-ai', '@earendil-works/pi-agent-core']
  * they stay external and let ws fall back to its pure-JS path.
  */
 const OPTIONAL_WS_NATIVE = ['bufferutil', 'utf-8-validate']
+
+/**
+ * linkedom's HTMLCanvasElement optionally `require('canvas')` (node-canvas)
+ * inside a try/catch and falls back to a no-op shim. In development Vite
+ * rewrites that missing optional peer into `__vite-optional-peer-dep`, a
+ * module that throws at evaluation — the try/catch never runs, and the app
+ * dies on load (`Could not resolve "canvas" imported by "linkedom"`).
+ *
+ * `resolve.alias` is not enough: the optional-peer handler can run first on
+ * the CJS require inside linkedom. A pre `resolveId` intercepts every
+ * `canvas` import (dev and build) and points it at linkedom's own shim.
+ * We only parse HTML for Readability / search, so a no-op canvas is fine.
+ */
+const LINKEDOM_CANVAS_SHIM = resolve('node_modules/linkedom/commonjs/canvas-shim.cjs')
+
+function shimLinkedomCanvas(): Plugin {
+  return {
+    name: 'shim-linkedom-canvas',
+    enforce: 'pre',
+    resolveId(id) {
+      if (id === 'canvas') return LINKEDOM_CANVAS_SHIM
+    }
+  }
+}
 
 /**
  * PDF.js needs cMaps + standard fonts for CJK/forms, and the worker as a
@@ -45,12 +70,11 @@ ensurePdfJsPublicAssets()
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin({ exclude: PI_PACKAGES })],
+    plugins: [externalizeDepsPlugin({ exclude: PI_PACKAGES }), shimLinkedomCanvas()],
     build: {
       rollupOptions: {
         input: {
-          index: resolve('packages/vav-desktop/src/main/index.ts'),
-          'vav-server': resolve('packages/vav-server/src/vav-server.ts')
+          index: resolve('packages/vav-desktop/src/main/index.ts')
         },
         external: OPTIONAL_WS_NATIVE
       }
@@ -58,7 +82,8 @@ export default defineConfig({
     resolve: {
       alias: {
         '@shared': resolve('src/shared'),
-        '@main': resolve('src/main')
+        '@main': resolve('src/main'),
+        canvas: LINKEDOM_CANVAS_SHIM
       }
     }
   },

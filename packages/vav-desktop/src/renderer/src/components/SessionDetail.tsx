@@ -829,7 +829,9 @@ export function AgentModeChrome({
   /** Single-file vav: session name / history / new in this same chrome row. */
   fileSessionChrome = null,
   /** Isolated window: Reveal in List, pinned with history / search. */
-  trail = null
+  trail = null,
+  /** Picture-in-picture: keep isolated chrome, hide swarm / CLI split. */
+  hideSplit = false
 }: {
   conversationId: string
   agentBinaryName: string | null
@@ -837,6 +839,7 @@ export function AgentModeChrome({
   showShellLeading?: boolean
   fileSessionChrome?: FileSessionChromeProps | null
   trail?: ReactNode
+  hideSplit?: boolean
 }): React.JSX.Element {
   const t = useT()
   const cliMode = useWorkspaceStore((s) => !!s.workspaces[conversationId]?.cliMode)
@@ -869,7 +872,7 @@ export function AgentModeChrome({
 
   const showFileSessionChrome = !!(fs && isChat && fs.sessions.length > 0)
   const trailing = fs?.trail ?? trail
-  const showSplit = swarmEnabled
+  const showSplit = swarmEnabled && !hideSplit
   const showTrailing =
     showFileSessionChrome || (showSearch && isChat) || showSplit || !!trailing
 

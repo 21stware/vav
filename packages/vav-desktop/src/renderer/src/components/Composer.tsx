@@ -38,12 +38,8 @@ import { imageInputLimits, modelAcceptsImageInput } from '@shared/agentImageInpu
 import { vendorIdFromEndpoint } from '@shared/llmVendors'
 import { useAccountGroups, vavAccountsOf } from '../lib/accountGroups'
 import { useT } from '../i18n/useT'
-import { attachPickedFiles, attachScreenshot } from '../lib/composerAttach'
-import {
-  COMPOSER_MIN_ROWS,
-  composerWheelStaysOnField,
-  fitComposerTextarea
-} from '../lib/composerTextarea'
+import { attachScreenshot } from '../lib/composerAttach'
+import { COMPOSER_MIN_ROWS, composerWheelStaysOnField } from '../lib/composerTextarea'
 import { collectClipboardImages, writeClipboardImage } from '../lib/pasteImages'
 import { menuAnchor, showMenu } from '../lib/nativeMenu'
 import { prettyAccelerator, resolveKeyBindings } from '@shared/keyBindings'
@@ -51,6 +47,8 @@ import { Button } from './ui'
 import { AgentModelPicker } from './AgentModelPicker'
 import { ComposerAttachments } from './ComposerAttachments'
 import { SessionRunPicker } from './SessionRunPicker'
+import { MentionBox, type MentionBoxHandle } from './mentionBox/MentionBox'
+import { appMentionToken, findComposerPills } from './mentionBox/mentionTokens'
 
 const NO_QUEUE: QueuedMessage[] = []
 
@@ -242,9 +240,7 @@ export function Composer({
     }
   }, [used, limit])
 
-  const textareaRef = useRef<HTMLTextAreaElement>(null)
-  /** True while IME / dictation composition is active (Enter must not submit). */
-  const composingRef = useRef(false)
+  const mentionRef = useRef<MentionBoxHandle>(null)
   const accountGroups = useAccountGroups()
   const imageLimits = imageInputLimits(conversation?.cliHost ?? null)
   const catalogModel = useSessionStore((s) => {
@@ -337,16 +333,8 @@ export function Composer({
   useEffect(() => {
     if (focusTick === 0) return
     if (focusId && focusId !== conversationId) return
-    textareaRef.current?.focus()
+    mentionRef.current?.focus()
   }, [focusTick, focusId, conversationId])
-
-  useEffect(() => {
-    const element = textareaRef.current
-    if (!element) return
-    // Avoid reflowing height mid-composition — can cancel IME on macOS.
-    if (composingRef.current) return
-    fitComposerTextarea(element, { minRows: COMPOSER_MIN_ROWS })
-  }, [draft])
 
   const runScreenshot = (hideWindow?: boolean): void => {
     void (async () => {
@@ -372,8 +360,55 @@ export function Composer({
   const submit = (): void => {
     if (!canSend) return
     if (conversationId) flushDraft(draft)
-    textareaRef.current?.blur()
+    mentionRef.current?.textarea?.blur()
     void send(draft.trim(), attachments, conversationId || undefined)
+  }
+
+  /** Update the local draft + coalesced store write (shared by typing + pills). */
+  const applyDraftChange = (next: string): void => {
+    setLocalDraft(next)
+    onChange?.(next)
+    if (!conversationId) return
+    if (draftFlushTimer.current) clearTimeout(draftFlushTimer.current)
+    draftFlushTimer.current = setTimeout(() => {
+      draftFlushTimer.current = null
+      setDraft(conversationId, next)
+    }, 32)
+  }
+
+  /** Native add-content menu — shared by the "+" button and the `@` trigger. */
+  const openAddMenu = (anchor: { x: number; y: number }): void => {
+    void (async () => {
+      const apps = await window.vav.computer.listApps().catch(() => [])
+      const appItems =
+        apps.length > 0
+          ? apps.map((app) => ({
+              label: app.name,
+              onSelect: () => mentionRef.current?.insertText(`${appMentionToken(app.name)} `)
+            }))
+          : [{ label: t('composer.mentionNoApps'), disabled: true }]
+      await showMenu(
+        [
+          {
+            label: t('composer.mentionAddFile'),
+            icon: { kind: 'lucide', key: 'file-text' },
+            onSelect: () => {
+              void (async () => {
+                const res = await window.vav.files.pickAttachments()
+                if (!res.ok || res.paths.length === 0) return
+                mentionRef.current?.insertText(`${res.paths.join(' ')} `)
+              })()
+            }
+          },
+          {
+            label: t('composer.mentionAddApp'),
+            icon: { kind: 'lucide', key: 'app-window' },
+            submenu: appItems
+          }
+        ],
+        anchor
+      )
+    })()
   }
 
   const hasCommentCards = commentCards.length > 0
@@ -426,7 +461,7 @@ export function Composer({
 
     const clipped = text.trim()
     if (!clipped) return
-    const el = textareaRef.current
+    const el = mentionRef.current?.textarea ?? null
     if (!el) {
       const next = `${draft}${draft && !draft.endsWith('\n') ? '\n' : ''}${clipped}`
       setLocalDraft(next)
@@ -492,7 +527,7 @@ export function Composer({
             onPick={(next) => {
               setLocalDraft(next)
               flushDraft(next)
-              textareaRef.current?.focus()
+              mentionRef.current?.focus()
             }}
           />
         ) : null}
@@ -511,37 +546,26 @@ export function Composer({
           />
         )}
 
-        <textarea
+        <MentionBox
           id="text"
-          ref={textareaRef}
+          ref={mentionRef}
           data-testid={isSchedule ? 'timer-prompt' : 'composer-input'}
           rows={COMPOSER_MIN_ROWS}
           placeholder={placeholder}
           value={draft}
           disabled={inputDisabled}
-          onCompositionStart={() => {
-            composingRef.current = true
+          findPills={findComposerPills}
+          onTrigger={(_query, anchor) => {
+            // `@` opens the same native add-content menu as the "+" button.
+            openAddMenu(anchor ?? { x: 0, y: 0 })
           }}
-          onCompositionEnd={() => {
-            composingRef.current = false
-          }}
-          onChange={(event) => {
+          onChange={(value) => {
             // Paint locally first; coalesce store writes so typing stays at 60fps
             // even when other panels subscribe to session churn.
-            const value = event.target.value
-            setLocalDraft(value)
-            onChange?.(value)
-            if (!conversationId) return
-            if (draftFlushTimer.current) clearTimeout(draftFlushTimer.current)
-            draftFlushTimer.current = setTimeout(() => {
-              draftFlushTimer.current = null
-              setDraft(conversationId, value)
-            }, 32)
+            applyDraftChange(value)
           }}
           onBlur={() => {
-            // Composition can be aborted without compositionend (focus loss).
-            composingRef.current = false
-            const next = textareaRef.current?.value ?? draft
+            const next = mentionRef.current?.textarea?.value ?? draft
             if (conversationId) flushDraft(next)
             onCommit?.(next)
           }}
@@ -555,7 +579,7 @@ export function Composer({
           }}
           onKeyDown={(event) => {
             // Don’t treat IME “confirm” Enter as send.
-            if (composingRef.current || event.nativeEvent.isComposing) return
+            if (event.nativeEvent.isComposing) return
             if (slashOpen && slashMatches) {
               if (event.key === 'ArrowDown') {
                 event.preventDefault()
@@ -597,18 +621,9 @@ export function Composer({
               data-testid="composer-attach"
               title={t('composer.attachFileTitle')}
               aria-label={t('composer.attachFile')}
-              disabled={inputDisabled || attachBusy}
-              onClick={() => {
-                void (async () => {
-                  if (attachBusy) return
-                  setAttachBusy(true)
-                  try {
-                    await attachPickedFiles()
-                  } finally {
-                    setAttachBusy(false)
-                  }
-                })()
-              }}
+              aria-haspopup="menu"
+              disabled={inputDisabled}
+              onClick={(event) => openAddMenu(menuAnchor(event.currentTarget))}
             >
               <Plus size={12} strokeWidth={2} />
             </button>

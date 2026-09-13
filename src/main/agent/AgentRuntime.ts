@@ -126,6 +126,15 @@ import { isE2eRuntime } from '../e2eRuntime'
 /** Token deltas are batched this often before crossing the IPC boundary. */
 const COALESCE_MS = 32
 
+/**
+ * How often a streaming (pre-tool, pre-turn-end) reply is checkpointed to disk.
+ * Without this, text-only streams live in memory + the renderer until the turn
+ * ends, so an abrupt quit (app update install, crash) drops the reply and the
+ * conversation reopens at the last user message. Coarse on purpose — this is a
+ * crash-safety net, not the per-token write path.
+ */
+const PERSIST_STREAM_MS = 2_000
+
 interface PendingUserTool {
   toolCallId: string
   resolve: (answer: { text: string; cancelled: boolean }) => void
@@ -164,6 +173,8 @@ interface TurnState {
   /** Coalesced deltas, keyed by block index. */
   buffers: Map<number, string>
   flushTimer: NodeJS.Timeout | null
+  /** Debounced crash-safety checkpoint of the in-flight reply. */
+  persistTimer: NodeJS.Timeout | null
   /**
    * Parked interactive/approval waiters, keyed by toolCallId.
    * A single slot used to drop the second gate when two cards overlapped
@@ -638,6 +649,7 @@ export class AgentRuntime {
       sentCards: new Map(),
       buffers: new Map(),
       flushTimer: null,
+      persistTimer: null,
       pending: new Map(),
       argOverrides: new Map(),
       selectionRefs: parentMessage?.contextBlocks ?? [],
@@ -890,6 +902,19 @@ export class AgentRuntime {
 
   cancelAll(): void {
     for (const id of [...this.turns.keys()]) this.cancel(id)
+  }
+
+  /**
+   * Checkpoint every in-flight reply into the conversation store. Call before a
+   * quit/flush (normal exit, or Squirrel/NSIS update install) so streamed text
+   * that hasn't hit a tool boundary or turn end yet survives the restart. The
+   * caller is responsible for the subsequent {@link ConversationStore.flush}.
+   */
+  persistInFlight(): void {
+    for (const [conversationId, turn] of this.turns) {
+      this.flushBuffers(conversationId, turn)
+      this.persistPartial(conversationId, turn)
+    }
   }
 
   /** Routes a card answer back into the paused turn. */
@@ -1263,11 +1288,28 @@ export class AgentRuntime {
       block.text += text
     }
     turn.buffers.set(slot, (turn.buffers.get(slot) ?? '') + text)
+    this.scheduleStreamCheckpoint(conversationId, turn)
     if (turn.flushTimer) return
     turn.flushTimer = setTimeout(() => {
       turn.flushTimer = null
       this.flushBuffers(conversationId, turn)
     }, COALESCE_MS)
+  }
+
+  /**
+   * Debounced disk checkpoint of the in-flight reply so a mid-stream quit
+   * (update install / crash) doesn't discard streamed text. Tool boundaries and
+   * turn end still own the authoritative writes; this only bridges long
+   * text-only stretches between them.
+   */
+  private scheduleStreamCheckpoint(conversationId: string, turn: TurnState): void {
+    if (turn.persistTimer) return
+    turn.persistTimer = setTimeout(() => {
+      turn.persistTimer = null
+      if (this.turns.get(conversationId) !== turn) return
+      this.persistPartial(conversationId, turn)
+    }, PERSIST_STREAM_MS)
+    turn.persistTimer.unref?.()
   }
 
   private flushBuffers(conversationId: string, turn: TurnState): void {
@@ -1687,6 +1729,10 @@ export class AgentRuntime {
   // -------------------------------------------------------------------------
 
   private persistPartial(conversationId: string, turn: TurnState): void {
+    if (turn.persistTimer) {
+      clearTimeout(turn.persistTimer)
+      turn.persistTimer = null
+    }
     this.deps.conversations.replaceMessage(conversationId, this.snapshot(turn))
   }
 
@@ -1704,6 +1750,10 @@ export class AgentRuntime {
     this.pendingCancels.delete(conversationId)
     this.flushBuffers(conversationId, turn)
     if (turn.flushTimer) clearTimeout(turn.flushTimer)
+    if (turn.persistTimer) {
+      clearTimeout(turn.persistTimer)
+      turn.persistTimer = null
+    }
     this.sealReasoning(turn)
 
     // Seal plan checklist to match turn outcome. Models often finish the work

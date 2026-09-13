@@ -33,6 +33,27 @@ export function placeDetachedBounds(
   }
 }
 
+export const PIP_MARGIN = 16
+
+/** Compact always-on-top PiP: bottom-right of the current work area. */
+export function placePipBounds(
+  area: Rect,
+  stored?: { width?: number; height?: number } | null,
+  minWidth = 280,
+  minHeight = 240
+): Rect {
+  const maxWidth = Math.max(minWidth, area.width - PIP_MARGIN * 2)
+  const maxHeight = Math.max(minHeight, area.height - PIP_MARGIN * 2)
+  const width = Math.min(Math.max(stored?.width ?? 360, minWidth), maxWidth)
+  const height = Math.min(Math.max(stored?.height ?? 520, minHeight), maxHeight)
+  return {
+    width,
+    height,
+    x: area.x + area.width - width - PIP_MARGIN,
+    y: area.y + area.height - height - PIP_MARGIN
+  }
+}
+
 export const OVERLAY_MAX_WIDTH = 1180
 export const OVERLAY_MAX_HEIGHT = 860
 export const OVERLAY_WARM_MAX_WIDTH = 960

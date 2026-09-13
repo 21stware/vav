@@ -36,6 +36,8 @@ resources/bin/cua-driver-rs-*
 resources/bin/vav_screencap.node
 resources/bin/tailcatbridge
 resources/bin/tailcatbridge.exe
+resources/bin/tailcatbridge.stamp
+resources/bin/tailcatbridge.exe.stamp
 sidecar/tailcatbridge/tailcatbridge
 sidecar/tailcatbridge/tailcatbridge.exe
 !resources/bin/README.md

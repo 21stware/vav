@@ -76,6 +76,7 @@ import { buildAcpPrompt } from './acpPrompt.ts'
 import { AcpTerminalRegistry } from './acpTerminal.ts'
 import { disposeStdioProcess } from './disposeStdio.ts'
 import { filterAcpExtraArgs } from '../cliTurnLifecycle.ts'
+import { unifiedDiff } from '../diff.ts'
 import {
   asArray,
   asRecord,
@@ -1591,7 +1592,19 @@ function toolResultText(content: unknown[] | null): string {
       const text = asString(r.text) || asString(dig(r, 'content.text'))
       if (text) parts.push(text)
     } else if (t === 'diff') {
-      parts.push(asString(r.diff) || asString(r.text) || '[diff]')
+      // ACP diff blocks carry { path, oldText, newText }, not a prebuilt diff.
+      // Build unified diff text so the card shows the actual change, matching
+      // the fs_write diff format, instead of a meaningless "[diff]" placeholder.
+      const oldText = asString(r.oldText)
+      const newText = asString(r.newText)
+      const built = newText !== null ? unifiedDiff(oldText, newText) : null
+      const body = built || asString(r.diff) || asString(r.text)
+      if (body) {
+        parts.push(body)
+      } else {
+        const path = asString(r.path)
+        parts.push(path ? `（${path}：无差异）` : '[diff]')
+      }
     } else if (t === 'terminal') {
       parts.push(asString(r.terminalId) ? `[terminal ${asString(r.terminalId)}]` : '[terminal]')
     } else if (asString(r.text)) {

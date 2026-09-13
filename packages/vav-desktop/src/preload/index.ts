@@ -532,6 +532,8 @@ const api: VavApi = {
       ipcRenderer.invoke(IPC.windowOpenSession, conversationId),
     revealInList: (conversationId: string) =>
       ipcRenderer.invoke(IPC.windowRevealInList, conversationId),
+    setPictureInPicture: (enabled: boolean) =>
+      ipcRenderer.invoke(IPC.windowSetPictureInPicture, enabled),
     closeDetachedSession: (conversationId: string) =>
       ipcRenderer.invoke(IPC.windowCloseDetached, conversationId),
     newDetachedSession: () => ipcRenderer.invoke(IPC.windowNewDetached),
@@ -691,6 +693,7 @@ const api: VavApi = {
 
   computer: {
     status: () => ipcRenderer.invoke(IPC.computerStatus),
+    listApps: () => ipcRenderer.invoke(IPC.computerListApps),
     requestAccessibility: () => ipcRenderer.invoke(IPC.computerRequestAccessibility),
     openAccessibilitySettings: () => ipcRenderer.invoke(IPC.computerOpenAccessibilitySettings),
     openScreenRecordingSettings: () => ipcRenderer.invoke(IPC.computerOpenScreenRecordingSettings)

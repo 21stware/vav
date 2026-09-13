@@ -1,6 +1,11 @@
 import { BrowserWindow, type IpcMain, type IpcMainInvokeEvent } from 'electron'
 import { IPC, type SettingsView } from '@shared/ipc'
-import { MAIN_WINDOW_MIN_HEIGHT, WINDOW_MIN_WIDTH_FLOOR } from '@shared/shellMinSize'
+import {
+  MAIN_WINDOW_MIN_HEIGHT,
+  PIP_WINDOW_MIN_HEIGHT,
+  PIP_WINDOW_MIN_WIDTH,
+  WINDOW_MIN_WIDTH_FLOOR
+} from '@shared/shellMinSize'
 import { applyWindowMinSize } from '@main/window/applyWindowMinSize'
 import type { AppSettings, ShellKind } from '@shared/types'
 import type { OverlayPayload } from '@shared/overlayOpen'
@@ -14,6 +19,8 @@ export type WindowIpcActions = {
   hideSettings: () => void
   openSession: (id: string) => void
   revealInList: (event: IpcMainInvokeEvent, id: string) => Promise<void>
+  setPictureInPicture: (enabled: boolean) => void
+  isPictureInPicture: () => boolean
   closeDetached: (id: string) => void
   newDetached: () => void
   listDetached: () => string[]
@@ -69,6 +76,9 @@ export function registerWindowIpc(ipcMain: IpcMain, actions: WindowIpcActions): 
   })
   ipcMain.handle(IPC.windowRevealInList, async (event, id: string) => {
     await actions.revealInList(event, String(id || ''))
+  })
+  ipcMain.handle(IPC.windowSetPictureInPicture, (_event, enabled: unknown) => {
+    actions.setPictureInPicture(enabled === true)
   })
   ipcMain.handle(IPC.windowCloseDetached, (_event, id: string) => {
     actions.closeDetached(String(id || ''))
@@ -128,14 +138,17 @@ export function registerWindowIpc(ipcMain: IpcMain, actions: WindowIpcActions): 
   ipcMain.handle(IPC.windowSetMinSize, (event, size: { width?: unknown; height?: unknown }) => {
     const win = BrowserWindow.fromWebContents(event.sender)
     if (!win || win.isDestroyed()) return
+    const pip = actions.isPictureInPicture()
+    const widthFloor = pip ? PIP_WINDOW_MIN_WIDTH : WINDOW_MIN_WIDTH_FLOOR
+    const heightFloor = pip ? PIP_WINDOW_MIN_HEIGHT : MAIN_WINDOW_MIN_HEIGHT
     const width =
       typeof size?.width === 'number' && Number.isFinite(size.width)
-        ? Math.max(WINDOW_MIN_WIDTH_FLOOR, Math.round(size.width))
-        : WINDOW_MIN_WIDTH_FLOOR
+        ? Math.max(widthFloor, Math.round(size.width))
+        : widthFloor
     const height =
       typeof size?.height === 'number' && Number.isFinite(size.height)
-        ? Math.max(MAIN_WINDOW_MIN_HEIGHT, Math.round(size.height))
-        : MAIN_WINDOW_MIN_HEIGHT
+        ? Math.max(heightFloor, Math.round(size.height))
+        : heightFloor
     applyWindowMinSize(win, width, height)
   })
 }

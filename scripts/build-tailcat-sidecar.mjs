@@ -6,10 +6,11 @@
  * "component missing"), so a missing Go toolchain is a warning, not a
  * build failure — packagers who want the feature install Go >= 1.23.
  *
- *   node scripts/build-tailcat-sidecar.mjs [--target darwin-arm64|win32-x64]
+ *   node scripts/build-tailcat-sidecar.mjs [--target darwin-arm64|win32-x64] [--force]
  */
 import { execFileSync, spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -27,6 +28,7 @@ function hostTarget() {
   return `${process.platform}-${process.arch}`
 }
 
+const force = process.argv.includes('--force')
 const targetArg = process.argv.includes('--target')
   ? process.argv[process.argv.indexOf('--target') + 1]
   : hostTarget()
@@ -36,6 +38,33 @@ if (!target) {
   process.exit(1)
 }
 
+function sourceStamp() {
+  const hash = createHash('sha256')
+  for (const name of ['go.mod', 'go.sum']) {
+    hash.update(readFileSync(join(sidecarDir, name)))
+    hash.update('\0')
+  }
+  for (const name of readdirSync(sidecarDir)
+    .filter((entry) => entry.endsWith('.go'))
+    .sort()) {
+    hash.update(name)
+    hash.update('\0')
+    hash.update(readFileSync(join(sidecarDir, name)))
+    hash.update('\0')
+  }
+  hash.update(targetArg)
+  return hash.digest('hex')
+}
+
+mkdirSync(outDir, { recursive: true })
+const out = join(outDir, target.exe)
+const stampPath = `${out}.stamp`
+const stamp = sourceStamp()
+if (!force && existsSync(out) && existsSync(stampPath) && readFileSync(stampPath, 'utf8').trim() === stamp) {
+  console.log(`[tailcat-sidecar] skip ${target.exe} (sources unchanged)`)
+  process.exit(0)
+}
+
 try {
   execFileSync('go', ['version'], { stdio: 'ignore' })
 } catch {
@@ -43,8 +72,6 @@ try {
   process.exit(0)
 }
 
-mkdirSync(outDir, { recursive: true })
-const out = join(outDir, target.exe)
 console.log(`[tailcat-sidecar] go build → ${out} (${targetArg})`)
 const result = spawnSync('go', ['build', '-trimpath', '-ldflags', '-s -w', '-o', out, '.'], {
   cwd: sidecarDir,
@@ -65,4 +92,5 @@ if (!existsSync(out)) {
   console.error('[tailcat-sidecar] build produced no binary')
   process.exit(1)
 }
+writeFileSync(stampPath, `${stamp}\n`)
 console.log('[tailcat-sidecar] ok')

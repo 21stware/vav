@@ -1644,6 +1644,11 @@ export interface VavApi {
      */
     revealInList(conversationId: string): Promise<void>
     /**
+     * Shrink (or restore) the main window as a picture-in-picture shell.
+     * Main owns bounds / always-on-top; the renderer switches layout.
+     */
+    setPictureInPicture(enabled: boolean): Promise<void>
+    /**
      * Close the companion window for this conversation so the main shell can
      * host the live terminal again (“Take it back”).
      */
@@ -1938,6 +1943,8 @@ export interface VavApi {
   /** Embedded Cua Driver — permissions and daemon status (this Mac). */
   computer: {
     status(): Promise<import('./computerUse').ComputerUseStatus>
+    /** Running apps from the embedded cua daemon for @-mention. `[]` when off. */
+    listApps(): Promise<import('./computerUse').ComputerApp[]>
     requestAccessibility(): Promise<boolean>
     openAccessibilitySettings(): Promise<void>
     openScreenRecordingSettings(): Promise<void>
@@ -2153,6 +2160,7 @@ export const IPC = {
   filesScreenshotPermission: 'vav:files:screenshot-permission',
   filesOpenScreenshotPermissionSettings: 'vav:files:screenshot-permission-open',
   computerStatus: 'vav:computer:status',
+  computerListApps: 'vav:computer:list-apps',
   computerRequestAccessibility: 'vav:computer:request-accessibility',
   computerOpenAccessibilitySettings: 'vav:computer:open-accessibility-settings',
   computerOpenScreenRecordingSettings: 'vav:computer:open-screen-recording-settings',
@@ -2290,6 +2298,7 @@ export const IPC = {
   windowE2eDismissMenu: 'vav:window:e2e-dismiss-menu',
   windowOpenSession: 'vav:window:open-session',
   windowRevealInList: 'vav:window:reveal-in-list',
+  windowSetPictureInPicture: 'vav:window:set-picture-in-picture',
   windowCloseDetached: 'vav:window:close-detached',
   windowNewDetached: 'vav:window:new-detached',
   windowListDetached: 'vav:window:list-detached',

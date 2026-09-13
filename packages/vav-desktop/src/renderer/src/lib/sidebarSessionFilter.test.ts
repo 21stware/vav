@@ -6,6 +6,7 @@ import {
   isSessionRunning,
   isSessionUnread,
   parseSidebarSessionFilter,
+  pipSessionFilter,
   sessionUnreadBadge
 } from './sidebarSessionFilter.ts'
 import type { ConversationMeta } from '@shared/types'
@@ -137,6 +138,21 @@ describe('isSessionUnread', () => {
   it('keeps a sticky resultUnseen badge even while running', () => {
     assert.equal(isSessionUnread({ isRunning: true, resultUnseen: true }), true)
     assert.equal(isSessionUnread({ activity: 'idle', resultUnseen: false }), false)
+  })
+})
+
+describe('pipSessionFilter', () => {
+  it('uses Running and unread when the sidebar has no filter', () => {
+    assert.deepEqual(pipSessionFilter({ kind: 'none' }), { kind: 'active' })
+  })
+
+  it('keeps the sidebar workspace / favorite filter', () => {
+    assert.deepEqual(pipSessionFilter({ kind: 'favorite' }), { kind: 'favorite' })
+    assert.deepEqual(pipSessionFilter({ kind: 'workspace', path: '/repo' }), {
+      kind: 'workspace',
+      path: '/repo'
+    })
+    assert.deepEqual(pipSessionFilter({ kind: 'active' }), { kind: 'active' })
   })
 })
 

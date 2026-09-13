@@ -31,6 +31,14 @@ export function isSidebarSessionFilterEnabled(filter: SidebarSessionFilter): boo
   return filter.kind !== 'none'
 }
 
+/**
+ * PiP list: keep the sidebar's workspace / favorite filter, otherwise show
+ * Running and unread (running + done) — the compact monitor set.
+ */
+export function pipSessionFilter(sidebarFilter: SidebarSessionFilter): SidebarSessionFilter {
+  return sidebarFilter.kind === 'none' ? { kind: 'active' } : sidebarFilter
+}
+
 function sameWorkdir(left: string | null | undefined, right: string): boolean {
   if (!left) return false
   const a = left.replace(/[\\/]+$/, '')

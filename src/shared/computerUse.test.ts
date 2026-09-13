@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import {
   cuaEmbeddedMcpServer,
+  parseComputerApps,
   parseCuaConnection,
   sanitizeComputerAct,
   sanitizeComputerObserve
@@ -149,5 +150,38 @@ describe('parseCuaConnection', () => {
         startedAt: '2026-01-01T00:00:00.000Z'
       }
     )
+  })
+})
+
+describe('parseComputerApps', () => {
+  it('parses a bare JSON array with mixed field spellings', () => {
+    const raw = JSON.stringify([
+      { name: 'Safari', bundle_id: 'com.apple.Safari', pid: 42 },
+      { app_name: 'Notes', bundleId: 'com.apple.Notes' }
+    ])
+    assert.deepEqual(parseComputerApps(raw), [
+      { name: 'Notes', bundleId: 'com.apple.Notes', pid: null },
+      { name: 'Safari', bundleId: 'com.apple.Safari', pid: 42 }
+    ])
+  })
+
+  it('accepts an already-parsed object under apps/items/windows', () => {
+    const apps = parseComputerApps({ apps: [{ title: 'Finder', bundle: 'com.apple.finder' }] })
+    assert.deepEqual(apps, [{ name: 'Finder', bundleId: 'com.apple.finder', pid: null }])
+  })
+
+  it('dedupes by bundle id and drops nameless rows', () => {
+    const apps = parseComputerApps([
+      { name: 'Safari', bundle_id: 'com.apple.Safari', pid: 1 },
+      { name: 'Safari', bundle_id: 'com.apple.Safari', pid: 2 },
+      { pid: 3 }
+    ])
+    assert.deepEqual(apps, [{ name: 'Safari', bundleId: 'com.apple.Safari', pid: 1 }])
+  })
+
+  it('returns [] for junk / invalid JSON', () => {
+    assert.deepEqual(parseComputerApps('not json'), [])
+    assert.deepEqual(parseComputerApps(null), [])
+    assert.deepEqual(parseComputerApps(42), [])
   })
 })

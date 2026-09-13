@@ -675,6 +675,9 @@ interface SessionState {
 
   toggleSidebar(): void
   setSidebarVisible(visible: boolean): void
+  /** Compact always-on-top shell — running / done tasks with accordion composer. */
+  pictureInPicture: boolean
+  setPictureInPicture(enabled: boolean): Promise<void>
   setSidebarListMode(mode: SidebarListMode): void
   setFilesSource(source: 'recent' | 'thisMac'): void
   /** Leave the file canvas and show Recent files / This Mac again. */
@@ -722,6 +725,7 @@ let workspaceSelectGen = 0
 const hydrationGen = new Map<string, number>()
 export const useSessionStore = create<SessionState>((set, get) => ({
   sidebarVisible: globalLayout.sidebarVisible,
+  pictureInPicture: false,
   sidebarListMode: 'main',
   filesSource: 'recent',
   activeDbTable: null,
@@ -2749,6 +2753,19 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       saveGlobalLayout({ sidebarVisible: visible })
       return { sidebarVisible: visible }
     })
+  },
+
+  async setPictureInPicture(enabled) {
+    if (get().pictureInPicture === enabled) return
+    const api = window.vav?.window?.setPictureInPicture
+    if (enabled) {
+      get().setToolsCollapsed(true)
+      set({ pictureInPicture: true })
+      if (typeof api === 'function') await api(true)
+      return
+    }
+    if (typeof api === 'function') await api(false)
+    set({ pictureInPicture: false })
   },
 
   setSidebarListMode(mode) {

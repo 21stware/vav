@@ -267,7 +267,7 @@ import {
   destroyLeavingFullscreen,
   hideLeavingFullscreen
 } from '@main/window/fullscreenLeave'
-import { overlayCascadeOrigin, overlayFit, placeDetachedBounds } from '@main/window/windowPlace'
+import { overlayCascadeOrigin, overlayFit, placeDetachedBounds, placePipBounds } from '@main/window/windowPlace'
 import { isPreviewableColdOpenPath as previewableColdOpenPath } from '@main/window/coldOpen'
 import { appZOrderWindowIds, windowIsInPlay as windowIsInPlayOf } from '@main/window/windowZOrder'
 import { replaceLiveWarmPool, shouldDestroyParkedWarmShell, takeReadyWarmShell, waitForReadyWarmShell } from '@main/window/warmShell'
@@ -289,6 +289,8 @@ import {
 import {
   MAIN_WINDOW_MIN_HEIGHT,
   MAIN_WINDOW_MIN_WIDTH,
+  PIP_WINDOW_MIN_HEIGHT,
+  PIP_WINDOW_MIN_WIDTH,
   SESSION_WINDOW_MIN_HEIGHT,
   SESSION_WINDOW_MIN_WIDTH
 } from '@shared/shellMinSize'
@@ -508,6 +510,9 @@ protocol.registerSchemesAsPrivileged([
 ])
 
 let mainWindow: BrowserWindow | null = null
+/** Full-shell bounds parked while the main window is in picture-in-picture. */
+let mainWindowFullBounds: Electron.Rectangle | null = null
+let mainWindowPip = false
 let stopSpawnedVavServer: (() => void) | undefined
 /** State dir of the spawned loopback vav-server, when this app owns one. */
 let spawnedVavServerStateDir: string | null = null
@@ -3310,6 +3315,7 @@ function createWindow(): BrowserWindow {
   wirePopupDismiss(window)
   applyTrafficLights(window)
   wireVibrancyRefresh(window)
+  wireMainWindowPipResize(window)
 
   window.once('ready-to-show', () => {
     applyTrafficLights(window)
@@ -3360,6 +3366,55 @@ function createWindow(): BrowserWindow {
   loadRenderer(window)
 
   return window
+}
+
+function wireMainWindowPipResize(window: BrowserWindow): void {
+  let resizeTimer: NodeJS.Timeout | null = null
+  window.on('resize', () => {
+    if (!mainWindowPip || window !== mainWindow) return
+    if (resizeTimer) clearTimeout(resizeTimer)
+    resizeTimer = setTimeout(() => {
+      if (!mainWindowPip || window.isDestroyed() || window.isFullScreen() || window.isMaximized()) {
+        return
+      }
+      const { width, height } = window.getBounds()
+      settingsStore.update({ pipWindowSize: { width, height } })
+    }, 500)
+  })
+}
+
+function setMainWindowPictureInPicture(enabled: boolean): void {
+  const win = mainWindow
+  if (!win || win.isDestroyed()) return
+  if (enabled === mainWindowPip) {
+    if (enabled) void revealBrowserWindow(win)
+    return
+  }
+  if (enabled) {
+    if (win.isFullScreen()) win.setFullScreen(false)
+    if (win.isMaximized()) win.unmaximize()
+    mainWindowFullBounds = win.getBounds()
+    mainWindowPip = true
+    const display = screen.getDisplayMatching(win.getBounds())
+    const bounds = placePipBounds(
+      display.workArea,
+      settingsStore.get().pipWindowSize,
+      PIP_WINDOW_MIN_WIDTH,
+      PIP_WINDOW_MIN_HEIGHT
+    )
+    win.setMinimumSize(PIP_WINDOW_MIN_WIDTH, PIP_WINDOW_MIN_HEIGHT)
+    win.setAlwaysOnTop(true, 'floating')
+    win.setBounds(bounds)
+    void revealBrowserWindow(win)
+    return
+  }
+  mainWindowPip = false
+  win.setAlwaysOnTop(false)
+  const restore = mainWindowFullBounds
+  mainWindowFullBounds = null
+  win.setMinimumSize(MAIN_WINDOW_MIN_WIDTH, MAIN_WINDOW_MIN_HEIGHT)
+  if (restore) win.setBounds(restore)
+  void revealBrowserWindow(win)
 }
 
 const uiZoomWired = new WeakSet<Electron.WebContents>()
@@ -7101,7 +7156,8 @@ function registerIpc(): void {
         accessibility: macAccessibilityState(),
         screenRecording: macScreenRecordingState()
       }
-    }
+    },
+    listApps: () => createCuaComputerHost().listApps()
   })
   registerSecretsIpc(ipcMain, secretStore, () => {
     invalidateAnalysisCache()
@@ -8179,6 +8235,8 @@ return c as text`
     openSession: (id) => {
       void openDetachedWindow(id)
     },
+    setPictureInPicture: setMainWindowPictureInPicture,
+    isPictureInPicture: () => mainWindowPip,
     revealInList: async (event, id) => {
       await revealConversationInList(id)
       const senderWin = BrowserWindow.fromWebContents(event.sender)
@@ -8294,6 +8352,8 @@ return c as text`
         stopSpawnedVavServer?.()
         stopDesktopWeb?.()
         remoteControl.dispose()
+        agent.persistInFlight()
+        cliHost.persistInFlight()
         agent.disposeAll()
         cliHost.disposeAll()
         ptyManager.killAll()
@@ -8498,6 +8558,10 @@ if (singleInstance) {
     remoteControl.dispose()
     timerScheduler?.stop()
     void postgres.close()
+    // Snapshot in-flight replies before disposeAll cancels them (its finish path
+    // is async and never lands during a sync quit) so the sync flush persists them.
+    agent.persistInFlight()
+    cliHost.persistInFlight()
     agent.disposeAll()
     cliHost.disposeAll()
     stopAllAgentInstalls()

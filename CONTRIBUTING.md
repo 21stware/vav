@@ -7,6 +7,7 @@ npm ci
 npm test              # globbed unit tests (skips *.live.test.ts)
 npm run typecheck
 npm run build         # typecheck + electron-vite
+npm run build:bundle  # electron-vite only (used by release packaging)
 ```
 
 `npm test` discovers `src/**/*.test.ts` and `scripts/**/*.test.mjs`. Network-backed files (`*.live.test.ts`) are opt-in: `npm run test:live`. Playwright Electron e2e is local-only (`npm run test:e2e`).

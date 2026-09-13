@@ -190,3 +190,9 @@ export const SESSION_WINDOW_MIN_HEIGHT = windowMinHeight({
   workbenchExpanded: false,
   shell: 'session'
 })
+
+/** Picture-in-picture main shell — title-only task list + collapsed composer. */
+export const PIP_WINDOW_MIN_WIDTH = 280
+export const PIP_WINDOW_MIN_HEIGHT = 240
+export const PIP_WINDOW_DEFAULT_WIDTH = 360
+export const PIP_WINDOW_DEFAULT_HEIGHT = 520

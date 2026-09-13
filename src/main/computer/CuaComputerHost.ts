@@ -2,10 +2,12 @@ import { mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
+  parseComputerApps,
   parseCuaConnection,
   sanitizeComputerAct,
   sanitizeComputerObserve,
   VAV_CUA_CONNECTION_ENV,
+  type ComputerApp,
   type CuaConnectionFile
 } from '../../shared/computerUse.ts'
 import { callCuaTool, type CuaCallResult } from './CuaDriverClient.ts'
@@ -14,6 +16,8 @@ import { readCuaConnectionFile } from './embeddedCua.ts'
 export type ComputerHost = {
   available: () => boolean
   list: () => Promise<CuaCallResult>
+  /** Structured running-app list for the composer @-mention menu. */
+  listApps: () => Promise<ComputerApp[]>
   observe: (input: Record<string, unknown>) => Promise<CuaCallResult>
   act: (input: Record<string, unknown>) => Promise<CuaCallResult>
 }
@@ -65,6 +69,18 @@ export function createCuaComputerHost(
         ok,
         text: ['## Apps', apps.text, '', '## Windows', windows.text].join('\n')
       }
+    },
+    listApps: async () => {
+      if (load() == null) return []
+      const conn = requireConn()
+      const apps = await callCuaTool({
+        bin: conn.binPath,
+        socket: conn.socketPath,
+        tool: 'list_apps',
+        timeoutMs: 20_000
+      })
+      if (!apps.ok) return []
+      return parseComputerApps(apps.text)
     },
     observe: async (input) => {
       const conn = requireConn()

@@ -386,6 +386,23 @@ export class SettingsStore {
         )
       }
     }
+    if (s.pipWindowSize) {
+      if (
+        typeof s.pipWindowSize.width !== 'number' ||
+        typeof s.pipWindowSize.height !== 'number'
+      ) {
+        s.pipWindowSize = undefined
+      } else {
+        s.pipWindowSize.width = Math.min(
+          10_000,
+          Math.max(240, Math.round(s.pipWindowSize.width))
+        )
+        s.pipWindowSize.height = Math.min(
+          10_000,
+          Math.max(240, Math.round(s.pipWindowSize.height))
+        )
+      }
+    }
     // null / "vav" = no explicit default. Otherwise a CLI agent id or LLM vendor id.
     if (s.defaultAgentId === undefined) s.defaultAgentId = null
     if (s.defaultAgentId === 'vav') s.defaultAgentId = null
