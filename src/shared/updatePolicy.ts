@@ -5,8 +5,14 @@ import type { UpdatePhase } from './changeSet.ts'
  *
  * `notify` is the product default: check in the background, prompt when a
  * newer build exists. Manual “Check for Updates” in About always works.
+ *
+ * There are only three policies now. The retired `auto` policy silently
+ * installed on the next quit and restarted the app out from under the user —
+ * a landmine for a tray-resident app. VAV never restarts to install without an
+ * explicit Restart click; the strongest policy (`download`) fetches in the
+ * background and then waits for that click.
  */
-export const AUTO_UPDATE_POLICIES = ['off', 'notify', 'download', 'auto'] as const
+export const AUTO_UPDATE_POLICIES = ['off', 'notify', 'download'] as const
 export type AutoUpdatePolicy = (typeof AUTO_UPDATE_POLICIES)[number]
 export const DEFAULT_AUTO_UPDATE_POLICY: AutoUpdatePolicy = 'notify'
 
@@ -22,13 +28,15 @@ export function isAutoUpdatePolicy(value: unknown): value is AutoUpdatePolicy {
 }
 
 /**
- * Prefer the explicit policy. Legacy `autoCheckUpdates: false` maps to `off`;
- * any other leftover boolean (or a missing field) becomes `notify`.
+ * Prefer the explicit policy. Legacy `auto` (silent install-on-quit) is retired
+ * and maps to `download`. Legacy `autoCheckUpdates: false` maps to `off`; any
+ * other leftover boolean (or a missing field) becomes `notify`.
  */
 export function resolveAutoUpdatePolicy(raw: {
   autoUpdatePolicy?: unknown
   autoCheckUpdates?: unknown
 }): AutoUpdatePolicy {
+  if (raw.autoUpdatePolicy === 'auto') return 'download'
   if (isAutoUpdatePolicy(raw.autoUpdatePolicy)) return raw.autoUpdatePolicy
   if (raw.autoCheckUpdates === false) return 'off'
   return DEFAULT_AUTO_UPDATE_POLICY
@@ -39,24 +47,7 @@ export function shouldAutoCheck(policy: AutoUpdatePolicy): boolean {
 }
 
 export function shouldAutoDownload(policy: AutoUpdatePolicy): boolean {
-  return policy === 'download' || policy === 'auto'
-}
-
-export function shouldAutoInstall(policy: AutoUpdatePolicy): boolean {
-  return policy === 'auto'
-}
-
-/**
- * electron-updater only starts Squirrel.Mac during `downloadUpdate()` when
- * `autoInstallOnAppQuit` is on (`auto` policy). notify / download must kick
- * the native fetch ourselves after the ZIP is local, or `update-downloaded`
- * never fires and the UI sits on “Unpacking update”.
- */
-export function shouldStartNativeMacStaging(opts: {
-  nativeReady: boolean
-  autoInstallOnAppQuit: boolean
-}): boolean {
-  return !opts.nativeReady && !opts.autoInstallOnAppQuit
+  return policy === 'download'
 }
 
 export type UpdateCheckReason = 'launch' | 'heartbeat' | 'focus' | 'policy'
@@ -65,7 +56,7 @@ export function isUpdateBusyPhase(phase: UpdatePhase): boolean {
   return phase === 'checking' || phase === 'downloading' || phase === 'preparing'
 }
 
-/** Skip a new check once a package is staged — Restart / auto-install owns it. */
+/** Skip a new check once a package is staged — Restart owns it. */
 export function isUpdateSettledPhase(phase: UpdatePhase): boolean {
   return phase === 'ready'
 }
@@ -86,14 +77,17 @@ export function shouldRunAutomaticCheck(opts: {
   return elapsed >= UPDATE_HEARTBEAT_MS
 }
 
-export type UpdateFollowUp = 'none' | 'download' | 'install'
+/**
+ * Automatic follow-up after a check. Only `download` ever auto-fetches, and it
+ * stops at `ready` — installing is always an explicit user gesture.
+ */
+export type UpdateFollowUp = 'none' | 'download'
 
 export function nextUpdateFollowUp(
   policy: AutoUpdatePolicy,
   phase: UpdatePhase
 ): UpdateFollowUp {
   if (phase === 'available' && shouldAutoDownload(policy)) return 'download'
-  if (phase === 'ready' && shouldAutoInstall(policy)) return 'install'
   return 'none'
 }
 
@@ -105,12 +99,12 @@ export function isUpdateCancellationError(err: unknown): boolean {
   return name === 'CancellationError' || /cancell?ed/i.test(message)
 }
 
-/** Download bytes or macOS Squirrel staging — both must be abortable. */
+/** Only the byte transfer is abortable; staging happens during Restart. */
 export function canCancelUpdateDownload(phase: UpdatePhase): boolean {
-  return phase === 'downloading' || phase === 'preparing'
+  return phase === 'downloading'
 }
 
-/** After a failed check/download/staging, retry the package if we still know the target. */
+/** After a failed check/download, retry the package if we still know the target. */
 export function canRetryUpdateDownload(
   phase: UpdatePhase,
   latestVersion: string | null
@@ -119,8 +113,9 @@ export function canRetryUpdateDownload(
 }
 
 /**
- * User cancelled, or macOS staging failed for this version. Auto-download
- * must not immediately re-enter `preparing` after a relaunch.
+ * User cancelled this version's download. Auto-download must not immediately
+ * re-fetch it; the user has to click Download. Session-only — a relaunch
+ * forgets the skip, so a stuck suppression can never outlive the process.
  */
 export function shouldSkipAutoFollowUp(opts: {
   sessionSkip: boolean
@@ -133,31 +128,4 @@ export function shouldSkipAutoFollowUp(opts: {
     opts.latestVersion != null &&
     opts.skippedVersion === opts.latestVersion
   )
-}
-
-export function parseSkippedUpdateVersion(raw: unknown): string | null {
-  if (!raw || typeof raw !== 'object') return null
-  const version = (raw as { skippedVersion?: unknown }).skippedVersion
-  return typeof version === 'string' && version.trim().length > 0 ? version.trim() : null
-}
-
-/** How long to wait for Squirrel.Mac after the ZIP is local. Real unzips can take minutes. */
-export const UPDATE_STAGING_TIMEOUT_MS = 10 * 60 * 1000
-
-export type NativeStagingWait = 'ready' | 'wait' | 'timeout'
-
-/**
- * Native `update-downloaded` is the only safe “Restart” signal.
- * Squirrel.Mac verifies and unzips in-process — ShipIt is not running yet —
- * so a missing ShipIt process is not a failed unpack.
- */
-export function nativeStagingWaitDecision(opts: {
-  nativeReady: boolean
-  elapsedMs: number
-  timeoutMs?: number
-}): NativeStagingWait {
-  if (opts.nativeReady) return 'ready'
-  const timeoutMs = opts.timeoutMs ?? UPDATE_STAGING_TIMEOUT_MS
-  if (opts.elapsedMs >= timeoutMs) return 'timeout'
-  return 'wait'
 }

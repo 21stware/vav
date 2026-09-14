@@ -1437,6 +1437,41 @@ function fanRemoteTurn(event: TurnEvent): void {
 const changeSetStore = new ChangeSetStore()
 changeSetStore.workingCopies = workingCopyService
 const updateService = new UpdateService()
+
+// Single teardown path for every quit — normal Quit *and* update installs.
+// Idempotent so a `before-quit` + `before-quit-for-update` double-fire can't
+// double-dispose, and so the update-install path can never drift from this list.
+let didTeardownForQuit = false
+function teardownForQuit(): void {
+  if (didTeardownForQuit) return
+  didTeardownForQuit = true
+  quitting = true
+  sleepBlocker.release()
+  macLidSleep?.stop()
+  daemonAttach.dispose()
+  stopVavServerLogs?.()
+  embeddedCua.stop()
+  stopSpawnedVavServer?.()
+  stopDesktopWeb?.()
+  remoteControl.dispose()
+  timerScheduler?.stop()
+  void postgres.close()
+  // Snapshot in-flight replies before disposeAll cancels them (its finish path
+  // is async and never lands during a sync quit) so the sync flush persists them.
+  agent.persistInFlight()
+  cliHost.persistInFlight()
+  agent.disposeAll()
+  cliHost.disposeAll()
+  stopAllAgentInstalls()
+  ptyManager.killAll()
+  fileService.disposeAll()
+  quotaService.stop()
+  conversationStore.flush()
+  settingsStore.flushPersist()
+  appLog().system(LOG_EVENT.systemQuit, 'Quit')
+  logStore.dispose()
+}
+
 const documentRetrieval = new DocumentRetrievalService()
 fileService.retrieval = documentRetrieval
 const duckdb = new DuckDbService()
@@ -8353,21 +8388,10 @@ return c as text`
     }
     if (IS_MAC) {
       // Squirrel.Mac emits this on electron's autoUpdater (not app). Run the
-      // same teardown as before-quit, then exit so the process cannot linger
-      // with a Tray/Dock-only lifetime after windows close.
+      // shared quit teardown, then exit so the process cannot linger with a
+      // Tray/Dock-only lifetime after windows close.
       electronAutoUpdater.once('before-quit-for-update', () => {
-        daemonAttach.dispose()
-        stopVavServerLogs?.()
-        stopSpawnedVavServer?.()
-        stopDesktopWeb?.()
-        remoteControl.dispose()
-        agent.persistInFlight()
-        cliHost.persistInFlight()
-        agent.disposeAll()
-        cliHost.disposeAll()
-        ptyManager.killAll()
-        fileService.disposeAll()
-        conversationStore.flush()
+        teardownForQuit()
         app.exit(0)
       })
     }
@@ -8555,33 +8579,7 @@ if (singleInstance) {
     app.quit()
   })
 
-  app.on('before-quit', () => {
-    quitting = true
-    sleepBlocker.release()
-    macLidSleep?.stop()
-    daemonAttach.dispose()
-    stopVavServerLogs?.()
-    embeddedCua.stop()
-    stopSpawnedVavServer?.()
-    stopDesktopWeb?.()
-    remoteControl.dispose()
-    timerScheduler?.stop()
-    void postgres.close()
-    // Snapshot in-flight replies before disposeAll cancels them (its finish path
-    // is async and never lands during a sync quit) so the sync flush persists them.
-    agent.persistInFlight()
-    cliHost.persistInFlight()
-    agent.disposeAll()
-    cliHost.disposeAll()
-    stopAllAgentInstalls()
-    ptyManager.killAll()
-    fileService.disposeAll()
-    quotaService.stop()
-    conversationStore.flush()
-    settingsStore.flushPersist()
-    appLog().system(LOG_EVENT.systemQuit, 'Quit')
-    logStore.dispose()
-  })
+  app.on('before-quit', teardownForQuit)
 
   app.on('will-quit', () => globalShortcut.unregisterAll())
 

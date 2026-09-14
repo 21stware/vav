@@ -18,7 +18,7 @@ const execFileAsync = promisify(execFile)
 const root = join(__dirname, '../..')
 const aliasHook = pathToFileURL(join(root, 'scripts/register-shared-alias.mjs')).href
 
-function vav-board(args: string[]): Promise<{ stdout: string; stderr: string }> {
+function vavBoard(args: string[]): Promise<{ stdout: string; stderr: string }> {
   return execFileAsync(
     process.execPath,
     ['--import', aliasHook, '--experimental-strip-types', join(root, 'packages/vav-board/src/vav-board.ts'), ...args],
@@ -257,7 +257,7 @@ test('About update policy persists and Check for Updates shows a loading indicat
     const settings = await openSettingsWindow(harness, 'about')
     const updatePolicy = settings.locator('[data-testid="settings-auto-update-policy"]')
     await expect(updatePolicy).toHaveValue('off')
-    await expect(updatePolicy.locator('option')).toHaveCount(4)
+    await expect(updatePolicy.locator('option')).toHaveCount(3)
     await expect(settings.locator('[data-testid="settings-about-update-cancel"]')).toHaveCount(0)
     await settings.getByRole('button', { name: 'Check for Updates' }).click()
     await expect(settings.locator('[data-testid="settings-about-update-checking"]')).toBeVisible()
@@ -311,7 +311,7 @@ test('spawned vav-server host settings match desktop Settings and vav-board', as
     expect(pairing?.secret).toBeTruthy()
     const auth = ['--host', '127.0.0.1', '--port', String(pairing!.port), '--secret', pairing!.secret]
     const updated = JSON.parse(
-      (await vav-board(['settings', 'set', '--approval', 'edit', ...auth])).stdout
+      (await vavBoard(['settings', 'set', '--approval', 'edit', ...auth])).stdout
     ) as { defaultApprovalMode?: string }
     expect(updated.defaultApprovalMode).toBe('edit')
     await expect

@@ -92,16 +92,6 @@ export function UpdateCorner({
         <div className="update-corner-progress-meta">
           <LoaderCircle size={13} strokeWidth={2} className="update-corner-spin" aria-hidden />
           <span>{t('update.preparing')}</span>
-          <button
-            type="button"
-            className="update-corner-cancel"
-            data-testid="update-cancel"
-            title={t('update.cancel')}
-            aria-label={t('update.cancel')}
-            onClick={() => void cancelUpdateDownload()}
-          >
-            <X size={12} strokeWidth={2.25} aria-hidden />
-          </button>
         </div>
         <div className="update-corner-hint">{t('update.preparingHint')}</div>
         <div className="update-corner-track is-indeterminate" aria-hidden>

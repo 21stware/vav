@@ -116,19 +116,14 @@ clearOrphanedMacShipIt()
 assert(!jobLoaded(), 'still no job after second cleanup')
 log('ok  cleanup is idempotent')
 
-// 4) Guard: install must not run ShipIt without native ready (logic probe)
-function installGuard({ phase, nativeUpdateReady, platform = 'darwin' }) {
-  if (phase !== 'ready') return 'noop'
-  if (platform === 'darwin' && !nativeUpdateReady) return 'blocked'
-  return 'would-install'
+// 4) Guard: install() only acts on a downloaded package (phase === 'ready').
+// Staging itself is owned by electron-updater's quitAndInstall, not gated here.
+function installGuard({ phase }) {
+  return phase === 'ready' ? 'would-install' : 'noop'
 }
-assert(installGuard({ phase: 'preparing', nativeUpdateReady: false }) === 'noop', 'preparing')
-assert(installGuard({ phase: 'ready', nativeUpdateReady: false }) === 'blocked', 'block early ready')
-assert(installGuard({ phase: 'ready', nativeUpdateReady: true }) === 'would-install', 'allow staged')
-assert(
-  installGuard({ phase: 'ready', nativeUpdateReady: false, platform: 'win32' }) === 'would-install',
-  'windows ignores flag'
-)
+assert(installGuard({ phase: 'available' }) === 'noop', 'available → noop')
+assert(installGuard({ phase: 'preparing' }) === 'noop', 'preparing → noop')
+assert(installGuard({ phase: 'ready' }) === 'would-install', 'ready → install')
 log('ok  install() guard matrix')
 
 // Final hygiene

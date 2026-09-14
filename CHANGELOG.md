@@ -4,6 +4,10 @@ User-facing changes by release. Unreleased work lives at the top until the next 
 
 ## Unreleased
 
+## 1.30.2
+
+In-app updates no longer install or restart on their own. The retired Auto policy becomes Download (fetch in the background, wait for Restart). macOS unpacking is left to electron-updater at Restart instead of a background Squirrel wait that could stick on “Unpacking update”.
+
 ## 1.30.1
 
 macOS in-app update no longer sticks on “Unpacking update” for Download / Notify. After the ZIP is local, VAV starts Squirrel.Mac itself instead of waiting for a ShipIt process that only runs at install time.

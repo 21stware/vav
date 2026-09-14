@@ -118,19 +118,16 @@ app.whenReady().then(async () => {
     if (checking.phase !== 'checking') throw new Error('checking state')
     console.log('ok  about button can enter checking')
 
-    // Install guard: macOS must not quitAndInstall before native staging
-    const installGuard = (phase, nativeUpdateReady) => {
-      if (phase !== 'ready') return 'noop'
-      if (process.platform === 'darwin' && !nativeUpdateReady) return 'blocked'
-      return 'would-install'
+    // Install guard: install() only acts on a downloaded package. Staging is
+    // owned by electron-updater's quitAndInstall (kicked on Restart), not here.
+    const installGuard = (phase) => (phase === 'ready' ? 'would-install' : 'noop')
+    if (installGuard('available') !== 'noop' || installGuard('downloading') !== 'noop') {
+      throw new Error('install guard should ignore non-ready phases')
     }
-    if (installGuard('ready', false) !== (process.platform === 'darwin' ? 'blocked' : 'would-install')) {
-      throw new Error('install guard failed for unstaged ready')
+    if (installGuard('ready') !== 'would-install') {
+      throw new Error('install guard should act on ready')
     }
-    if (installGuard('ready', true) !== 'would-install') {
-      throw new Error('install guard should allow staged ready')
-    }
-    console.log('ok  install() blocked until native Squirrel staging')
+    console.log('ok  install() acts only on a ready package')
 
     // Orphan ShipIt cleanup (same rules as clearOrphanedMacShipIt)
     if (process.platform === 'darwin') {

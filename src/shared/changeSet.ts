@@ -42,7 +42,7 @@ export type UpdatePhase =
   | 'available'
   | 'error'
   | 'downloading'
-  /** macOS: ZIP downloaded; Squirrel.Mac still verifying / unzipping. */
+  /** Restart clicked; electron-updater is applying the update before relaunch. */
   | 'preparing'
   | 'ready'
 

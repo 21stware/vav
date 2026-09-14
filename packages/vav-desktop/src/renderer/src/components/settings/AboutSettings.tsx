@@ -14,15 +14,13 @@ import { Button } from '../ui'
 const POLICY_LABEL: Record<AutoUpdatePolicy, MessageKey> = {
   off: 'about.autoUpdatePolicy.off',
   notify: 'about.autoUpdatePolicy.notify',
-  download: 'about.autoUpdatePolicy.download',
-  auto: 'about.autoUpdatePolicy.auto'
+  download: 'about.autoUpdatePolicy.download'
 }
 
 const POLICY_HINT: Record<AutoUpdatePolicy, MessageKey> = {
   off: 'about.autoUpdatePolicyHint.off',
   notify: 'about.autoUpdatePolicyHint.notify',
-  download: 'about.autoUpdatePolicyHint.download',
-  auto: 'about.autoUpdatePolicyHint.auto'
+  download: 'about.autoUpdatePolicyHint.download'
 }
 import wordmark from '../../assets/wordmark.png'
 import wordmarkDark from '../../assets/wordmark-dark.png'
@@ -224,7 +222,7 @@ export function AboutSettings(): React.JSX.Element {
               onClick={() => void downloadUpdate()}
             />
           ) : null}
-          {phase === 'downloading' || phase === 'preparing' ? (
+          {phase === 'downloading' ? (
             <Button
               label={t('update.cancel')}
               variant="secondary"

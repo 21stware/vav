@@ -10,16 +10,12 @@ import {
   isUpdateSettledPhase,
   canCancelUpdateDownload,
   canRetryUpdateDownload,
-  nativeStagingWaitDecision,
   nextUpdateFollowUp,
-  parseSkippedUpdateVersion,
   resolveAutoUpdatePolicy,
   shouldSkipAutoFollowUp,
   shouldAutoCheck,
   shouldAutoDownload,
-  shouldAutoInstall,
-  shouldRunAutomaticCheck,
-  shouldStartNativeMacStaging
+  shouldRunAutomaticCheck
 } from './updatePolicy.ts'
 
 describe('resolveAutoUpdatePolicy', () => {
@@ -33,11 +29,15 @@ describe('resolveAutoUpdatePolicy', () => {
     assert.equal(resolveAutoUpdatePolicy({ autoCheckUpdates: false }), 'off')
   })
 
-  it('prefers the explicit policy over the legacy boolean', () => {
+  it('retires the legacy auto policy down to download', () => {
+    assert.equal(resolveAutoUpdatePolicy({ autoUpdatePolicy: 'auto' }), 'download')
     assert.equal(
       resolveAutoUpdatePolicy({ autoUpdatePolicy: 'auto', autoCheckUpdates: false }),
-      'auto'
+      'download'
     )
+  })
+
+  it('prefers the explicit policy over the legacy boolean', () => {
     assert.equal(
       resolveAutoUpdatePolicy({ autoUpdatePolicy: 'download', autoCheckUpdates: true }),
       'download'
@@ -46,39 +46,30 @@ describe('resolveAutoUpdatePolicy', () => {
 })
 
 describe('isAutoUpdatePolicy', () => {
-  it('accepts the four stored values', () => {
+  it('accepts the three stored values and rejects retired auto', () => {
     assert.equal(isAutoUpdatePolicy('off'), true)
     assert.equal(isAutoUpdatePolicy('notify'), true)
     assert.equal(isAutoUpdatePolicy('download'), true)
-    assert.equal(isAutoUpdatePolicy('auto'), true)
+    assert.equal(isAutoUpdatePolicy('auto'), false)
     assert.equal(isAutoUpdatePolicy(true), false)
     assert.equal(isAutoUpdatePolicy(''), false)
   })
 })
 
 describe('policy gates', () => {
-  it('off never auto-checks, downloads, or installs', () => {
+  it('off never auto-checks or downloads', () => {
     assert.equal(shouldAutoCheck('off'), false)
     assert.equal(shouldAutoDownload('off'), false)
-    assert.equal(shouldAutoInstall('off'), false)
   })
 
   it('notify checks only', () => {
     assert.equal(shouldAutoCheck('notify'), true)
     assert.equal(shouldAutoDownload('notify'), false)
-    assert.equal(shouldAutoInstall('notify'), false)
   })
 
   it('download checks and fetches, install stays manual', () => {
     assert.equal(shouldAutoCheck('download'), true)
     assert.equal(shouldAutoDownload('download'), true)
-    assert.equal(shouldAutoInstall('download'), false)
-  })
-
-  it('auto does check, download, and install', () => {
-    assert.equal(shouldAutoCheck('auto'), true)
-    assert.equal(shouldAutoDownload('auto'), true)
-    assert.equal(shouldAutoInstall('auto'), true)
   })
 })
 
@@ -165,13 +156,12 @@ describe('nextUpdateFollowUp', () => {
   it('downloads when a newer build is available and the policy says so', () => {
     assert.equal(nextUpdateFollowUp('notify', 'available'), 'none')
     assert.equal(nextUpdateFollowUp('download', 'available'), 'download')
-    assert.equal(nextUpdateFollowUp('auto', 'available'), 'download')
   })
 
-  it('installs only on auto once the package is ready', () => {
+  it('never auto-installs — ready always waits for an explicit Restart', () => {
     assert.equal(nextUpdateFollowUp('download', 'ready'), 'none')
-    assert.equal(nextUpdateFollowUp('auto', 'ready'), 'install')
-    assert.equal(nextUpdateFollowUp('auto', 'latest'), 'none')
+    assert.equal(nextUpdateFollowUp('notify', 'ready'), 'none')
+    assert.equal(nextUpdateFollowUp('download', 'latest'), 'none')
   })
 })
 
@@ -185,9 +175,9 @@ describe('phase helpers', () => {
     assert.equal(isUpdateSettledPhase('available'), false)
   })
 
-  it('allows cancel while downloading or unpacking', () => {
+  it('allows cancel only while downloading — staging during Restart is not cancellable', () => {
     assert.equal(canCancelUpdateDownload('downloading'), true)
-    assert.equal(canCancelUpdateDownload('preparing'), true)
+    assert.equal(canCancelUpdateDownload('preparing'), false)
     assert.equal(canCancelUpdateDownload('available'), false)
     assert.equal(canCancelUpdateDownload('ready'), false)
   })
@@ -233,81 +223,6 @@ describe('shouldSkipAutoFollowUp', () => {
         latestVersion: '1.2.3'
       }),
       false
-    )
-  })
-})
-
-describe('parseSkippedUpdateVersion', () => {
-  it('reads a persisted skip payload', () => {
-    assert.equal(parseSkippedUpdateVersion({ skippedVersion: '1.29.0' }), '1.29.0')
-    assert.equal(parseSkippedUpdateVersion({ skippedVersion: '  ' }), null)
-    assert.equal(parseSkippedUpdateVersion({}), null)
-    assert.equal(parseSkippedUpdateVersion(null), null)
-  })
-})
-
-describe('shouldStartNativeMacStaging', () => {
-  it('starts Squirrel for download/notify, not for auto (already started during download)', () => {
-    assert.equal(
-      shouldStartNativeMacStaging({
-        nativeReady: false,
-        autoInstallOnAppQuit: shouldAutoInstall('download')
-      }),
-      true
-    )
-    assert.equal(
-      shouldStartNativeMacStaging({
-        nativeReady: false,
-        autoInstallOnAppQuit: shouldAutoInstall('notify')
-      }),
-      true
-    )
-    assert.equal(
-      shouldStartNativeMacStaging({
-        nativeReady: false,
-        autoInstallOnAppQuit: shouldAutoInstall('auto')
-      }),
-      false
-    )
-    assert.equal(
-      shouldStartNativeMacStaging({
-        nativeReady: true,
-        autoInstallOnAppQuit: shouldAutoInstall('download')
-      }),
-      false
-    )
-  })
-})
-
-describe('nativeStagingWaitDecision', () => {
-  it('waits for the native event and only times out after the full window', () => {
-    assert.equal(
-      nativeStagingWaitDecision({
-        nativeReady: true,
-        elapsedMs: 60_000
-      }),
-      'ready'
-    )
-    assert.equal(
-      nativeStagingWaitDecision({
-        nativeReady: false,
-        elapsedMs: 45_000
-      }),
-      'wait'
-    )
-    assert.equal(
-      nativeStagingWaitDecision({
-        nativeReady: false,
-        elapsedMs: 5 * 60_000
-      }),
-      'wait'
-    )
-    assert.equal(
-      nativeStagingWaitDecision({
-        nativeReady: false,
-        elapsedMs: 10 * 60_000
-      }),
-      'timeout'
     )
   })
 })
