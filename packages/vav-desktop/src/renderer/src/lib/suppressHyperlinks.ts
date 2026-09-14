@@ -3,7 +3,7 @@
  * navigate the BrowserWindow or open the system browser on click.
  *
  * Allow-list (still interactive):
- * - `a.md-file-link` — local path mention → open file preview (handled by MarkdownView)
+ * - `a.md-file-link` — legacy path mention (new chips are buttons, not anchors)
  * - `a.web-title` / `.web-hit a` — tool-card search results (intentional external open)
  * - `a[data-allow-nav]` — opt-in escape hatch
  */

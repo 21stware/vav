@@ -16,7 +16,8 @@ import {
   waitForHostWindow,
   pairRemoteDaemon,
   ensureSelectedSession,
-  waitForRemoteFolderPicker
+  waitForRemoteFolderPicker,
+  switchSidebarInstance
 } from '../launch'
 import { startVavServer } from '../startVavServer'
 
@@ -58,7 +59,7 @@ test('pair vav-server, open its folder, list a file that only exists there', asy
     await expect(
       remote.locator(`[data-testid="session-row"][data-conversation-id="${E2E_SESSION_ID}"]`)
     ).toHaveCount(0)
-    await page.locator('[data-testid="sidebar-service-chip"][data-machine-id="local"]').click()
+    await switchSidebarInstance(page, 'Local')
     await expect(page.locator('[data-testid="sidebar-connect"]')).toHaveAttribute(
       'data-machine-id',
       'local'
@@ -66,9 +67,7 @@ test('pair vav-server, open its folder, list a file that only exists there', asy
     await expect(
       page.locator(`[data-testid="session-row"][data-conversation-id="${E2E_SESSION_ID}"]`)
     ).toBeVisible()
-    await page
-      .locator(`[data-testid="sidebar-service-chip"][data-machine-id="${paired.host.id}"]`)
-      .click()
+    await switchSidebarInstance(page, 'E2E Daemon')
     await expect(remote.locator('[data-testid="sidebar-connect"]')).toHaveAttribute(
       'data-machine-id',
       paired.host.id
@@ -795,7 +794,7 @@ test('pair another VAV, pull its sessions and folder recents', async () => {
 
     await remote.evaluate((path) => window.vav.conversations.revealInFinder(path), host.extraWorkspace)
 
-    await client.page.locator('[data-testid="sidebar-service-chip"][data-machine-id="local"]').click()
+    await switchSidebarInstance(client.page, 'Local')
     await expect(client.page.locator('[data-testid="sidebar-connect"]')).toHaveAttribute(
       'data-machine-id',
       'local'

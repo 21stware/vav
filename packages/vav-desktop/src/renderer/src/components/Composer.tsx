@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -48,8 +49,10 @@ import { Button } from './ui'
 import { AgentModelPicker } from './AgentModelPicker'
 import { ComposerAttachments } from './ComposerAttachments'
 import { SessionRunPicker } from './SessionRunPicker'
-import { MentionBox, type MentionBoxHandle } from './mentionBox/MentionBox'
-import { appMentionToken, findComposerPills } from './mentionBox/mentionTokens'
+import { filterComputerApps, type ComputerApp } from '@shared/computerUse'
+import { MentionBox, type MentionBoxHandle, type MentionItem } from './mentionBox/MentionBox'
+import type { MentionOptions } from './mentionBox/mentionModel'
+import { appMentionToken, fileMentionToken, findComposerPills } from './mentionBox/mentionTokens'
 
 const NO_QUEUE: QueuedMessage[] = []
 
@@ -244,6 +247,14 @@ export function Composer({
   }, [used, limit])
 
   const mentionRef = useRef<MentionBoxHandle>(null)
+  const appsCache = useRef<{ at: number; apps: ComputerApp[] } | null>(null)
+  const mentionOptions = useMemo<MentionOptions>(
+    () => ({
+      // Keep `@[Calendar]` typeable so a mid-token caret still filters.
+      isNameChar: (ch) => /[\p{L}\p{N}_./\\+[\]-]/u.test(ch)
+    }),
+    []
+  )
   const accountGroups = useAccountGroups()
   const imageLimits = imageInputLimits(conversation?.cliHost ?? null)
   const catalogModel = useSessionStore((s) => {
@@ -380,7 +391,8 @@ export function Composer({
   }
 
   /** Turn on computer use from the composer, then guide the mac grants it needs. */
-  const enableComputerUse = (): void => {
+  const enableComputerUse = useCallback((): void => {
+    appsCache.current = null
     void updateSettings({ computerUseEnabled: true }).then(async () => {
       const outcome = await ensureComputerPermissions()
       // 'pending' already surfaced a guided dialog; only confirm when it's live.
@@ -388,15 +400,78 @@ export function Composer({
         showToast({ kind: 'info', title: t('composer.computerUseEnabledToast') })
       }
     })
-  }
+  }, [showToast, t, updateSettings])
 
-  /** Native add-content menu — shared by the "+" button and the `@` trigger. */
+  const loadMentionApps = useCallback(async (): Promise<ComputerApp[]> => {
+    const now = Date.now()
+    if (appsCache.current && now - appsCache.current.at < 15_000) {
+      return appsCache.current.apps
+    }
+    const apps = await window.vav.computer.listApps().catch(() => [])
+    appsCache.current = { at: now, apps }
+    return apps
+  }, [])
+
+  const pickAttachmentFiles = useCallback((): void => {
+    void (async () => {
+      const res = await window.vav.files.pickAttachments()
+      if (!res.ok || res.paths.length === 0) return
+      mentionRef.current?.insertText(`${res.paths.map(fileMentionToken).join(' ')} `)
+    })()
+  }, [])
+
+  /** Built-in popover: type after `@` to filter apps (and Add file / enable). */
+  const fetchMentionItems = useCallback(
+    async (query: string): Promise<MentionItem[]> => {
+      const items: MentionItem[] = []
+      const q = query
+        .replace(/^\[/, '')
+        .replace(/\]$/, '')
+        .trim()
+        .toLowerCase()
+      const addFileLabel = t('composer.mentionAddFile')
+      if (!q || addFileLabel.toLowerCase().includes(q)) {
+        items.push({
+          id: 'add-file',
+          label: addFileLabel,
+          onSelect: pickAttachmentFiles
+        })
+      }
+      if (!computerUseEnabled) {
+        const enableLabel = t('composer.mentionEnableComputer')
+        if (!q || enableLabel.toLowerCase().includes(q)) {
+          items.push({
+            id: 'enable-computer',
+            label: enableLabel,
+            onSelect: enableComputerUse
+          })
+        }
+        return items
+      }
+      const apps = filterComputerApps(await loadMentionApps(), query)
+      if (apps.length === 0 && items.length === 0) {
+        return [{ id: 'no-apps', label: t('composer.mentionNoApps'), disabled: true }]
+      }
+      for (const app of apps) {
+        items.push({
+          id: app.bundleId ?? app.name,
+          label: app.name,
+          detail: app.bundleId ?? undefined,
+          insert: appMentionToken(app.name)
+        })
+      }
+      return items
+    },
+    [computerUseEnabled, enableComputerUse, loadMentionApps, pickAttachmentFiles, t]
+  )
+
+  /** Native add-content menu for the "+" button. */
   const openAddMenu = (anchor: { x: number; y: number }): void => {
     void (async () => {
       const appItems = !computerUseEnabled
         ? [{ label: t('composer.mentionEnableComputer'), onSelect: enableComputerUse }]
         : await (async () => {
-            const apps = await window.vav.computer.listApps().catch(() => [])
+            const apps = await loadMentionApps()
             return apps.length > 0
               ? apps.map((app) => ({
                   label: app.name,
@@ -409,13 +484,7 @@ export function Composer({
           {
             label: t('composer.mentionAddFile'),
             icon: { kind: 'lucide', key: 'file-text' },
-            onSelect: () => {
-              void (async () => {
-                const res = await window.vav.files.pickAttachments()
-                if (!res.ok || res.paths.length === 0) return
-                mentionRef.current?.insertText(`${res.paths.join(' ')} `)
-              })()
-            }
+            onSelect: pickAttachmentFiles
           },
           {
             label: t('composer.mentionAddApp'),
@@ -572,10 +641,10 @@ export function Composer({
           value={draft}
           disabled={inputDisabled}
           findPills={findComposerPills}
-          onTrigger={(_query, anchor) => {
-            // `@` opens the same native add-content menu as the "+" button.
-            openAddMenu(anchor ?? { x: 0, y: 0 })
-          }}
+          mentionOptions={mentionOptions}
+          conversationId={conversationId}
+          fetchItems={fetchMentionItems}
+          emptyLabel={t('composer.mentionNoApps')}
           onChange={(value) => {
             // Paint locally first; coalesce store writes so typing stays at 60fps
             // even when other panels subscribe to session churn.

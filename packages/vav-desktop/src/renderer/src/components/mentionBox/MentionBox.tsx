@@ -43,6 +43,8 @@ import {
   type MentionOptions
 } from './mentionModel'
 import { caretPoint, readMetrics, type CaretPoint } from './pretextMeasure'
+import { FileChip } from '../FileChip'
+import { openAttachmentPreview } from '../../lib/openSessionFile'
 
 export type MentionItem = {
   /** Stable id for keys / aria. */
@@ -57,6 +59,8 @@ export type MentionItem = {
   icon?: ReactNode
   /** When true the row is shown but not selectable (e.g. a disabled reason). */
   disabled?: boolean
+  /** Extra action after the token is applied (enable computer use, pick a file). */
+  onSelect?: () => void
 }
 
 export type MentionBoxHandle = {
@@ -105,6 +109,8 @@ export type MentionBoxProps = {
   onWheel?: React.WheelEventHandler<HTMLTextAreaElement>
   /** Empty-popover message. Return null to render nothing. */
   emptyLabel?: string
+  /** Session id so inline file chips can open a preview window. */
+  conversationId?: string | null
 }
 
 type MenuState = {
@@ -134,6 +140,7 @@ export const MentionBox = forwardRef<MentionBoxHandle, MentionBoxProps>(function
     onBlur,
     onPaste,
     emptyLabel,
+    conversationId,
     ...rest
   },
   ref
@@ -292,11 +299,13 @@ export const MentionBox = forwardRef<MentionBoxHandle, MentionBoxProps>(function
       const end = mentionSpanEnd(value, active.start, mentionOptions)
       const nextChar = value[end] ?? ''
       const needsSpace = !/\s/.test(nextChar) // true at EOL too (nextChar === '')
-      const insert = (item.insert ?? `${active.trigger}${item.label}`) + (needsSpace ? ' ' : '')
+      const raw = item.insert ?? (item.onSelect ? '' : `${active.trigger}${item.label}`)
+      const insert = raw + (raw && needsSpace ? ' ' : '')
       const res = applyMention(value, active.start, insert, mentionOptions)
       pendingCaret.current = res.caret
       onChange(res.value)
       closeMenu()
+      item.onSelect?.()
       requestAnimationFrame(() => ta.focus())
     },
     [menu, value, onChange, mentionOptions, closeMenu]
@@ -393,14 +402,34 @@ export const MentionBox = forwardRef<MentionBoxHandle, MentionBoxProps>(function
       className={`mention-box${className ? ` ${className}` : ''}`}
       data-disabled={disabled ? 'true' : undefined}
     >
-      <div ref={highlightRef} className="mention-box-highlights" aria-hidden="true">
-        {segments.map((seg) =>
-          seg.kind === 'mention' ? (
+      <div ref={highlightRef} className="mention-box-highlights">
+        {segments.map((seg) => {
+          const kind = kindByStart.get(seg.start)
+          if (seg.kind === 'mention' && kind === 'file') {
+            return (
+              <span key={seg.start} className="mention-file-slot">
+                <span className="mention-file-metrics" aria-hidden="true">
+                  {seg.text}
+                </span>
+                <FileChip
+                  path={seg.name}
+                  conversationId={conversationId}
+                  className="mention-file-face"
+                  onRemove={() => {
+                    const next = value.slice(0, seg.start) + value.slice(seg.end).replace(/^[ \t]/, '')
+                    pendingCaret.current = seg.start
+                    onChange(next)
+                  }}
+                />
+              </span>
+            )
+          }
+          return seg.kind === 'mention' ? (
             <span
               key={seg.start}
               className="mention-chip"
               data-name={seg.name}
-              data-kind={kindByStart.get(seg.start)}
+              data-kind={kind}
             >
               {seg.text}
             </span>
@@ -409,7 +438,7 @@ export const MentionBox = forwardRef<MentionBoxHandle, MentionBoxProps>(function
               {seg.text}
             </span>
           )
-        )}
+        })}
         {/* Keep the mirror's last empty line so the caret has room to sit. */}
         {value.endsWith('\n') || value === '' ? '\u200b' : null}
       </div>
@@ -441,7 +470,14 @@ export const MentionBox = forwardRef<MentionBoxHandle, MentionBoxProps>(function
           syncMenu(next, caret)
         }}
         onScroll={syncScroll}
-        onClick={(e) => syncMenu(value, e.currentTarget.selectionStart ?? 0)}
+        onClick={(e) => {
+          const caret = e.currentTarget.selectionStart ?? 0
+          const filePill = pills.find(
+            (p) => p.kind === 'file' && caret > p.start && caret <= p.end
+          )
+          if (filePill) openAttachmentPreview(filePill.name)
+          syncMenu(value, caret)
+        }}
         onKeyUp={(e) => {
           // Caret-moving keys re-evaluate the popover; typing is handled onChange.
           if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) {

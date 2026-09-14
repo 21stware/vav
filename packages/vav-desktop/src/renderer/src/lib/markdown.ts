@@ -149,6 +149,11 @@ const CACHE_LIMIT = 2000
 // When highlight.js arrives, drop sealed HTML so the next paint gets real spans.
 onHljsReady(() => cache.clear())
 
+if (import.meta.hot) {
+  import.meta.hot.accept(() => cache.clear())
+  import.meta.hot.accept(['./filePathLinks'], () => cache.clear())
+}
+
 /** Renders and memoises. Sealed chunks are stable strings, so this always hits. */
 export function renderMarkdown(source: string): string {
   const hit = cache.get(source)

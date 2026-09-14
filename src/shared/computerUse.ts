@@ -263,14 +263,60 @@ function pickString(rec: Record<string, unknown>, keys: string[]): string | null
   return null
 }
 
+function isAppLikeRow(row: unknown): boolean {
+  if (!row || typeof row !== 'object') return false
+  const rec = row as Record<string, unknown>
+  return Boolean(
+    rec.name ||
+      rec.app_name ||
+      rec.appName ||
+      rec.localizedName ||
+      rec.bundle_id ||
+      rec.bundleId ||
+      rec.bundle
+  )
+}
+
+/** Unwrap cua-driver MCP/CLI envelopes (`structuredContent`, nested `result`). */
+function collectAppRows(data: unknown, depth = 0): unknown[] {
+  if (depth > 4) return []
+  if (Array.isArray(data)) return data
+  if (!data || typeof data !== 'object') return []
+  const rec = data as Record<string, unknown>
+  for (const key of ['apps', 'applications', 'items']) {
+    if (Array.isArray(rec[key])) return rec[key] as unknown[]
+  }
+  if (Array.isArray(rec.windows) && rec.windows.some(isAppLikeRow)) {
+    return rec.windows
+  }
+  for (const key of ['structuredContent', 'structured_content', 'result', 'data']) {
+    const nested = rec[key]
+    if (nested && typeof nested === 'object') {
+      const rows = collectAppRows(nested, depth + 1)
+      if (rows.length) return rows
+    }
+  }
+  return []
+}
+
+function sortComputerApps(apps: ComputerApp[]): ComputerApp[] {
+  return [...apps].sort((a, b) => {
+    const ar = a.pid != null && a.pid > 0 ? 0 : 1
+    const br = b.pid != null && b.pid > 0 ? 0 : 1
+    if (ar !== br) return ar - br
+    return a.name.localeCompare(b.name)
+  })
+}
+
 /**
  * Normalize the cua daemon's `list_apps` output into a stable app list.
  *
  * The daemon's exact JSON shape is owned by cua-driver and may evolve, so this
  * parser is deliberately permissive: it accepts a bare array, `{ apps: [...] }`,
- * or `{ items/windows: [...] }`, and reads the app name / bundle id / pid from
- * any of several common field spellings. Anything unparseable yields `[]` so
- * the menu degrades to empty rather than throwing.
+ * MCP `{ structuredContent: { apps } }`, or `{ items/windows: [...] }`, and
+ * reads the app name / bundle id / pid from any of several common field
+ * spellings. `pid: 0` (installed, not running) becomes `null`. Anything
+ * unparseable yields `[]` so the menu degrades to empty rather than throwing.
  */
 export function parseComputerApps(raw: unknown): ComputerApp[] {
   let data: unknown = raw
@@ -281,17 +327,7 @@ export function parseComputerApps(raw: unknown): ComputerApp[] {
       return []
     }
   }
-  let rows: unknown[]
-  if (Array.isArray(data)) {
-    rows = data
-  } else if (data && typeof data === 'object') {
-    const rec = data as Record<string, unknown>
-    const list = rec.apps ?? rec.applications ?? rec.items ?? rec.windows ?? rec.result
-    rows = Array.isArray(list) ? list : []
-  } else {
-    rows = []
-  }
-
+  const rows = collectAppRows(data)
   const byKey = new Map<string, ComputerApp>()
   for (const row of rows) {
     if (!row || typeof row !== 'object') continue
@@ -308,11 +344,63 @@ export function parseComputerApps(raw: unknown): ComputerApp[] {
     ])
     if (!name) continue
     const bundleId = pickString(rec, ['bundleId', 'bundle_id', 'bundle', 'bundle_identifier'])
-    const pid = asFiniteInt(rec.pid ?? rec.process_id ?? rec.processId)
+    const pidRaw = asFiniteInt(rec.pid ?? rec.process_id ?? rec.processId)
+    const pid = pidRaw != null && pidRaw > 0 ? pidRaw : null
     const dedupeKey = bundleId ?? name.toLowerCase()
     if (!byKey.has(dedupeKey)) {
-      byKey.set(dedupeKey, { name, bundleId, pid: pid ?? null })
+      byKey.set(dedupeKey, { name, bundleId, pid })
     }
   }
-  return [...byKey.values()].sort((a, b) => a.name.localeCompare(b.name))
+  return sortComputerApps([...byKey.values()])
+}
+
+/** Overlay later lists onto earlier ones (driver localized names / pids win). */
+export function mergeComputerApps(...lists: ComputerApp[][]): ComputerApp[] {
+  const byKey = new Map<string, ComputerApp>()
+  for (const list of lists) {
+    for (const app of list) {
+      const key = app.bundleId ?? app.name.toLowerCase()
+      const prev = byKey.get(key)
+      if (!prev) {
+        byKey.set(key, app)
+        continue
+      }
+      const pid = app.pid != null && app.pid > 0 ? app.pid : prev.pid
+      byKey.set(key, {
+        name: app.name || prev.name,
+        bundleId: app.bundleId ?? prev.bundleId,
+        pid
+      })
+    }
+  }
+  return sortComputerApps([...byKey.values()])
+}
+
+/** Compact listing for the agent — stays well under the tool-output cap. */
+export function formatComputerAppsList(apps: ComputerApp[]): string {
+  if (apps.length === 0) return '(none)'
+  return apps
+    .map((app) => {
+      const id = app.bundleId ? `  ${app.bundleId}` : ''
+      const pid = app.pid != null ? `pid=${app.pid}` : 'pid=—'
+      return `- ${app.name}${id}  ${pid}`
+    })
+    .join('\n')
+}
+
+/** Typeahead filter for `@` mentions. Strips `@[…]` brackets; matches name or bundle id. */
+export function filterComputerApps(apps: ComputerApp[], query: string): ComputerApp[] {
+  const q = query
+    .replace(/^\[/, '')
+    .replace(/\]$/, '')
+    .trim()
+    .toLowerCase()
+  if (!q) return apps
+  const compact = q.replace(/\s+/g, '')
+  return apps.filter((app) => {
+    const name = app.name.toLowerCase()
+    if (name.includes(q) || name.replace(/\s+/g, '').includes(compact)) return true
+    const id = app.bundleId?.toLowerCase()
+    return Boolean(id && (id.includes(q) || id.replace(/\s+/g, '').includes(compact)))
+  })
 }

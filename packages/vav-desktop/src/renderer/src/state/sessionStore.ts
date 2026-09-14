@@ -75,6 +75,10 @@ import {
   setCommentCardsMap,
   updateCommentCardInMap
 } from './sessionCommentCards'
+import {
+  collectFileMentionPaths,
+  expandFileMentionTokens
+} from '../components/mentionBox/mentionTokens'
 
 export {
   DEFAULT_SESSION_TOOLS,
@@ -2151,7 +2155,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const refs = previewRefs[activeId] ?? []
     const cards = commentCards[activeId] ?? []
     const leftoverContext = resolveComposerContextFile(contextFiles, activeId)
-    const files = mergeComposerFilePaths(leftoverContext, attachments)
+    const mentionedFiles = collectFileMentionPaths(text)
+    text = expandFileMentionTokens(text)
+    const files = mergeComposerFilePaths(leftoverContext, [...attachments, ...mentionedFiles])
     const activeConversation = conversations.find((c) => c.id === activeId)
     const activeHost = activeConversation?.cliHost ?? null
     const hostHoldsKeys = hostHoldsControlPlaneKeys(hosts, activeConversation?.machineId)

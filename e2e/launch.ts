@@ -736,6 +736,12 @@ export async function peekNativeMenu(page: Page): Promise<NativeMenuPeekItem[] |
   return page.evaluate(() => window.vav.window.peekPopupMenu())
 }
 
+/** Open the sidebar instance menu and switch to the named host. */
+export async function switchSidebarInstance(page: Page, name: string): Promise<void> {
+  await page.locator('[data-testid="sidebar-connect"]').click()
+  await chooseNativeMenu(page, name)
+}
+
 /** Wait for a native popup row, then choose it by id or label. */
 export async function chooseNativeMenu(page: Page, idOrLabel: string): Promise<void> {
   await expect

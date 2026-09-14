@@ -66,7 +66,7 @@
 .mention-box-highlights {
   position: absolute;
   inset: 0;
-  z-index: 0;
+  z-index: 2;
   pointer-events: none;
   overflow: hidden;
   color: var(--text);
@@ -92,8 +92,31 @@
  * properties — so the mirror stays glyph-aligned with the textarea caret.
  */
 .mention-chip[data-kind='file'] {
-  color: var(--info-text, #2b6cb0);
-  background: var(--info-soft, rgba(43, 108, 176, 0.14));
+  color: inherit;
+  background: color-mix(in srgb, var(--text) 8%, var(--bg-sunken, transparent));
+}
+
+/* File pills: keep path width for caret sync, paint a compact chip on top. */
+.mention-file-slot {
+  position: relative;
+  display: inline;
+}
+
+.mention-file-metrics {
+  visibility: hidden;
+}
+
+.mention-file-face.md-file-chip {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  max-width: 100%;
+  pointer-events: auto;
+}
+
+.mention-file-face.md-file-chip:active {
+  transform: translateY(-50%) scale(0.98);
 }
 
 .mention-chip[data-kind='app'] {

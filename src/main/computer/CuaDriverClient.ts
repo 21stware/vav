@@ -8,6 +8,8 @@ import { cap } from '../agent/toolSummarize.ts'
 export type CuaCallResult = {
   ok: boolean
   text: string
+  /** Uncapped parsed stdout — used by listApps so the 20k text cap cannot drop system apps. */
+  json?: unknown
   screenshotPath?: string
 }
 
@@ -65,10 +67,17 @@ export async function callCuaTool(opts: CuaCallOptions): Promise<CuaCallResult> 
     })
     child.on('close', (code) => {
       clearTimeout(timer)
+      let json: unknown
+      try {
+        json = JSON.parse(stdout.trim())
+      } catch {
+        json = undefined
+      }
       const text = cap(formatOutput(stdout, stderr))
       resolve({
         ok: code === 0,
         text,
+        json,
         screenshotPath: opts.screenshotOut
       })
     })

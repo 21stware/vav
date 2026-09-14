@@ -35,6 +35,7 @@ describe('callCuaTool', () => {
     })
     assert.equal(result.ok, true)
     assert.match(result.text, /"apps"/)
+    assert.deepEqual(result.json, { apps: [] })
   })
 
   it('fails when the process exits non-zero', async () => {

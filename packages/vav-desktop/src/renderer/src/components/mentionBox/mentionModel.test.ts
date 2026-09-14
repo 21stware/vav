@@ -85,6 +85,18 @@ describe('getActiveMention (pretext detection)', () => {
     const { text, caret } = cursor('hi@ex|ample')
     assert.equal(getActiveMention(text, caret), null)
   })
+
+  it('stays active inside @[App] when brackets are name chars', () => {
+    const opts: MentionOptions = {
+      isNameChar: (ch) => /[\p{L}\p{N}_./\\+[\]-]/u.test(ch)
+    }
+    const { text, caret } = cursor('@[Cal|endar]')
+    assert.deepEqual(getActiveMention(text, caret, opts), {
+      start: 0,
+      trigger: '@',
+      query: '[Cal'
+    })
+  })
 })
 
 describe('applyMention — full-span replacement (MM-57320 guard)', () => {

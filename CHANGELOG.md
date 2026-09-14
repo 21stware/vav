@@ -4,6 +4,14 @@ User-facing changes by release. Unreleased work lives at the top until the next 
 
 ## Unreleased
 
+## 1.30.0
+
+Transcript file paths render as chips (thumbnail + filename) instead of underlined links; click opens a preview. Composer `@` file mentions stay compact in the draft and attach those files on send.
+
+The sidebar footer is one instance switcher — category chips sit above it, and Local / paired hosts live in a single menu instead of a row of service chips.
+
+Computer use lists installed desktop apps (not only the driver’s running set), so `@` mentions and `computer_list` still see Calendar, Safari, and the rest when the driver list is truncated or empty.
+
 ## 1.29.1
 
 macOS “Unpacking update” can be cancelled or retried. A leftover ShipIt cache no longer traps the About page or the corner chip after a failed unzip, and the same version will not auto-download again after a relaunch until you retry.

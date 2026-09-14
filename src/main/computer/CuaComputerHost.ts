@@ -2,6 +2,8 @@ import { mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
+  formatComputerAppsList,
+  mergeComputerApps,
   parseComputerApps,
   parseCuaConnection,
   sanitizeComputerAct,
@@ -12,6 +14,7 @@ import {
 } from '../../shared/computerUse.ts'
 import { callCuaTool, type CuaCallResult } from './CuaDriverClient.ts'
 import { readCuaConnectionFile } from './embeddedCua.ts'
+import { scanInstalledDesktopApps } from './installedApps.ts'
 
 export type ComputerHost = {
   available: () => boolean
@@ -52,35 +55,44 @@ export function createCuaComputerHost(
     available: () => load() != null,
     list: async () => {
       const conn = requireConn()
-      const apps = await callCuaTool({
-        bin: conn.binPath,
-        socket: conn.socketPath,
-        tool: 'list_apps',
-        timeoutMs: 20_000
-      })
-      const windows = await callCuaTool({
-        bin: conn.binPath,
-        socket: conn.socketPath,
-        tool: 'list_windows',
-        timeoutMs: 20_000
-      })
-      const ok = apps.ok && windows.ok
+      const [appsCall, windows] = await Promise.all([
+        callCuaTool({
+          bin: conn.binPath,
+          socket: conn.socketPath,
+          tool: 'list_apps',
+          timeoutMs: 20_000
+        }),
+        callCuaTool({
+          bin: conn.binPath,
+          socket: conn.socketPath,
+          tool: 'list_windows',
+          timeoutMs: 20_000
+        })
+      ])
+      const apps = mergeComputerApps(
+        scanInstalledDesktopApps(),
+        parseComputerApps(appsCall.json ?? appsCall.text)
+      )
       return {
-        ok,
-        text: ['## Apps', apps.text, '', '## Windows', windows.text].join('\n')
+        ok: windows.ok || apps.length > 0,
+        text: ['## Apps', formatComputerAppsList(apps), '', '## Windows', windows.text].join('\n')
       }
     },
     listApps: async () => {
-      if (load() == null) return []
-      const conn = requireConn()
-      const apps = await callCuaTool({
-        bin: conn.binPath,
-        socket: conn.socketPath,
-        tool: 'list_apps',
-        timeoutMs: 20_000
-      })
-      if (!apps.ok) return []
-      return parseComputerApps(apps.text)
+      const installed = scanInstalledDesktopApps()
+      const conn = load()
+      if (!conn) return installed
+      try {
+        const apps = await callCuaTool({
+          bin: conn.binPath,
+          socket: conn.socketPath,
+          tool: 'list_apps',
+          timeoutMs: 20_000
+        })
+        return mergeComputerApps(installed, parseComputerApps(apps.json ?? apps.text))
+      } catch {
+        return installed
+      }
     },
     observe: async (input) => {
       const conn = requireConn()

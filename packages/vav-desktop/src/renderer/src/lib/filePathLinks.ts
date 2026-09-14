@@ -1,7 +1,6 @@
 /**
- * Detect file-path mentions in agent markdown and turn them into clickable
- * links that open the session side preview, with a Finder/Explorer control
- * after each path.
+ * Detect file-path mentions in agent markdown and turn them into compact
+ * chips (thumbnail + filename). Click opens a standalone preview window.
  *
  * Matching rules live in `@shared/filePathMentions` (unit-tested).
  */
@@ -12,9 +11,9 @@ import {
   looksLikeFilePath,
   trimPathCandidate
 } from '@shared/filePathMentions'
-import { tt } from '../i18n/useT'
-import { fileManagerLabel } from './platform'
-import { joinPath } from './path'
+import { localFileStreamUrl } from '@shared/localFileUrl'
+import { PREVIEW_IMAGE_EXTS } from '@shared/previewKind'
+import { basename, extname, joinPath } from './path'
 
 export {
   findFilePathMentions,
@@ -52,29 +51,41 @@ function escapeHtml(value: string): string {
     .replace(/"/g, '&quot;')
 }
 
-/** Compact folder glyph for the post-link Finder/Explorer control. */
-const REVEAL_SVG =
-  '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>'
+const FILE_GLYPH =
+  '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>'
 
-function revealButtonHtml(path: string): string {
-  const title = tt('tools.revealInFm', { fileManager: fileManagerLabel() })
-  return (
-    `<button type="button" class="md-file-reveal" data-path="${escapeHtml(path)}" ` +
-    `title="${escapeHtml(title)}" aria-label="${escapeHtml(title)}">` +
-    REVEAL_SVG +
-    `</button>`
-  )
+/** Visible chip label — basename only; the full path stays on `title`. */
+export function fileMentionDisplayName(path: string): string {
+  const trimmed = trimPathCandidate(path.trim())
+  return basename(trimmed) || trimmed
 }
 
-/** Path link + Finder control as a single inline unit. */
-export function fileMentionHtml(path: string, label: string): string {
+export function isFileMentionImage(path: string): boolean {
+  return PREVIEW_IMAGE_EXTS.has(extname(path).toLowerCase())
+}
+
+function chipThumbHtml(path: string): string {
+  if (isFileMentionImage(path) && (/^\/|^[A-Za-z]:[\\/]/.test(path) || path.startsWith('~/'))) {
+    const src = escapeHtml(localFileStreamUrl(path))
+    return (
+      `<img class="md-file-chip-thumb" src="${src}" alt="" draggable="false" ` +
+      `onerror="this.hidden=true;const n=this.nextElementSibling;if(n)n.hidden=false"/>` +
+      `<span class="md-file-chip-icon" hidden>${FILE_GLYPH}</span>`
+    )
+  }
+  return `<span class="md-file-chip-icon">${FILE_GLYPH}</span>`
+}
+
+/** Inline file chip: thumbnail + filename. Full path is the tooltip. */
+export function fileMentionHtml(path: string): string {
+  const resolved = trimPathCandidate(path)
+  const name = fileMentionDisplayName(resolved)
   return (
-    `<span class="md-file-mention">` +
-    `<a class="md-file-link" href="#" data-path="${escapeHtml(path)}" title="${escapeHtml(path)}">` +
-    `${escapeHtml(label)}` +
-    `</a>` +
-    revealButtonHtml(path) +
-    `</span>`
+    `<button type="button" class="md-file-chip" data-path="${escapeHtml(resolved)}" ` +
+    `title="${escapeHtml(resolved)}">` +
+    chipThumbHtml(resolved) +
+    `<span class="md-file-chip-name">${escapeHtml(name)}</span>` +
+    `</button>`
   )
 }
 
@@ -89,7 +100,7 @@ type MdToken = {
 
 /**
  * markdown-it plugin: turn path-like text (and path-like inline code) into
- * path links with a trailing Finder/Explorer button.
+ * thumbnail + filename chips.
  */
 export function filePathLinksPlugin(md: MarkdownIt): void {
   md.core.ruler.after('md_marks', 'file_path_links', (state) => {
@@ -119,8 +130,7 @@ export function filePathLinksPlugin(md: MarkdownIt): void {
   md.renderer.rules.code_inline = (tokens, idx, options, env, self): string => {
     const content = tokens[idx]?.content ?? ''
     if (looksLikeFilePath(content)) {
-      const path = trimPathCandidate(content)
-      return `<code class="md-file-code">${fileMentionHtml(path, content)}</code>`
+      return fileMentionHtml(trimPathCandidate(content))
     }
     return defaultCodeInline(tokens, idx, options, env, self)
   }
@@ -143,7 +153,7 @@ function pushSplitPaths(Token: any, text: string, out: MdToken[]): void {
       out.push(t)
     }
     const html = new Token('html_inline', '', 0)
-    html.content = fileMentionHtml(mention.path, mention.path)
+    html.content = fileMentionHtml(mention.path)
     out.push(html)
     last = mention.index + mention.raw.length
   }

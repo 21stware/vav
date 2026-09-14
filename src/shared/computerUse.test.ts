@@ -2,6 +2,9 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import {
   cuaEmbeddedMcpServer,
+  filterComputerApps,
+  formatComputerAppsList,
+  mergeComputerApps,
   parseComputerApps,
   parseCuaConnection,
   sanitizeComputerAct,
@@ -160,8 +163,8 @@ describe('parseComputerApps', () => {
       { app_name: 'Notes', bundleId: 'com.apple.Notes' }
     ])
     assert.deepEqual(parseComputerApps(raw), [
-      { name: 'Notes', bundleId: 'com.apple.Notes', pid: null },
-      { name: 'Safari', bundleId: 'com.apple.Safari', pid: 42 }
+      { name: 'Safari', bundleId: 'com.apple.Safari', pid: 42 },
+      { name: 'Notes', bundleId: 'com.apple.Notes', pid: null }
     ])
   })
 
@@ -183,5 +186,70 @@ describe('parseComputerApps', () => {
     assert.deepEqual(parseComputerApps('not json'), [])
     assert.deepEqual(parseComputerApps(null), [])
     assert.deepEqual(parseComputerApps(42), [])
+  })
+
+  it('unwraps MCP structuredContent and treats pid 0 as not running', () => {
+    const apps = parseComputerApps({
+      structuredContent: {
+        apps: [
+          { name: 'Calendar', bundle_id: 'com.apple.iCal', pid: 0, running: false },
+          { name: 'Safari', bundle_id: 'com.apple.Safari', pid: 88, running: true }
+        ]
+      }
+    })
+    assert.deepEqual(apps, [
+      { name: 'Safari', bundleId: 'com.apple.Safari', pid: 88 },
+      { name: 'Calendar', bundleId: 'com.apple.iCal', pid: null }
+    ])
+  })
+
+  it('unwraps a nested result object (not a bare array)', () => {
+    const apps = parseComputerApps({
+      result: { apps: [{ name: 'Notes', bundle_id: 'com.apple.Notes', pid: 0 }] }
+    })
+    assert.deepEqual(apps, [{ name: 'Notes', bundleId: 'com.apple.Notes', pid: null }])
+  })
+})
+
+describe('mergeComputerApps / filterComputerApps', () => {
+  it('overlays driver pids onto the installed scan and keeps system apps', () => {
+    const merged = mergeComputerApps(
+      [
+        { name: 'Calendar', bundleId: 'com.apple.iCal', pid: null },
+        { name: 'Safari', bundleId: 'com.apple.Safari', pid: null }
+      ],
+      [{ name: 'Safari', bundleId: 'com.apple.Safari', pid: 42 }]
+    )
+    assert.deepEqual(merged, [
+      { name: 'Safari', bundleId: 'com.apple.Safari', pid: 42 },
+      { name: 'Calendar', bundleId: 'com.apple.iCal', pid: null }
+    ])
+  })
+
+  it('filters by name, compact name, or bundle id and strips @[ ]', () => {
+    const apps = [
+      { name: 'Google Chrome', bundleId: 'com.google.Chrome', pid: null },
+      { name: 'Calendar', bundleId: 'com.apple.iCal', pid: 9 }
+    ]
+    assert.deepEqual(
+      filterComputerApps(apps, '[cal]').map((a) => a.name),
+      ['Calendar']
+    )
+    assert.deepEqual(
+      filterComputerApps(apps, 'googlechrome').map((a) => a.name),
+      ['Google Chrome']
+    )
+    assert.deepEqual(
+      filterComputerApps(apps, 'apple.ical').map((a) => a.name),
+      ['Calendar']
+    )
+  })
+
+  it('formats a compact agent listing', () => {
+    assert.equal(
+      formatComputerAppsList([{ name: 'Calendar', bundleId: 'com.apple.iCal', pid: null }]),
+      '- Calendar  com.apple.iCal  pid=—'
+    )
+    assert.equal(formatComputerAppsList([]), '(none)')
   })
 })

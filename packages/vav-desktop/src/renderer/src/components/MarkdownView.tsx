@@ -24,10 +24,13 @@ import {
   disposeDiagramViewportZoom,
   syncDiagramViewportZoom
 } from '../lib/diagramViewportZoom'
-import { resolveMentionedPath } from '../lib/filePathLinks'
 import { revealCitation } from '../lib/mdMarks'
 import { joinPath } from '../lib/path'
-import { openConversationFile, revealSessionFileInFinder } from '../lib/openSessionFile'
+import {
+  openAttachmentPreview,
+  resolveSessionFilePath,
+  revealSessionFileInFinder
+} from '../lib/openSessionFile'
 import { onHljsReady } from '../lib/hljsLazy'
 import { tt } from '../i18n/useT'
 import {
@@ -207,29 +210,13 @@ export const MarkdownView = memo(function MarkdownView({
       return
     }
 
-    const fileLink = target.closest<HTMLAnchorElement>('a.md-file-link')
-    if (fileLink) {
+    const fileChip = target.closest<HTMLElement>('.md-file-chip, a.md-file-link')
+    if (fileChip) {
       event.preventDefault()
       event.stopPropagation()
-      const raw = fileLink.dataset.path || fileLink.textContent || ''
+      const raw = fileChip.dataset.path || fileChip.textContent || ''
       if (!raw.trim()) return
-      // Chat / agent log: open in the session right drawer. Previewed .md files
-      // keep standalone open so nested docs stay a separate window.
-      if (filePath) {
-        const resolved = resolveMentionedPath(
-          raw,
-          useSessionStore.getState().conversations.find(
-            (c) => c.id === useSessionStore.getState().activeId
-          )?.workingDirectory ?? null,
-          useSessionStore.getState().home || ''
-        )
-        void window.vav.window.openFilePreview(resolved, {
-          origin: 'session',
-          conversationId: useSessionStore.getState().activeId || undefined
-        })
-      } else {
-        openConversationFile(raw)
-      }
+      openAttachmentPreview(resolveSessionFilePath(raw), useSessionStore.getState().activeId)
       return
     }
 

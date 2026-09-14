@@ -1404,7 +1404,6 @@ export function Sidebar({
 
   return (
     <aside className={`sidebar${floating ? ' floating' : ''}`} data-testid="sidebar">
-      <SidebarCategoryBar />
       <div className="sidebar-search">
         <div className="sidebar-search-field">
           <Search
@@ -1729,21 +1728,24 @@ export function Sidebar({
       <UpdateCorner variant="inline" />
 
       <div className="sidebar-foot">
-        <SidebarServiceBar
-          sessionMenuItems={[
-            {
-              label: t('sidebar.menu.import'),
-              icon: lucideMenuIcon('import'),
-              onSelect: () => void importSessions()
-            },
-            {
-              label: t('sidebar.category.archived'),
-              icon: lucideMenuIcon('archive'),
-              checked: archiveView,
-              onSelect: () => activateSidebarListMode('archive')
-            }
-          ]}
-        />
+        <div className="sidebar-nav-block">
+          <SidebarCategoryBar />
+          <SidebarServiceBar
+            sessionMenuItems={[
+              {
+                label: t('sidebar.menu.import'),
+                icon: lucideMenuIcon('import'),
+                onSelect: () => void importSessions()
+              },
+              {
+                label: t('sidebar.category.archived'),
+                icon: lucideMenuIcon('archive'),
+                checked: archiveView,
+                onSelect: () => activateSidebarListMode('archive')
+              }
+            ]}
+          />
+        </div>
       </div>
     </aside>
   )

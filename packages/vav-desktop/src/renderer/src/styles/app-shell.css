@@ -895,7 +895,6 @@ html[data-resizing='true'] webview {
   z-index: -1;
   pointer-events: none;
   opacity: var(--chrome-solid);
-  background: color-mix(in srgb, var(--bg-content) 70%, transparent);
   backdrop-filter: blur(12px) saturate(1.2);
   -webkit-backdrop-filter: blur(12px) saturate(1.2);
   -webkit-mask-image: var(--chrome-glass-mask);
@@ -1143,11 +1142,6 @@ html[data-resizing='true'] webview {
   inset: 0;
   z-index: -1;
   pointer-events: none;
-  background: color-mix(
-    in srgb,
-    var(--bg-content) calc(var(--chrome-solid) * 42%),
-    transparent
-  );
   backdrop-filter:
     blur(calc(var(--chrome-solid) * 20px))
     saturate(calc(1 + var(--chrome-solid) * 0.8))
@@ -1788,16 +1782,19 @@ kbd {
 
 .sidebar-category-bar {
   flex: 0 0 auto;
+  width: 100%;
   min-width: 0;
   display: flex;
   align-items: center;
   gap: 2px;
-  padding: 4px 10px 0;
+  padding: 0;
+  overflow: visible;
   background: transparent;
 }
 
 .sidebar-category-chips.sidebar-service-bar {
   flex: 1 1 auto;
+  width: auto;
   min-width: 0;
   padding: 0;
   overflow-x: hidden;
@@ -1811,12 +1808,12 @@ kbd {
   justify-content: center;
   width: 28px;
   height: 28px;
-  margin: 0;
+  margin-left: auto;
   padding: 0;
   border: 0;
   border-radius: 7px;
   background: transparent;
-  color: var(--text-tertiary);
+  color: var(--text-secondary);
   cursor: pointer;
   transition:
     background var(--dur-hover) ease,
@@ -4397,77 +4394,133 @@ kbd {
   overflow: visible;
 }
 
-/* Clickable file paths in agent log (+ Finder/Explorer control after the link). */
+/* File-path chips in agent log: thumb + filename, not a hyperlink. */
+.md-file-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  max-width: min(100%, 22em);
+  margin: 0 1px;
+  padding: 1px 4px 1px 2px;
+  border: 0;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--text) 8%, var(--bg-sunken, var(--bg-content)));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 10%, transparent);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.92em;
+  line-height: 1.35;
+  vertical-align: -0.25em;
+  cursor: default;
+  text-decoration: none;
+  transition:
+    background var(--dur-hover, 120ms) ease,
+    box-shadow var(--dur-hover, 120ms) ease;
+}
+
+.md-file-chip-hit {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: default;
+}
+
+.md-file-chip-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 12px;
+  height: 12px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: default;
+  opacity: 0.72;
+}
+
+.md-file-chip-close:hover {
+  opacity: 1;
+  color: var(--text);
+  background: color-mix(in srgb, var(--text) 10%, transparent);
+}
+
+.md-file-chip-close svg {
+  display: block;
+}
+
+.md-file-chip:hover {
+  background: color-mix(in srgb, var(--text) 12%, var(--bg-sunken, var(--bg-content)));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 16%, transparent);
+}
+
+.md-file-chip:active {
+  transform: scale(0.98);
+}
+
+.md-file-chip-thumb,
+.md-file-chip-icon {
+  display: block;
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+}
+
+.md-file-chip-thumb {
+  object-fit: cover;
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+.md-file-chip-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+}
+
+.md-file-chip-icon svg {
+  display: block;
+}
+
+.md-file-chip-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Legacy path-link markup still in older transcripts. */
 .md-file-mention {
   display: inline;
   white-space: normal;
 }
 
 a.md-file-link {
-  color: var(--accent-text);
-  text-decoration: underline;
-  text-decoration-color: color-mix(in srgb, var(--accent) 45%, transparent);
-  text-underline-offset: 2px;
+  color: inherit;
+  text-decoration: none;
   cursor: default;
   word-break: break-all;
 }
 
-a.md-file-link:hover {
-  color: var(--accent-hover, var(--accent));
-  text-decoration-color: var(--accent);
-}
-
 button.md-file-reveal {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  vertical-align: -0.15em;
-  margin: 0 0 0 3px;
-  padding: 1px 3px;
-  border: 0;
-  border-radius: 4px;
-  background: transparent;
-  color: var(--text-tertiary, var(--text-secondary));
-  cursor: default;
-  line-height: 0;
-  opacity: 0.75;
-  transition:
-    opacity var(--dur-hover, 120ms) ease,
-    color var(--dur-hover, 120ms) ease,
-    background var(--dur-hover, 120ms) ease;
-}
-
-button.md-file-reveal:hover {
-  opacity: 1;
-  color: var(--text);
-  background: color-mix(in srgb, var(--text) 8%, transparent);
-}
-
-button.md-file-reveal:active {
-  transform: scale(0.96);
-}
-
-.md-file-mention:hover button.md-file-reveal {
-  opacity: 1;
+  display: none;
 }
 
 code.md-file-code {
-  padding: 0.1em 0.35em;
-  border-radius: 4px;
-  background: var(--bg-sunken);
-}
-
-code.md-file-code a.md-file-link {
-  text-decoration: none;
-  font-family: inherit;
-}
-
-code.md-file-code a.md-file-link:hover {
-  text-decoration: underline;
-}
-
-code.md-file-code button.md-file-reveal {
-  vertical-align: middle;
+  padding: 0;
+  background: transparent;
 }
 
 .md-math {
@@ -7108,7 +7161,67 @@ button.tool-row {
   padding: 6px 8px 10px;
 }
 
-.sidebar-foot .sidebar-service-bar {
+.sidebar-nav-block {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  min-width: 0;
+  padding-top: 6px;
+  border-top: 0.5px solid color-mix(in srgb, var(--text) 10%, transparent);
+}
+
+.sidebar-instance-switch {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.sidebar-instance-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  height: 28px;
+  padding: 0 6px 0 7px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  transition:
+    background var(--dur-hover) ease,
+    color var(--dur-hover) ease,
+    transform var(--dur-press) var(--ease-out);
+}
+
+.sidebar-instance-trigger > svg:first-of-type {
+  display: block;
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+}
+
+.sidebar-instance-trigger:hover {
+  background: var(--bg-hover);
+}
+
+.sidebar-instance-trigger:active {
+  transform: scale(0.97);
+}
+
+.sidebar-instance-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+.sidebar-foot .sidebar-service-bar:not(.sidebar-category-chips) {
   flex: 0 0 auto;
   width: 100%;
 }
@@ -8206,7 +8319,6 @@ button.tool-row {
   inset: 0;
   z-index: -1;
   pointer-events: none;
-  background: color-mix(in srgb, var(--bg-content) 52%, transparent);
   backdrop-filter: blur(20px) saturate(1.35);
   -webkit-backdrop-filter: blur(20px) saturate(1.35);
   -webkit-mask-image: var(--chrome-glass-mask);

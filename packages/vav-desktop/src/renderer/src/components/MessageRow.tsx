@@ -16,6 +16,7 @@ import {
 } from 'lucide-react'
 import type { ChatMessage, PreviewRef, TextBlock } from '@shared/types'
 import { AttachmentTile } from './ComposerAttachments'
+import { PathRichText } from './PathRichText'
 import { markdownToPlainText } from '@shared/markdownPlain'
 import { showMenu, type MenuItem } from '../lib/nativeMenu'
 import { mergeComposerFilePaths } from '../state/sessionQueue'
@@ -388,7 +389,7 @@ export const MessageRow = memo(function MessageRow({
               className={`${classes}${collapsed ? ' is-collapsed' : ''}`}
               id={`msg-${message.id}`}
             >
-              {body}
+              <PathRichText text={body} />
             </div>
           )}
           {!hasBody && (

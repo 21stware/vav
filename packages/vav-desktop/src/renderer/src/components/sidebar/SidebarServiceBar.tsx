@@ -10,7 +10,7 @@ export function SidebarServiceBar({
 }: {
   /** Session-management actions folded into the active service's menu. */
   sessionMenuItems?: MenuItem[]
-} = {}): React.JSX.Element {
+} = {}): React.JSX.Element | null {
   const t = useT()
   const hosts = useSessionStore((s) => s.hosts)
   const services = listedServices(hosts)
@@ -22,37 +22,47 @@ export function SidebarServiceBar({
   const incoming =
     incomingControllers.some((row) => row.online) || (remoteControlStatus?.clients.length ?? 0) > 0
 
+  const current = services.find((service) => service.id === windowMachineId) ?? services[0]
+  if (!current) return null
+
   const switchService = (machineId: string): void => {
+    if (machineId === windowMachineId) return
     void (async () => {
       await useSessionStore.getState().switchMachine(machineId)
       await window.vav.hosts.show(machineId)
     })()
   }
 
-  const openMore = (machineId: string, anchor: HTMLElement): void => {
+  const openMenu = (anchor: HTMLElement): void => {
     const items: MenuItem[] = [
+      { label: t('sidebar.switchService'), header: true },
+      ...services.map((service) => ({
+        label: service.name,
+        checked: service.id === windowMachineId,
+        onSelect: () => switchService(service.id)
+      })),
+      { label: '', divider: true },
       {
         label: t('sidebar.setDefaultService'),
-        checked: defaultMachineId === machineId,
-        onSelect: () => void setDefaultMachine(machineId)
+        checked: defaultMachineId === current.id,
+        onSelect: () => void setDefaultMachine(current.id)
       },
       {
         label: t('sidebar.pairDevice'),
-        onSelect: () => useSessionStore.getState().openSettings('connect', undefined, machineId)
+        onSelect: () => useSessionStore.getState().openSettings('connect', undefined, current.id)
       },
       {
         label: t('sidebar.configureService'),
         icon: lucideMenuIcon('settings'),
-        onSelect: () => useSessionStore.getState().openSettings('agents', undefined, machineId)
+        onSelect: () => useSessionStore.getState().openSettings('agents', undefined, current.id)
       }
     ]
-    if (!isLocalMachine(machineId)) {
+    if (!isLocalMachine(current.id)) {
       items.push({
         label: t('machines.forget'),
-        onSelect: () => void window.vav.hosts.forget(machineId)
+        onSelect: () => void window.vav.hosts.forget(current.id)
       })
     }
-    // Import belongs to the active service, not a separate fixed button.
     if (sessionMenuItems.length) {
       items.push({ label: '', divider: true }, ...sessionMenuItems)
     }
@@ -61,7 +71,7 @@ export function SidebarServiceBar({
       {
         label: t('common.settingsEllipsis'),
         icon: lucideMenuIcon('settings'),
-        onSelect: () => useSessionStore.getState().openSettings('appearance', undefined, machineId)
+        onSelect: () => useSessionStore.getState().openSettings('appearance', undefined, current.id)
       },
       {
         label: t('sidebar.pictureInPicture'),
@@ -72,40 +82,30 @@ export function SidebarServiceBar({
     void showMenu(items, menuAnchor(anchor))
   }
 
+  const title = isLocalMachine(current.id)
+    ? `${current.name}${incoming ? ` · ${t('sidebar.connect')}` : ''}`
+    : current.name
+
   return (
-    <div className="sidebar-service-bar" data-testid="sidebar-service-bar">
-      {services.map((service) => {
-        const expanded = service.id === windowMachineId
-        const title = isLocalMachine(service.id)
-          ? `${service.name}${incoming ? ` · ${t('sidebar.connect')}` : ''}`
-          : service.name
-        const Icon = isLocalMachine(service.id) ? House : Monitor
-        return (
-          <button
-            key={service.id}
-            type="button"
-            className="sidebar-service-chip"
-            data-expanded={expanded ? 'true' : 'false'}
-            data-testid={expanded ? 'sidebar-connect' : 'sidebar-service-chip'}
-            data-machine-id={service.id}
-            title={title}
-            aria-label={expanded ? t('sidebar.switchService') : title}
-            aria-expanded={expanded}
-            onClick={(event) => {
-              if (expanded) openMore(service.id, event.currentTarget)
-              else switchService(service.id)
-            }}
-          >
-            <Icon size={14} aria-hidden />
-            <span className="sidebar-service-label-clip" aria-hidden="true">
-              <span className="sidebar-service-label-inner">
-                <span className="sidebar-service-label">{service.name}</span>
-                <ChevronDown className="sidebar-foot-connect-chevron" size={11} aria-hidden />
-              </span>
-            </span>
-          </button>
-        )
-      })}
+    <div className="sidebar-instance-switch" data-testid="sidebar-service-bar">
+      <button
+        type="button"
+        className="sidebar-instance-trigger"
+        data-testid="sidebar-connect"
+        data-machine-id={current.id}
+        title={title}
+        aria-label={t('sidebar.switchService')}
+        aria-haspopup="menu"
+        onClick={(event) => openMenu(event.currentTarget)}
+      >
+        {isLocalMachine(current.id) ? (
+          <House size={14} aria-hidden />
+        ) : (
+          <Monitor size={14} aria-hidden />
+        )}
+        <span className="sidebar-instance-name">{current.name}</span>
+        <ChevronDown className="sidebar-foot-connect-chevron" size={11} aria-hidden />
+      </button>
     </div>
   )
 }

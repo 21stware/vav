@@ -3352,6 +3352,22 @@ html:has(.provider-account-popup) #root {
   color: color-mix(in srgb, var(--warning) 70%, var(--text-secondary));
 }
 
+.attachment-file-chip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 0 auto;
+  max-width: 100%;
+}
+
+.attachment-file-chip .attachment-image-remove {
+  position: static;
+  flex: 0 0 auto;
+  top: auto;
+  right: auto;
+}
+
 .attachment-image-chip {
   position: relative;
   display: inline-flex;

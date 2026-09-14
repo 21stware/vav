@@ -3,6 +3,9 @@ import { describe, it } from 'node:test'
 import {
   appMentionToken,
   appNameFromToken,
+  collectFileMentionPaths,
+  expandFileMentionTokens,
+  fileMentionToken,
   findComposerPills
 } from './mentionTokens.ts'
 
@@ -38,5 +41,33 @@ describe('findComposerPills', () => {
 
   it('ignores bare words and emails', () => {
     assert.deepEqual(findComposerPills('ping me at hi@example.com about foo'), [])
+  })
+
+  it('treats @file[name] tokens as file pills with the registered path', () => {
+    const token = fileMentionToken('/Users/me/Pictures/IMG_1555.JPG')
+    assert.equal(token, '@file[IMG_1555.JPG]')
+    const text = `look at ${token} please`
+    const pills = findComposerPills(text)
+    assert.deepEqual(
+      pills.map((p) => `${p.kind}:${p.name}`),
+      ['file:/Users/me/Pictures/IMG_1555.JPG']
+    )
+    assert.equal(text.slice(pills[0]!.start, pills[0]!.end), token)
+  })
+})
+
+describe('file tokens', () => {
+  it('expands registered tokens back to the real path', () => {
+    const token = fileMentionToken('/tmp/notes.md')
+    assert.equal(expandFileMentionTokens(`see ${token}`), 'see /tmp/notes.md')
+    assert.deepEqual(collectFileMentionPaths(`see ${token}`), ['/tmp/notes.md'])
+  })
+
+  it('disambiguates two files that share a basename', () => {
+    const a = fileMentionToken('/a/shot.png')
+    const b = fileMentionToken('/b/shot.png')
+    assert.equal(a, '@file[shot.png]')
+    assert.equal(b, '@file[shot 2.png]')
+    assert.equal(expandFileMentionTokens(`${a} ${b}`), '/a/shot.png /b/shot.png')
   })
 })
