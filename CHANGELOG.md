@@ -4,6 +4,10 @@ User-facing changes by release. Unreleased work lives at the top until the next 
 
 ## Unreleased
 
+## 1.30.1
+
+macOS in-app update no longer sticks on “Unpacking update” for Download / Notify. After the ZIP is local, VAV starts Squirrel.Mac itself instead of waiting for a ShipIt process that only runs at install time.
+
 ## 1.30.0
 
 Transcript file paths render as chips (thumbnail + filename) instead of underlined links; click opens a preview. Composer `@` file mentions stay compact in the draft and attach those files on send.

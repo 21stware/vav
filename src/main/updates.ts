@@ -10,7 +10,6 @@ import {
   DEFAULT_AUTO_UPDATE_POLICY,
   UPDATE_HEARTBEAT_MS,
   UPDATE_LAUNCH_DELAY_MS,
-  UPDATE_STAGING_DEAD_GRACE_MS,
   UPDATE_STAGING_TIMEOUT_MS,
   canCancelUpdateDownload,
   nativeStagingWaitDecision,
@@ -21,6 +20,7 @@ import {
   parseSkippedUpdateVersion,
   shouldAutoInstall,
   shouldRunAutomaticCheck,
+  shouldStartNativeMacStaging,
   shouldSkipAutoFollowUp,
   type AutoUpdatePolicy,
   type UpdateCheckReason
@@ -44,9 +44,11 @@ const REPO = GITHUB_UPDATE_REPO
  * macOS note: electron-updater marks the ZIP downloaded before Squirrel.Mac
  * finishes staging (verify + ditto unzip). Showing "Restart" too early makes
  * quitAndInstall appear to no-op. We wait for Electron's native
- * `update-downloaded` before flipping to `ready`. The `preparing` wait is
- * cancellable — Squirrel can hang (proxy feed, leftover ShipIt), and hide-on-
- * close would otherwise leave "Unpacking update" on screen with no escape.
+ * `update-downloaded` before flipping to `ready`. For notify / download,
+ * electron-updater will not start that native fetch (`autoInstallOnAppQuit`
+ * is off), so we call `checkForUpdates()` ourselves after the ZIP is local.
+ * The `preparing` wait is cancellable — hide-on-close would otherwise leave
+ * "Unpacking update" on screen with no escape.
  *
  * Also: a failed Squirrel.Mac install can leave launchd job `com.vav.app.ShipIt`
  * restarting every ~2s without ShipItState.plist. That loop re-triggers app
@@ -431,6 +433,21 @@ export class UpdateService {
           bytesPerSecond: null,
           message: null
         })
+        // electron-updater serves the ZIP locally, but only starts Squirrel
+        // when autoInstallOnAppQuit is true. notify / download must kick it.
+        if (
+          shouldStartNativeMacStaging({
+            nativeReady: this.nativeUpdateReady,
+            autoInstallOnAppQuit: shouldAutoInstall(this.policy)
+          })
+        ) {
+          try {
+            console.info('[updates] starting Squirrel.Mac staging')
+            electronAutoUpdater.checkForUpdates()
+          } catch (err) {
+            console.warn('[updates] Squirrel.Mac checkForUpdates failed', err)
+          }
+        }
         const staged = await this.waitForNativeUpdateReady()
         if (this.cancelRequested) return this.cancelledDownloadState()
         if (!staged || !this.nativeUpdateReady) {
@@ -533,9 +550,7 @@ export class UpdateService {
       const tick = (): void => {
         const decision = nativeStagingWaitDecision({
           nativeReady: this.nativeUpdateReady,
-          shipItRunning: isMacShipItRunning(),
           elapsedMs: Date.now() - startedAt,
-          deadGraceMs: UPDATE_STAGING_DEAD_GRACE_MS,
           timeoutMs
         })
         if (decision === 'ready') {
@@ -704,16 +719,6 @@ export function clearOrphanedMacShipIt(): void {
     rmSync(cacheDir, { recursive: true, force: true })
   } catch {
     // ignore
-  }
-}
-
-function isMacShipItRunning(): boolean {
-  if (process.platform !== 'darwin') return false
-  try {
-    execFileSync('pgrep', ['-f', 'com.vav.app.ShipIt'], { stdio: 'ignore' })
-    return true
-  } catch {
-    return false
   }
 }
 

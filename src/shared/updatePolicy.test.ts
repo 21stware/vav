@@ -18,7 +18,8 @@ import {
   shouldAutoCheck,
   shouldAutoDownload,
   shouldAutoInstall,
-  shouldRunAutomaticCheck
+  shouldRunAutomaticCheck,
+  shouldStartNativeMacStaging
 } from './updatePolicy.ts'
 
 describe('resolveAutoUpdatePolicy', () => {
@@ -245,12 +246,44 @@ describe('parseSkippedUpdateVersion', () => {
   })
 })
 
+describe('shouldStartNativeMacStaging', () => {
+  it('starts Squirrel for download/notify, not for auto (already started during download)', () => {
+    assert.equal(
+      shouldStartNativeMacStaging({
+        nativeReady: false,
+        autoInstallOnAppQuit: shouldAutoInstall('download')
+      }),
+      true
+    )
+    assert.equal(
+      shouldStartNativeMacStaging({
+        nativeReady: false,
+        autoInstallOnAppQuit: shouldAutoInstall('notify')
+      }),
+      true
+    )
+    assert.equal(
+      shouldStartNativeMacStaging({
+        nativeReady: false,
+        autoInstallOnAppQuit: shouldAutoInstall('auto')
+      }),
+      false
+    )
+    assert.equal(
+      shouldStartNativeMacStaging({
+        nativeReady: true,
+        autoInstallOnAppQuit: shouldAutoInstall('download')
+      }),
+      false
+    )
+  })
+})
+
 describe('nativeStagingWaitDecision', () => {
-  it('waits while ShipIt is working, fails fast when it is dead', () => {
+  it('waits for the native event and only times out after the full window', () => {
     assert.equal(
       nativeStagingWaitDecision({
         nativeReady: true,
-        shipItRunning: false,
         elapsedMs: 60_000
       }),
       'ready'
@@ -258,7 +291,13 @@ describe('nativeStagingWaitDecision', () => {
     assert.equal(
       nativeStagingWaitDecision({
         nativeReady: false,
-        shipItRunning: true,
+        elapsedMs: 45_000
+      }),
+      'wait'
+    )
+    assert.equal(
+      nativeStagingWaitDecision({
+        nativeReady: false,
         elapsedMs: 5 * 60_000
       }),
       'wait'
@@ -266,23 +305,6 @@ describe('nativeStagingWaitDecision', () => {
     assert.equal(
       nativeStagingWaitDecision({
         nativeReady: false,
-        shipItRunning: false,
-        elapsedMs: 10_000
-      }),
-      'wait'
-    )
-    assert.equal(
-      nativeStagingWaitDecision({
-        nativeReady: false,
-        shipItRunning: false,
-        elapsedMs: 45_000
-      }),
-      'dead'
-    )
-    assert.equal(
-      nativeStagingWaitDecision({
-        nativeReady: false,
-        shipItRunning: true,
         elapsedMs: 10 * 60_000
       }),
       'timeout'

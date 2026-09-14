@@ -46,6 +46,19 @@ export function shouldAutoInstall(policy: AutoUpdatePolicy): boolean {
   return policy === 'auto'
 }
 
+/**
+ * electron-updater only starts Squirrel.Mac during `downloadUpdate()` when
+ * `autoInstallOnAppQuit` is on (`auto` policy). notify / download must kick
+ * the native fetch ourselves after the ZIP is local, or `update-downloaded`
+ * never fires and the UI sits on “Unpacking update”.
+ */
+export function shouldStartNativeMacStaging(opts: {
+  nativeReady: boolean
+  autoInstallOnAppQuit: boolean
+}): boolean {
+  return !opts.nativeReady && !opts.autoInstallOnAppQuit
+}
+
 export type UpdateCheckReason = 'launch' | 'heartbeat' | 'focus' | 'policy'
 
 export function isUpdateBusyPhase(phase: UpdatePhase): boolean {
@@ -130,26 +143,21 @@ export function parseSkippedUpdateVersion(raw: unknown): string | null {
 
 /** How long to wait for Squirrel.Mac after the ZIP is local. Real unzips can take minutes. */
 export const UPDATE_STAGING_TIMEOUT_MS = 10 * 60 * 1000
-/** If ShipIt never starts, fail instead of sitting on “Unpacking…” until the full timeout. */
-export const UPDATE_STAGING_DEAD_GRACE_MS = 45_000
 
-export type NativeStagingWait = 'ready' | 'wait' | 'dead' | 'timeout'
+export type NativeStagingWait = 'ready' | 'wait' | 'timeout'
 
 /**
- * Native `update-downloaded` is the only safe “Restart” signal, but ShipIt
- * can die (or never start) while leftover cache keeps the UI in `preparing`.
+ * Native `update-downloaded` is the only safe “Restart” signal.
+ * Squirrel.Mac verifies and unzips in-process — ShipIt is not running yet —
+ * so a missing ShipIt process is not a failed unpack.
  */
 export function nativeStagingWaitDecision(opts: {
   nativeReady: boolean
-  shipItRunning: boolean
   elapsedMs: number
-  deadGraceMs?: number
   timeoutMs?: number
 }): NativeStagingWait {
   if (opts.nativeReady) return 'ready'
   const timeoutMs = opts.timeoutMs ?? UPDATE_STAGING_TIMEOUT_MS
-  const deadGraceMs = opts.deadGraceMs ?? UPDATE_STAGING_DEAD_GRACE_MS
   if (opts.elapsedMs >= timeoutMs) return 'timeout'
-  if (!opts.shipItRunning && opts.elapsedMs >= deadGraceMs) return 'dead'
   return 'wait'
 }
