@@ -173,7 +173,12 @@ export type DaemonPairOffer = {
   pairing: string
 }
 
-export type DaemonClientMessage = DaemonHello | DaemonReq | DaemonPing | DaemonPairAsk
+export type DaemonClientMessage =
+  | DaemonHello
+  | DaemonProxyHello
+  | DaemonReq
+  | DaemonPing
+  | DaemonPairAsk
 export type DaemonServerMessage =
   | DaemonWelcome
   | DaemonRes
@@ -241,6 +246,8 @@ export function parseDaemonPairAsk(value: unknown): DaemonPairAsk | null {
 export function parseDaemonClientFrame(value: unknown): DaemonClientMessage | null {
   const hello = parseDaemonHello(value)
   if (hello) return hello
+  const proxy = parseDaemonProxyHello(value)
+  if (proxy) return proxy
   const ask = parseDaemonPairAsk(value)
   if (ask) return ask
   if (typeof value !== 'object' || value === null) return null

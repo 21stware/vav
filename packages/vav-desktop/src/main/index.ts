@@ -8212,7 +8212,7 @@ return c as text`
       fork: (id, messageId) => agent.fork(id, messageId),
       compact: (id, options) => agent.compact(id, options),
       clearCompaction: (id, leafId) => agent.clearCompaction(id, leafId),
-      tryRemoteSend: (id, text, attachments, quote, contextBlocks, contextFile) => {
+      tryRemoteSend: (id, text) => {
         const remote = conversationStore.get(id)
         if (!remote) return false
         if (isLocalMachine(remote.machineId)) {

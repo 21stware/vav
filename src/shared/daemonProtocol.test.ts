@@ -74,6 +74,23 @@ describe('daemon client frames', () => {
   it('rejects a req without a method', () => {
     assert.equal(parseDaemonClientFrame({ type: 'req', id: '1' }), null)
   })
+
+  it('parses a proxy-role hello as a client frame', () => {
+    const frame = parseDaemonClientFrame({
+      type: 'hello',
+      proto: 1,
+      auth: 'secret-value-16+',
+      role: 'proxy',
+      targetPort: 5173
+    })
+    assert.ok(frame)
+    assert.equal(frame.type, 'hello')
+    if (frame.type === 'hello' && frame.role === 'proxy') {
+      assert.equal(frame.targetPort, 5173)
+    } else {
+      assert.fail('expected a proxy hello')
+    }
+  })
 })
 
 describe('daemon server frames', () => {

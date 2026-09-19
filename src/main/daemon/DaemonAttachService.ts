@@ -43,7 +43,6 @@ import { loadOrCreateIdentity, writePrivateJson, type DaemonIdentity } from './i
 import {
   createFileGrantStore,
   incomingFromGrants,
-  isPairAuthMessage,
   isPairRevokedMessage,
   type GrantStore,
   type IncomingController
