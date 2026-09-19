@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { LogIn, Plus, RefreshCw } from 'lucide-react'
+import { QuotaUsageView, accountQuotaPending, quotaNoticeForAccount } from '../EmptyQuotaUsage'
 import type { AccountGroupView, AccountView, AccountsPagePayload } from '@shared/ipc'
 import type { AppLocale, QuotaWindow } from '@shared/types'
 import {
-  accountRowUsage,
   accountShowsOAuthQuota,
   createKindsForAgent,
   liveOAuthSibling,
@@ -47,47 +47,6 @@ function formatTokens(value: number): string {
   if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(2)}M`
   if (value >= 1_000) return `${(value / 1_000).toFixed(value >= 10_000 ? 0 : 1)}K`
   return value.toLocaleString('en-US')
-}
-
-function rowUsage(
-  account: AccountView,
-  t: ReturnType<typeof useT>,
-  syncing: boolean
-): { text: string; tone: 'muted' | 'warn' | 'danger' } | null {
-  const usage = accountRowUsage({
-    kind: account.kind,
-    keyStatus: account.keyStatus,
-    oauthSignedIn: account.oauthSignedIn,
-    oauthExpired: account.oauthExpired,
-    quotaPercent: account.quotaPercent,
-    quotaStatus: account.quotaStatus,
-    monthTokens: account.monthTokens,
-    refreshing: syncing,
-    balance: account.balance
-  })
-  if (!usage) return null
-  if (usage.kind === 'invalid') return { text: t('accounts.detail.invalid'), tone: usage.tone }
-  if (usage.kind === 'signedOut') return { text: t('accounts.detail.signedOut'), tone: usage.tone }
-  if (usage.kind === 'capped') return { text: t('accounts.detail.capped'), tone: usage.tone }
-  if (usage.kind === 'percent') return { text: `${usage.percent}%`, tone: usage.tone }
-  if (usage.kind === 'syncing') return { text: t('accounts.detail.syncing'), tone: usage.tone }
-  if (usage.kind === 'syncFailed') return { text: t('accounts.detail.syncFailed'), tone: usage.tone }
-  if (usage.kind === 'balance') {
-    return {
-      text: usage.available
-        ? formatApiBalanceAmount({
-            source: account.balance?.source === 'openrouter' ? 'openrouter' : 'deepseek',
-            currency: usage.currency,
-            total: usage.amount,
-            granted: 0,
-            toppedUp: 0,
-            available: usage.available
-          })
-        : t('accounts.balanceUnavailable'),
-      tone: usage.tone
-    }
-  }
-  return { text: formatTokens(usage.tokens), tone: usage.tone }
 }
 
 export function AccountsSettings(): React.JSX.Element {
@@ -281,6 +240,7 @@ export function AccountsSettings(): React.JSX.Element {
             agent: page?.groups.find((group) => group.agentId === account.agentId)?.name ?? account.agentId
           })
         )
+        await load({ refresh: true, force: true })
         return
       }
       apply(await window.vav.accounts.setCurrent(account.id))
@@ -290,10 +250,27 @@ export function AccountsSettings(): React.JSX.Element {
           agent: page?.groups.find((group) => group.agentId === account.agentId)?.name ?? account.agentId
         })
       )
+      await load({ refresh: true, force: true })
     } catch {
       setError(t('accounts.switchFailed'))
     } finally {
       setSwitchingId(null)
+    }
+  }
+
+  const removeAccount = async (account: AccountView, groupSize: number): Promise<void> => {
+    if (groupSize <= 1) return
+    try {
+      const next = await window.vav.accounts.remove(account.id)
+      apply(next)
+      if (selection?.kind === 'account' && selection.id === account.id) {
+        const nextId =
+          next.groups.find((group) => group.agentId === account.agentId)?.accounts[0]?.id ??
+          next.accounts[0]?.id
+        setSelection(nextId ? { kind: 'account', id: nextId } : null)
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
     }
   }
 
@@ -343,6 +320,27 @@ export function AccountsSettings(): React.JSX.Element {
           <div className="accounts-list" role="list">
             {page.groups.map((group) => {
             const creating = selection?.kind === 'create' && selection.agentId === group.agentId
+            const lastInGroup = group.accounts.length <= 1
+            const usageAccount =
+              group.accounts.find((row) => row.current) ?? group.accounts[0] ?? null
+            const groupSwitching = Boolean(
+              switchingId && group.accounts.some((row) => row.id === switchingId)
+            )
+            const usagePending = Boolean(
+              usageAccount &&
+                (groupSwitching || accountQuotaPending(usageAccount, refreshing && groupSwitching))
+            )
+            const usageWindows = usageAccount && !usagePending ? usageAccount.quotaWindows : []
+            const usageNotice =
+              usageAccount && !usagePending && usageWindows.length === 0
+                ? quotaNoticeForAccount(usageAccount, t)
+                : null
+            const canShowUsage =
+              Boolean(usageAccount) &&
+              (usagePending ||
+                usageWindows.length > 0 ||
+                usageNotice != null ||
+                (usageAccount != null && accountShowsOAuthQuota(usageAccount)))
             return (
               <section key={group.agentId} className={`accounts-group${creating ? ' is-creating' : ''}`}>
                 <div className="accounts-group-head">
@@ -357,7 +355,6 @@ export function AccountsSettings(): React.JSX.Element {
                   />
                 </div>
                 {group.accounts.map((account) => {
-                  const usage = rowUsage(account, t, refreshing)
                   const selected = selection?.kind === 'account' && selection.id === account.id
                   return (
                     <div
@@ -381,17 +378,32 @@ export function AccountsSettings(): React.JSX.Element {
                         <span className="accounts-row-main">
                           <span className="accounts-row-name">{account.name}</span>
                         </span>
-                        {usage ? (
-                          <span
-                            className={`accounts-row-detail is-${usage.tone}${refreshing ? ' usage-shimmer' : ''}`}
-                          >
-                            {usage.text}
-                          </span>
-                        ) : null}
                       </button>
+                      <Button
+                        className="accounts-row-remove"
+                        label={t('accounts.remove')}
+                        variant="ghost"
+                        size="sm"
+                        disabled={lastInGroup}
+                        title={lastInGroup ? t('accounts.removeLastDisabled') : t('accounts.remove')}
+                        testId={`account-remove-${account.id}`}
+                        onClick={() => void removeAccount(account, group.accounts.length)}
+                      />
                     </div>
                   )
                 })}
+                {canShowUsage && usageAccount ? (
+                  <div className="accounts-group-usage">
+                    <QuotaUsageView
+                      key={`${usageAccount.id}:${usagePending ? 'pending' : 'ready'}`}
+                      windows={usageWindows}
+                      pending={usagePending}
+                      noticeText={usageNotice}
+                      hostKey={usageAccount.id}
+                      align="start"
+                    />
+                  </div>
+                ) : null}
               </section>
             )
             })}
@@ -423,6 +435,7 @@ export function AccountsSettings(): React.JSX.Element {
             liveSibling={liveOAuthSibling(page.accounts, selectedAccount)}
             agentName={selectedGroup?.name ?? selectedAccount.agentId}
             canSwitch={(selectedGroup?.accounts.length ?? 0) > 1}
+            canRemove={(selectedGroup?.accounts.length ?? 0) > 1}
             switching={switchingId === selectedAccount.id}
             compare={page.usage}
             locale={locale}
@@ -560,6 +573,7 @@ function AccountInspector({
   liveSibling,
   agentName,
   canSwitch,
+  canRemove,
   switching,
   compare,
   locale,
@@ -582,6 +596,7 @@ function AccountInspector({
   liveSibling: AccountView | null
   agentName: string
   canSwitch: boolean
+  canRemove: boolean
   switching: boolean
   compare: AccountsPagePayload['usage']
   locale: AppLocale
@@ -649,6 +664,15 @@ function AccountInspector({
           {account.current ? (
             <span className="accounts-badge">{t('accounts.detail.current')}</span>
           ) : null}
+          {account.healthKind === 'resting' ? (
+            <span className="accounts-badge is-warn">{t('accounts.detail.resting')}</span>
+          ) : null}
+          {account.healthKind === 'capped' ? (
+            <span className="accounts-badge is-danger">{t('accounts.detail.capped')}</span>
+          ) : null}
+          {account.healthKind === 'unknown' && account.kind === 'oauth' && account.oauthSignedIn ? (
+            <span className="accounts-badge">{t('accounts.detail.unknownHealth')}</span>
+          ) : null}
         </div>
         {canRefresh ? (
           <Button
@@ -661,6 +685,30 @@ function AccountInspector({
           />
         ) : null}
       </div>
+
+      {account.healthKind === 'resting' ||
+      account.healthKind === 'capped' ||
+      account.healthKind === 'needsReauth' ||
+      (account.healthKind === 'unknown' && account.kind === 'oauth' && account.oauthSignedIn) ? (
+        <div
+          className={`accounts-alert${account.healthKind === 'unknown' ? ' is-warning' : ''}`}
+          role="status"
+        >
+          <span>
+            {account.healthKind === 'resting'
+              ? t('accounts.health.resting', {
+                  clock: account.healthResetsAt
+                    ? formatExpiry(account.healthResetsAt, Date.now(), locale)
+                    : '—'
+                })
+              : account.healthKind === 'capped'
+                ? t('accounts.health.capped')
+                : account.healthKind === 'needsReauth'
+                  ? t('accounts.health.needsReauth')
+                  : t('accounts.health.unknown')}
+          </span>
+        </div>
+      ) : null}
 
       {account.kind === 'vav_key' && account.keyStatus === 'invalid' ? (
         <div className="accounts-alert" role="alert">
@@ -876,7 +924,14 @@ function AccountInspector({
           <Button label={t('accounts.signOut')} variant="ghost" size="sm" onClick={onSignOut} />
         ) : null}
         <span className="accounts-inspector-spacer" />
-        <Button label={t('common.delete')} variant="ghost" size="sm" onClick={onDelete} />
+        <Button
+          label={t('accounts.remove')}
+          variant="ghost"
+          size="sm"
+          disabled={!canRemove}
+          title={canRemove ? t('accounts.remove') : t('accounts.removeLastDisabled')}
+          onClick={onDelete}
+        />
       </div>
 
       {account.monthTokens > 0 || account.lastModel || others.length > 0 ? (

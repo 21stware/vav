@@ -291,6 +291,10 @@ describe('accounts helpers', () => {
       refreshing: false
     }
     assert.deepEqual(accountRowUsage(signedIn), { kind: 'percent', percent: 39, tone: 'muted' })
+    assert.deepEqual(accountRowUsage({ ...signedIn, healthKind: 'resting' }), {
+      kind: 'resting',
+      tone: 'warn'
+    })
     assert.deepEqual(accountRowUsage({ ...signedIn, quotaPercent: null, quotaStatus: 'idle' }), null)
     assert.deepEqual(accountRowUsage({ ...signedIn, quotaPercent: null, refreshing: true }), {
       kind: 'syncing',
@@ -358,6 +362,30 @@ describe('accounts helpers', () => {
         'cursor'
       ),
       'c2'
+    )
+    assert.equal(
+      resolveSessionAccountId(
+        [
+          {
+            id: 'rest',
+            kind: 'oauth',
+            keyStatus: 'ok',
+            current: true,
+            agentId: 'claude',
+            healthKind: 'resting'
+          },
+          {
+            id: 'ok',
+            kind: 'oauth',
+            keyStatus: 'ok',
+            current: false,
+            agentId: 'claude',
+            healthKind: 'ok'
+          }
+        ],
+        'claude'
+      ),
+      'ok'
     )
     assert.equal(
       sessionShowsHostQuota({

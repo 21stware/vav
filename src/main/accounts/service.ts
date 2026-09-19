@@ -4,7 +4,12 @@ import { captureLiveHost } from './activateAccount.ts'
 import { readHostAccountInfo } from '../agent/hostAuth'
 
 export { accountHasKey, accountSecret, resolveVavCredentials } from './vavCredentials'
-export { buildAccountsPage, cliCatalogOf, resolveWorkspaceContext } from './page.ts'
+export {
+  buildAccountsPage,
+  cliCatalogOf,
+  overlayQuotaOnAccountsPage,
+  resolveWorkspaceContext
+} from './page.ts'
 
 /**
  * CLI login is machine-wide. Align stored OAuth rows with the live identity

@@ -57,6 +57,8 @@ export type AccountsIpcHost = {
   publishSettings?: () => Promise<void>
   /** Fan the accounts page to every window (picker + Settings). */
   broadcastAccounts?: (page: AccountsPagePayload) => void
+  /** Overlay local quota + health onto a daemon-built page. */
+  hydratePage?: (page: AccountsPagePayload) => AccountsPagePayload
 }
 
 /** Provider account CRUD, verify/reveal, and host OAuth login. */
@@ -69,13 +71,24 @@ export function registerAccountsIpc(
   const remote = (): { request: (method: string, params?: unknown) => Promise<unknown> } | null =>
     host.remote?.() ?? null
 
+  const hydrate = (page: AccountsPagePayload): AccountsPagePayload =>
+    host.hydratePage?.(page) ?? page
+
   const afterRemote = async <T>(result: T): Promise<T> => {
     if (host.publishSettings) await host.publishSettings()
     if (result && typeof result === 'object') {
-      if ('groups' in result) host.broadcastAccounts?.(result as unknown as AccountsPagePayload)
-      else if ('page' in result) {
-        const page = (result as { page?: AccountsPagePayload }).page
-        if (page) host.broadcastAccounts?.(page)
+      if ('groups' in result) {
+        const page = hydrate(result as unknown as AccountsPagePayload)
+        host.broadcastAccounts?.(page)
+        return page as T
+      }
+      if ('page' in result) {
+        const raw = (result as { page?: AccountsPagePayload }).page
+        if (raw) {
+          const page = hydrate(raw)
+          host.broadcastAccounts?.(page)
+          return { ...result, page } as T
+        }
       }
     }
     return result
@@ -94,7 +107,8 @@ export function registerAccountsIpc(
     ) => {
       const client = remote()
       if (client) {
-        return client.request('accounts.getPage', { workspaceKey })
+        const page = (await client.request('accounts.getPage', { workspaceKey })) as AccountsPagePayload
+        return hydrate(page)
       }
       if (options?.refresh) return host.refreshPage(workspaceKey, options.force === true)
       return host.page(workspaceKey)

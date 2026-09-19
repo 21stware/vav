@@ -4,6 +4,10 @@
  */
 
 import { LLM_VENDOR_CATALOGUE, isLlmVendorId, vendorById, vendorFromEndpoint } from './llmVendors.ts'
+import { isAccountRoutable, pickRoutableAccountId, type AccountHealthKind } from './accountHealth.ts'
+
+export type { AccountHealthKind } from './accountHealth.ts'
+export { accountHealthOf, isAccountRoutable, pickRoutableAccountId } from './accountHealth.ts'
 
 export const DEFAULT_WORKSPACE_KEY = '__default__'
 export const WORKSPACE_ACCOUNT_NAME = '__workspace__'
@@ -519,25 +523,28 @@ export function resolveSessionAccountId(
     provider?: string | null
     agentId?: string | null
     oauthHost?: string | null
+    healthKind?: AccountHealthKind | null
   }>,
   agentId?: string | null
 ): string | null {
   if (!agentId || agentId === 'vav') {
-    return (
-      accounts.find((account) => account.provider === 'vav' && account.current)?.id ??
-      accounts.find((account) => account.provider === 'vav')?.id ??
-      null
-    )
+    const vav = accounts.filter((account) => account.provider === 'vav')
+    return pickRoutableAccountId(vav)
   }
   const rows = accounts.filter((account) => agentIdOf(account) === agentId)
-  return (
-    rows.find((account) => account.current && account.kind === 'oauth' && account.keyStatus === 'ok')
-      ?.id ??
-    rows.find((account) => account.kind === 'oauth' && account.keyStatus === 'ok')?.id ??
-    rows.find((account) => account.current)?.id ??
-    rows[0]?.id ??
-    null
+  const liveOk = rows.filter((account) => account.kind === 'oauth' && account.keyStatus === 'ok')
+  const fromLive = pickRoutableAccountId(
+    liveOk.length
+      ? liveOk.map((row) => ({
+          ...row,
+          current: row.current && isAccountRoutable(row.healthKind)
+        }))
+      : []
   )
+  if (fromLive) return fromLive
+  const healthyLive = liveOk.find((account) => isAccountRoutable(account.healthKind))
+  if (healthyLive) return healthyLive.id
+  return pickRoutableAccountId(rows)
 }
 
 /** One stored OAuth identity: prefer this workspace, then current, then signed-in, then oldest. */
@@ -777,6 +784,8 @@ export type AccountRowUsage =
   | { kind: 'invalid'; tone: 'danger' }
   | { kind: 'signedOut'; tone: 'muted' }
   | { kind: 'capped'; tone: 'danger' }
+  | { kind: 'resting'; tone: 'warn' }
+  | { kind: 'unknownHealth'; tone: 'muted' }
   | { kind: 'percent'; percent: number; tone: 'muted' | 'warn' }
   | { kind: 'syncing'; tone: 'muted' }
   | { kind: 'syncFailed'; tone: 'danger' }
@@ -797,6 +806,7 @@ export function accountRowUsage(input: {
   monthTokens: number
   refreshing: boolean
   balance?: { amount: number; currency: string; available: boolean } | null
+  healthKind?: AccountHealthKind | null
 }): AccountRowUsage | null {
   if (input.kind === 'vav_key' && input.keyStatus === 'invalid') {
     return { kind: 'invalid', tone: 'danger' }
@@ -804,6 +814,9 @@ export function accountRowUsage(input: {
   if (input.kind === 'oauth' && !input.oauthSignedIn && input.oauthExpired === true) {
     return { kind: 'signedOut', tone: 'muted' }
   }
+  if (input.healthKind === 'needsReauth') return { kind: 'signedOut', tone: 'muted' }
+  if (input.healthKind === 'resting') return { kind: 'resting', tone: 'warn' }
+  if (input.healthKind === 'capped') return { kind: 'capped', tone: 'danger' }
   const quotaPct = input.quotaPercent
   if (quotaPct != null && quotaPct >= 100) return { kind: 'capped', tone: 'danger' }
   if (quotaPct != null) {

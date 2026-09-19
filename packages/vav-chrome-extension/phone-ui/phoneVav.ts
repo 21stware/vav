@@ -541,7 +541,11 @@ export function installPhoneVav(transport: PhoneTransport): PhoneVavHandle {
       quotaStatus: 'none',
       quotaUpdatedAt: null,
       quotaError: null,
-      balance: null
+      balance: null,
+      healthKind: 'ok',
+      healthSource: 'credential',
+      healthObservedAt: null,
+      healthResetsAt: null
     }
     return {
       workspaceKey: '',

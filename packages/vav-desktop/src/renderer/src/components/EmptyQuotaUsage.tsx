@@ -1,9 +1,13 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import type { CliHostKind, QuotaWindow, QuotaWindowKind } from '@shared/types'
 import type { HostAuthKind } from '@shared/cliAccountParse'
+import { normalizeAuthKind } from '@shared/cliAccountParse'
 import { isStructuredCliHost } from '@shared/cliHost'
 import type { MessageKey } from '@shared/i18n'
 import { QUOTA_EXHAUSTED_PERCENT } from '@shared/cliErrors'
+import type { AccountView } from '@shared/ipc'
+import { accountShowsOAuthQuota } from '@shared/accounts'
+import { formatApiBalanceAmount } from '@shared/apiBalance'
 import { useT } from '../i18n/useT'
 import { refreshUsage, useUsageCache } from '../lib/usageCache'
 import { StaggerLine } from './ui'
@@ -102,10 +106,6 @@ function PendingRow(): React.JSX.Element {
   )
 }
 
-/**
- * Compact usage under the empty-session mark.
- * Cached quota paints immediately; a later refresh shimmers in place.
- */
 const NOTICE_LINE: Record<Exclude<HostAuthKind, 'unknown'>, MessageKey> = {
   none: 'token.quotaSignedOut',
   expired: 'token.quotaExpired',
@@ -114,42 +114,60 @@ const NOTICE_LINE: Record<Exclude<HostAuthKind, 'unknown'>, MessageKey> = {
   oauth: 'token.quotaSignedIn'
 }
 
-export function EmptyQuotaUsage({
-  conversationId,
-  host,
-  accountId
+export function quotaNoticeForAccount(
+  account: AccountView,
+  t: ReturnType<typeof useT>
+): string | null {
+  if (account.kind === 'vav_key') {
+    if (!account.balance) return null
+    return account.balance.available
+      ? formatApiBalanceAmount({
+          source: account.balance.source === 'openrouter' ? 'openrouter' : 'deepseek',
+          currency: account.balance.currency,
+          total: account.balance.amount,
+          granted: 0,
+          toppedUp: 0,
+          available: account.balance.available
+        })
+      : t('accounts.balanceUnavailable')
+  }
+  const authKind = normalizeAuthKind(
+    account.oauthExpired ? 'expired' : account.oauthSignedIn ? 'oauth' : 'none',
+    account.oauthSignedIn
+  )
+  if (account.quotaWindows.length > 0) return null
+  if (authKind === 'unknown') return null
+  if (authKind === 'oauth') return account.identityName || account.name
+  return t(NOTICE_LINE[authKind])
+}
+
+/**
+ * Compact usage bars — empty-session mark and provider-account lists share this.
+ */
+export function QuotaUsageView({
+  windows,
+  pending,
+  updating = false,
+  noticeText = null,
+  hostKey = 'quota',
+  align = 'center'
 }: {
-  conversationId: string
-  host: CliHostKind | null
-  accountId?: string | null
-}): React.JSX.Element | null {
+  windows: QuotaWindow[]
+  pending: boolean
+  updating?: boolean
+  noticeText?: string | null
+  hostKey?: string
+  align?: 'center' | 'start'
+}): React.JSX.Element {
   const t = useT()
-  const canShow = isStructuredCliHost(host)
-  const { snap, updating } = useUsageCache(host, accountId)
-
-  useEffect(() => {
-    if (!host || !canShow) return
-    void refreshUsage({ conversationId, host, accountId })
-  }, [conversationId, host, accountId, canShow])
-
-  if (!host || !canShow) return null
-  const pending = snap === null
-  const rows = snap?.windows ?? []
-  const noticeKind =
-    snap && rows.length === 0 && snap.authKind !== 'unknown' ? snap.authKind : null
-  const noticeText =
-    noticeKind === 'oauth' && snap?.accountId
-      ? snap.accountId
-      : noticeKind
-        ? t(NOTICE_LINE[noticeKind])
-        : null
-  const phase = pending ? 'pending' : rows.length > 0 ? 'ready' : noticeText ? 'notice' : 'empty'
   const now = Date.now()
-  const showKind = rows.length > 1
-
+  const showKind = windows.length > 1
+  const phase = pending ? 'pending' : windows.length > 0 ? 'ready' : noticeText ? 'notice' : 'empty'
   return (
     <div
-      className={`empty-quota is-${phase}${updating && snap ? ' is-updating' : ''}`}
+      className={`empty-quota is-${phase}${updating && !pending ? ' is-updating' : ''}${
+        align === 'start' ? ' is-start' : ''
+      }`}
       aria-busy={pending || updating}
       aria-label={noticeText || t('token.quotaSection')}
     >
@@ -162,9 +180,9 @@ export function EmptyQuotaUsage({
               <StaggerLine baseDelay={QUOTA_STAGGER_BASE}>{noticeText}</StaggerLine>
             </div>
           ) : (
-            rows.map((window, index) => (
+            windows.map((window, index) => (
               <QuotaRow
-                key={`${host}:${window.id}`}
+                key={`${hostKey}:${window.id}`}
                 window={window}
                 showKind={showKind}
                 now={now}
@@ -177,4 +195,64 @@ export function EmptyQuotaUsage({
       </div>
     </div>
   )
+}
+
+/**
+ * Compact usage under the empty-session mark.
+ * Switching host / account always plays loading, then the bars — same as first visit.
+ */
+export function EmptyQuotaUsage({
+  conversationId,
+  host,
+  accountId
+}: {
+  conversationId: string
+  host: CliHostKind | null
+  accountId?: string | null
+}): React.JSX.Element | null {
+  const t = useT()
+  const canShow = isStructuredCliHost(host)
+  const identity = `${host ?? ''}:${accountId ?? ''}`
+  const { snap, updating } = useUsageCache(host, accountId)
+  const [readyFor, setReadyFor] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!host || !canShow) return
+    let cancelled = false
+    setReadyFor(null)
+    void refreshUsage({ conversationId, host, accountId, force: true }).finally(() => {
+      if (!cancelled) setReadyFor(identity)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [conversationId, host, accountId, canShow, identity])
+
+  if (!host || !canShow) return null
+  const pending = readyFor !== identity
+  const rows = pending ? [] : (snap?.windows ?? [])
+  const noticeKind =
+    !pending && snap && rows.length === 0 && snap.authKind !== 'unknown' ? snap.authKind : null
+  const noticeText =
+    noticeKind === 'oauth' && snap?.accountId
+      ? snap.accountId
+      : noticeKind
+        ? t(NOTICE_LINE[noticeKind])
+        : null
+
+  return (
+    <QuotaUsageView
+      windows={rows}
+      pending={pending}
+      updating={!pending && updating}
+      noticeText={noticeText}
+      hostKey={host}
+    />
+  )
+}
+
+export function accountQuotaPending(account: AccountView, extraPending: boolean): boolean {
+  if (extraPending) return true
+  if (!accountShowsOAuthQuota(account) && account.kind !== 'vav_key') return extraPending
+  return account.quotaStatus === 'loading' && account.quotaWindows.length === 0
 }

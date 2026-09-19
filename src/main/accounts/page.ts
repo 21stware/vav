@@ -36,6 +36,7 @@ import { isLocalMachine, parseWorkspaceRefList } from '@shared/workspaceHost'
 import { isStructuredCliHost, type CliHostKind } from '@shared/cliHost'
 import { hostMayHaveAccountQuota, selectQuotaWindows } from '@shared/quotaWindows'
 import { accountHasKey } from './vavCredentials'
+import { accountHealthOf } from '@shared/accountHealth'
 
 export function resolveWorkspaceContext(
   conversations: ConversationMeta[],
@@ -161,6 +162,20 @@ function toAccountView(
     : []
   const windows = canPoll && host ? selectQuotaWindows(raw, host, account.name) : []
   const quotaPercent = primaryQuotaPercent(windows)
+  const health = accountHealthOf(
+    {
+      kind: account.kind,
+      keyStatus: signedIn ? 'ok' : account.kind === 'oauth' ? 'unknown' : account.keyStatus,
+      oauthSignedIn: signedIn,
+      oauthExpired: account.kind === 'oauth' && !signedIn && account.oauthExpired === true,
+      credentialExpiresAtMs: account.credentialExpiresAtMs ?? null,
+      quotaWindows: windows,
+      quotaStatus: canPoll ? (state?.status ?? (windows.length > 0 ? 'ready' : 'idle')) : 'none',
+      quotaUpdatedAt: state?.updatedAt ?? null,
+      balance: account.kind === 'vav_key' ? (apiBalance?.(account.id) ?? null) : null
+    },
+    Date.now()
+  )
   return {
     id: account.id,
     agentId: agentIdOf(account),
@@ -193,6 +208,86 @@ function toAccountView(
     quotaStatus: canPoll ? (state?.status ?? (windows.length > 0 ? 'ready' : 'idle')) : 'none',
     quotaUpdatedAt: state?.updatedAt ?? null,
     quotaError: state?.error ?? null,
-    balance: account.kind === 'vav_key' ? (apiBalance?.(account.id) ?? null) : null
+    balance: account.kind === 'vav_key' ? (apiBalance?.(account.id) ?? null) : null,
+    healthKind: health.kind,
+    healthSource: health.source,
+    healthObservedAt: health.observedAt,
+    healthResetsAt: health.resetsAt
+  }
+}
+
+/** Re-apply quota windows + health onto a page built without QuotaService (daemon). */
+export function overlayQuotaOnAccountsPage(
+  page: AccountsPagePayload,
+  lookup: (account: AccountView) => {
+    windows: QuotaWindow[]
+    status: AccountQuotaStatus
+    updatedAt: number | null
+    error: string | null
+  } | null,
+  now = Date.now()
+): AccountsPagePayload {
+  const nextOf = (view: AccountView): AccountView => {
+    const overlay = lookup(view)
+    if (!overlay) {
+      const health = accountHealthOf(
+        {
+          kind: view.kind,
+          keyStatus: view.keyStatus,
+          oauthSignedIn: view.oauthSignedIn,
+          oauthExpired: view.oauthExpired,
+          credentialExpiresAtMs: view.credentialExpiresAtMs,
+          quotaWindows: view.quotaWindows,
+          quotaStatus: view.quotaStatus,
+          quotaUpdatedAt: view.quotaUpdatedAt,
+          balance: view.balance
+        },
+        now
+      )
+      return {
+        ...view,
+        healthKind: health.kind,
+        healthSource: health.source,
+        healthObservedAt: health.observedAt,
+        healthResetsAt: health.resetsAt
+      }
+    }
+    const windows = overlay.windows
+    const health = accountHealthOf(
+      {
+        kind: view.kind,
+        keyStatus: view.keyStatus,
+        oauthSignedIn: view.oauthSignedIn,
+        oauthExpired: view.oauthExpired,
+        credentialExpiresAtMs: view.credentialExpiresAtMs,
+        quotaWindows: windows,
+        quotaStatus: overlay.status,
+        quotaUpdatedAt: overlay.updatedAt,
+        balance: view.balance
+      },
+      now
+    )
+    return {
+      ...view,
+      quotaWindows: windows,
+      quotaPercent: primaryQuotaPercent(windows),
+      quotaStatus: overlay.status,
+      quotaUpdatedAt: overlay.updatedAt,
+      quotaError: overlay.error,
+      healthKind: health.kind,
+      healthSource: health.source,
+      healthObservedAt: health.observedAt,
+      healthResetsAt: health.resetsAt
+    }
+  }
+  const accounts = page.accounts.map(nextOf)
+  const byId = new Map(accounts.map((row) => [row.id, row]))
+  return {
+    ...page,
+    accounts,
+    groups: page.groups.map((group) => ({
+      ...group,
+      accounts: group.accounts.map((row) => byId.get(row.id) ?? nextOf(row))
+    }))
   }
 }

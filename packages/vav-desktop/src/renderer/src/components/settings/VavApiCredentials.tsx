@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { AccountView, AccountsPagePayload } from '@shared/ipc'
 import {
+  accountShowsOAuthQuota,
   apiProviderBrand,
   createKindForAgent,
   createKindsForAgent,
@@ -10,6 +11,11 @@ import {
 import { vendorFromEndpoint } from '@shared/llmVendors'
 import { useT } from '../../i18n/useT'
 import { Button } from '../ui'
+import {
+  QuotaUsageView,
+  accountQuotaPending,
+  quotaNoticeForAccount
+} from '../EmptyQuotaUsage'
 
 const NEW_ACCOUNT = '__new__'
 
@@ -64,6 +70,7 @@ export function AgentProfileSwitch({
     'idle'
   )
   const [oauthError, setOauthError] = useState<string | null>(null)
+  const [usageLoading, setUsageLoading] = useState(false)
   const onChangedRef = useRef(onProfileChanged)
   onChangedRef.current = onProfileChanged
   const hydratedRef = useRef(accounts.length > 0)
@@ -77,6 +84,7 @@ export function AgentProfileSwitch({
     setDraftId(null)
     setOauthPhase('idle')
     setOauthError(null)
+    setUsageLoading(false)
   }, [agentId])
 
   useEffect(() => {
@@ -93,6 +101,24 @@ export function AgentProfileSwitch({
   useEffect(() => {
     if (pickedId && current?.id === pickedId) setPickedId(null)
   }, [pickedId, current?.id])
+
+  useEffect(() => {
+    if (!current) return
+    let cancelled = false
+    setUsageLoading(true)
+    void window.vav.accounts
+      .getPage(null, { refresh: true, force: true })
+      .then((page) => {
+        if (!cancelled) onChangedRef.current(groupAccounts(page, agentId))
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (!cancelled) setUsageLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [agentId, current?.id])
 
   useEffect(() => {
     if (oauthPhase !== 'waiting' && oauthPhase !== 'authorizing') return
@@ -130,25 +156,40 @@ export function AgentProfileSwitch({
     setOauthError(null)
   }
 
+  const applyPage = (page: AccountsPagePayload): void => {
+    onChangedRef.current(groupAccounts(page, agentId))
+  }
+
   const switchTo = async (id: string): Promise<void> => {
     const target = accounts.find((row) => row.id === id)
     if (!target) return
+    setUsageLoading(true)
     try {
       if (target.kind === 'oauth' && typeof window.vav.accounts.activate === 'function') {
         const { page, result } = await window.vav.accounts.activate(id)
         if (result.kind === 'needsReauth' || result.kind === 'needsRefresh') {
-          onProfileChanged(groupAccounts(await window.vav.accounts.setCurrent(id), agentId))
+          applyPage(await window.vav.accounts.setCurrent(id))
           setSwitchNotice(result.kind)
           return
         }
-        onProfileChanged(groupAccounts(page, agentId))
+        applyPage(page)
         setSwitchNotice(null)
         return
       }
-      onProfileChanged(groupAccounts(await window.vav.accounts.setCurrent(id), agentId))
+      applyPage(await window.vav.accounts.setCurrent(id))
       setSwitchNotice(null)
     } catch {
       setSwitchNotice('failed')
+    }
+  }
+
+  const removeCurrent = async (): Promise<void> => {
+    if (!current || accounts.length <= 1) return
+    try {
+      applyPage(await window.vav.accounts.remove(current.id))
+    } catch (err) {
+      setSwitchNotice('failed')
+      void err
     }
   }
 
@@ -192,10 +233,24 @@ export function AgentProfileSwitch({
   const showNew = adding || accounts.length === 0
   const busy = oauthPhase === 'authorizing' || oauthPhase === 'waiting'
   const selectedId = showNew ? NEW_ACCOUNT : (pickedId ?? current?.id ?? NEW_ACCOUNT)
+  const lastAccount = accounts.length <= 1
+  const showUsage = !showNew && current != null
+  const usagePending = showUsage && accountQuotaPending(current, usageLoading)
+  const usageWindows = showUsage && !usagePending ? current.quotaWindows : []
+  const usageNotice =
+    showUsage && !usagePending && usageWindows.length === 0
+      ? quotaNoticeForAccount(current, t)
+      : null
+  const canShowUsage =
+    showUsage &&
+    (usagePending ||
+      usageWindows.length > 0 ||
+      usageNotice != null ||
+      accountShowsOAuthQuota(current))
 
   return (
     <div className="agents-vav-credentials">
-      <label className="settings-field row agents-account-switch">
+      <div className="settings-field row agents-account-switch">
         <span>{t('agents.account')}</span>
         <select
           className="text-field"
@@ -209,7 +264,26 @@ export function AgentProfileSwitch({
           ))}
           <option value={NEW_ACCOUNT}>{t('accounts.newAccount')}</option>
         </select>
-      </label>
+        <Button
+          label={t('accounts.remove')}
+          variant="ghost"
+          size="sm"
+          disabled={lastAccount || showNew}
+          title={lastAccount ? t('accounts.removeLastDisabled') : t('accounts.remove')}
+          testId="provider-account-remove"
+          onClick={() => void removeCurrent()}
+        />
+      </div>
+      {canShowUsage ? (
+        <QuotaUsageView
+          key={current?.id ?? 'usage'}
+          windows={usageWindows}
+          pending={usagePending}
+          noticeText={usageNotice}
+          hostKey={current?.id ?? agentId}
+          align="start"
+        />
+      ) : null}
 
       {showNew ? (
         newKind === 'oauth' ? (
