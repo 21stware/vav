@@ -38,6 +38,7 @@ import {
   remoteSendDisposition
 } from '../remote/sessionGate.ts'
 import { buildRemoteThreadEvent, fallbackRemoteSession, mapRemoteSessions } from '../remote/sessionList.ts'
+import { ModelPriceStore } from '../analysis/modelPriceStore.ts'
 import { AccountStore } from '../store/AccountStore.ts'
 import { ConversationStore } from '../store/ConversationStore.ts'
 import { NodeSecretStore } from '../store/NodeSecretStore.ts'
@@ -157,6 +158,11 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
   const settings = new SettingsStore(opts.stateDir)
   const secrets = new NodeSecretStore(opts.stateDir)
   const accounts = new AccountStore(opts.stateDir)
+  const modelPrices = new ModelPriceStore(opts.stateDir)
+  modelPrices.load()
+  void modelPrices.refresh().catch((err) => {
+    console.warn('[model-prices] initial sync failed', err)
+  })
   const conversations = new ConversationStore(opts.stateDir)
   const fileSessions = new FileSessionStore(opts.stateDir)
   const logStore = new LogStore({

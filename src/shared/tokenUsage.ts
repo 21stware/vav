@@ -1,6 +1,9 @@
 import { isAcpCliHost, type CliHostKind } from './cliHost.ts'
 import type { ChatMessage, DisplayCurrency, MessageBlock, TokenSnapshot } from './types'
 import { t, type AppLocale } from './i18n/index.ts'
+import { lookupModelRates, type ModelPriceTable, type ModelRates } from './modelPrices.ts'
+
+export type { ModelRates } from './modelPrices.ts'
 
 export {
   classifyCodexRateLimitWindowKinds,
@@ -30,15 +33,14 @@ export const TOKEN_HISTORY_LIMIT = 30
 /** Popover chart shows the newest N points. */
 export const TOKEN_CHART_POINTS = 10
 
-export interface ModelRates {
-  input: number
-  output: number
-  cacheWrite: number
-  cacheRead: number
+let priceTable: ModelPriceTable | null = null
+
+/** models.dev catalog + local overrides. Heuristic rates still win as fallback. */
+export function setModelPriceTable(table: ModelPriceTable | null): void {
+  priceTable = table
 }
 
-/** $/MTok — Sonnet 4 reference; other providers scale lightly. */
-export function ratesForModel(modelId: string): ModelRates {
+export function heuristicRatesForModel(modelId: string): ModelRates {
   const id = modelId.toLowerCase()
   if (id.includes('opus')) {
     return { input: 15, output: 75, cacheWrite: 18.75, cacheRead: 1.5 }
@@ -54,6 +56,11 @@ export function ratesForModel(modelId: string): ModelRates {
   }
   // Sonnet 4 / default (main-chat.rpml §花费计算)
   return { input: 3, output: 15, cacheWrite: 3.75, cacheRead: 0.3 }
+}
+
+/** $/MTok — catalog / override first, then the local heuristic. */
+export function ratesForModel(modelId: string): ModelRates {
+  return (priceTable ? lookupModelRates(priceTable, modelId) : null) ?? heuristicRatesForModel(modelId)
 }
 
 /** CJK ideographs / kana / hangul: ~1 token per character. */
@@ -189,6 +196,11 @@ export function buildSnapshot(input: {
   rates?: ModelRates
   /** Settings → Accounts profile for this turn. */
   accountId?: string | null
+  /** Model id used for this turn (analysis slices). */
+  model?: string | null
+  /** Classified failure when this sample belongs to a failed turn. */
+  errorKind?: TokenSnapshot['errorKind']
+  latencyMs?: number | null
 }): TokenSnapshot {
   const cacheReadTokens = Math.max(0, input.usage.cacheRead)
   const cacheWriteTokens = Math.max(0, input.usage.cacheWrite)
@@ -213,7 +225,14 @@ export function buildSnapshot(input: {
     timestamp,
     estimatedCost,
     costSource: fromProvider ? 'provider' : 'estimated',
-    ...(input.accountId ? { accountId: input.accountId } : {})
+    ...(input.accountId ? { accountId: input.accountId } : {}),
+    ...(input.model || input.modelId
+      ? { model: (input.model || input.modelId).trim() || null }
+      : {}),
+    ...(input.errorKind ? { errorKind: input.errorKind } : {}),
+    ...(typeof input.latencyMs === 'number' && Number.isFinite(input.latencyMs)
+      ? { latencyMs: Math.max(0, Math.round(input.latencyMs)) }
+      : {})
   }
 }
 

@@ -1,7 +1,20 @@
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { RefreshCw } from 'lucide-react'
-import type { AnalysisHostUsage, AnalysisProvider, AnalysisUsageTotals } from '@shared/analysis'
-import { localAnalysisProviders, orderByProviderList, stubAnalysisProviders } from '@shared/analysis'
+import type {
+  AnalysisHostUsage,
+  AnalysisProvider,
+  AnalysisRange,
+  AnalysisSliceRow,
+  AnalysisUsageTotals
+} from '@shared/analysis'
+import {
+  analysisSinceMs,
+  filterAnalysisTurns,
+  localAnalysisProviders,
+  orderByProviderList,
+  slicesFromTurns,
+  stubAnalysisProviders
+} from '@shared/analysis'
 import { isLlmVendorId, vendorById, groupAccountsByVendor } from '@shared/llmVendors'
 import { apiBalanceProviderLabel, formatApiBalanceAmount } from '@shared/apiBalance'
 import type { AppLocale, DisplayCurrency, QuotaWindow, QuotaWindowKind } from '@shared/types'
@@ -56,6 +69,7 @@ export function AnalysisSettings(): React.JSX.Element {
   const locale = useSessionStore((s) => s.resolvedLocale)
   const settings = useSessionStore((s) => s.settings)
   const currency = settings.displayCurrency
+  const [range, setRange] = useState<AnalysisRange>('30d')
   const installById = useAgentInstallMap()
   const accountGroups = useAccountGroups()
   const vendors = useMemo(
@@ -109,6 +123,19 @@ export function AnalysisSettings(): React.JSX.Element {
   }, [])
 
   const usage = snapshot?.usage
+  const now = snapshot?.now ?? Date.now()
+  const scopedTurns = useMemo(
+    () => filterAnalysisTurns(usage?.turns ?? [], analysisSinceMs(range, now)),
+    [usage?.turns, range, now]
+  )
+  const slices = useMemo(() => slicesFromTurns(scopedTurns), [scopedTurns])
+  const accountNames = useMemo(() => {
+    const names = new Map<string, string>()
+    for (const group of accountGroups) {
+      for (const account of group.accounts) names.set(account.id, account.name)
+    }
+    return names
+  }, [accountGroups])
   const listOrder = settings.providerListOrder ?? []
   const providers = orderByProviderList(
     snapshot?.providers?.length ? snapshot.providers : localProviders,
@@ -121,7 +148,6 @@ export function AnalysisSettings(): React.JSX.Element {
     listOrder,
     (a, b) => b.costUsd - a.costUsd || b.turns - a.turns
   )
-  const now = snapshot?.now ?? Date.now()
   const usagePending = !usage && syncing
   const names = new Map(providers.map((p) => [p.hostKey, p.hostName]))
 
@@ -130,6 +156,34 @@ export function AnalysisSettings(): React.JSX.Element {
       <section className="analysis-section">
         <div className="analysis-section-head">
           <p className="analysis-lede">{t('analysis.usageHint')}</p>
+          <p className="analysis-lede">{t('analysis.pricesHint')}</p>
+          {snapshot?.pricesUpdatedAt ? (
+            <p className="analysis-lede">
+              {t('analysis.pricesUpdated', {
+                clock: formatExpiry(snapshot.pricesUpdatedAt, now, locale)
+              })}
+            </p>
+          ) : null}
+          <div className="analysis-range" role="tablist" aria-label={t('analysis.usageTitle')}>
+            {(['7d', '30d', 'all'] as const).map((id) => (
+              <button
+                key={id}
+                type="button"
+                role="tab"
+                aria-selected={range === id}
+                className={`analysis-range-btn${range === id ? ' is-on' : ''}`}
+                onClick={() => setRange(id)}
+              >
+                {t(
+                  id === '7d'
+                    ? 'analysis.range7d'
+                    : id === '30d'
+                      ? 'analysis.range30d'
+                      : 'analysis.rangeAll'
+                )}
+              </button>
+            ))}
+          </div>
         </div>
         {usage && usage.total.sessions > 0 ? (
           <>
@@ -157,6 +211,26 @@ export function AnalysisSettings(): React.JSX.Element {
                 />
               ))}
             </div>
+            {slices.byModel.length > 0 ? (
+              <SliceList
+                title={t('analysis.byModel')}
+                rows={slices.byModel}
+                labelOf={(key) => key || t('analysis.unknownModel')}
+                currency={currency}
+                updating={updating}
+                t={t}
+              />
+            ) : null}
+            {slices.byAccount.length > 0 ? (
+              <SliceList
+                title={t('analysis.byAccount')}
+                rows={slices.byAccount}
+                labelOf={(key) => accountNames.get(key) || key || t('analysis.unknownAccount')}
+                currency={currency}
+                updating={updating}
+                t={t}
+              />
+            ) : null}
           </>
         ) : usagePending ? (
           <p className="analysis-lede">{t('common.loading')}</p>
@@ -227,6 +301,53 @@ function UsageStat({
           sessions: formatCount(totals.sessions),
           tokens: formatCount(usageTokens(totals))
         })}
+      </div>
+    </div>
+  )
+}
+
+function sliceTokens(row: AnalysisSliceRow): number {
+  return row.inputTokens + row.outputTokens + row.cacheReadTokens + row.cacheWriteTokens
+}
+
+function SliceList({
+  title,
+  rows,
+  labelOf,
+  currency,
+  updating,
+  t
+}: {
+  title: string
+  rows: AnalysisSliceRow[]
+  labelOf: (key: string) => string
+  currency: DisplayCurrency
+  updating: boolean
+  t: ReturnType<typeof useT>
+}): React.JSX.Element {
+  return (
+    <div className="analysis-slice">
+      <h3 className="analysis-slice-title">{title}</h3>
+      <div className={`analysis-host-list${updating ? ' is-updating' : ''}`}>
+        {rows.map((row) => (
+          <div key={row.key || 'unknown'} className="analysis-row">
+            <div className="analysis-row-who">
+              <div className="analysis-row-name">{labelOf(row.key)}</div>
+              <div className="analysis-row-meta">
+                {t('analysis.sliceMeta', {
+                  turns: formatCount(row.turns),
+                  tokens: formatCount(sliceTokens(row))
+                })}
+                {row.failures > 0 ? ` · ${t('analysis.failures', { n: row.failures })}` : ''}
+              </div>
+            </div>
+            <div className="analysis-row-nums">
+              <div className={`analysis-row-cost${updating ? ' usage-shimmer' : ''}`}>
+                {formatCost(row.costUsd, currency, row.costApprox)}
+              </div>
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   )

@@ -202,6 +202,57 @@ describe('aggregateAnalysisUsage', () => {
     assert.equal(usage.api.inputTokens, 800)
     assert.equal(usage.api.turns, 0)
   })
+
+  it('slices turns by model and account', () => {
+    const usage = aggregateAnalysisUsage([
+      {
+        cliHost: 'claude',
+        accountId: 'acc-a',
+        model: 'sonnet',
+        tokenHistory: [
+          snap({
+            turnIndex: 1,
+            timestamp: 100,
+            newInputTokens: 10,
+            outputTokens: 4,
+            estimatedCost: 0.2,
+            model: 'sonnet',
+            accountId: 'acc-a'
+          }),
+          snap({
+            turnIndex: 2,
+            timestamp: 200,
+            newInputTokens: 8,
+            outputTokens: 2,
+            estimatedCost: 0.1,
+            model: 'opus',
+            accountId: 'acc-b',
+            errorKind: 'quota'
+          })
+        ]
+      }
+    ])
+    assert.equal(usage.turns.length, 2)
+    assert.deepEqual(
+      usage.byModel.map((row) => row.key),
+      ['sonnet', 'opus']
+    )
+    assert.equal(usage.byAccount.find((row) => row.key === 'acc-b')?.failures, 1)
+    const week = aggregateAnalysisUsage(
+      [
+        {
+          cliHost: 'claude',
+          tokenHistory: [
+            snap({ turnIndex: 1, timestamp: 1, newInputTokens: 10, estimatedCost: 1, model: 'old' }),
+            snap({ turnIndex: 2, timestamp: 50, newInputTokens: 4, estimatedCost: 2, model: 'new' })
+          ]
+        }
+      ],
+      { sinceMs: 40 }
+    )
+    assert.equal(week.turns.length, 1)
+    assert.equal(week.byModel[0]?.key, 'new')
+  })
 })
 
 describe('snapshotWithFreshUsage', () => {

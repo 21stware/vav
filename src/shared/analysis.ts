@@ -31,11 +31,52 @@ export interface AnalysisHostUsage extends AnalysisUsageTotals {
   kind: AnalysisUsageKind
 }
 
+export type AnalysisRange = '7d' | '30d' | 'all'
+
+export interface AnalysisSliceRow {
+  key: string
+  turns: number
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens: number
+  cacheWriteTokens: number
+  costUsd: number
+  costApprox: boolean
+  failures: number
+}
+
+export interface AnalysisTurnRow {
+  timestamp: number
+  hostKey: string
+  model: string | null
+  accountId: string | null
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens: number
+  cacheWriteTokens: number
+  costUsd: number
+  costApprox: boolean
+  failed: boolean
+}
+
 export interface AnalysisUsage {
   total: AnalysisUsageTotals
   api: AnalysisUsageTotals
   agent: AnalysisUsageTotals
   hosts: AnalysisHostUsage[]
+  turns: AnalysisTurnRow[]
+  byModel: AnalysisSliceRow[]
+  byAccount: AnalysisSliceRow[]
+}
+
+export const ANALYSIS_RANGE_MS: Record<Exclude<AnalysisRange, 'all'>, number> = {
+  '7d': 7 * 24 * 60 * 60 * 1000,
+  '30d': 30 * 24 * 60 * 60 * 1000
+}
+
+export function analysisSinceMs(range: AnalysisRange, now: number): number | null {
+  if (range === 'all') return null
+  return now - ANALYSIS_RANGE_MS[range]
 }
 
 export interface AnalysisProvider {
@@ -57,12 +98,15 @@ export interface AnalysisSnapshot {
   usage: AnalysisUsage
   providers: AnalysisProvider[]
   now: number
+  /** models.dev catalog last synced (null = heuristic only). */
+  pricesUpdatedAt?: number | null
 }
 
 /** Lean conversation shape the aggregator needs — no message bodies. */
 export interface AnalysisConversationInput {
   cliHost?: CliHostKind | null
   accountId?: string | null
+  model?: string | null
   tokenHistory?: TokenSnapshot[]
   reportedSessionCostUsd?: number | null
   tokensUsed?: number
@@ -72,6 +116,7 @@ export interface AnalysisConversationInput {
       tokenHistory?: TokenSnapshot[]
       reportedSessionCostUsd?: number | null
       tokensUsed?: number
+      model?: string | null
     }
   >
 }
@@ -204,24 +249,127 @@ export function hostBucketsFromConversation(
   return buckets
 }
 
+function emptySlice(key: string): AnalysisSliceRow {
+  return {
+    key,
+    turns: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    cacheReadTokens: 0,
+    cacheWriteTokens: 0,
+    costUsd: 0,
+    costApprox: false,
+    failures: 0
+  }
+}
+
+function addSlice(target: AnalysisSliceRow, turn: AnalysisTurnRow): void {
+  target.turns += 1
+  target.inputTokens += turn.inputTokens
+  target.outputTokens += turn.outputTokens
+  target.cacheReadTokens += turn.cacheReadTokens
+  target.cacheWriteTokens += turn.cacheWriteTokens
+  target.costUsd += turn.costUsd
+  target.costApprox = target.costApprox || turn.costApprox
+  if (turn.failed) target.failures += 1
+}
+
+function sliceRowsFromTurns(
+  turns: AnalysisTurnRow[],
+  keyOf: (turn: AnalysisTurnRow) => string
+): AnalysisSliceRow[] {
+  const byKey = new Map<string, AnalysisSliceRow>()
+  for (const turn of turns) {
+    const key = keyOf(turn)
+    const row = byKey.get(key) ?? emptySlice(key)
+    addSlice(row, turn)
+    byKey.set(key, row)
+  }
+  return [...byKey.values()].sort(
+    (a, b) => b.costUsd - a.costUsd || b.turns - a.turns || a.key.localeCompare(b.key)
+  )
+}
+
+export function collectAnalysisTurns(
+  conversations: AnalysisConversationInput[],
+  options?: {
+    remapHost?: (hostKey: string, accountId?: string | null) => string
+  }
+): AnalysisTurnRow[] {
+  const turns: AnalysisTurnRow[] = []
+  for (const conversation of conversations) {
+    for (const bucket of hostBucketsFromConversation(conversation)) {
+      if (!bucket.tokenHistory.length) continue
+      const fallbackAccount =
+        conversation.accountId ??
+        bucket.tokenHistory.find((row) => row.accountId)?.accountId ??
+        null
+      const hostKey = options?.remapHost?.(bucket.hostKey, fallbackAccount) ?? bucket.hostKey
+      const fallbackModel = conversation.model ?? null
+      for (const snap of bucket.tokenHistory) {
+        const accountId = snap.accountId ?? fallbackAccount
+        turns.push({
+          timestamp: snap.timestamp,
+          hostKey,
+          model: snap.model?.trim() || fallbackModel,
+          accountId,
+          inputTokens: snap.newInputTokens,
+          outputTokens: snap.outputTokens,
+          cacheReadTokens: snap.cacheReadTokens,
+          cacheWriteTokens: snap.cacheWriteTokens,
+          costUsd: snap.estimatedCost,
+          costApprox: snap.costSource !== 'provider',
+          failed: Boolean(snap.errorKind)
+        })
+      }
+    }
+  }
+  return turns.sort((a, b) => b.timestamp - a.timestamp)
+}
+
+export function filterAnalysisTurns(
+  turns: AnalysisTurnRow[],
+  sinceMs: number | null | undefined
+): AnalysisTurnRow[] {
+  if (sinceMs == null) return turns
+  return turns.filter((turn) => turn.timestamp >= sinceMs)
+}
+
+export function slicesFromTurns(turns: AnalysisTurnRow[]): {
+  byModel: AnalysisSliceRow[]
+  byAccount: AnalysisSliceRow[]
+} {
+  return {
+    byModel: sliceRowsFromTurns(turns, (turn) => turn.model?.trim() || ''),
+    byAccount: sliceRowsFromTurns(turns, (turn) => turn.accountId?.trim() || '')
+  }
+}
+
 export function aggregateAnalysisUsage(
   conversations: AnalysisConversationInput[],
   options?: {
     remapHost?: (hostKey: string, accountId?: string | null) => string
     order?: string[] | null
+    sinceMs?: number | null
   }
 ): AnalysisUsage {
   const byHost = new Map<string, AnalysisUsageTotals>()
   for (const conversation of conversations) {
     for (const bucket of hostBucketsFromConversation(conversation)) {
       if (!bucketHasUsage(bucket)) continue
+      const history =
+        options?.sinceMs != null
+          ? bucket.tokenHistory.filter((row) => row.timestamp >= options.sinceMs!)
+          : bucket.tokenHistory
+      const scoped = { ...bucket, tokenHistory: history }
+      if (!bucketHasUsage(scoped)) continue
       const accountId =
         conversation.accountId ??
-        bucket.tokenHistory.find((row) => row.accountId)?.accountId ??
+        scoped.tokenHistory.find((row) => row.accountId)?.accountId ??
         null
       const hostKey = options?.remapHost?.(bucket.hostKey, accountId) ?? bucket.hostKey
       const current = byHost.get(hostKey) ?? emptyUsageTotals()
-      addTotals(current, totalsFromBucket(bucket))
+      addTotals(current, totalsFromBucket(scoped))
       byHost.set(hostKey, current)
     }
   }
@@ -246,7 +394,9 @@ export function aggregateAnalysisUsage(
   const total = emptyUsageTotals()
   addTotals(total, api)
   addTotals(total, agent)
-  return { total, api, agent, hosts }
+  const turns = filterAnalysisTurns(collectAnalysisTurns(conversations, options), options?.sinceMs)
+  const slices = slicesFromTurns(turns)
+  return { total, api, agent, hosts, turns, ...slices }
 }
 
 function providerTakesBalanceLookup(
