@@ -35,6 +35,7 @@ import {
   type DaemonWorkspaceCatalog
 } from './DaemonServer.ts'
 import { DaemonClient, createRemoteWorkspaceHost, requestLanPairOffer, PAIRING_CANCELLED } from './DaemonClient.ts'
+import type { PortProxyDial } from './portProxy.ts'
 import { isLoopbackPairedHost } from './vavServerShellPairing.ts'
 import { RemoteControlDial } from '../remote/RemoteControlDial.ts'
 import type { RemoteHello, RemoteServerMessage } from '../../shared/remoteControl.ts'
@@ -43,6 +44,7 @@ import {
   createFileGrantStore,
   incomingFromGrants,
   isPairAuthMessage,
+  isPairRevokedMessage,
   type GrantStore,
   type IncomingController
 } from './grants.ts'
@@ -171,6 +173,10 @@ export class DaemonAttachService {
   private localShellReconnect: Promise<unknown> | null = null
   /** Last welcome.version per host — About reads the local-shell vav-server. */
   private readonly versions = new Map<string, string>()
+  /** Live daemon TCP endpoint for `hello.role=proxy` (LAN or tailcat dial). */
+  private readonly proxyDials = new Map<string, PortProxyDial>()
+  /** Same endpoint the phone-role control plane should redial if it drops. */
+  private readonly controlTargets = new Map<string, DialTarget & { secret: string }>()
 
   constructor(opts: AttachOpts) {
     this.opts = opts
@@ -438,6 +444,22 @@ export class DaemonAttachService {
     return path || null
   }
 
+  proxyDial(machineId: string): PortProxyDial | null {
+    if (this.localShellHostIds.has(machineId)) return null
+    const live = this.proxyDials.get(machineId)
+    if (live) return live
+    const row = this.loadStore().find((entry) => entry.machineId === machineId)
+    if (!row || row.localShell || isLoopbackPairedHost(row)) return null
+    return {
+      host: row.host,
+      port: row.port,
+      secret: row.secret,
+      grantId: row.grantId,
+      clientId: this.identity.machineId,
+      device: this.identity.name
+    }
+  }
+
   rememberDefaultPath(machineId: string, path: string): void {
     const normalized = path.trim()
     if (!normalized) return
@@ -660,11 +682,19 @@ export class DaemonAttachService {
     return this.control.get(machineId)?.ready === true
   }
 
-  /** Wait until the phone-role probe for this host finishes (desktop or vav-server). */
+  /**
+   * Wait until the phone-role plane is live. A finished failed probe (or a
+   * dropped socket) retries once against the stored target — otherwise a
+   * 400ms-era miss / tunnel blip leaves every send on the local CLI fallback.
+   */
   async waitForControlPlane(machineId: string): Promise<boolean> {
+    if (this.control.get(machineId)?.ready) return true
     const probe = this.controlProbes.get(machineId)
-    if (probe) return probe
-    return this.control.get(machineId)?.ready === true
+    if (probe) {
+      await probe
+      if (this.control.get(machineId)?.ready) return true
+    }
+    return this.ensureControlPlane(machineId)
   }
 
   async forget(machineId: string): Promise<void> {
@@ -678,6 +708,7 @@ export class DaemonAttachService {
     this.appearances.delete(machineId)
     this.whichCache.delete(machineId)
     this.versions.delete(machineId)
+    this.controlTargets.delete(machineId)
     this.opts.registry.remove(machineId)
     this.saveStore(this.loadStore().filter((row) => row.machineId !== machineId))
     this.opts.onHostsChanged(this.opts.registry.list())
@@ -703,6 +734,8 @@ export class DaemonAttachService {
     this.appearances.delete(machineId)
     this.whichCache.delete(machineId)
     this.versions.delete(machineId)
+    this.proxyDials.delete(machineId)
+    this.controlTargets.delete(machineId)
     this.releaseTunnel(machineId)
     this.opts.registry.remove(machineId)
     const next = this.loadStore().filter((row) => row.machineId !== machineId)
@@ -1003,6 +1036,27 @@ export class DaemonAttachService {
     previous?.close()
     this.dropControl(welcome.host.id)
     this.clients.set(welcome.host.id, client)
+    if (target && hostSecret && !extra?.localShell) {
+      this.proxyDials.set(welcome.host.id, {
+        host: target.host,
+        port: target.port,
+        secret: hostSecret,
+        grantId: welcome.grant?.id,
+        clientId: this.identity.machineId,
+        device: this.identity.name
+      })
+    } else {
+      this.proxyDials.delete(welcome.host.id)
+    }
+    if (target && hostSecret) {
+      this.controlTargets.set(welcome.host.id, {
+        host: target.host,
+        port: target.port,
+        secret: hostSecret
+      })
+    } else {
+      this.controlTargets.delete(welcome.host.id)
+    }
     this.homes.set(welcome.host.id, welcome.home)
     this.tmps.set(welcome.host.id, welcome.tmp)
     if (welcome.version) this.versions.set(welcome.host.id, welcome.version)
@@ -1021,7 +1075,10 @@ export class DaemonAttachService {
     }
     client.onClose((reason) => {
       if (this.clients.get(welcome.host.id) !== client) return
-      if (isPairAuthMessage(reason)) {
+      // Only an explicit revoke drops the pairing. "pairing rejected" also
+      // happens when an update races the local listen / a stale loopback
+      // target — forgetting then wipes Connect remotes and their folders.
+      if (isPairRevokedMessage(reason)) {
         this.detachLocal(welcome.host.id)
         return
       }
@@ -1057,9 +1114,10 @@ export class DaemonAttachService {
   private pendingControl: Promise<void> = Promise.resolve()
 
   private dropControl(machineId: string): void {
-    this.control.get(machineId)?.close()
+    const dial = this.control.get(machineId)
     this.control.delete(machineId)
     this.controlProbes.delete(machineId)
+    dial?.close()
   }
 
   /**
@@ -1074,6 +1132,24 @@ export class DaemonAttachService {
     const probe = this.probeControlPlane(machineId, target, secret)
     this.controlProbes.set(machineId, probe)
     await probe
+  }
+
+  private async ensureControlPlane(machineId: string): Promise<boolean> {
+    if (this.disposed) return false
+    if (this.control.get(machineId)?.ready) return true
+    const target = this.controlTargets.get(machineId)
+    if (!target) return false
+    const existing = this.controlProbes.get(machineId)
+    if (existing) {
+      await existing
+      if (this.control.get(machineId)?.ready) return true
+      if (this.controlProbes.get(machineId) !== existing) {
+        return (await this.controlProbes.get(machineId)) === true
+      }
+    }
+    const probe = this.probeControlPlane(machineId, target, target.secret)
+    this.controlProbes.set(machineId, probe)
+    return probe
   }
 
   private async probeControlPlane(
@@ -1091,6 +1167,14 @@ export class DaemonAttachService {
       })
       this.control.set(machineId, dial)
       dial.onFrame((_state, message) => this.opts.onControlEvent?.(machineId, message))
+      dial.onClose(() => {
+        if (this.control.get(machineId) !== dial) return
+        this.control.delete(machineId)
+        if (this.disposed) return
+        setTimeout(() => {
+          void this.ensureControlPlane(machineId)
+        }, 250)
+      })
       this.opts.onHostsChanged(this.opts.registry.list())
       return true
     } catch {
@@ -1173,7 +1257,7 @@ export class DaemonAttachService {
     } catch (err) {
       if (this.disposed || ctl.signal.aborted) return
       const message = err instanceof Error ? err.message : String(err)
-      if (isPairAuthMessage(message)) {
+      if (isPairRevokedMessage(message)) {
         this.detachLocal(row.machineId)
         return
       }

@@ -70,4 +70,19 @@ describe('hostSettings', () => {
       { machineId: hostId, path: adopted }
     ])
   })
+
+  it('keeps desktop folder recents when the host snapshot is empty', () => {
+    const localPath = { machineId: 'local', path: '/Users/me/repo' }
+    const remotePath = { machineId: 'macmini', path: '/Users/me/wall' }
+    const merged = composeHostSettings(
+      {
+        ...DEFAULT_SETTINGS,
+        recentWorkspaceDirectories: [localPath, remotePath]
+      },
+      { recentWorkspaceDirectories: [], defaultModel: 'hosted' },
+      'local'
+    )
+    assert.equal(merged.defaultModel, 'hosted')
+    assert.deepEqual(merged.recentWorkspaceDirectories, [localPath, remotePath])
+  })
 })

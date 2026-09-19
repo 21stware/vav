@@ -330,6 +330,107 @@ describe('DaemonAttachService', () => {
     }
   })
 
+  it('keeps a stored host when reconnect is pairing-rejected', async () => {
+    const userData = await mkdtemp(join(tmpdir(), 'vav-attach-'))
+    const reject = createServer((socket) => {
+      socket.write(
+        `${JSON.stringify({ type: 'error', code: 'auth', message: 'pairing rejected' })}\n`
+      )
+      socket.end()
+    })
+    const port = await new Promise<number>((resolve, rejectListen) => {
+      reject.once('error', rejectListen)
+      reject.listen(0, '127.0.0.1', () => {
+        const address = reject.address()
+        resolve(typeof address === 'object' && address ? address.port : 0)
+      })
+    })
+    await writeFile(
+      join(userData, 'paired-hosts.json'),
+      JSON.stringify({
+        hosts: [
+          {
+            machineId: 'box-1',
+            name: 'Mac mini',
+            secret: SECRET,
+            host: '127.0.0.1',
+            port
+          }
+        ]
+      })
+    )
+    const { service, registry } = attach(userData, false, { reconnectDelayMs: () => 20 })
+    try {
+      service.restore()
+      const start = Date.now()
+      while (!registry.get('box-1') && Date.now() - start < 2000) {
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      }
+      await new Promise((resolve) => setTimeout(resolve, 80))
+      const stored = JSON.parse(await readFile(join(userData, 'paired-hosts.json'), 'utf8')) as {
+        hosts: { machineId: string }[]
+      }
+      assert.equal(stored.hosts[0]?.machineId, 'box-1')
+      assert.equal(registry.get('box-1')?.info.online, false)
+    } finally {
+      service.dispose()
+      reject.close()
+      await rm(userData, { recursive: true, force: true })
+    }
+  })
+
+  it('forgets a stored host when the peer revoked the grant', async () => {
+    const userData = await mkdtemp(join(tmpdir(), 'vav-attach-'))
+    const reject = createServer((socket) => {
+      socket.write(
+        `${JSON.stringify({ type: 'error', code: 'revoked', message: 'pairing revoked' })}\n`
+      )
+      socket.end()
+    })
+    const port = await new Promise<number>((resolve, rejectListen) => {
+      reject.once('error', rejectListen)
+      reject.listen(0, '127.0.0.1', () => {
+        const address = reject.address()
+        resolve(typeof address === 'object' && address ? address.port : 0)
+      })
+    })
+    await writeFile(
+      join(userData, 'paired-hosts.json'),
+      JSON.stringify({
+        hosts: [
+          {
+            machineId: 'box-1',
+            name: 'Mac mini',
+            secret: SECRET,
+            host: '127.0.0.1',
+            port
+          }
+        ]
+      })
+    )
+    const { service } = attach(userData, false, { reconnectDelayMs: () => 20 })
+    try {
+      service.restore()
+      const start = Date.now()
+      let empty = false
+      while (Date.now() - start < 2000) {
+        const stored = JSON.parse(await readFile(join(userData, 'paired-hosts.json'), 'utf8')) as {
+          hosts: unknown[]
+        }
+        if (stored.hosts.length === 0) {
+          empty = true
+          break
+        }
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      }
+      assert.equal(empty, true)
+    } finally {
+      service.dispose()
+      reject.close()
+      await rm(userData, { recursive: true, force: true })
+    }
+  })
+
   it('rejects garbage and a wrong secret without mounting a host', async () => {
     const disk = await mkdtemp(join(tmpdir(), 'vav-box-'))
     const userData = await mkdtemp(join(tmpdir(), 'vav-attach-'))
@@ -701,6 +802,92 @@ describe('DaemonAttachService', () => {
         await new Promise((resolve) => setTimeout(resolve, 20))
       }
       assert.deepEqual(received, ['send:c1:hi', 'configure:c1:bypass'])
+    } finally {
+      service.dispose()
+      hub.dispose()
+      server.close()
+      await rm(disk, { recursive: true, force: true })
+      await rm(userData, { recursive: true, force: true })
+    }
+  })
+
+  it('reopens the control plane after the phone-role socket drops', async () => {
+    const disk = await mkdtemp(join(tmpdir(), 'vav-box-'))
+    const userData = await mkdtemp(join(tmpdir(), 'vav-attach-'))
+    const received: string[] = []
+    const hub = new RemoteControlHub({
+      appVersion: 'test',
+      secret: () => SECRET,
+      listSessions: () => [],
+      listThread: () => null,
+      listControls: () => null,
+      listHost: () => ({
+        type: 'host',
+        name: 'box',
+        home: disk,
+        tmp: disk,
+        capabilities: REMOTE_PHONE_CAPABILITIES,
+        defaults: { agent: 'vav', model: '', thinking: null, approval: 'auto' },
+        recentDirs: []
+      }),
+      configure: () => 'ok',
+      sendMessage: (id, text) => {
+        received.push(`send:${id}:${text}`)
+        return 'ok'
+      },
+      createSession: () => {
+        throw new Error('unused')
+      },
+      cancel: () => 'ok',
+      reply: () => false,
+      rename: () => 'ok',
+      archive: () => 'ok',
+      pin: () => 'ok',
+      favorite: () => 'ok',
+      browse: () => 'not-found',
+      setWorkspace: () => 'ok'
+    })
+    const server = new DaemonServer({
+      host: createLocalWorkspaceHost({ name: 'box' }),
+      identity: { machineId: 'box-1', name: 'box' },
+      secret: () => SECRET,
+      appVersion: 'test',
+      home: disk,
+      tmp: disk,
+      onControlHello: (socket, leftover, hello) => hub.adoptAuthed(socket, leftover, hello)
+    })
+    const port = await server.listen(0, '127.0.0.1')
+    const { service } = attach(userData)
+    try {
+      const result = await service.pair(
+        encodeDaemonPairing({
+          v: DAEMON_PROTO_VERSION,
+          secret: SECRET,
+          machineId: 'ignored',
+          name: 'box',
+          host: '127.0.0.1',
+          port
+        })
+      )
+      assert.equal(result.ok, true)
+      assert.equal(await service.waitForControlPlane('box-1'), true)
+      service.controlOf('box-1')?.close()
+      const start = Date.now()
+      let ready = false
+      while (Date.now() - start < 2000) {
+        if (await service.waitForControlPlane('box-1')) {
+          ready = true
+          break
+        }
+        await new Promise((resolve) => setTimeout(resolve, 40))
+      }
+      assert.equal(ready, true)
+      service.controlOf('box-1')?.send('c1', 'after-drop')
+      const sentAt = Date.now()
+      while (!received.includes('send:c1:after-drop') && Date.now() - sentAt < 1000) {
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      }
+      assert.deepEqual(received, ['send:c1:after-drop'])
     } finally {
       service.dispose()
       hub.dispose()

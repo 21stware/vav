@@ -20,13 +20,15 @@ import {
 import { drainJsonLines, REMOTE_MAX_LINE_BYTES } from '../../shared/remoteControl.ts'
 
 const CONNECT_TIMEOUT_MS = 4_000
-const WELCOME_TIMEOUT_MS = 400
+/** Tunnel + a large `sessions` snapshot can exceed a LAN-sized 400ms probe. */
+export const CONTROL_PLANE_WELCOME_MS = 8_000
 
 export class RemoteControlDial {
   private socket: Socket | null = null
   private buffer = ''
   private state = emptyRemoteControlSession()
   private readonly listeners = new Set<(state: RemoteControlSessionState, message: RemoteServerMessage) => void>()
+  private readonly closeListeners = new Set<() => void>()
   ready = false
 
   snapshot(): RemoteControlSessionState {
@@ -37,6 +39,13 @@ export class RemoteControlDial {
     this.listeners.add(listener)
     return () => {
       this.listeners.delete(listener)
+    }
+  }
+
+  onClose(listener: () => void): () => void {
+    this.closeListeners.add(listener)
+    return () => {
+      this.closeListeners.delete(listener)
     }
   }
 
@@ -67,15 +76,17 @@ export class RemoteControlDial {
     socket.setEncoding('utf8')
     socket.on('data', (chunk: string) => this.ingest(chunk))
     const closed = (): void => {
+      const wasReady = this.ready
       this.ready = false
       if (this.socket === socket) this.socket = null
+      if (wasReady) this.emitClose()
     }
     socket.on('close', closed)
     socket.on('error', closed)
     this.write(remoteHello(opts.secret, opts.device, 'phone'))
     const welcomed = await this.waitFor(
       (state) => state.welcomed || state.lastError !== null,
-      opts.timeoutMs ?? WELCOME_TIMEOUT_MS,
+      opts.timeoutMs ?? CONTROL_PLANE_WELCOME_MS,
       'welcome'
     )
     if (welcomed.lastError) {
@@ -295,11 +306,18 @@ export class RemoteControlDial {
   }
 
   close(): void {
+    const wasReady = this.ready
     this.ready = false
     this.buffer = ''
     this.state = emptyRemoteControlSession()
-    this.socket?.destroy()
+    const socket = this.socket
     this.socket = null
+    socket?.destroy()
+    if (wasReady) this.emitClose()
+  }
+
+  private emitClose(): void {
+    for (const listener of this.closeListeners) listener()
   }
 
   private write(message: RemoteClientMessage): void {

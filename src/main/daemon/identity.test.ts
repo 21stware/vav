@@ -82,4 +82,20 @@ describe('daemon identity', () => {
       await rm(dir, { recursive: true, force: true })
     }
   })
+
+  it('writePrivateJson overwrites an existing file atomically', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vav-atomic-'))
+    try {
+      const file = join(dir, 'paired-hosts.json')
+      writePrivateJson(file, { hosts: [{ machineId: 'a' }] })
+      writePrivateJson(file, { hosts: [{ machineId: 'b' }, { machineId: 'c' }] })
+      const raw = JSON.parse(await readFile(file, 'utf8')) as { hosts: { machineId: string }[] }
+      assert.deepEqual(
+        raw.hosts.map((row) => row.machineId),
+        ['b', 'c']
+      )
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
 })

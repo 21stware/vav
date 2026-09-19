@@ -3,7 +3,6 @@ import {
   isLocalMachine,
   normalizeMachineId,
   parseWorkspaceRefList,
-  recentsForMachine,
   workspaceRef,
   workspaceRefKey,
   type WorkspaceRef
@@ -111,13 +110,11 @@ export function remapHostWorkspaceSettings(
 export function retainAdoptedHostRecents(
   merged: AppSettings,
   local: AppSettings,
-  machineId: string
+  _machineId: string
 ): AppSettings {
-  if (isLocalMachine(machineId)) return merged
-  const adopted = recentsForMachine(
-    parseWorkspaceRefList(local.recentWorkspaceDirectories),
-    machineId
-  )
+  // A freshly spawned / empty vav-server must not clobber the desktop cache —
+  // that is what made folder history vanish after every app update.
+  const adopted = parseWorkspaceRefList(local.recentWorkspaceDirectories)
   if (!adopted.length) return merged
   const next = parseWorkspaceRefList(merged.recentWorkspaceDirectories)
   const seen = new Set(next.map(workspaceRefKey))

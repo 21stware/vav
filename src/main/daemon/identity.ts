@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from 'node:crypto'
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
 import { hostname, userInfo } from 'node:os'
 import { join } from 'node:path'
 
@@ -12,7 +12,29 @@ export type DaemonIdentity = {
 export const SECRET_FILE_MODE = 0o600
 
 export function writePrivateJson(file: string, value: unknown): void {
-  writeFileSync(file, JSON.stringify(value, null, 2), { mode: SECRET_FILE_MODE })
+  const body = JSON.stringify(value, null, 2)
+  const tmp = `${file}.${process.pid}.tmp`
+  writeFileSync(tmp, body, { mode: SECRET_FILE_MODE })
+  try {
+    renameSync(tmp, file)
+  } catch {
+    // win32 cannot rename over an existing file
+    try {
+      unlinkSync(file)
+    } catch {
+      /* first write */
+    }
+    try {
+      renameSync(tmp, file)
+    } catch {
+      writeFileSync(file, body, { mode: SECRET_FILE_MODE })
+      try {
+        unlinkSync(tmp)
+      } catch {
+        /* ignore */
+      }
+    }
+  }
   try {
     chmodSync(file, SECRET_FILE_MODE)
   } catch {
