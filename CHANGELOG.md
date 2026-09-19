@@ -4,6 +4,22 @@ User-facing changes by release. Unreleased work lives at the top until the next 
 
 ## Unreleased
 
+## 1.31.0
+
+⌘⇧? (Ctrl+Shift+/) opens faaaaast — a small overlay for a glanceable answer from any app. Math, units, and encode stay on this computer; weather, trains, flights, and FX are looked up this turn.
+
+A terminal pane that is listening shows :port chips. On this Mac they open localhost. On a paired host the same port is forwarded here; if this computer already uses that port, the chip says so instead of silently remapping.
+
+Accounts show resting / capped / needs reauth. A new session prefers a healthy account in that group. Settings can remove an extra account (the last one in a group stays).
+
+Analysis can show the last 7 days, 30 days, or all history, and splits cost by model and account. When a provider does not report a bill, rates come from models.dev (with a last-updated line).
+
+Swarm stays on. The Settings toggle and the toolbar split buttons are gone — right-click empty session chrome, or use the split shortcuts.
+
+Recent folders and paired hosts survive an app update. Sending to a remote machine no longer falls back to this Mac’s CLI when the session channel is down.
+
+HTML file preview can load the page’s own scripts, fonts, and CDNs (including Tailwind). Typed paths and /slash commands stay plain text in the composer. A failed turn is an error on the message, not a quoted block in the transcript.
+
 ## 1.30.2
 
 In-app updates no longer install or restart on their own. The retired Auto policy becomes Download (fetch in the background, wait for Restart). macOS unpacking is left to electron-updater at Restart instead of a background Squirrel wait that could stick on “Unpacking update”.
