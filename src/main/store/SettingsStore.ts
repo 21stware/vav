@@ -237,6 +237,8 @@ export class SettingsStore {
     s.webToolsEnabled = true
     s.webSearchEnabled = true
     s.webFetchEnabled = true
+    // Swarm is always on — the settings toggle was removed.
+    s.swarmModeEnabled = true
     if (typeof s.webFetchAllowRender !== 'boolean') s.webFetchAllowRender = false
     if (typeof s.webSearxngBaseUrl !== 'string') s.webSearxngBaseUrl = ''
     s.webSearxngBaseUrl = s.webSearxngBaseUrl.trim()

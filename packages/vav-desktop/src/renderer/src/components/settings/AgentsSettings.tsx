@@ -46,7 +46,6 @@ import { menuAnchor, showMenu } from '../../lib/nativeMenu'
 import { AgentBrandMark } from '../AgentBrandMark'
 import { Toggle } from '../ui'
 import { AgentProfileSwitch } from './VavApiCredentials'
-import { useWorkspaceStore } from '../../state/workspaceStore'
 import {
   getAgentInstallStatus,
   openAgentWebsite,
@@ -1369,24 +1368,6 @@ export function AgentsSettings(): React.JSX.Element {
       </div>
 
       <div className="agents-prefs">
-        <label className="agents-pref-row">
-          <span>{t('agents.swarmMode')}</span>
-          <Toggle
-            checked={settings.swarmModeEnabled === true}
-            title={t('agents.swarmMode')}
-            testId="settings-swarm-mode"
-            onChange={(swarmModeEnabled) => {
-              void updateSettings({ swarmModeEnabled })
-              if (!swarmModeEnabled) {
-                const { workspaces, exitCliMode } = useWorkspaceStore.getState()
-                for (const id of Object.keys(workspaces)) {
-                  if (workspaces[id]?.cliMode) exitCliMode(id)
-                }
-              }
-            }}
-          />
-        </label>
-        <div className="form-hint">{t('agents.swarmModeHint')}</div>
         <label className="agents-pref-row">
           <span>{t('agents.skipPickerWhenSingle')}</span>
           <Toggle

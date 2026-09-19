@@ -114,7 +114,7 @@ test('appearance toggle persists on change', async () => {
   }
 })
 
-test('Providers lists CLI hosts and keeps Swarm off', async () => {
+test('Providers lists CLI hosts', async () => {
   const harness = await launchWorkbench()
   try {
     const settings = await openSettingsWindow(harness, 'agents')
@@ -122,10 +122,7 @@ test('Providers lists CLI hosts and keeps Swarm off', async () => {
     await expect(settings.locator('[data-testid="providers-list"]')).toBeVisible()
     await expect(settings.locator('[data-testid="provider-row-claude"]')).toBeVisible()
     await expect(settings.locator('[data-testid="provider-row-codex"]')).toBeVisible()
-    await expect(settings.locator('[data-testid="settings-swarm-mode"]')).toHaveAttribute(
-      'aria-checked',
-      'false'
-    )
+    await expect(settings.locator('[data-testid="settings-swarm-mode"]')).toHaveCount(0)
 
     await settings.locator('[data-testid="provider-row-claude"]').click()
     await expect(settings.locator('[data-testid="provider-editor-name"]')).toHaveText('Claude Code')

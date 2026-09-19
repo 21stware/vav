@@ -80,14 +80,14 @@ test('⌘⇧C / ⌘⇧V flip the Swarm CLI surface and back to VAV', async () =>
   }
 })
 
-test('toolbar split buttons add Swarm panes', async () => {
+test('split chords add Swarm panes when toolbar split buttons are hidden', async () => {
   const harness = await launchWorkbench({ swarmMode: true })
   try {
     const { page } = harness
     await page.locator('[data-testid="app-shell"]').click()
-    await expect(page.locator('[data-testid="swarm-split-right"]')).toBeVisible()
-    await expect(page.locator('[data-testid="swarm-split-down"]')).toBeVisible()
-    await page.locator('[data-testid="swarm-split-right"]').click()
+    await expect(page.locator('[data-testid="swarm-split-right"]')).toHaveCount(0)
+    await expect(page.locator('[data-testid="swarm-split-down"]')).toHaveCount(0)
+    await page.keyboard.press('Meta+d')
     await expect(page.locator('[data-testid="swarm-split"]')).toBeVisible()
     await expect(page.locator('[data-testid="swarm-pane"]')).toHaveCount(2)
   } finally {

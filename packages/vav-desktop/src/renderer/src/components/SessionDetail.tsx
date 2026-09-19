@@ -8,14 +8,14 @@ import {
   type ReactNode,
   type RefObject
 } from 'react'
-import { Clock, Plus, Search, SquareSplitHorizontal, SquareSplitVertical } from 'lucide-react'
+import { Clock, Plus, Search } from 'lucide-react'
 import { buildWorkspaceFocusContext } from '@shared/agentContextInject'
 import { DEFAULT_CLI_AGENTS, enabledCliAgents, type AgentConfig } from '@shared/types'
 import type { FileSessionMeta } from '@shared/ipc'
 import { handoffFocusToCli } from '../lib/cliFocusHandoff'
 import { findNeighborPane, focusedCliPaneId, measureCliPaneRects } from '../lib/cliPaneNavigate'
 import { focusAgentPane, resolveUiFocusScope } from '../lib/uiFocus'
-import { focusCliAgentPickerFirstOption } from './CliAgentPicker'
+import { splitCliAndFocusPicker } from '../lib/sessionSplit'
 import { useSessionStore } from '../state/sessionStore'
 import { resolveComposerContextFile } from '../state/sessionQueue'
 import { CLI_SURFACE_KEY, useWorkspaceStore } from '../state/workspaceStore'
@@ -49,25 +49,6 @@ import { matchingKeyBindingId, prettyAccelerator, resolveKeyBindings } from '@sh
 import { PLATFORM } from '../lib/platform'
 import { useSidebarFloatMode } from '../lib/sidebarLayout'
 import { isCompanionSessionShell } from '../lib/windowKind'
-
-/** Split CLI Screen and move keyboard focus to the new pane’s first agent. */
-function splitCliAndFocusPicker(
-  conversationId: string,
-  axis: 'row' | 'column'
-): void {
-  if (!conversationId) return
-  useWorkspaceStore.getState().splitCliSurface(conversationId, axis)
-  const host =
-    useWorkspaceStore.getState().workspaces[conversationId]?.agentHostSessions[
-      CLI_SURFACE_KEY
-    ]
-  const pendingId = host?.activeTabId
-  if (!pendingId) return
-  // Prefer pane-scoped focus (retries across paint). Also nudge the picker
-  // button so ←/→ works even if a sibling TerminalHost raced for focus.
-  focusAgentPane(conversationId, pendingId)
-  focusCliAgentPickerFirstOption(conversationId, pendingId)
-}
 
 /**
  * - `main`: full session surface (sidebar → open conversation)
@@ -829,9 +810,7 @@ export function AgentModeChrome({
   /** Single-file vav: session name / history / new in this same chrome row. */
   fileSessionChrome = null,
   /** Isolated window: Reveal in List, pinned with history / search. */
-  trail = null,
-  /** Picture-in-picture: keep isolated chrome, hide swarm / CLI split. */
-  hideSplit = false
+  trail = null
 }: {
   conversationId: string
   agentBinaryName: string | null
@@ -839,6 +818,7 @@ export function AgentModeChrome({
   showShellLeading?: boolean
   fileSessionChrome?: FileSessionChromeProps | null
   trail?: ReactNode
+  /** Unused: split actions moved to the empty-area context menu. */
   hideSplit?: boolean
 }): React.JSX.Element {
   const t = useT()
@@ -872,14 +852,7 @@ export function AgentModeChrome({
 
   const showFileSessionChrome = !!(fs && isChat && fs.sessions.length > 0)
   const trailing = fs?.trail ?? trail
-  const showSplit = swarmEnabled && !hideSplit
-  const showTrailing =
-    showFileSessionChrome || (showSearch && isChat) || showSplit || !!trailing
-
-  const splitSwarm = (axis: 'row' | 'column'): void => {
-    if (isTerminal) splitCliAndFocusPicker(conversationId, axis)
-    else void useSessionStore.getState().splitSwarmPane(axis)
-  }
+  const showTrailing = showFileSessionChrome || (showSearch && isChat) || !!trailing
 
   return (
     <div
@@ -938,25 +911,6 @@ export function AgentModeChrome({
                 title={`${t('common.search')} ${prettyAccelerator(bindings.find, PLATFORM)}`}
                 onClick={() => (searchOpen ? closeSearch() : openSearch())}
               />
-            ) : null}
-
-            {showSplit ? (
-              <>
-                <Button
-                  icon={<SquareSplitVertical size={14} />}
-                  variant="ghost"
-                  testId="swarm-split-right"
-                  title={`${t('agents.splitRight')} ${prettyAccelerator(bindings.splitPaneRight, PLATFORM)}`}
-                  onClick={() => splitSwarm('row')}
-                />
-                <Button
-                  icon={<SquareSplitHorizontal size={14} />}
-                  variant="ghost"
-                  testId="swarm-split-down"
-                  title={`${t('agents.splitDown')} ${prettyAccelerator(bindings.splitPaneDown, PLATFORM)}`}
-                  onClick={() => splitSwarm('column')}
-                />
-              </>
             ) : null}
 
             {trailing ? <div className="agent-mode-chrome-trail">{trailing}</div> : null}

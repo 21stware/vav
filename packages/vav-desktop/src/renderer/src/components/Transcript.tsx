@@ -35,6 +35,7 @@ import { SessionWorkspaceChrome } from './SessionWorkspaceChrome'
 import { EmptyQuotaUsage } from './EmptyQuotaUsage'
 import { FirstRunChecklist } from './FirstRunChecklist'
 import { useWorkspaceSwitchMenu } from '../lib/workspaceSwitchMenu'
+import { handleSessionSplitContextMenu } from '../lib/sessionSplit'
 import { useT } from '../i18n/useT'
 
 /**
@@ -698,6 +699,9 @@ export function Transcript({
         <div
           ref={contentRef}
           className={`transcript-inner${branchSwapActive ? ' is-branch-swap' : ''}`}
+          onContextMenu={(event) => {
+            handleSessionSplitContextMenu(event, activeId)
+          }}
         >
           {isEmpty &&
             (archived ? (

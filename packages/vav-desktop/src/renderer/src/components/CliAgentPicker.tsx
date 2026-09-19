@@ -5,6 +5,7 @@ import { useSessionStore } from '../state/sessionStore'
 import { CLI_SURFACE_KEY, useWorkspaceStore } from '../state/workspaceStore'
 import { setUiFocusScope } from '../lib/uiFocus'
 import { requestCliSurface } from '../lib/cliSurfaceSwitch'
+import { handleSessionSplitContextMenu } from '../lib/sessionSplit'
 import {
   matchingKeyBindingId,
   prettyAccelerator,
@@ -272,6 +273,9 @@ export function CliAgentPicker({
     <div
       className={`cli-agent-picker${compact ? ' is-compact' : ''}`}
       data-testid="cli-agent-picker"
+      onContextMenu={(event) => {
+        handleSessionSplitContextMenu(event, conversationId)
+      }}
     >
       {agents.length === 0 ? (
         <p className="cli-agent-picker-empty">{t('agents.empty')}</p>
@@ -354,42 +358,4 @@ export function CliAgentPicker({
   )
 }
 
-/**
- * Focus the first CLI agent option inside a pending pane (by tab id), or any
- * active picker in the conversation. Used after split / close so keyboard
- * control continues without a mouse click.
- */
-export function focusCliAgentPickerFirstOption(_conversationId: string, tabId?: string): void {
-  const apply = (attempt: number): void => {
-    const root = tabId
-      ? document.querySelector(
-          `[data-cli-pane="${CSS.escape(tabId)}"]:not(.is-surface-parked) .cli-agent-picker`
-        )
-      : document.querySelector(
-          `.terminal-host-main:not(.is-surface-parked) [data-terminal-surface="agent"] .cli-agent-picker`
-        )
-    const first = root?.querySelector('.cli-agent-picker-item') as HTMLButtonElement | null
-    if (!first) {
-      if (attempt < 12) requestAnimationFrame(() => apply(attempt + 1))
-      return
-    }
-    // Sibling TerminalHost fit/focus can win a frame later after ⌘D — reclaim.
-    if (document.activeElement !== first && attempt < 12) {
-      setUiFocusScope('agent')
-      try {
-        first.focus({ preventScroll: true })
-      } catch {
-        first.focus()
-      }
-      requestAnimationFrame(() => apply(attempt + 1))
-      return
-    }
-    setUiFocusScope('agent')
-    try {
-      first.focus({ preventScroll: true })
-    } catch {
-      first.focus()
-    }
-  }
-  requestAnimationFrame(() => apply(0))
-}
+export { focusCliAgentPickerFirstOption } from '../lib/sessionSplit'
