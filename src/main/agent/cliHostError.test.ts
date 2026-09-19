@@ -12,6 +12,11 @@ describe('describeCliHostError', () => {
     assert.equal(describeCliHostError('authentication required', [], null, null, t, 'en').kind, 'auth')
     assert.equal(describeCliHostError('ECONNRESET', [], null, null, t, 'en').kind, 'network')
     assert.equal(
+      describeCliHostError('连接失败，请检查网络后重试。 (network error)', [], null, null, t, 'en')
+        .message,
+      t('error.network')
+    )
+    assert.equal(
       describeCliHostError('Error: RetriableError: WritableIterable is closed', [], null, null, t, 'en')
         .kind,
       'technical'

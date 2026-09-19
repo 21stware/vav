@@ -67,7 +67,7 @@ const PROCESS_EXIT_RE =
   /(?:agent process exited|codex exited with code|claude exited with code|(?:agent |codex |claude )?process exited \(\s*-?\d+\s*\))/i
 
 const RETRIABLE_RE =
-  /RetriableError|Client network socket disconnected|ECONNRESET|ECONNREFUSED|ECONNABORTED|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|EPIPE|EHOSTUNREACH|ENETUNREACH|socket hang up|TLS connection (?:failed|error)|error sending request for url|fetch failed|network (?:error|failure)|connection (?:reset|refused|closed|interrupted|timed?[\s-]?out)|request (?:to .{1,200} )?failed, reason:/i
+  /RetriableError|Client network socket disconnected|ECONNRESET|ECONNREFUSED|ECONNABORTED|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|EPIPE|EHOSTUNREACH|ENETUNREACH|socket hang up|TLS connection (?:failed|error)|error sending request for url|fetch failed|network (?:error|failure)|connection (?:reset|refused|closed|interrupted|timed?[\s-]?out)|request (?:to .{1,200} )?failed, reason:|连接失败|网络连接(?:中断|失败)|请检查网络/i
 
 export type ExtractedRpcError = {
   code: number | null

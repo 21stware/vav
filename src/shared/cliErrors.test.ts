@@ -120,6 +120,7 @@ describe('classifyCliError', () => {
     assert.equal(classifyCliError('getaddrinfo ENOTFOUND api.example.com'), 'network')
     assert.equal(classifyCliError('socket hang up'), 'network')
     assert.equal(classifyCliError('fetch failed'), 'network')
+    assert.equal(classifyCliError('连接失败，请检查网络后重试。 (network error)'), 'network')
     assert.equal(classifyCliError('Agent process exited (1)'), 'network')
     assert.equal(classifyCliError('codex exited with code 1'), 'network')
     assert.equal(classifyCliError('claude exited with code 1'), 'network')

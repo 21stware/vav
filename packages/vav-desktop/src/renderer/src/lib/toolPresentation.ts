@@ -195,6 +195,13 @@ export function classifyNetworkError(text: string): MessageKey | null {
   if (/ssrf|private (ip|net|address)|localhost is blocked|blocked/.test(lower)) {
     return 'tool.error.blocked'
   }
+  if (
+    /network\s*(error|failure)|fetch failed|连接失败|请检查网络|网络连接(?:中断|失败)|网络错误/.test(
+      lower
+    )
+  ) {
+    return 'tool.error.network'
+  }
   return null
 }
 

@@ -137,6 +137,10 @@ describe('classifyNetworkError', () => {
     assert.equal(classifyNetworkError('connect ECONNREFUSED 127.0.0.1:443'), 'tool.error.refused')
     assert.equal(classifyNetworkError('HTTP 404 Not Found'), 'tool.error.missing')
     assert.equal(classifyNetworkError('Blocked: private address'), 'tool.error.blocked')
+    assert.equal(
+      classifyNetworkError('连接失败，请检查网络后重试。 (network error)'),
+      'tool.error.network'
+    )
   })
 })
 

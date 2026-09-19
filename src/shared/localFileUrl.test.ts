@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { localFilePageUrl, localFileStreamUrl, parseVavLocalFilePath } from './localFileUrl.ts'
+import {
+  VAV_LOCAL_CORS_HEADERS,
+  localFilePageUrl,
+  localFileStreamUrl,
+  parseVavLocalFilePath
+} from './localFileUrl.ts'
 
 describe('localFileUrl', () => {
   it('keeps the query form for streaming previews', () => {
@@ -31,5 +36,10 @@ describe('localFileUrl', () => {
       '/tmp/a.js'
     )
     assert.equal(parseVavLocalFilePath('https://example.com/x'), null)
+  })
+
+  it('advertises CORS so srcdoc module scripts can load sibling files', () => {
+    assert.equal(VAV_LOCAL_CORS_HEADERS['Access-Control-Allow-Origin'], '*')
+    assert.match(VAV_LOCAL_CORS_HEADERS['Access-Control-Allow-Methods'] ?? '', /GET/)
   })
 })

@@ -48,7 +48,7 @@ describe('agentMessage', () => {
     assert.equal(fatal.role, 'assistant')
     assert.equal(fatal.content, 'No API key')
     assert.equal(fatal.errorText, 'No API key')
-    assert.deepEqual(fatal.blocks, [{ kind: 'text', text: '> No API key' }])
+    assert.deepEqual(fatal.blocks, [])
   })
 
   it('strips prior changeSetIds in place and reports dirty', () => {

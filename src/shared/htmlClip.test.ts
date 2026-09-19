@@ -52,11 +52,13 @@ describe('html-clip', () => {
     const raw =
       '<script src="https://evil.example/x.js"></script>' +
       '<script src="https://esm.sh/xstate@5"></script>' +
+      '<script src="https://cdn.tailwindcss.com"></script>' +
       '<script>window.ready = true</script>' +
       '<iframe src="https://evil.example"></iframe>'
     const cleaned = stripExternalClipLoaders(raw)
     assert.doesNotMatch(cleaned, /evil\.example/)
     assert.match(cleaned, /esm\.sh\/xstate/)
+    assert.match(cleaned, /cdn\.tailwindcss\.com/)
     assert.match(cleaned, /window\.ready/)
   })
 
@@ -87,6 +89,7 @@ describe('html-clip', () => {
     assert.match(doc, /esm\.sh/)
     assert.match(doc, /importmap/)
     assert.match(doc, /cdn\.tldraw\.com/)
+    assert.match(doc, /cdn\.tailwindcss\.com/)
     assert.match(doc, /stately\.ai/)
   })
 

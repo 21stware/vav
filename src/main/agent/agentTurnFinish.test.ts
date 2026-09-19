@@ -278,7 +278,7 @@ describe('findTurnWithPendingTool / collectParkedWaiters', () => {
 })
 
 describe('applyRuntimeFinishSeals / shouldPersistAssistantTurn / noticeAppendPlan', () => {
-  it('clears a cancelled error and quotes a real error', () => {
+  it('clears a cancelled error and leaves a real error on the turn', () => {
     const cancelled = {
       cancelled: true,
       error: 'boom',
@@ -296,13 +296,15 @@ describe('applyRuntimeFinishSeals / shouldPersistAssistantTurn / noticeAppendPla
       blocks: [{ kind: 'text', text: 'hi' }] as MessageBlock[]
     }
     applyRuntimeFinishSeals(failed, 'Cancelled')
-    assert.equal((failed.blocks[1] as { text: string }).text, '\n\n> boom')
+    assert.equal(failed.error, 'boom')
+    assert.equal(failed.blocks.length, 1)
   })
 
   it('persists a change set even when blocks are empty', () => {
     assert.equal(shouldPersistAssistantTurn({ blocks: [] }), false)
     assert.equal(shouldPersistAssistantTurn({ blocks: [{ kind: 'text' }] }), true)
     assert.equal(shouldPersistAssistantTurn({ blocks: [], changeSetId: 'cs1' }), true)
+    assert.equal(shouldPersistAssistantTurn({ blocks: [], errorText: '连接失败，请检查网络后重试。' }), true)
   })
 
   it('queues notices while a turn is running', () => {

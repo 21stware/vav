@@ -89,7 +89,7 @@ export type MentionBoxProps = {
   onTrigger?: (query: string, anchor: { x: number; y: number } | null, active: ActiveMention) => void
   /**
    * Custom pill detection for the highlight + atomic layer. When set, replaces
-   * the default `@name` scan (used e.g. to pill-ize file paths and app tokens).
+   * the default `@name` scan (used e.g. to pill-ize `@file[…]` and app tokens).
    */
   findPills?: (text: string) => MentionPill[]
   /** Mention parsing config (triggers, roster matcher). Shared with highlights. */

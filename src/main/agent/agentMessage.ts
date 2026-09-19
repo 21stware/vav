@@ -90,7 +90,7 @@ export function fatalAssistantMessage(opts: {
     parentId: opts.parentId,
     role: 'assistant',
     content: opts.error,
-    blocks: [{ kind: 'text', text: `> ${opts.error}` }],
+    blocks: [],
     createdAt: opts.createdAt ?? Date.now(),
     errorText: opts.error,
     errorDetail: opts.error

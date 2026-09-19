@@ -181,7 +181,7 @@ export function runtimeTurnStatus(
   }
 }
 
-/** Cancelled turns drop the error and expire in-flight tools; errors stay as a quote. */
+/** Cancelled turns drop the error and expire in-flight tools. Failures stay on `errorText`. */
 export function applyRuntimeFinishSeals(
   turn: { cancelled?: boolean; error?: string; blocks: MessageBlock[] },
   cancelledLabel: string
@@ -190,15 +190,15 @@ export function applyRuntimeFinishSeals(
     turn.error = undefined
     sealCancelledInteractiveTools(turn.blocks, cancelledLabel)
   }
-  if (turn.error) appendTurnErrorBlock(turn.blocks, turn.error)
 }
 
 /** Empty cancelled turns with no change set never become a transcript leaf. */
 export function shouldPersistAssistantTurn(message: {
   blocks: unknown[]
   changeSetId?: string
+  errorText?: string
 }): boolean {
-  return message.blocks.length > 0 || !!message.changeSetId
+  return message.blocks.length > 0 || !!message.changeSetId || !!message.errorText?.trim()
 }
 
 export type NoticeAppendPlan = 'drop' | 'queue' | 'write'

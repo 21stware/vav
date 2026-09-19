@@ -8,7 +8,6 @@
  * File tokens keep a path map so the textarea stays compact (thumb + name)
  * instead of reserving the full path's glyph width.
  */
-import { findFilePathMentions } from '@shared/filePathMentions'
 import { basename } from '../../lib/path'
 
 /** Matches an app placeholder like `@[Google Chrome]`. */
@@ -87,8 +86,10 @@ export type ComposerPill = {
 }
 
 /**
- * Find every inline pill in the draft: file tokens, app placeholders, and
- * raw file paths. Ranges are sorted and non-overlapping (earlier match wins).
+ * Find every inline pill in the draft: explicit `@file[…]` tokens and
+ * `@[App]` placeholders. Typed paths (`/compact`, `./src/app.ts`) stay
+ * plain text — auto-pilling them ate slash commands and other `/…` input.
+ * Ranges are sorted and non-overlapping (earlier match wins).
  */
 export function findComposerPills(text: string): ComposerPill[] {
   const pills: ComposerPill[] = []
@@ -113,15 +114,6 @@ export function findComposerPills(text: string): ComposerPill[] {
       end: m.index + m[0].length,
       name: appNameFromToken(m[0]) ?? m[0],
       kind: 'app'
-    })
-  }
-
-  for (const file of findFilePathMentions(text)) {
-    pills.push({
-      start: file.index,
-      end: file.index + file.raw.length,
-      name: file.path,
-      kind: 'file'
     })
   }
 

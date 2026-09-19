@@ -403,18 +403,15 @@ function OutcomeBlock({ outcome }: { outcome: ToolOutcome }): React.JSX.Element 
   if (outcome.kind === 'body') {
     return <pre className="story-body">{clampLines(outcome.text.split('\n')).join('\n')}</pre>
   }
-  const support =
-    outcome.kind === 'error'
-      ? outcome.detailKey
-        ? t(outcome.detailKey)
-        : outcome.detailText
-      : undefined
-  return (
-    <div className={`story-outcome is-${outcome.kind}`}>
-      <div className="story-headline">{t(outcome.headline)}</div>
-      {support ? <div className="story-support">{support}</div> : null}
-    </div>
-  )
+  if (outcome.kind === 'error') {
+    const text = outcome.detailKey
+      ? t(outcome.detailKey)
+      : outcome.detailText
+        ? outcome.detailText
+        : t(outcome.headline)
+    return <div className="story-error-text">{text}</div>
+  }
+  return <div className="story-empty-text">{t(outcome.headline)}</div>
 }
 
 function parseWebSearch(text: string): {

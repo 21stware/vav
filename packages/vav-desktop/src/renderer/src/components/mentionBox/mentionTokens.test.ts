@@ -27,16 +27,19 @@ describe('app tokens', () => {
 })
 
 describe('findComposerPills', () => {
-  it('finds app tokens and file paths, sorted and non-overlapping', () => {
+  it('finds app tokens and ignores typed paths', () => {
     const text = 'open @[Safari] then edit ./src/app.ts please'
     const pills = findComposerPills(text)
     assert.deepEqual(
       pills.map((p) => `${p.kind}:${p.name}`),
-      ['app:Safari', 'file:./src/app.ts']
+      ['app:Safari']
     )
-    // Ranges cover the literal token / path text.
     assert.equal(text.slice(pills[0]!.start, pills[0]!.end), '@[Safari]')
-    assert.equal(text.slice(pills[1]!.start, pills[1]!.end), './src/app.ts')
+  })
+
+  it('does not pill slash commands or typed absolute paths', () => {
+    assert.deepEqual(findComposerPills('/compact'), [])
+    assert.deepEqual(findComposerPills('/tmp/out.log and ./src/app.ts'), [])
   })
 
   it('ignores bare words and emails', () => {

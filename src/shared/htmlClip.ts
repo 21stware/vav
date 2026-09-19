@@ -211,6 +211,7 @@ export const HTML_CLIP_TRUSTED_HOSTS = [
   'cdn.jsdelivr.net',
   'unpkg.com',
   'cdnjs.cloudflare.com',
+  'cdn.tailwindcss.com',
   'fonts.googleapis.com',
   'fonts.gstatic.com',
   'stately.ai',
@@ -220,11 +221,12 @@ export const HTML_CLIP_TRUSTED_HOSTS = [
 const STATELY = 'https://stately.ai https://*.stately.ai'
 const STATELY_WS = 'wss://stately.ai wss://*.stately.ai'
 const TLDRAW = 'https://cdn.tldraw.com'
+const TAILWIND = 'https://cdn.tailwindcss.com'
 
 const CSP =
   "default-src 'none'; " +
-  `script-src 'unsafe-inline' 'unsafe-eval' https://esm.sh https://cdn.jsdelivr.net https://unpkg.com https://cdnjs.cloudflare.com ${STATELY}; ` +
-  `style-src 'unsafe-inline' https://esm.sh https://cdn.jsdelivr.net https://unpkg.com https://fonts.googleapis.com ${STATELY}; ` +
+  `script-src 'unsafe-inline' 'unsafe-eval' https://esm.sh https://cdn.jsdelivr.net https://unpkg.com https://cdnjs.cloudflare.com ${TAILWIND} ${STATELY}; ` +
+  `style-src 'unsafe-inline' https://esm.sh https://cdn.jsdelivr.net https://unpkg.com https://fonts.googleapis.com ${TAILWIND} ${STATELY}; ` +
   `font-src data: https://fonts.gstatic.com https://cdn.jsdelivr.net ${STATELY} ${TLDRAW}; ` +
   "img-src data: blob: https:; " +
   "media-src data: blob:; " +

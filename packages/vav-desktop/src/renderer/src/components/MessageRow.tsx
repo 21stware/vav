@@ -32,12 +32,20 @@ import { processThoughtMs, splitAssistantProcess } from '../lib/assistantProcess
 import { ToolCard } from './ToolCard'
 import { Button } from './ui'
 
+/** Persisted turn errors used to be a markdown quote — skip that chrome. */
+function isQuotedErrorBlock(text: string, errorText?: string): boolean {
+  if (!errorText?.trim()) return false
+  const trimmed = text.trim()
+  if (!trimmed.startsWith('>')) return false
+  return trimmed.split('\n').every((line) => !line.trim() || line.startsWith('>'))
+}
+
 function messageMarkdown(message: ChatMessage): string {
   const parts = message.blocks
     .filter((block): block is TextBlock => block.kind === 'text')
     .map((block) => block.text)
-    .filter((text) => text.length > 0)
-  return parts.join('\n\n') || message.content || ''
+    .filter((text) => text.length > 0 && !isQuotedErrorBlock(text, message.errorText))
+  return parts.join('\n\n') || (message.errorText ? '' : message.content) || ''
 }
 
 /** Visible selection that intersects `root`, or empty if the range is elsewhere. */
@@ -490,6 +498,7 @@ export const MessageRow = memo(function MessageRow({
               return <ToolCard key={block.id} block={block} startCollapsed={nested} />
             }
             if (block.kind === 'text') {
+              if (isQuotedErrorBlock(block.text, message.errorText)) return null
               return nested ? (
                 <ProcessText key={`t${index}`} text={block.text} />
               ) : (

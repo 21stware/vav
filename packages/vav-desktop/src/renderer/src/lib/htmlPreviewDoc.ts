@@ -71,9 +71,30 @@ export function isAbsoluteOrSpecialUrl(value: string): boolean {
   )
 }
 
+/**
+ * Electron registers `vav-local:`. The web / Chrome shells do not — leave
+ * relative hrefs alone there so we do not emit dead custom-scheme URLs.
+ */
+export function canRewriteToVavLocal(): boolean {
+  try {
+    if (typeof document === 'undefined') return true
+    const phone = document.documentElement?.dataset?.phone
+    return phone !== 'web' && phone !== 'extension'
+  } catch {
+    return true
+  }
+}
+
+/** `//cdn.example/x` must not resolve against the vav-local <base>. */
+export function absolutizeProtocolRelativeUrl(value: string): string {
+  const trimmed = value.trim()
+  return trimmed.startsWith('//') ? `https:${trimmed}` : trimmed
+}
+
 export function resolvePreviewAssetUrl(filePath: string, raw: string): string {
-  const value = raw.trim()
+  const value = absolutizeProtocolRelativeUrl(raw)
   if (!value || isAbsoluteOrSpecialUrl(value)) return value
+  if (!canRewriteToVavLocal()) return value
   try {
     const pathOnly = value.split(/[?#]/)[0] || value
     return localFilePageUrl(joinPath(dirname(filePath), pathOnly))
@@ -84,8 +105,9 @@ export function resolvePreviewAssetUrl(filePath: string, raw: string): string {
 
 export function rewriteCssPreviewUrls(css: string, filePath: string): string {
   return css.replace(/url\(\s*(['"]?)([^'")]+)\1\s*\)/gi, (full, _q, url: string) => {
-    if (isAbsoluteOrSpecialUrl(url)) return full
-    return `url("${resolvePreviewAssetUrl(filePath, url)}")`
+    const next = resolvePreviewAssetUrl(filePath, url)
+    if (next === url.trim()) return full
+    return `url("${next}")`
   })
 }
 
@@ -104,6 +126,7 @@ function rewriteAssetAttrs(doc: Document, filePath: string): void {
 }
 
 function ensureBaseHref(doc: Document, filePath: string): void {
+  if (!canRewriteToVavLocal()) return
   let base = doc.querySelector('base')
   if (!base) {
     base = doc.createElement('base')

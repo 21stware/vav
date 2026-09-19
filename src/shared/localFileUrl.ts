@@ -18,6 +18,17 @@ export function localFilePageUrl(filePath: string): string {
   return `vav-local://local${encoded}`
 }
 
+/**
+ * CORS for sibling JS modules loaded from an HTML preview srcdoc (parent
+ * origin). Module scripts require ACAO; classic scripts do not.
+ */
+export const VAV_LOCAL_CORS_HEADERS: Record<string, string> = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+  'Access-Control-Allow-Headers': 'Range, Content-Type',
+  'Cross-Origin-Resource-Policy': 'cross-origin'
+}
+
 /** File path encoded in a `vav-local:` request, or null if the URL is not one. */
 export function parseVavLocalFilePath(requestUrl: string): string | null {
   let url: URL
