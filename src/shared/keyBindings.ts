@@ -40,6 +40,7 @@ export type AcceleratorKeyBindingId =
   | 'pickAttachments'
   | 'switchApproval'
   | 'screenshot'
+  | 'faaaaast'
   | 'closeContext'
   | 'openSettings'
   | 'find'
@@ -244,6 +245,13 @@ export const KEY_BINDING_DEFS: readonly KeyBindingDef[] = [
     labelKey: 'composer.screenshot',
     kind: 'accelerator',
     defaultAccelerator: IS_DEV ? 'CmdOrCtrl+Control+S' : 'CmdOrCtrl+Control+A'
+  },
+  {
+    id: 'faaaaast',
+    group: 'special',
+    labelKey: 'shortcut.faaaaast',
+    kind: 'accelerator',
+    defaultAccelerator: 'CmdOrCtrl+Shift+/'
   },
   {
     id: 'closeContext',
@@ -587,7 +595,9 @@ function inputKeyMatches(accelKey: string, input: { key: string; code: string })
   if (k === ';') return input.key === ';' || input.code === 'Semicolon'
   if (k === "'") return input.key === "'" || input.code === 'Quote'
   if (k === '.') return input.key === '.' || input.code === 'Period'
-  if (k === '/') return input.key === '/' || input.code === 'Slash'
+  if (k === '/' || k === '?') {
+    return input.key === '/' || input.key === '?' || input.code === 'Slash'
+  }
   if (k.length === 1 && /[a-zA-Z]/.test(k)) {
     const upper = k.toUpperCase()
     const lower = k.toLowerCase()
@@ -677,9 +687,11 @@ export function prettyAccelerator(
       ? isMac(platform)
         ? '↵'
         : 'Enter'
-      : isMac(platform)
-        ? (arrowGlyph[key] ?? key)
-        : key
+      : key === '/' && parts.includes('Shift')
+        ? '?'
+        : isMac(platform)
+          ? (arrowGlyph[key] ?? key)
+          : key
 
   if (isMac(platform)) {
     return parts

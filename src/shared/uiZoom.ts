@@ -41,7 +41,7 @@ export function stepUiZoom(current: unknown, direction: 1 | -1): number {
 export function uiZoomAppliesToUrl(url: string): boolean {
   if (!url) return true
   const lower = url.toLowerCase()
-  if (lower.includes('screenshot.html')) return false
+  if (lower.includes('screenshot.html') || lower.includes('faaaaast.html')) return false
   let view: string | null = null
   try {
     view = new URL(url).searchParams.get('view')

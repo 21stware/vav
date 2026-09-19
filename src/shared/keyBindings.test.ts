@@ -9,6 +9,42 @@ import {
   sanitizeKeyBindings
 } from './keyBindings.ts'
 
+describe('faaaaast binding', () => {
+  it('defaults to Cmd+Shift+/ and matches ? on the slash key', () => {
+    const bindings = resolveKeyBindings({})
+    assert.equal(bindings.faaaaast, 'CmdOrCtrl+Shift+/')
+    assert.equal(prettyAccelerator('CmdOrCtrl+Shift+/', 'darwin'), '⌘⇧?')
+    assert.equal(prettyAccelerator('CmdOrCtrl+Shift+/', 'win32'), 'Ctrl+Shift+?')
+    const input = {
+      type: 'keyDown',
+      key: '?',
+      code: 'Slash',
+      control: false,
+      alt: false,
+      shift: true,
+      meta: true
+    }
+    assert.equal(matchesAccelerator(input, 'CmdOrCtrl+Shift+/', 'darwin'), true)
+    assert.equal(
+      matchingKeyBindingId(
+        {
+          type: 'keydown',
+          key: '?',
+          code: 'Slash',
+          ctrlKey: false,
+          altKey: false,
+          shiftKey: true,
+          metaKey: true
+        },
+        bindings,
+        'darwin',
+        ['faaaaast']
+      ),
+      'faaaaast'
+    )
+  })
+})
+
 describe('swarm pane bindings', () => {
   it('defaults split and spatial focus chords', () => {
     const bindings = resolveKeyBindings({})

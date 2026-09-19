@@ -111,7 +111,8 @@ export default defineConfig({
       rollupOptions: {
         input: {
           index: resolve('packages/vav-desktop/src/renderer/index.html'),
-          screenshot: resolve('packages/vav-desktop/src/renderer/screenshot.html')
+          screenshot: resolve('packages/vav-desktop/src/renderer/screenshot.html'),
+          faaaaast: resolve('packages/vav-desktop/src/renderer/faaaaast.html')
         }
       }
     }

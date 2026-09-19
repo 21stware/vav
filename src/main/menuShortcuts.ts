@@ -28,6 +28,7 @@ const KEY_BINDING_MENU_COMMAND: Partial<Record<keyof ResolvedKeyBindings, MenuCo
   pickAttachments: 'pick-attachments',
   switchApproval: 'switch-approval',
   screenshot: 'screenshot',
+  faaaaast: 'faaaaast',
   closeContext: 'close-context',
   openSettings: 'open-settings',
   find: 'find',

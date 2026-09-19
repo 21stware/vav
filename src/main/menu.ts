@@ -274,6 +274,11 @@ export function buildAppMenu(
       accelerator: b.screenshot,
       click: send('screenshot')
     },
+    {
+      label: t('shortcut.faaaaast'),
+      accelerator: b.faaaaast,
+      click: send('faaaaast')
+    },
     { type: 'separator' },
     {
       label: t('menu.showSessions'),

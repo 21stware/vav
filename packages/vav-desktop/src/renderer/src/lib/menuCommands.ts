@@ -118,6 +118,8 @@ export function handleMenuCommand(command: MenuCommand): void {
     case 'screenshot':
       void attachScreenshot()
       break
+    case 'faaaaast':
+      break
     case 'send': {
       // ⌘↵ is composer-only. Never fire while Find / sidebar filter / other
       // inputs own the keyboard (plain Enter in search was already local;

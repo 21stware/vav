@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'"
+    />
+    <title></title>
+    <script>
+      ;(function () {
+        try {
+          var theme = new URLSearchParams(location.search).get('theme')
+          // Panel windows often report prefers-color-scheme: light. Only trust
+          // the theme stamped by the main process (same as the main UI).
+          if (theme === 'dark' || theme === 'light') {
+            document.documentElement.dataset.theme = theme
+            document.documentElement.style.colorScheme = theme
+          }
+        } catch (_) {}
+      })()
+    </script>
+    <style>
+      html,
+      body,
+      #root {
+        margin: 0;
+        width: 100%;
+        height: 100%;
+        background: transparent;
+        overflow: hidden;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/faaaaast.tsx"></script>
+  </body>
+</html>

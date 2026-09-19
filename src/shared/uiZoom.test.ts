@@ -50,5 +50,6 @@ describe('uiZoomAppliesToUrl', () => {
     assert.equal(uiZoomAppliesToUrl('http://localhost:5173/?view=provider-account'), false)
     assert.equal(uiZoomAppliesToUrl('file:///tmp/renderer/screenshot.html'), false)
     assert.equal(uiZoomAppliesToUrl('http://localhost:5173/screenshot.html'), false)
+    assert.equal(uiZoomAppliesToUrl('http://localhost:5173/faaaaast.html'), false)
   })
 })

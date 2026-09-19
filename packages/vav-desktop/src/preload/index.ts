@@ -14,6 +14,9 @@ import {
   type SwarmHistoryResumeEvent,
   type TokenUsageViewPayload,
   type ScreenshotInitPayload,
+  type FaaaaastAskRequest,
+  type FaaaaastDelta,
+  type FaaaaastInitPayload,
   type VavApi
 } from '@shared/ipc'
 import type { AppSettings, FileSortKey, ShellKind } from '@shared/types'
@@ -609,6 +612,21 @@ const api: VavApi = {
     },
     setKey: (on) => {
       ipcRenderer.send(IPC.screenshotSetKey, on)
+    }
+  },
+
+  faaaaast: {
+    onInit: (handler) => subscribe<FaaaaastInitPayload>(IPC.faaaaastInit, handler),
+    onDelta: (handler) => subscribe<FaaaaastDelta>(IPC.faaaaastDelta, handler),
+    ask: (request: FaaaaastAskRequest) => ipcRenderer.invoke(IPC.faaaaastAsk, request),
+    cancel: () => {
+      ipcRenderer.send(IPC.faaaaastCancel)
+    },
+    dismiss: () => {
+      ipcRenderer.send(IPC.faaaaastDismiss)
+    },
+    resize: (height) => {
+      ipcRenderer.send(IPC.faaaaastResize, height)
     }
   },
 
