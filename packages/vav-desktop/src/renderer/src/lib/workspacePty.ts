@@ -1,5 +1,6 @@
 import type { ConversationPtyLayouts, TerminalLayoutNode, TerminalSplitAxis, TerminalTab } from '@shared/types.ts'
 import type { PtyActivityStatus, PtyCreateOptions, PtyListResult, PtySessionMeta } from '@shared/ipc.ts'
+import { portForwardsEqual } from '@shared/ptyPorts.ts'
 import { collectLeaves, layoutDirectionKey, layoutFromTabIds, removeLeaf, splitLeaf } from './workspaceLayout.ts'
 import type { AgentHostSession } from './workspaceCliSurface.ts'
 
@@ -31,7 +32,8 @@ export function tabsEqual(a: TerminalTab[], b: TerminalTab[]): boolean {
       !!x.isAgent !== !!y.isAgent ||
       !!x.pendingCli !== !!y.pendingCli ||
       x.purpose !== y.purpose ||
-      x.installAgentId !== y.installAgentId
+      x.installAgentId !== y.installAgentId ||
+      !portForwardsEqual(x.forwards, y.forwards)
     ) {
       return false
     }
@@ -162,6 +164,7 @@ export function projectPtySessions(sessions: PtySessionMeta[]): {
       agentId: isVavMirror ? 'vav' : null,
       purpose: s.purpose,
       installAgentId: s.installAgentId,
+      forwards: s.forwards,
       splitWeight: 1
     }
   })
@@ -184,6 +187,7 @@ export function projectPtySessions(sessions: PtySessionMeta[]): {
       title: s.title || (i === 0 ? agentId : `${agentId}-${i + 1}`),
       isAgent: false,
       agentId,
+      forwards: s.forwards,
       splitWeight: 1
     }))
     const hostLayout = layoutFromTabIds(hostTabs.map((t) => t.id))

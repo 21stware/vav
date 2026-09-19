@@ -38,6 +38,14 @@ describe('workspacePty', () => {
     assert.equal(listed.sessions, sessions)
   })
 
+  it('treats port-forward rows as part of tab equality', () => {
+    const a = tab('sh', { forwards: [{ remotePort: 5173, localPort: 5173, status: 'local' }] })
+    const b = tab('sh', { forwards: [{ remotePort: 5173, localPort: 5173, status: 'local' }] })
+    const c = tab('sh', { forwards: [{ remotePort: 5173, localPort: 0, status: 'conflict' }] })
+    assert.equal(tabsEqual([a], [b]), true)
+    assert.equal(tabsEqual([a], [c]), false)
+  })
+
   it('compares tabs and puts the VAV mirror after user bash', () => {
     const agent = tab(AGENT_TAB_ID, { isAgent: true, agentId: 'vav' })
     const bash = tab('sh')

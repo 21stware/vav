@@ -6,18 +6,28 @@
  */
 
 import { spawn } from 'node:child_process'
-import { createServer, type Server, type Socket } from 'node:net'
+import { createConnection, createServer, type Server, type Socket } from 'node:net'
 import { randomUUID } from 'node:crypto'
 import {
   DAEMON_PROTO_VERSION,
   parseDaemonClientFrame,
   parseDaemonHello,
   parseDaemonPairAsk,
+  parseDaemonProxyHello,
   type DaemonPairAsk,
+  type DaemonProxyHello,
   type DaemonReq,
   type FsDirentWire,
   type FsStatWire
 } from '../../shared/daemonProtocol.ts'
+import { isLoopbackProxyTarget, listenPortsEqual, normalizeListenPorts } from '../../shared/ptyPorts.ts'
+import {
+  childrenByParent,
+  listProcessRows,
+  listeningPortsByPid,
+  portsForTree
+} from '../terminal/listenPorts.ts'
+import { pipeSockets } from './portProxy.ts'
 import { parseClientMessage, type RemoteHello } from '../../shared/remoteControl.ts'
 import type { WorkspaceHost } from '../host/WorkspaceHost.ts'
 import {
@@ -346,6 +356,9 @@ export class DaemonServer {
   /** PTYs and spawned processes live on the daemon, not the client socket. */
   private readonly processes = new Map<string, LiveProcess>()
   private readonly ptys = new Map<string, LivePty>()
+  private readonly lastPtyPorts = new Map<string, number[]>()
+  private portPollTimer: ReturnType<typeof setInterval> | null = null
+  private portPolling = false
   private listenPort = 0
   private pairAskBusy = false
   private pendingAsk: IncomingController | null = null
@@ -462,6 +475,8 @@ export class DaemonServer {
       }
     }
     this.ptys.clear()
+    this.lastPtyPorts.clear()
+    this.stopPortPolling()
     for (const socket of this.sockets) {
       try {
         if (typeof socket.resetAndDestroy === 'function') socket.resetAndDestroy()
@@ -695,6 +710,11 @@ export class DaemonServer {
             ready = true
             return
           }
+        }
+        const proxy = parseDaemonProxyHello(value)
+        if (proxy) {
+          void this.handleProxyHello(socket, leftoverRef, proxy)
+          return
         }
         const phone = parseClientMessage(value)
         if (phone?.type === 'hello' && phone.role !== 'daemon') {
@@ -1539,6 +1559,7 @@ export class DaemonServer {
     })
     const stream = `t-${randomUUID()}`
     this.ptys.set(stream, { proc, socket })
+    this.startPortPolling()
     proc.onData((data) => {
       const dest = this.ptys.get(stream)?.socket
       if (dest && !dest.destroyed) {
@@ -1561,7 +1582,122 @@ export class DaemonServer {
         /* ConPTY/worker teardown is idempotent */
       }
       this.ptys.delete(stream)
+      this.lastPtyPorts.delete(stream)
+      if (this.ptys.size === 0) this.stopPortPolling()
     })
     return { stream, pid: proc.pid }
+  }
+
+  private authenticateProxyHello(auth: string, device?: string): boolean {
+    const existing = this.grants.findBySecret(auth)
+    if (existing) {
+      this.grants.touch(existing.id, device)
+      return true
+    }
+    return this.matchesOffer(auth)
+  }
+
+  private async handleProxyHello(
+    socket: Socket,
+    leftoverRef: { value: string },
+    hello: DaemonProxyHello
+  ): Promise<void> {
+    if (this.authLocked(socket)) {
+      writeLine(socket, { type: 'error', code: 'auth', message: 'pairing rejected' })
+      socket.destroy()
+      return
+    }
+    if (!this.authenticateProxyHello(hello.auth, hello.device)) {
+      this.noteAuthFail(socket)
+      writeLine(socket, { type: 'error', code: 'auth', message: 'pairing rejected' })
+      socket.destroy()
+      return
+    }
+    this.authFails.delete(this.authKey(socket))
+    const targetHost = hello.targetHost?.trim() || '127.0.0.1'
+    if (!isLoopbackProxyTarget(targetHost)) {
+      writeLine(socket, { type: 'error', code: 'bad-request', message: 'proxy target must be loopback' })
+      socket.destroy()
+      return
+    }
+    socket.removeAllListeners('data')
+    socket.setEncoding()
+    leftoverRef.value = ''
+    try {
+      const target = await new Promise<Socket>((resolve, reject) => {
+        const dest = createConnection({ host: targetHost === 'localhost' ? '127.0.0.1' : targetHost, port: hello.targetPort })
+        const timer = setTimeout(() => {
+          dest.destroy()
+          reject(new Error('proxy target timed out'))
+        }, 4_000)
+        timer.unref?.()
+        dest.once('error', (err) => {
+          clearTimeout(timer)
+          reject(err)
+        })
+        dest.once('connect', () => {
+          clearTimeout(timer)
+          resolve(dest)
+        })
+      })
+      writeLine(socket, {
+        type: 'welcome',
+        proto: DAEMON_PROTO_VERSION,
+        app: 'vav-server',
+        version: this.opts.appVersion,
+        host: {
+          id: this.opts.identity.machineId,
+          name: this.opts.identity.name,
+          kind: 'remote',
+          online: true,
+          platform: this.opts.host.info.platform
+        },
+        home: this.opts.home,
+        tmp: this.opts.tmp
+      })
+      pipeSockets(socket, target)
+    } catch (err) {
+      writeLine(socket, {
+        type: 'error',
+        code: 'internal',
+        message: err instanceof Error ? err.message : 'proxy target unavailable'
+      })
+      socket.destroy()
+    }
+  }
+
+  private startPortPolling(): void {
+    if (this.portPollTimer) return
+    this.portPollTimer = setInterval(() => void this.pollPtyPorts(), 2000)
+    this.portPollTimer.unref?.()
+    void this.pollPtyPorts()
+  }
+
+  private stopPortPolling(): void {
+    if (!this.portPollTimer) return
+    clearInterval(this.portPollTimer)
+    this.portPollTimer = null
+  }
+
+  private async pollPtyPorts(): Promise<void> {
+    if (this.portPolling || this.ptys.size === 0) return
+    this.portPolling = true
+    try {
+      const rows = await listProcessRows()
+      const byParent = childrenByParent(rows)
+      const portsByPid = await listeningPortsByPid()
+      for (const [stream, live] of this.ptys) {
+        const ports = normalizeListenPorts(portsForTree(live.proc.pid, byParent, portsByPid))
+        const prev = this.lastPtyPorts.get(stream)
+        if (listenPortsEqual(prev, ports)) continue
+        this.lastPtyPorts.set(stream, ports)
+        const dest = live.socket
+        if (dest && !dest.destroyed) {
+          writeLine(dest, { type: 'stream', stream, event: 'pty-ports', data: { ports } })
+        }
+      }
+    } finally {
+      this.portPolling = false
+    }
   }
 }

@@ -21,6 +21,7 @@ import { requestCloseAgentTab, setUiFocusScope } from '../lib/uiFocus'
 import { useT } from '../i18n/useT'
 import { EmptyState } from './ui'
 import { CliAgentPicker } from './CliAgentPicker'
+import { TerminalPortMarks } from './TerminalPortMarks'
 
 function countLeaves(node: TerminalLayoutNode | null): number {
   if (!node) return 0
@@ -308,6 +309,9 @@ function LayoutNodeView({
           }
         }}
       >
+        {paneTab?.forwards?.length ? (
+          <TerminalPortMarks forwards={paneTab.forwards} insetClose={multiPane} />
+        ) : null}
         {multiPane ? (
           <button
             type="button"

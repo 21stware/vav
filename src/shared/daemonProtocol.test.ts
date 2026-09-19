@@ -6,6 +6,7 @@ import {
   parseDaemonAnnounce,
   parseDaemonClientFrame,
   parseDaemonHello,
+  parseDaemonProxyHello,
   parseDaemonPairAsk,
   parseDaemonPairing,
   parseDaemonServerFrame,
@@ -31,6 +32,31 @@ describe('daemon hello', () => {
 
   it('rejects a phone-style hello without role', () => {
     assert.equal(parseDaemonHello({ type: 'hello', proto: 1, auth: 'secret-value-16+' }), null)
+  })
+
+  it('parses a proxy-role hello and rejects a bad target port', () => {
+    const msg = parseDaemonProxyHello({
+      type: 'hello',
+      proto: 1,
+      auth: 'secret-value-16+',
+      role: 'proxy',
+      targetPort: 5173,
+      targetHost: '127.0.0.1'
+    })
+    assert.ok(msg)
+    assert.equal(msg.role, 'proxy')
+    assert.equal(msg.targetPort, 5173)
+    assert.equal(
+      parseDaemonProxyHello({
+        type: 'hello',
+        proto: 1,
+        auth: 'secret-value-16+',
+        role: 'proxy',
+        targetPort: 0
+      }),
+      null
+    )
+    assert.equal(parseDaemonHello({ type: 'hello', proto: 1, auth: 'secret-value-16+', role: 'proxy' }), null)
   })
 })
 

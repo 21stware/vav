@@ -17,7 +17,8 @@ export type PtyIo = {
 export function registerPtyIoIpc(
   ipcMain: IpcMain,
   pty: PtyIo,
-  swarm: { forgetPane: (conversationId: string, tabId: string) => void }
+  swarm: { forgetPane: (conversationId: string, tabId: string) => void },
+  decorateList?: (listed: unknown) => unknown
 ): void {
   ipcMain.on(IPC.ptyWrite, (_event, tabId: unknown, data: unknown) => {
     if (typeof tabId !== 'string' || typeof data !== 'string') return
@@ -38,7 +39,9 @@ export function registerPtyIoIpc(
   })
   ipcMain.handle(IPC.ptyIsBusy, (_event, tabId: string) => pty.isBusy(tabId))
   ipcMain.handle(IPC.ptyList, (_event, conversationId: string) =>
-    pty.listForConversation(String(conversationId || ''))
+    decorateList
+      ? decorateList(pty.listForConversation(String(conversationId || '')))
+      : pty.listForConversation(String(conversationId || ''))
   )
   ipcMain.handle(
     IPC.ptySetLayouts,

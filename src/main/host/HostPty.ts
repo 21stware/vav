@@ -26,6 +26,8 @@ export interface HostPtyProcess {
   readonly pid: number
   onData(listener: (data: string) => void): void
   onExit(listener: (e: HostPtyExit) => void): void
+  /** Host-discovered LISTEN ports on this PTY tree (remote daemons). */
+  onPorts?(listener: (ports: number[]) => void): void
   write(data: string): void
   resize(cols: number, rows: number): void
   kill(signal?: string): void

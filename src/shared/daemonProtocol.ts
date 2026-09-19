@@ -8,7 +8,9 @@
  * / Explorer / the default app on the machine that holds the files so Chrome,
  * desktop-remote, and `vav-board file reveal` match the workbench.
  *
- * Handshake: first line is `hello` with `role: 'daemon'` and either the
+ * Handshake: first line is `hello` with `role: 'daemon'` (fs / spawn / pty)
+ * or `role: 'proxy'` (raw TCP to a loopback listen port on this host)
+ * and either the
  * ephemeral offer secret or a previously issued grant secret. Offer hellos
  * mint a per-controller grant returned on `welcome`; that grant can be
  * revoked later without rotating every other pairing. The server replies
@@ -102,6 +104,19 @@ export type DaemonHello = {
   grantId?: string
 }
 
+/** Extra TCP connection: after welcome, the socket is a raw pipe to loopback. */
+export type DaemonProxyHello = {
+  type: 'hello'
+  proto: number
+  auth: string
+  role: 'proxy'
+  targetPort: number
+  targetHost?: string
+  device?: string
+  clientId?: string
+  grantId?: string
+}
+
 export type DaemonWelcome = {
   type: 'welcome'
   proto: number
@@ -184,6 +199,32 @@ export function parseDaemonHello(value: unknown): DaemonHello | null {
   const clientId = typeof raw.clientId === 'string' && raw.clientId.trim() ? raw.clientId.trim() : undefined
   const grantId = typeof raw.grantId === 'string' && raw.grantId.trim() ? raw.grantId.trim() : undefined
   return { type: 'hello', proto: raw.proto, auth: raw.auth, role: 'daemon', device, clientId, grantId }
+}
+
+export function parseDaemonProxyHello(value: unknown): DaemonProxyHello | null {
+  if (typeof value !== 'object' || value === null) return null
+  const raw = value as Record<string, unknown>
+  if (raw.type !== 'hello') return null
+  if (typeof raw.auth !== 'string' || raw.auth.length === 0) return null
+  if (typeof raw.proto !== 'number') return null
+  if (raw.role !== 'proxy') return null
+  const targetPort = Number(raw.targetPort)
+  if (!Number.isInteger(targetPort) || targetPort < 1 || targetPort > 65535) return null
+  const targetHost = typeof raw.targetHost === 'string' ? raw.targetHost : undefined
+  const device = typeof raw.device === 'string' ? raw.device : undefined
+  const clientId = typeof raw.clientId === 'string' && raw.clientId.trim() ? raw.clientId.trim() : undefined
+  const grantId = typeof raw.grantId === 'string' && raw.grantId.trim() ? raw.grantId.trim() : undefined
+  return {
+    type: 'hello',
+    proto: raw.proto,
+    auth: raw.auth,
+    role: 'proxy',
+    targetPort,
+    targetHost,
+    device,
+    clientId,
+    grantId
+  }
 }
 
 export function parseDaemonPairAsk(value: unknown): DaemonPairAsk | null {

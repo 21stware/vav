@@ -19,6 +19,14 @@ import { ensureClaudeWorkspaceTrusted, isClaudeCodeBinary } from './claudeTrust'
 import { readPtsName, signalPosixPtyForegroundGroup } from './posixPtyForegroundGroup'
 import { SYNC_HOLD_MAX_MS, splitSynchronizedOutput } from '@shared/terminalSyncFrames'
 import { ptyOutputImpliesRunning } from './ptyActivity'
+import {
+  childrenByParent,
+  listProcessRows,
+  listeningPortsByPid,
+  portsForTree,
+  type ProcRow
+} from './listenPorts.ts'
+import { listenPortsEqual, normalizeListenPorts } from '@shared/ptyPorts'
 
 interface GhostBash {
   id: string
@@ -100,6 +108,8 @@ export interface PtySessionMeta {
   status: PtyActivityStatus
   purpose?: 'install'
   installAgentId?: string
+  ports?: number[]
+  forwards?: import('@shared/ptyPorts').PtyPortForward[]
 }
 
 interface PtySession {
@@ -129,6 +139,10 @@ interface PtySession {
   /** Timestamp of the last stdout byte — the fast half of the busy check. */
   lastDataAt: number
   status: Exclude<PtyActivityStatus, 'exited'>
+  /** Confirmed LISTEN ports on the process tree. */
+  ports: number[]
+  /** True when the workspace host pushed ports (remote daemon). */
+  portsFromHost: boolean
 }
 
 
@@ -277,85 +291,12 @@ async function activeParentPids(): Promise<Set<number>> {
   return pids
 }
 
-interface ProcRow {
-  pid: number
-  ppid: number
-  comm: string
-  args: string
-}
-
 const SHELLISH =
   /^(?:-?bash|-?zsh|-?sh|-?fish|-?dash|-?ksh|-?csh|-?tcsh|login|ssh|screen|tmux|nu|pwsh|powershell|cmd|conhost)(?:\.exe)?$/i
 
 function isShellish(row: ProcRow): boolean {
   const base = row.comm.replace(/^\(|\)$/g, '').split(/[/\\]/).pop() || row.comm
   return SHELLISH.test(base)
-}
-
-/** Parse `ps -axo pid=,ppid=,command=` style lines. */
-function parsePsRows(stdout: string): ProcRow[] {
-  const rows: ProcRow[] = []
-  for (const line of stdout.split('\n')) {
-    const trimmed = line.trim()
-    if (!trimmed) continue
-    const m = trimmed.match(/^(\d+)\s+(\d+)\s+(.+)$/)
-    if (!m) continue
-    const pid = Number.parseInt(m[1]!, 10)
-    const ppid = Number.parseInt(m[2]!, 10)
-    const args = m[3]!.trim()
-    if (!Number.isFinite(pid) || !Number.isFinite(ppid) || !args) continue
-    const first = args.split(/\s+/)[0] || args
-    const comm = first.split(/[/\\]/).pop() || first
-    rows.push({ pid, ppid, comm, args })
-  }
-  return rows
-}
-
-async function listProcessRows(): Promise<ProcRow[]> {
-  try {
-    if (IS_WINDOWS) {
-      const { stdout } = await execFileAsync(
-        'powershell.exe',
-        [
-          '-NoProfile',
-          '-Command',
-          // Pipe-separated: pid|ppid|name|commandline
-          "Get-CimInstance Win32_Process | ForEach-Object { '{0}|{1}|{2}|{3}' -f $_.ProcessId,$_.ParentProcessId,$_.Name,(($_.CommandLine) -replace '[\\r\\n|]', ' ') }"
-        ],
-        { encoding: 'utf8', windowsHide: true, maxBuffer: 8 * 1024 * 1024, timeout: 4000 }
-      )
-      const rows: ProcRow[] = []
-      for (const line of stdout.split('\n')) {
-        const parts = line.trim().split('|')
-        if (parts.length < 3) continue
-        const pid = Number.parseInt(parts[0]!, 10)
-        const ppid = Number.parseInt(parts[1]!, 10)
-        const comm = (parts[2] || 'process').replace(/\.exe$/i, '')
-        const args = parts.slice(3).join('|') || comm
-        if (!Number.isFinite(pid) || !Number.isFinite(ppid)) continue
-        rows.push({ pid, ppid, comm, args })
-      }
-      return rows
-    }
-    const { stdout } = await execFileAsync('ps', ['-axo', 'pid=,ppid=,command='], {
-      encoding: 'utf8',
-      maxBuffer: 8 * 1024 * 1024,
-      timeout: 3000
-    })
-    return parsePsRows(stdout)
-  } catch {
-    return []
-  }
-}
-
-function childrenByParent(rows: ProcRow[]): Map<number, ProcRow[]> {
-  const map = new Map<number, ProcRow[]>()
-  for (const row of rows) {
-    const list = map.get(row.ppid)
-    if (list) list.push(row)
-    else map.set(row.ppid, [row])
-  }
-  return map
 }
 
 /** Walk the shell's process tree; prefer the deepest non-shell child. */
@@ -377,50 +318,6 @@ function foregroundProcess(
     }
   }
   return best
-}
-
-function collectTreePids(root: number, byParent: Map<number, ProcRow[]>): number[] {
-  const out: number[] = []
-  const stack = [root]
-  const seen = new Set<number>()
-  while (stack.length) {
-    const pid = stack.pop()!
-    if (seen.has(pid)) continue
-    seen.add(pid)
-    out.push(pid)
-    for (const kid of byParent.get(pid) ?? []) stack.push(kid.pid)
-  }
-  return out
-}
-
-/** pid → listening TCP ports (LISTEN). Empty on Windows / when lsof is missing. */
-async function listeningPortsByPid(): Promise<Map<number, number[]>> {
-  const map = new Map<number, number[]>()
-  if (IS_WINDOWS) return map
-  try {
-    const { stdout } = await execFileAsync(
-      'lsof',
-      ['-nP', '-iTCP', '-sTCP:LISTEN', '-F', 'pn'],
-      { encoding: 'utf8', maxBuffer: 4 * 1024 * 1024, timeout: 2500 }
-    )
-    let pid = 0
-    for (const line of stdout.split('\n')) {
-      if (line.startsWith('p')) {
-        pid = Number.parseInt(line.slice(1), 10) || 0
-      } else if (line.startsWith('n') && pid > 0) {
-        const m = line.match(/:(\d+)\s*$/)
-        if (!m) continue
-        const port = Number.parseInt(m[1]!, 10)
-        if (!Number.isFinite(port) || port <= 0) continue
-        const list = map.get(pid) ?? []
-        if (!list.includes(port)) list.push(port)
-        map.set(pid, list)
-      }
-    }
-  } catch {
-    // lsof missing or denied — titles fall back to process name only.
-  }
-  return map
 }
 
 function extractPortFromArgs(args: string): number | null {
@@ -483,7 +380,10 @@ function formatBashTabTitle(
   ports: number[],
   baseTitle: string
 ): string {
-  if (!proc) return baseTitle
+  if (!proc) {
+    const port = ports[0]
+    return port ? `${baseTitle} :${port}` : baseTitle
+  }
   const name = prettyProcessName(proc)
   const port = ports[0] ?? extractPortFromArgs(proc.args)
   if (port) return `${name} :${port}`
@@ -613,18 +513,17 @@ export class PtyManager {
 
       const titleChanged = new Set<string>()
       for (const session of this.sessions.values()) {
+        const computed = session.portsFromHost
+          ? session.ports
+          : portsForTree(session.proc.pid, byParent, this.cachedListenPorts)
+        if (!session.portsFromHost && !listenPortsEqual(session.ports, computed)) {
+          session.ports = computed
+          titleChanged.add(session.conversationId)
+        }
         // Only tools-tray bash (not CLI agents / VAV mirror / pinned install).
         if (session.agentId != null || session.pinTitle) continue
         const proc = foregroundProcess(session.proc.pid, byParent)
-        const tree = collectTreePids(session.proc.pid, byParent)
-        const ports: number[] = []
-        for (const pid of tree) {
-          for (const p of this.cachedListenPorts.get(pid) ?? []) {
-            if (!ports.includes(p)) ports.push(p)
-          }
-        }
-        ports.sort((a, b) => a - b)
-        const next = formatBashTabTitle(proc, ports, session.baseTitle)
+        const next = formatBashTabTitle(proc, session.ports, session.baseTitle)
         if (next !== session.title) {
           session.title = next
           titleChanged.add(session.conversationId)
@@ -922,8 +821,20 @@ export class PtyManager {
       // Bash starts idle (prompt paint is not a command). Agent TUIs start
       // running until the first poll / quiet gap.
       lastDataAt: Date.now(),
-      status: ptyOutputImpliesRunning(agentId) ? 'running' : 'idle'
+      status: ptyOutputImpliesRunning(agentId) ? 'running' : 'idle',
+      ports: [],
+      portsFromHost: false
     }
+    proc.onPorts?.((ports) => {
+      const next = normalizeListenPorts(ports)
+      if (listenPortsEqual(session.ports, next) && session.portsFromHost) return
+      session.ports = next
+      session.portsFromHost = true
+      if (session.agentId == null && !session.pinTitle) {
+        session.title = formatBashTabTitle(null, session.ports, session.baseTitle)
+      }
+      this.onChanged?.(conversationId)
+    })
     proc.onData((data) => {
       appendOutputBuffer(session, data)
       session.lastDataAt = Date.now()
@@ -977,21 +888,45 @@ export class PtyManager {
   /** Split trees for bash / CLI hosts — shared across main + detached windows. */
   private layouts = new Map<string, ConversationPtyLayouts>()
 
+  private metaOf(session: PtySession): PtySessionMeta {
+    return {
+      id: session.id,
+      conversationId: session.conversationId,
+      agentId: session.agentId,
+      title: session.title,
+      createdAt: session.createdAt,
+      status: session.status,
+      purpose: session.purpose,
+      installAgentId: session.installAgentId,
+      ports: session.ports.length ? session.ports : undefined
+    }
+  }
+
+  /** Live PTY process trees that may own listen ports (not the VAV mirror). */
+  listLivePortSessions(): Array<{
+    id: string
+    conversationId: string
+    ports: number[]
+  }> {
+    const out: Array<{ id: string; conversationId: string; ports: number[] }> = []
+    for (const session of this.sessions.values()) {
+      if (session.agentId === 'vav') continue
+      if (session.ports.length === 0) continue
+      out.push({
+        id: session.id,
+        conversationId: session.conversationId,
+        ports: session.ports
+      })
+    }
+    return out
+  }
+
   /** Live PTY metadata + layouts for one conversation (stable across windows). */
   listForConversation(conversationId: string): PtyListResult {
     const out: PtySessionMeta[] = []
     for (const session of this.sessions.values()) {
       if (session.conversationId !== conversationId) continue
-      out.push({
-        id: session.id,
-        conversationId: session.conversationId,
-        agentId: session.agentId,
-        title: session.title,
-        createdAt: session.createdAt,
-        status: session.status,
-        purpose: session.purpose,
-        installAgentId: session.installAgentId
-      })
+      out.push(this.metaOf(session))
     }
     for (const ghost of this.ghosts.values()) {
       if (ghost.conversationId !== conversationId) continue
@@ -1188,14 +1123,7 @@ export class PtyManager {
     const out: PtySessionMeta[] = []
     for (const session of this.sessions.values()) {
       if (!session.agentId || session.agentId === 'vav') continue
-      out.push({
-        id: session.id,
-        conversationId: session.conversationId,
-        agentId: session.agentId,
-        title: session.title,
-        createdAt: session.createdAt,
-        status: session.status
-      })
+      out.push(this.metaOf(session))
     }
     out.sort((a, b) => a.createdAt - b.createdAt)
     return out
@@ -1206,16 +1134,7 @@ export class PtyManager {
     const out: PtySessionMeta[] = []
     for (const session of this.sessions.values()) {
       if (session.agentId != null) continue
-      out.push({
-        id: session.id,
-        conversationId: session.conversationId,
-        agentId: null,
-        title: session.title,
-        createdAt: session.createdAt,
-        status: session.status,
-        purpose: session.purpose,
-        installAgentId: session.installAgentId
-      })
+      out.push(this.metaOf(session))
     }
     out.sort((a, b) => a.createdAt - b.createdAt)
     return out

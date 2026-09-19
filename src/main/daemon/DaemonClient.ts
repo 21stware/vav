@@ -564,6 +564,7 @@ export function createRemoteHostPty(client: DaemonClient): HostPty {
       let pid = 0
       const dataListeners: Array<(data: string) => void> = []
       const exitListeners: Array<(e: { exitCode: number; signal?: number }) => void> = []
+      const portListeners: Array<(ports: number[]) => void> = []
       const writeQueue: string[] = []
       const proc: HostPtyProcess = {
         get pid() {
@@ -574,6 +575,9 @@ export function createRemoteHostPty(client: DaemonClient): HostPty {
         },
         onExit(listener) {
           exitListeners.push(listener)
+        },
+        onPorts(listener) {
+          portListeners.push(listener)
         },
         write(data) {
           if (!streamId) {
@@ -614,6 +618,12 @@ export function createRemoteHostPty(client: DaemonClient): HostPty {
             if (event === 'pty-data') {
               const text = String((data as { text?: string })?.text ?? '')
               for (const cb of dataListeners) cb(text)
+            } else if (event === 'pty-ports') {
+              const raw = (data as { ports?: unknown })?.ports
+              const ports = Array.isArray(raw)
+                ? raw.filter((n): n is number => typeof n === 'number')
+                : []
+              for (const cb of portListeners) cb(ports)
             } else if (event === 'pty-exit') {
               const payload = data as { exitCode?: number; signal?: number }
               for (const cb of exitListeners) {
