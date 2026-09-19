@@ -791,6 +791,95 @@
   border-radius: 3px;
 }
 
+.terminal-port-marks {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  z-index: 55;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  pointer-events: none;
+}
+
+.terminal-port-marks[data-inset-close='true'] {
+  right: 32px;
+}
+
+.terminal-port-mark {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  margin: 0;
+  padding: 0 7px;
+  border: 1px solid color-mix(in srgb, var(--border, #3a3a3c) 80%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg-content) 78%, transparent);
+  color: var(--text-secondary);
+  font: 500 11px/1 var(--font-ui, inherit);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+  cursor: default;
+  opacity: 0.92;
+  transform: translateY(0);
+  transition:
+    opacity 160ms var(--ease-out, ease-out),
+    transform 160ms var(--ease-out, ease-out),
+    background 120ms ease,
+    color 120ms ease,
+    border-color 120ms ease;
+}
+
+.terminal-port-mark[data-status='forwarding'] {
+  color: var(--accent, #0a84ff);
+  border-color: color-mix(in srgb, var(--accent, #0a84ff) 38%, transparent);
+}
+
+.terminal-port-mark[data-status='conflict'],
+.terminal-port-mark[data-status='error'] {
+  color: var(--danger, #e5484d);
+  border-color: color-mix(in srgb, var(--danger, #e5484d) 32%, transparent);
+}
+
+.terminal-port-mark:disabled {
+  cursor: default;
+}
+
+.terminal-port-mark:not(:disabled) {
+  cursor: pointer;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .terminal-port-mark:not(:disabled):hover {
+    background: var(--bg-hover, color-mix(in srgb, var(--bg-content) 70%, #fff));
+    color: var(--text);
+  }
+}
+
+.terminal-port-mark:not(:disabled):active {
+  transform: scale(0.97);
+}
+
+.terminal-port-mark.is-more {
+  pointer-events: none;
+  border-style: dashed;
+  opacity: 0.7;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .terminal-port-mark {
+    transition: none;
+  }
+}
+
+.terminal-port-mark {
+  @starting-style {
+    opacity: 0;
+    transform: translateY(-2px) scale(0.97);
+  }
+}
+
 /* Multi-pane close floats top-right; no title chrome (covers active ring). */
 .terminal-split-pane-close {
   position: absolute;
@@ -2236,7 +2325,13 @@
 }
 
 .agents-account-switch {
+  display: flex;
   align-items: center;
+  gap: 8px;
+}
+
+.agents-account-switch .btn.sm {
+  flex: 0 0 auto;
 }
 
 .agents-account-switch > span:first-child {
@@ -5417,6 +5512,45 @@ html:has(.remote-folder-window) #root {
   color: var(--text-secondary);
 }
 
+.analysis-range {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.analysis-range-btn {
+  height: 26px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--surface-muted, color-mix(in srgb, var(--text) 6%, transparent));
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 550;
+  cursor: pointer;
+}
+
+.analysis-range-btn.is-on {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+.analysis-slice {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.analysis-slice-title {
+  margin: 8px 0 0;
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  color: var(--text-secondary);
+}
+
 .analysis-error {
   color: var(--danger);
 }
@@ -6563,7 +6697,24 @@ html:has(.remote-folder-window) #root {
   position: relative;
   display: flex;
   align-items: center;
+  gap: 2px;
   border-radius: var(--radius-sm);
+}
+
+.accounts-row-remove.btn.sm {
+  flex: 0 0 auto;
+  height: 24px;
+  padding: 0 8px;
+  font-size: 11px;
+  opacity: 0.72;
+}
+
+.accounts-row-remove.btn.sm:disabled {
+  opacity: 0.38;
+}
+
+.accounts-group-usage {
+  padding: 6px 8px 8px;
 }
 
 .accounts-row-wrap:hover {
@@ -6576,7 +6727,9 @@ html:has(.remote-folder-window) #root {
 }
 
 .accounts-row {
-  width: 100%;
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -6677,6 +6830,7 @@ html:has(.remote-folder-window) #root {
 .accounts-inspector-heading {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   min-width: 0;
 }
@@ -6710,6 +6864,16 @@ html:has(.remote-folder-window) #root {
   letter-spacing: 0.01em;
   background: var(--accent-soft);
   color: var(--accent-text);
+}
+
+.accounts-badge.is-warn {
+  background: color-mix(in srgb, var(--warn, #d97706) 16%, transparent);
+  color: var(--warn, #d97706);
+}
+
+.accounts-badge.is-danger {
+  background: color-mix(in srgb, var(--danger) 16%, transparent);
+  color: var(--danger);
 }
 
 .accounts-field-value {

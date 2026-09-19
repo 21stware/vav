@@ -48,6 +48,12 @@ import type { SupabaseResult, SupabaseStatus, SupabaseStatusQuery } from './supa
 import type { KeepAwakeGrantResult, KeepAwakeStatus } from './sleepBlocker'
 import type { Platform } from './platform'
 import type { AgentInstallRun } from './agentInstall'
+import type {
+  FaaaaastAskRequest,
+  FaaaaastAskResult,
+  FaaaaastDelta,
+  FaaaaastInitPayload
+} from './faaaaast'
 import type { OverlayNavigatePayload, OverlayPayload } from './overlayOpen'
 import type { AnalysisSnapshot } from './analysis'
 import type { ConversationActivityRow } from './traySessions'
@@ -78,6 +84,12 @@ export type ScreenshotInitPayload = {
 }
 
 export type { AgentInstallRun } from './agentInstall'
+export type {
+  FaaaaastAskRequest,
+  FaaaaastAskResult,
+  FaaaaastDelta,
+  FaaaaastInitPayload
+} from './faaaaast'
 export type { OverlayNavigatePayload, OverlayPayload } from './overlayOpen'
 export type { AnalysisSnapshot } from './analysis'
 
@@ -142,6 +154,10 @@ export interface PtySessionMeta {
   status: PtyActivityStatus
   purpose?: 'install'
   installAgentId?: string
+  /** TCP listen ports on this PTY's process tree (host-discovered). */
+  ports?: number[]
+  /** How those ports appear on this computer (local / forwarded / conflict). */
+  forwards?: import('./ptyPorts').PtyPortForward[]
 }
 
 /** Live PTYs plus the split trees every window must hydrate from. */
@@ -419,6 +435,8 @@ export interface TokenUsageAccountRow {
 export type AccountViewKind = 'vav_key' | 'oauth'
 export type AccountViewProvider = 'vav' | 'anthropic' | 'openai' | 'custom'
 export type AccountViewKeyStatus = 'ok' | 'invalid' | 'unknown'
+export type AccountHealthKind = 'ok' | 'capped' | 'resting' | 'needsReauth' | 'unknown'
+export type AccountHealthSource = 'quota' | 'credential' | 'balance' | 'none'
 
 export interface AccountView {
   id: string
@@ -455,6 +473,11 @@ export interface AccountView {
   quotaError: string | null
   /** Official API wallet when the endpoint exposes one (DeepSeek, OpenRouter). */
   balance: AccountApiBalance | null
+  /** Composite health. `unknown` means missing evidence — never treat as healthy. */
+  healthKind: AccountHealthKind
+  healthSource: AccountHealthSource
+  healthObservedAt: number | null
+  healthResetsAt: number | null
 }
 
 export interface AccountApiBalance {
@@ -1804,6 +1827,19 @@ export interface VavApi {
     setKey(on: boolean): void
   }
 
+  /**
+   * Overlay-only: faaaaast one-shot lookup.
+   * Opened from the global ⌘⇧? accelerator.
+   */
+  faaaaast: {
+    onInit(handler: (payload: FaaaaastInitPayload) => void): () => void
+    onDelta(handler: (payload: FaaaaastDelta) => void): () => void
+    ask(request: FaaaaastAskRequest): Promise<FaaaaastAskResult>
+    cancel(): void
+    dismiss(): void
+    resize(height: number): void
+  }
+
   notifications: {
     /** System notification authorization for the settings hint. */
     permission(): Promise<'granted' | 'denied' | 'unknown'>
@@ -1988,6 +2024,8 @@ export type MenuCommand =
   | 'set-approval-edit'
   /** Capture a screen region, annotate, attach to the composer. */
   | 'screenshot'
+  /** ⌘⇧? — faaaaast one-shot overlay. */
+  | 'faaaaast'
   | 'send'
   /** Stop the in-flight agent turn for the active session. */
   | 'cancel-turn'
@@ -2174,6 +2212,12 @@ export const IPC = {
   screenshotDismiss: 'vav:screenshot:dismiss',
   screenshotFinish: 'vav:screenshot:finish',
   screenshotSetKey: 'vav:screenshot:set-key',
+  faaaaastInit: 'vav:faaaaast:init',
+  faaaaastAsk: 'vav:faaaaast:ask',
+  faaaaastDelta: 'vav:faaaaast:delta',
+  faaaaastCancel: 'vav:faaaaast:cancel',
+  faaaaastDismiss: 'vav:faaaaast:dismiss',
+  faaaaastResize: 'vav:faaaaast:resize',
   filesSaveAs: 'vav:files:save-as',
   filesRename: 'vav:files:rename',
   filesTrash: 'vav:files:trash',

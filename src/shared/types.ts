@@ -294,6 +294,11 @@ export interface TokenSnapshot {
   costSource?: 'estimated' | 'provider'
   /** Provider account that produced this turn (Settings → Accounts). */
   accountId?: string | null
+  /** Model id for this sample. Missing on legacy snapshots. */
+  model?: string | null
+  /** Set when the turn that produced this sample failed. */
+  errorKind?: TurnErrorKind | null
+  latencyMs?: number | null
 }
 
 /**
@@ -1138,8 +1143,8 @@ export interface AppSettings {
    */
   customSurfacePatternSize: string
   /**
-   * When false (default), Swarm / CLI Screen is off: the Thread|Swarm
-   * switcher is hidden and enterCliMode is a no-op.
+   * Always on. Kept for host-settings sync with older builds; the product
+   * no longer exposes a toggle and SettingsStore forces this true.
    */
   swarmModeEnabled: boolean
   /** UI language; default follows the OS. */
@@ -1366,7 +1371,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   surfacePattern: 'none',
   customSurfacePatternUrl: '',
   customSurfacePatternSize: '',
-  swarmModeEnabled: false,
+  swarmModeEnabled: true,
   locale: 'system',
   displayCurrency: 'USD',
   codeFont: 'SF Mono',
@@ -1549,6 +1554,8 @@ export interface TerminalTab {
   installAgentId?: string
   /** Flex weight for multi-split layout (default 1). */
   splitWeight?: number
+  /** Loopback mapping for services listening in this pane. */
+  forwards?: import('./ptyPorts').PtyPortForward[]
 }
 
 /**

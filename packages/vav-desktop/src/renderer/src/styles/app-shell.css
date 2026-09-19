@@ -6716,28 +6716,18 @@ button.tool-row {
   text-decoration: underline;
 }
 
-.story-outcome {
-  padding: 8px 10px;
-  border-radius: var(--radius-sm);
-  background: var(--bg-sunken);
+.story-error-text,
+.story-empty-text {
+  font-size: 12px;
+  line-height: 1.5;
 }
 
-.story-outcome.is-error {
-  background: color-mix(in srgb, var(--danger) 8%, var(--bg-sunken));
-}
-
-.story-headline {
-  color: var(--text);
-}
-
-.story-outcome.is-error .story-headline {
+.story-error-text {
   color: var(--danger);
 }
 
-.story-support {
-  margin-top: 3px;
-  font-size: 12px;
-  color: var(--text-secondary);
+.story-empty-text {
+  color: var(--text-tertiary);
 }
 
 .story-body {
@@ -9205,6 +9195,26 @@ button.tool-row {
   width: auto;
   max-width: 100%;
   margin-top: 2px;
+}
+
+.empty-quota.is-start {
+  align-items: stretch;
+  width: 100%;
+  max-width: none;
+  margin-top: 4px;
+}
+
+.empty-quota.is-start .empty-quota-reveal-inner {
+  align-items: stretch;
+}
+
+.empty-quota.is-start .empty-quota-row {
+  width: 100%;
+  max-width: none;
+}
+
+.empty-quota.is-start .empty-quota-line {
+  text-align: left;
 }
 
 .empty-quota.is-empty {

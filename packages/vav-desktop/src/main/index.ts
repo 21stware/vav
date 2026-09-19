@@ -70,7 +70,11 @@ import {
   type TurnStatus
 } from '@shared/types'
 import { agentBinaryCandidates } from '@shared/agentBinary'
-import { localFileStreamUrl, parseVavLocalFilePath } from '@shared/localFileUrl'
+import {
+  VAV_LOCAL_CORS_HEADERS,
+  localFileStreamUrl,
+  parseVavLocalFilePath
+} from '@shared/localFileUrl'
 import { compactionForLeaf } from '@shared/compaction'
 import {
   chatMessagesFromRemoteThread,
@@ -91,8 +95,8 @@ import { DaemonAttachService } from '@main/daemon/DaemonAttachService'
 import { createAccountsCatalog } from '@main/accounts/daemonCatalog'
 import { seedChangeReviewTurn } from '@main/agent/seedChangeReview'
 import { createSettingsCatalog, vavAccountKeyPresent } from '@main/daemon/settingsCatalog'
-import { composeHostSettings, pickSecretPresent } from '@shared/hostSettings'
-import { pickAppearanceBase } from '@shared/machineAppearance'
+import { composeHostSettings, pickSecretPresent, remapHostWorkspaceSettings } from '@shared/hostSettings'
+import { appearanceForMachine, pickAppearanceBase } from '@shared/machineAppearance'
 import {
   createChangeSetCatalog,
   createConnectorCatalog,
@@ -146,6 +150,7 @@ import {
   accountSecret,
   buildAccountsPage,
   cliCatalogOf,
+  overlayQuotaOnAccountsPage,
   resolveVavCredentials,
   resolveWorkspaceContext,
   syncOAuthProfiles
@@ -155,6 +160,9 @@ import {
   displayAccountLabel,
   agentIdOf,
   isVavProfile,
+  accountHealthOf,
+  isAccountRoutable,
+  isLiveOAuthProfile,
   resolveSessionAccountId,
   sessionShowsHostQuota,
   conversationQuotaAuthView,
@@ -336,6 +344,8 @@ import {
   turnEventsFromRemoteTurn
 } from '@shared/remoteControlApply'
 import { createScreenshotController } from '@main/screenshot/ScreenshotSession'
+import { createFaaaaastController } from '@main/faaaaast/FaaaaastSession'
+import { registerFaaaaastIpc } from '@main/ipc/registerFaaaaastIpc'
 import { OVERLAY_IMAGE_EXTS, shouldOpenAsOverlay } from '@shared/previewOverlay'
 import {
   overlayIdentity,
@@ -354,6 +364,8 @@ import { ChangeSetStore } from '@main/agent/ChangeSetStore'
 import { setGitHostFor } from '@main/git/GitService'
 import { UpdateService } from '@main/updates'
 import { PtyManager, type PtySessionMeta } from '@main/terminal/PtyManager'
+import { PortForwardService, type DesiredPortForward } from '@main/portForward/PortForwardService'
+import type { PtyListResult } from '@shared/ipc'
 import { ensureLoginPath, probeAgentExecutables, resolveAgentExecutable } from '@main/terminal/loginPath'
 import { warmAgentLaunchCache } from '@main/terminal/agentLaunchWarm'
 import { menuCommandFromInput, matchesNewSessionWindow } from '@main/menuShortcuts'
@@ -440,6 +452,7 @@ import {
   refreshApiBalance
 } from '@main/quota/apiBalanceCache'
 import { buildAnalysisSnapshot } from '@main/analysis/buildAnalysisSnapshot'
+import { ModelPriceStore } from '@main/analysis/modelPriceStore'
 import {
   configureAnalysisCache,
   invalidateAnalysisCache,
@@ -450,7 +463,8 @@ import {
   ACCOUNT_QUOTA_HOSTS,
   hostMayHaveAccountQuota,
   latestQuotaWindowsByHost,
-  mergeNamespacedQuotaWindows
+  mergeNamespacedQuotaWindows,
+  selectQuotaWindows
 } from '@shared/quotaWindows'
 import { nativeSessionId } from '@shared/cliPaneBinding'
 import {
@@ -536,6 +550,7 @@ let remoteFolderSettled = false
 /** Last BrowserWindow that held focus — Dock activate raises this, not always main. */
 let lastFocusedWindow: BrowserWindow | null = null
 let screenshotController: ReturnType<typeof createScreenshotController> | null = null
+let faaaaastController: ReturnType<typeof createFaaaaastController> | null = null
 /** Conversation currently shown in the token-usage panel (for live hydrate). */
 let tokenUsageConversationId: string | null = null
 /** Last conversation the user actually viewed — Accounts workspace follows this. */
@@ -621,6 +636,8 @@ const sessionSecretStore = new SessionSecretStore({
   }
 })
 const accountStore = new AccountStore(app.getPath('userData'))
+const modelPriceStore = new ModelPriceStore(app.getPath('userData'))
+modelPriceStore.load()
 const conversationStore = new ConversationStore()
 const timerStore = new TimerStore(defaultVavServerStateDir(), {
   migrateFrom: app.getPath('userData')
@@ -724,6 +741,7 @@ workingCopyService.onCopyChanged = (realPath) => {
 // Wired after construction — retrieval is defined below; assigned once created.
 
 let swarmFinishAlert: ReturnType<typeof createSwarmFinishAlert> | null = null
+let syncPtyPortForwards = (): void => {}
 
 const ptyManager = new PtyManager(
   (tabId, data) => {
@@ -739,6 +757,7 @@ const ptyManager = new PtyManager(
     sendToWorkspaceWindows(IPC.ptyChanged, { conversationId }, conversationId)
     // Live CLI / bash panes plus unseen completions drive the tray menu.
     refreshTraySessions()
+    syncPtyPortForwards()
   },
   (tabId, conversationId, status) => {
     sendToWorkspaceWindows(IPC.ptyStatus, { tabId, conversationId, status }, conversationId)
@@ -1464,6 +1483,7 @@ function teardownForQuit(): void {
   cliHost.disposeAll()
   stopAllAgentInstalls()
   ptyManager.killAll()
+  portForwards.close()
   fileService.disposeAll()
   quotaService.stop()
   conversationStore.flush()
@@ -2161,10 +2181,12 @@ const daemonAttach = new DaemonAttachService({
   },
   onHostAttached: (machineId) => {
     applyConversationPersist()
+    void seedHostRecentsFromDesktop(machineId)
     void pullRemoteWorkspace(machineId)
     attachLocalShellLogs(machineId)
   },
   onHostsChanged: (hosts) => {
+    syncPtyPortForwards()
     applyConversationPersist()
     broadcast(IPC.hostsChanged, decorateHosts(hosts))
     syncHostWindows(hosts)
@@ -2213,6 +2235,32 @@ const daemonAttach = new DaemonAttachService({
   }
 })
 
+const portForwards = new PortForwardService((conversationIds) => {
+  for (const conversationId of conversationIds) {
+    sendToWorkspaceWindows(IPC.ptyChanged, { conversationId }, conversationId)
+  }
+})
+
+syncPtyPortForwards = (): void => {
+  const desired: DesiredPortForward[] = []
+  for (const session of ptyManager.listLivePortSessions()) {
+    const machineId = conversationStore.get(session.conversationId)?.machineId
+    const host = workspaceHostForConversation(hostRegistry, machineId)
+    const local = isLocalMachine(machineId) || Boolean(host.info.localShell)
+    for (const port of session.ports) {
+      desired.push({
+        hostId: host.id,
+        tabId: session.id,
+        conversationId: session.conversationId,
+        remotePort: port,
+        mode: local ? ('local' as const) : ('proxy' as const),
+        dial: local ? null : daemonAttach.proxyDial(host.id)
+      })
+    }
+  }
+  portForwards.sync(desired)
+}
+
 /**
  * Talk to the host session plane when this conversation lives on another
  * machine. Desktop hosts and headless vav-server both expose the hub; returns
@@ -2220,6 +2268,39 @@ const daemonAttach = new DaemonAttachService({
  */
 function remoteMachineId(conversation: Conversation | undefined | null): string | null {
   return remoteConversationMachineId(conversation)
+}
+
+function sealRemotePlaneUnavailable(conversationId: string, text: string): void {
+  const conversation = conversationStore.get(conversationId)
+  if (!conversation) return
+  const user = {
+    id: randomUUID(),
+    parentId: conversation.activeLeafId,
+    role: 'user' as const,
+    content: text,
+    blocks: text ? [{ kind: 'text' as const, text }] : [],
+    createdAt: Date.now()
+  }
+  const assistant = {
+    id: randomUUID(),
+    parentId: user.id,
+    role: 'assistant' as const,
+    content: '',
+    blocks: [],
+    createdAt: Date.now(),
+    errorText: t('error.remotePlaneUnavailable')
+  }
+  conversationStore.appendMessage(conversationId, user)
+  handleAgentEvent({ type: 'user', conversationId, message: user })
+  conversationStore.appendMessage(conversationId, assistant)
+  handleAgentEvent({
+    type: 'end',
+    conversationId,
+    message: assistant,
+    tokensUsed: 0,
+    error: assistant.errorText,
+    errorKind: 'generic'
+  })
 }
 
 async function forwardControl(
@@ -2635,6 +2716,7 @@ function isAuxiliaryWindow(window: BrowserWindow): boolean {
     return true
   }
   if (screenshotController?.isOverlay(window)) return true
+  if (faaaaastController?.isOverlay(window)) return true
   return false
 }
 
@@ -2685,6 +2767,13 @@ let lastMenuCommand: MenuCommand | null = null
 function sendMenuCommand(command: MenuCommand): void {
   const now = Date.now()
   if (command === 'screenshot' && screenshotController?.isActive()) return
+  if (command === 'faaaaast') {
+    if (shouldSkipDuplicateMenuCommand(command, lastMenuCommand, now, lastMenuCommandAt)) return
+    lastMenuCommand = command
+    lastMenuCommandAt = now
+    faaaaastController?.toggle()
+    return
+  }
   if (shouldSkipDuplicateMenuCommand(command, lastMenuCommand, now, lastMenuCommandAt)) return
   lastMenuCommand = command
   lastMenuCommandAt = now
@@ -2701,11 +2790,17 @@ function sendMenuCommand(command: MenuCommand): void {
     return
   }
   let target = BrowserWindow.getFocusedWindow()
-  if (!target || target.isDestroyed() || screenshotController?.isOverlay(target)) {
+  if (
+    !target ||
+    target.isDestroyed() ||
+    screenshotController?.isOverlay(target) ||
+    faaaaastController?.isOverlay(target)
+  ) {
     target =
       lastFocusedWindow &&
       !lastFocusedWindow.isDestroyed() &&
-      !screenshotController?.isOverlay(lastFocusedWindow)
+      !screenshotController?.isOverlay(lastFocusedWindow) &&
+      !faaaaastController?.isOverlay(lastFocusedWindow)
         ? lastFocusedWindow
         : mainWindow
   }
@@ -2745,6 +2840,14 @@ function wireMenuAccelerators(contents: Electron.WebContents): void {
     }
     const command = menuCommandFromInput(input, bindings)
     if (!command) return
+    const overlayHost = BrowserWindow.fromWebContents(contents)
+    if (overlayHost && faaaaastController?.isOverlay(overlayHost)) {
+      if (command === 'faaaaast' || command === 'close-context') {
+        event.preventDefault()
+        faaaaastController.hide()
+      }
+      return
+    }
     event.preventDefault()
     // open-settings is owned by main (native window), not the renderer list.
     if (command === 'open-settings') {
@@ -3458,7 +3561,7 @@ function applyUiZoomToAllWindows(): void {
   const zoom = settingsStore.get().uiZoom
   for (const window of BrowserWindow.getAllWindows()) {
     if (window.isDestroyed()) continue
-    if (screenshotController?.isOverlay(window)) continue
+    if (screenshotController?.isOverlay(window) || faaaaastController?.isOverlay(window)) continue
     applyUiZoomFactor(window.webContents, zoom)
   }
 }
@@ -3476,7 +3579,7 @@ function wireUiZoom(window: BrowserWindow): void {
   const contents = window.webContents
   const apply = (): void => {
     if (window.isDestroyed() || contents.isDestroyed()) return
-    if (screenshotController?.isOverlay(window)) return
+    if (screenshotController?.isOverlay(window) || faaaaastController?.isOverlay(window)) return
     applyUiZoomFactor(contents, settingsStore.get().uiZoom)
   }
   apply()
@@ -3521,6 +3624,18 @@ function loadScreenshotRenderer(window: BrowserWindow): void {
     return
   }
   window.loadFile(join(__dirname, '../renderer/screenshot.html'))
+}
+
+function loadFaaaaastRenderer(window: BrowserWindow): void {
+  const look = appearanceForMachine(settingsStore.get(), LOCAL_MACHINE_ID)
+  const theme =
+    look.theme === 'light' || look.theme === 'dark' ? look.theme : windowThemeName()
+  const base = process.env.ELECTRON_RENDERER_URL?.replace(/\/$/, '')
+  if (base) {
+    window.loadURL(`${base}/faaaaast.html?theme=${theme}`)
+    return
+  }
+  window.loadFile(join(__dirname, '../renderer/faaaaast.html'), { query: { theme } })
 }
 
 /** Category the next Settings paint should show. ⌘, parks on Appearance. */
@@ -6199,7 +6314,8 @@ function activateApp(): void {
   const last =
     lastFocusedWindow &&
     !lastFocusedWindow.isDestroyed() &&
-    !screenshotController?.isOverlay(lastFocusedWindow)
+    !screenshotController?.isOverlay(lastFocusedWindow) &&
+    !faaaaastController?.isOverlay(lastFocusedWindow)
       ? lastFocusedWindow
       : null
   const lastIsCompanion =
@@ -6410,6 +6526,21 @@ function registerGlobalHotkey(accelerator: string): boolean {
   } catch (err) {
     console.warn('[hotkey] screenshot register threw', err)
   }
+  // 4) faaaaast overlay from any app (default ⌘⇧? / Ctrl+Shift+/)
+  const faaaaastAccel = currentKeyBindings().faaaaast
+  try {
+    const ok = globalShortcut.register(faaaaastAccel, () => {
+      console.log(`[hotkey] faaaaast fired: ${faaaaastAccel}`)
+      faaaaastController?.toggle()
+    })
+    if (!ok) {
+      console.warn(`[hotkey] failed to register global faaaaast: ${faaaaastAccel}`)
+    } else {
+      console.log(`[hotkey] registered global faaaaast: ${faaaaastAccel}`)
+    }
+  } catch (err) {
+    console.warn('[hotkey] faaaaast register threw', err)
+  }
   // `unregisterAll` above drops the in-session Esc binding; put it back.
   screenshotController?.rebindEscape()
   return toggleOk
@@ -6470,7 +6601,8 @@ function watchSystemAccentColor(): void {
     if (
       window &&
       !window.isDestroyed() &&
-      !screenshotController?.isOverlay(window)
+      !screenshotController?.isOverlay(window) &&
+      !faaaaastController?.isOverlay(window)
     ) {
       lastFocusedWindow = window
       updateService.notifyWindowActive()
@@ -6640,6 +6772,61 @@ function rememberWorkdir(path: string, machineId?: string | null): void {
     const isTemp = Boolean(tmp) && (path.startsWith(tmp) || path.startsWith('/private' + tmp))
     if (!isTemp) daemonAttach.rememberDefaultPath(id, path)
   }
+  void persistRecentsToHost(id)
+}
+
+function recentsHostScope(machineId?: string | null): string {
+  const id = normalizeMachineId(machineId)
+  if (isLocalMachine(id) || hostRegistry.get(id)?.info.localShell) return LOCAL_MACHINE_ID
+  return id
+}
+
+function recentsHostClient(machineId?: string | null) {
+  const scope = recentsHostScope(machineId)
+  return scope === LOCAL_MACHINE_ID
+    ? daemonAttach.localShellClient()
+    : daemonAttach.clientOf(scope)
+}
+
+/** Write this machine's folder recents onto its vav-server so they survive an update. */
+async function persistRecentsToHost(machineId?: string | null): Promise<void> {
+  const scope = recentsHostScope(machineId)
+  const client = recentsHostClient(machineId)
+  if (!client?.connected) return
+  const recents = recentsForMachine(
+    parseWorkspaceRefList(settingsStore.get().recentWorkspaceDirectories),
+    scope
+  )
+  try {
+    await client.request(
+      'settings.update',
+      remapHostWorkspaceSettings({ recentWorkspaceDirectories: recents }, scope, 'toHost')
+    )
+  } catch {
+    /* host offline / older daemon */
+  }
+}
+
+/** First attach after an update: copy desktop recents onto an empty vav-server. */
+async function seedHostRecentsFromDesktop(machineId: string): Promise<void> {
+  const client = recentsHostClient(machineId)
+  if (!client?.connected) return
+  const scope = recentsHostScope(machineId)
+  try {
+    const hostSnap = (await client.request('settings.get')) as Partial<AppSettings>
+    if (parseWorkspaceRefList(hostSnap?.recentWorkspaceDirectories).length > 0) return
+    const desktop = recentsForMachine(
+      parseWorkspaceRefList(settingsStore.get().recentWorkspaceDirectories),
+      scope
+    )
+    if (!desktop.length) return
+    await client.request(
+      'settings.update',
+      remapHostWorkspaceSettings({ recentWorkspaceDirectories: desktop }, scope, 'toHost')
+    )
+  } catch {
+    /* ignore */
+  }
 }
 
 /** Always mint a Temporary Workspace folder (switcher “A new temp folder”). */
@@ -6716,6 +6903,30 @@ function applyDefaultMachine(machineId: string): void {
   notifications.notifyHostsChanged()
 }
 
+function sessionAccountHealthKind(
+  account: import('@shared/accounts').ProviderAccount,
+  now: number
+): import('@shared/accountHealth').AccountHealthKind {
+  const host = account.oauthHost
+  const signedIn = isLiveOAuthProfile(account, lastLiveOAuth)
+  const windows =
+    host && hostMayHaveAccountQuota(host)
+      ? selectQuotaWindows(namespacedQuotaFor(host), host, account.name)
+      : []
+  return accountHealthOf(
+    {
+      kind: account.kind,
+      keyStatus: signedIn ? 'ok' : account.keyStatus,
+      oauthSignedIn: signedIn,
+      oauthExpired: account.oauthExpired,
+      credentialExpiresAtMs: account.credentialExpiresAtMs ?? null,
+      quotaWindows: windows,
+      quotaStatus: windows.length > 0 ? 'ready' : 'idle'
+    },
+    now
+  ).kind
+}
+
 function accountIdForSession(
   workdir: string | null,
   cliHost?: CliHostKind | null
@@ -6726,20 +6937,32 @@ function accountIdForSession(
     endpoint: settingsStore.get().apiEndpoint || null,
     hasApiKey: secretStore.has('api')
   })
+  const now = Date.now()
+  const rows = accountStore.listVisible(workspaceKey).map((account) => ({
+    ...account,
+    healthKind: sessionAccountHealthKind(account, now)
+  }))
   if (cliHost) {
-    return resolveSessionAccountId(accountStore.listVisible(workspaceKey), cliHost)
+    return resolveSessionAccountId(rows, cliHost)
   }
   const vendorId = settingsStore.get().defaultAgentId
   if (isLlmVendorId(vendorId)) {
-    const rows = accountStore
-      .listVisible(workspaceKey)
-      .filter((row) => row.provider === 'vav' || agentIdOf(row) === 'vav')
+    const vav = rows.filter((row) => row.provider === 'vav' || agentIdOf(row) === 'vav')
     const match =
-      rows.find((row) => row.current && vendorIdFromEndpoint(row.endpoint) === vendorId) ??
-      rows.find((row) => vendorIdFromEndpoint(row.endpoint) === vendorId)
+      vav.find(
+        (row) =>
+          row.current &&
+          vendorIdFromEndpoint(row.endpoint) === vendorId &&
+          isAccountRoutable(row.healthKind)
+      ) ??
+      vav.find(
+        (row) => vendorIdFromEndpoint(row.endpoint) === vendorId && isAccountRoutable(row.healthKind)
+      ) ??
+      vav.find((row) => row.current && vendorIdFromEndpoint(row.endpoint) === vendorId) ??
+      vav.find((row) => vendorIdFromEndpoint(row.endpoint) === vendorId)
     if (match) return match.id
   }
-  return accountStore.currentVav(workspaceKey)?.id ?? null
+  return resolveSessionAccountId(rows, 'vav') ?? accountStore.currentVav(workspaceKey)?.id ?? null
 }
 
 function pushAccountsIfSettingsOpen(): void {
@@ -6750,7 +6973,11 @@ function pushAccountsIfSettingsOpen(): void {
       .request('accounts.getPage', {})
       .then((page) => {
         if (!settingsWindow || settingsWindow.isDestroyed()) return
-        safeSend(settingsWindow.webContents, IPC.accountsUpdated, page)
+        safeSend(
+          settingsWindow.webContents,
+          IPC.accountsUpdated,
+          hydrateAccountsPage(page as import('@shared/ipc').AccountsPagePayload)
+        )
       })
       .catch(() => undefined)
     return
@@ -6958,6 +7185,28 @@ function accountsPage(workspaceKey?: string | null): import('@shared/ipc').Accou
     }),
     oauthLogin: currentOAuthLogin()
   }
+}
+
+function hydrateAccountsPage(
+  page: import('@shared/ipc').AccountsPagePayload
+): import('@shared/ipc').AccountsPagePayload {
+  const liveByHost = latestQuotaWindowsByHost(conversationStore.all())
+  return overlayQuotaOnAccountsPage(page, (view) => {
+    const row = accountStore.get(view.id)
+    const host = view.oauthHost ?? row?.oauthHost
+    if (!host || !hostMayHaveAccountQuota(host)) return null
+    const identity = row?.name ?? view.identityName
+    const state = quotaService.getState(host, identity)
+    return {
+      ...state,
+      windows: mergeNamespacedQuotaWindows(
+        host,
+        identity,
+        quotaService.get(host, identity),
+        liveByHost.get(host)
+      )
+    }
+  })
 }
 
 const ACCOUNTS_REFRESH_MS = 12_000
@@ -7187,6 +7436,23 @@ function registerIpc(): void {
   registerHapticsIpc()
   screenshotController ??= createScreenshotController({ loadScreenshotRenderer })
   registerScreenshotIpc(ipcMain, screenshotController!)
+  faaaaastController ??= createFaaaaastController({
+    loadRenderer: loadFaaaaastRenderer,
+    getSettings: () => settingsStore.get(),
+    resolveCredentials: () =>
+      resolveVavCredentials(
+        { settingsEndpoint: settingsStore.get().apiEndpoint },
+        accountStore,
+        secretStore
+      ),
+    webSearch,
+    webFetch,
+    searchKeys: () => ({
+      brave: secretStore.get('braveSearch') || undefined,
+      tinyfish: secretStore.get('tinyfish') || undefined
+    })
+  })
+  registerFaaaaastIpc(ipcMain, faaaaastController!)
   registerComputerIpc(ipcMain, {
     status: () => {
       const st = embeddedCua.status()
@@ -7530,7 +7796,8 @@ return c as text`
       } catch (err) {
         console.error('[analysis] binary probe failed', err)
       }
-      return await buildAnalysisSnapshot({
+      const prices = await modelPriceStore.refresh({ force })
+      const snapshot = await buildAnalysisSnapshot({
         conversations: conversationStore.all(),
         cliAgents: configured,
         catalogue,
@@ -7549,6 +7816,7 @@ return c as text`
         },
         readApiBalance: (hostKey) => lookupVendorApiBalance(hostKey, force)
       })
+      return { ...snapshot, pricesUpdatedAt: prices.updatedAt }
     }
   })
   if (secretStore.has('api')) {
@@ -7620,6 +7888,7 @@ return c as text`
     refreshQuotaPanel: (host) => {
       void quotaService.refreshForPanel(host as CliHostKind)
     },
+    hydratePage: hydrateAccountsPage,
     remote: () => activeSettingsClient()
   })
 
@@ -7967,11 +8236,9 @@ return c as text`
         }
         void forwardControl(remote, (dial, hostId) => dial.send(hostId, text ?? '')).then((used) => {
           if (used) return
-          if (agentFor(id) === 'cli') {
-            void cliHost.run(id, text, attachments, quote, contextBlocks, contextFile)
-            return
-          }
-          void agent.run(id, text, attachments, quote, contextBlocks, contextFile)
+          // Do not run this computer's CLI against a remote resume cursor —
+          // that path dies as a fake "network dropped" error.
+          sealRemotePlaneUnavailable(id, text ?? '')
         })
         return true
       },
@@ -8265,7 +8532,16 @@ return c as text`
     afterSpawn: (conversationId, tabId, agentId) =>
       swarmSession.afterSpawn(conversationId, tabId, agentId)
   })
-  registerPtyIoIpc(ipcMain, ptyManager, swarmSession)
+  registerPtyIoIpc(ipcMain, ptyManager, swarmSession, (listed) => {
+    const raw = listed as PtyListResult
+    return {
+      ...raw,
+      sessions: raw.sessions.map((session) => ({
+        ...session,
+        forwards: portForwards.snapshotForTab(session.id)
+      }))
+    }
+  })
 
 
   // --- window ---
@@ -8612,21 +8888,35 @@ if (singleInstance) {
       powerMonitor.on('user-did-resign-active', onPowerChange)
     }
     protocol.handle('vav-local', async (request) => {
+      const withCors = (response: Response): Response => {
+        const headers = new Headers(response.headers)
+        for (const [key, value] of Object.entries(VAV_LOCAL_CORS_HEADERS)) {
+          headers.set(key, value)
+        }
+        return new Response(response.body, {
+          status: response.status,
+          statusText: response.statusText,
+          headers
+        })
+      }
       try {
+        if (request.method === 'OPTIONS') {
+          return withCors(new Response(null, { status: 204 }))
+        }
         // Query form (`preview/?path=`) or path form (`local/abs/file`) so
         // relative JS modules next to an HTML preview resolve as siblings.
         const requested = parseVavLocalFilePath(request.url)
         if (!requested) {
-          return new Response('Not found', { status: 404 })
+          return withCors(new Response('Not found', { status: 404 }))
         }
         // Document sandbox: preview must read the working copy when one exists.
         const mapped = workingCopyService.ioPath(requested)
         const filePath = existsSync(mapped) ? mapped : requested
         if (!fileService.isAllowedPath(requested) && !fileService.isAllowedPath(filePath)) {
-          return new Response('Forbidden', { status: 403 })
+          return withCors(new Response('Forbidden', { status: 403 }))
         }
         if (!existsSync(filePath)) {
-          return new Response('Not found', { status: 404 })
+          return withCors(new Response('Not found', { status: 404 }))
         }
         // Forward Range headers so pdf.js can stream large files efficiently.
         const headers: Record<string, string> = {}
@@ -8689,15 +8979,17 @@ if (singleInstance) {
           // Range enables seeking for PDF/media/large office.
           out.set('Accept-Ranges', 'bytes')
           out.set('Cache-Control', 'no-store')
-          return new Response(response.body, {
-            status: response.status,
-            statusText: response.statusText,
-            headers: out
-          })
+          return withCors(
+            new Response(response.body, {
+              status: response.status,
+              statusText: response.statusText,
+              headers: out
+            })
+          )
         }
-        return response
+        return withCors(response)
       } catch {
-        return new Response('Bad request', { status: 400 })
+        return withCors(new Response('Bad request', { status: 400 }))
       }
     })
     const settings = settingsStore.load()
