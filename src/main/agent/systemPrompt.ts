@@ -34,6 +34,15 @@ export type SystemPromptOptions = {
   sessionSecretNames?: string[]
   /** Embedded Cua Driver is up — offer computer_list / observe / act. */
   computerUse?: boolean
+  /** Local CSV / TSV / SQLite / Parquet bound as a Data resource. */
+  dataFilePath?: string | null
+  /** Bound Knowledge host (note or ingested document). */
+  knowledgeHost?: {
+    id: string
+    title: string
+    kind: 'document' | 'note'
+    path: string | null
+  } | null
 }
 
 const DB_SCHEMA_PROMPT_BUDGET = 12_000
@@ -174,10 +183,24 @@ export function buildSystemPrompt(
         : dbTable
           ? `The user is viewing table \`${dbTable}\` in the preview (like a sheet in a workbook). When they say "this table" / "the table" / "这张表", they mean \`${dbTable}\`. Query that table unless they name another.`
           : 'No table is focused in the preview yet. When they ask about "this database" / "这个库", they mean this connection. List or inspect tables before assuming a name.',
-      'For tabular analysis prefer `sql_query` against that connection (omit path). Do not invent write/DDL APIs — only read-only SQL is allowed.',
+      options.dataFilePath
+        ? `The bound Data file is ${options.dataFilePath}. Prefer \`sql_query\` with that path (DuckDB). Do not invent write/DDL APIs — only read-only SQL is allowed.`
+        : 'For tabular analysis prefer `sql_query` against that connection (omit path). Do not invent write/DDL APIs — only read-only SQL is allowed.',
       catalog
         ? 'The catalog above is already in context. Use it for table/column names; query when you need samples, fresh counts, or objects missing from the snapshot. Use the dialect of this connection. Do not open unrelated files unless the user asks.'
         : 'Start with information_schema / system tables or `SELECT * FROM … LIMIT 20` to learn tables. Use the dialect of this connection. Do not open unrelated files unless the user asks.',
+      ''
+    )
+  }
+  if (options?.knowledgeHost) {
+    const host = options.knowledgeHost
+    lines.push(
+      `This session is attached to a Knowledge host: ${host.title} (${host.kind}, id ${host.id}).`,
+      host.path ? `Vault path: ${host.path}` : 'The host has no stored file yet.',
+      host.kind === 'note'
+        ? 'Read or rewrite the note with `knowledge_fetch` / `knowledge_write` (pass host_id). The user can also edit it in the Knowledge editor — your write replaces the whole markdown.'
+        : 'This document was ingested and chunked. Prefer `knowledge_search` / `knowledge_fetch` (or `doc_search` / `doc_fetch` on the vault path) over guessing.',
+      'Task sessions may `@mention` this host; when they do, search it instead of inventing contents.',
       ''
     )
   }
@@ -203,6 +226,7 @@ export function buildSystemPrompt(
     `- Artifacts are **only** deliberate user-facing documents (reports, briefs, HTML pages, slides notes). Ordinary source edits are not artifacts. Mark a deliverable with \`${ARTIFACT_MARKER}\` near the top of the file, and/or \`artifact: true\` on \`fs_write\`.`,
     '- `doc_search` / `doc_fetch` — local retrieval over PDF, Word, Excel, PowerPoint, CSV/TSV, and text. Prefer these over terminal/python for office/PDF **reading** (PDF = extractable text layer only; no OCR). Do not install python-docx/pdf tools when doc_search can read the file. Not for images/audio/video.',
     '- `sql_query` — analytical SQL. On a live DB session, queries that connection (PostgreSQL / MySQL / ClickHouse / BigQuery / DuckDB; omit path). Otherwise DuckDB over a SQLite, CSV, TSV, or Parquet file (not `.xlsx`). Use for aggregation, GROUP BY, JOIN, window functions, filtering. Prefer this over paging the preview when you need to compute.',
+    '- `knowledge_search` / `knowledge_fetch` / `knowledge_write` — the Knowledge library. Search hosts (documents + notes), fetch chunks or a whole note, and rewrite notes. Use these when the user mentions a knowledge host or this is a Knowledge session.',
     '- `web_search` / `web_fetch` — public web from this machine (Brave if key configured, else optional SearXNG, else DuckDuckGo HTML). Search first, then fetch promising URLs. HTML/PDF/text/JSON supported; private/localhost URLs are blocked. Prefer these over `terminal` curl/wget for reading pages.',
     '- `load_skill` — load a domain skill (SKILL.md + optional scripts/references) before specialized work. Catalog metadata is below; full instructions load on demand.',
     '- `connector` — GitHub / Cloudflare / Supabase / Vercel. `op=list|probe|act`. Deploy is a connector action, not a skill. GitHub is read-only.',

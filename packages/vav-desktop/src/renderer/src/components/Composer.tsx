@@ -52,7 +52,14 @@ import { SessionRunPicker } from './SessionRunPicker'
 import { filterComputerApps, type ComputerApp } from '@shared/computerUse'
 import { MentionBox, type MentionBoxHandle, type MentionItem } from './mentionBox/MentionBox'
 import type { MentionOptions } from './mentionBox/mentionModel'
-import { appMentionToken, fileMentionToken, findComposerPills } from './mentionBox/mentionTokens'
+import { sessionKindOf } from '@shared/sessionKind'
+import {
+  appMentionToken,
+  dataMentionToken,
+  fileMentionToken,
+  findComposerPills,
+  knowledgeMentionToken
+} from './mentionBox/mentionTokens'
 
 const NO_QUEUE: QueuedMessage[] = []
 
@@ -194,6 +201,7 @@ export function Composer({
   const conversation = useSessionStore((s) =>
     s.conversations.find((c) => c.id === conversationId)
   )
+  const mentionableConversations = useSessionStore((s) => s.conversations)
   const storeDraft = useSessionStore((s) => s.drafts[conversationId] ?? '')
   const boundDraft = value !== undefined ? value : storeDraft
   const attachments = useSessionStore((s) => s.attachments[conversationId] ?? NO_ATTACHMENTS)
@@ -420,13 +428,14 @@ export function Composer({
     })()
   }, [])
 
-  /** Built-in popover: type after `@` to filter apps (and Add file / enable). */
+  /** Built-in popover: type after `@` to filter files, Data, Knowledge, and apps. */
   const fetchMentionItems = useCallback(
     async (query: string): Promise<MentionItem[]> => {
       const items: MentionItem[] = []
       const q = query
         .replace(/^\[/, '')
         .replace(/\]$/, '')
+        .replace(/^(file|data|knowledge)/i, '')
         .trim()
         .toLowerCase()
       const addFileLabel = t('composer.mentionAddFile')
@@ -435,6 +444,54 @@ export function Composer({
           id: 'add-file',
           label: addFileLabel,
           onSelect: pickAttachmentFiles
+        })
+      }
+      const dataRows = mentionableConversations.filter(
+        (row) => sessionKindOf(row) === 'db' && !row.archived
+      )
+      for (const row of dataRows) {
+        const title = row.title || row.dataFilePath || row.id
+        if (q && !title.toLowerCase().includes(q) && !t('sidebar.category.data').toLowerCase().includes(q)) {
+          continue
+        }
+        items.push({
+          id: `data:${row.id}`,
+          label: title,
+          detail: t('sidebar.category.data'),
+          insert: dataMentionToken({
+            conversationId: row.id,
+            title,
+            path: row.dataFilePath,
+            connectionId: row.dbConnectionId
+          })
+        })
+      }
+      const knowledgeRows = mentionableConversations.filter(
+        (row) => sessionKindOf(row) === 'knowledge' && !row.archived
+      )
+      let knowledgeHosts = knowledgeRows.map((row) => ({
+        hostId: row.knowledgeHostId || row.id,
+        title: row.title || row.id
+      }))
+      if (window.vav.knowledge?.list) {
+        const listed = await window.vav.knowledge.list().catch(() => [])
+        if (listed.length > 0) {
+          knowledgeHosts = listed.map((host) => ({ hostId: host.id, title: host.title }))
+        }
+      }
+      for (const host of knowledgeHosts) {
+        if (
+          q &&
+          !host.title.toLowerCase().includes(q) &&
+          !t('sidebar.category.knowledge').toLowerCase().includes(q)
+        ) {
+          continue
+        }
+        items.push({
+          id: `knowledge:${host.hostId}`,
+          label: host.title,
+          detail: t('sidebar.category.knowledge'),
+          insert: knowledgeMentionToken(host)
         })
       }
       if (!computerUseEnabled) {
@@ -462,7 +519,14 @@ export function Composer({
       }
       return items
     },
-    [computerUseEnabled, enableComputerUse, loadMentionApps, pickAttachmentFiles, t]
+    [
+      computerUseEnabled,
+      enableComputerUse,
+      loadMentionApps,
+      mentionableConversations,
+      pickAttachmentFiles,
+      t
+    ]
   )
 
   /** Native add-content menu for the "+" button. */
@@ -485,6 +549,49 @@ export function Composer({
             label: t('composer.mentionAddFile'),
             icon: { kind: 'lucide', key: 'file-text' },
             onSelect: pickAttachmentFiles
+          },
+          {
+            label: t('composer.mentionAddData'),
+            icon: { kind: 'lucide', key: 'file-sessions' },
+            submenu:
+              mentionableConversations.filter((row) => sessionKindOf(row) === 'db' && !row.archived)
+                .length > 0
+                ? mentionableConversations
+                    .filter((row) => sessionKindOf(row) === 'db' && !row.archived)
+                    .map((row) => ({
+                      label: row.title || row.dataFilePath || row.id,
+                      onSelect: () =>
+                        mentionRef.current?.insertText(
+                          `${dataMentionToken({
+                            conversationId: row.id,
+                            title: row.title || row.dataFilePath || row.id,
+                            path: row.dataFilePath,
+                            connectionId: row.dbConnectionId
+                          })} `
+                        )
+                    }))
+                : [{ label: t('composer.mentionNoData'), disabled: true }]
+          },
+          {
+            label: t('composer.mentionAddKnowledge'),
+            icon: { kind: 'lucide', key: 'message-square-text' },
+            submenu:
+              mentionableConversations.filter(
+                (row) => sessionKindOf(row) === 'knowledge' && !row.archived
+              ).length > 0
+                ? mentionableConversations
+                    .filter((row) => sessionKindOf(row) === 'knowledge' && !row.archived)
+                    .map((row) => ({
+                      label: row.title || row.id,
+                      onSelect: () =>
+                        mentionRef.current?.insertText(
+                          `${knowledgeMentionToken({
+                            hostId: row.knowledgeHostId || row.id,
+                            title: row.title || row.id
+                          })} `
+                        )
+                    }))
+                : [{ label: t('composer.mentionNoKnowledge'), disabled: true }]
           },
           {
             label: t('composer.mentionAddApp'),

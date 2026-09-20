@@ -415,6 +415,9 @@ const api: VavApi = {
   db: {
     list: () => ipcRenderer.invoke(IPC.dbList),
     create: () => ipcRenderer.invoke(IPC.dbCreate),
+    createFromFile: (path) => ipcRenderer.invoke(IPC.dbCreateFromFile, path),
+    fileSchema: (path) => ipcRenderer.invoke(IPC.dbFileSchema, path),
+    fileQuery: (path, sql) => ipcRenderer.invoke(IPC.dbFileQuery, path, sql),
     createSession: (connectionId) => ipcRenderer.invoke(IPC.dbCreateSession, connectionId),
     getForConversation: (conversationId) =>
       ipcRenderer.invoke(IPC.dbGetForConversation, conversationId),
@@ -428,6 +431,21 @@ const api: VavApi = {
     queryTable: (id, table, offset, limit) =>
       ipcRenderer.invoke(IPC.dbQueryTable, id, table, offset, limit),
     onChanged: (handler) => subscribe(IPC.dbChanged, handler)
+  },
+
+  knowledge: {
+    list: () => ipcRenderer.invoke(IPC.knowledgeList),
+    get: (id) => ipcRenderer.invoke(IPC.knowledgeGet, id),
+    getForConversation: (conversationId) =>
+      ipcRenderer.invoke(IPC.knowledgeGetForConversation, conversationId),
+    createNote: () => ipcRenderer.invoke(IPC.knowledgeCreateNote),
+    importDocument: (path) => ipcRenderer.invoke(IPC.knowledgeImportDocument, path),
+    readNote: (id) => ipcRenderer.invoke(IPC.knowledgeReadNote, id),
+    writeNote: (id, markdown) => ipcRenderer.invoke(IPC.knowledgeWriteNote, id, markdown),
+    rename: (id, title) => ipcRenderer.invoke(IPC.knowledgeRename, id, title),
+    remove: (id) => ipcRenderer.invoke(IPC.knowledgeRemove, id),
+    refresh: (id) => ipcRenderer.invoke(IPC.knowledgeRefresh, id),
+    onChanged: (handler) => subscribe(IPC.knowledgeChanged, handler)
   },
 
   fileSessions: {
@@ -660,6 +678,7 @@ const api: VavApi = {
     listDir: (machineId: string, path: string) =>
       ipcRenderer.invoke(IPC.hostsListDir, machineId, path),
     home: (machineId: string) => ipcRenderer.invoke(IPC.hostsHome, machineId),
+    specialFolder: (machineId, kind) => ipcRenderer.invoke(IPC.hostsSpecialFolder, machineId, kind),
     show: (machineId: string) => ipcRenderer.invoke(IPC.hostsShow, machineId),
     active: () => ipcRenderer.invoke(IPC.hostsActive),
     openFolder: (machineId: string) => ipcRenderer.invoke(IPC.hostsOpenFolder, machineId),

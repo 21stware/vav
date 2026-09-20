@@ -235,9 +235,19 @@ describe('nextVisibleSelectionAfterArchive', () => {
 })
 
 describe('sidebar category visibility', () => {
-  it('defaults to scheduled only and ignores junk', () => {
-    assert.deepEqual(parseSidebarVisibleCategories(undefined), ['timers'])
-    assert.deepEqual(parseSidebarVisibleCategories(DEFAULT_SIDEBAR_VISIBLE_CATEGORIES), ['timers'])
+  it('defaults to scheduled, storage, data, and knowledge', () => {
+    assert.deepEqual(parseSidebarVisibleCategories(undefined), [
+      'timers',
+      'fileSessions',
+      'databases',
+      'knowledge'
+    ])
+    assert.deepEqual(parseSidebarVisibleCategories(DEFAULT_SIDEBAR_VISIBLE_CATEGORIES), [
+      'timers',
+      'fileSessions',
+      'databases',
+      'knowledge'
+    ])
     assert.deepEqual(parseSidebarVisibleCategories(['fileSessions', 'timers', 'timers', 'nope']), [
       'fileSessions',
       'timers'
@@ -261,6 +271,10 @@ describe('sidebar list mode', () => {
   it('maps file / timer / archived / task rows onto categories', () => {
     assert.equal(sidebarListModeOfConversation(conv({ id: 't', sessionKind: 'timer' })), 'timers')
     assert.equal(sidebarListModeOfConversation(conv({ id: 'db', sessionKind: 'db' })), 'databases')
+    assert.equal(
+      sidebarListModeOfConversation(conv({ id: 'k', sessionKind: 'knowledge' })),
+      'knowledge'
+    )
     assert.equal(sidebarListModeOfConversation(conv({ id: 'f', fileId: 'ino-1' })), 'fileSessions')
     assert.equal(
       sidebarListModeOfConversation(conv({ id: 'a', archived: true, archivedAt: 9 })),
@@ -272,6 +286,8 @@ describe('sidebar list mode', () => {
       'fileSessions'
     )
     assert.ok(conversationFitsListMode(conv({ id: 'w' }), 'main'))
+    assert.equal(conversationFitsListMode(conv({ id: 'f', fileId: 'ino-1' }), 'main'), false)
+    assert.equal(conversationFitsListMode(conv({ id: 'db', sessionKind: 'db' }), 'main'), false)
     assert.equal(conversationFitsListMode(conv({ id: 'a', archived: true }), 'main'), false)
   })
 
@@ -283,7 +299,8 @@ describe('sidebar list mode', () => {
       conv({ id: 'file', fileId: 'ino', updatedAt: 9 }),
       conv({ id: 'job', sessionKind: 'timer', updatedAt: 4 }),
       conv({ id: 'run', sessionKind: 'timer', timerRunId: 'r1', updatedAt: 12 }),
-      conv({ id: 'db', sessionKind: 'db', updatedAt: 7 })
+      conv({ id: 'db', sessionKind: 'db', updatedAt: 7 }),
+      conv({ id: 'know', sessionKind: 'knowledge', updatedAt: 6 })
     ]
     assert.equal(nextConversationForListMode(rows, 'main', 'live', 'local'), 'live')
     assert.equal(nextConversationForListMode(rows, 'main', 'arch', 'local'), 'live')
@@ -310,6 +327,7 @@ describe('sidebar list mode', () => {
       'named'
     )
     assert.equal(nextConversationForListMode(rows, 'databases', 'live', 'local'), 'db')
+    assert.equal(nextConversationForListMode(rows, 'knowledge', 'live', 'local'), 'know')
     assert.equal(
       nextConversationForListMode(
         [conv({ id: 'live', updatedAt: 8 })],

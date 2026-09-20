@@ -124,6 +124,16 @@
   background: var(--success-soft, rgba(47, 133, 90, 0.14));
 }
 
+.mention-chip[data-kind='data'] {
+  color: var(--info-text, #2b6cb0);
+  background: var(--info-soft, rgba(43, 108, 176, 0.14));
+}
+
+.mention-chip[data-kind='knowledge'] {
+  color: var(--warning-text, #9a6700);
+  background: var(--warning-soft, rgba(154, 103, 0, 0.14));
+}
+
 /* --------------------------------------------------------------------------
    Suggestion popover
    -------------------------------------------------------------------------- */

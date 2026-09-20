@@ -47,6 +47,9 @@ export type ToolName =
   | 'request_for_secret'
   | 'plan'
   | 'sql_query'
+  | 'knowledge_search'
+  | 'knowledge_fetch'
+  | 'knowledge_write'
   | 'load_skill'
   | 'connector'
   | 'switch_mode'
@@ -88,6 +91,9 @@ export const TOOL_LABELS: Record<ToolName, string> = {
   request_for_secret: '请求密钥',
   plan: '计划',
   sql_query: 'SQL 查询',
+  knowledge_search: '检索知识',
+  knowledge_fetch: '取回知识块',
+  knowledge_write: '写入笔记',
   load_skill: '加载技能',
   connector: '连接器',
   switch_mode: '切换到编辑',
@@ -394,6 +400,10 @@ export interface ConversationMeta {
   timerRunAt?: number | null
   /** Live database connection bound to this session. */
   dbConnectionId?: string | null
+  /** Knowledge host bound to this session. */
+  knowledgeHostId?: string | null
+  /** Local CSV / TSV / SQLite / Parquet file bound to a Data session. */
+  dataFilePath?: string | null
   /**
    * When true, the agent system prompt forbids file modifications (read-only
    * toggle on the File Preview chrome).
@@ -887,20 +897,31 @@ export type MachineAppearance = {
 /** Sidebar list grouping; default is time buckets ("无分组" in the UI). */
 export type SidebarGroupingMode = 'none' | 'workspace' | 'provider'
 /**
- * Optional sidebar category chips. Task (`main`) is always shown; these four
+ * Optional sidebar category chips. Task (`main`) is always shown; these
  * can be toggled from the category-bar settings menu.
  */
-export type SidebarOptionalCategory = 'fileSessions' | 'timers' | 'databases' | 'archive'
+export type SidebarOptionalCategory =
+  | 'fileSessions'
+  | 'timers'
+  | 'databases'
+  | 'knowledge'
+  | 'archive'
 
 export const SIDEBAR_OPTIONAL_CATEGORIES = [
   'timers',
   'fileSessions',
   'databases',
+  'knowledge',
   'archive'
 ] as const satisfies readonly SidebarOptionalCategory[]
 
-/** Default chips: Task + Scheduled. File / DB / Archived stay hidden. */
-export const DEFAULT_SIDEBAR_VISIBLE_CATEGORIES: readonly SidebarOptionalCategory[] = ['timers']
+/** Default chips: Task + Scheduled + Storage + Data + Knowledge. Archive stays hidden. */
+export const DEFAULT_SIDEBAR_VISIBLE_CATEGORIES: readonly SidebarOptionalCategory[] = [
+  'timers',
+  'fileSessions',
+  'databases',
+  'knowledge'
+]
 
 export function parseSidebarVisibleCategories(value: unknown): SidebarOptionalCategory[] {
   if (!Array.isArray(value)) return [...DEFAULT_SIDEBAR_VISIBLE_CATEGORIES]

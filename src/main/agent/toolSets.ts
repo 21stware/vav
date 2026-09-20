@@ -13,6 +13,8 @@ export const READONLY_TOOLS: ReadonlySet<ToolName> = new Set([
   'web_search',
   'web_fetch',
   'sql_query',
+  'knowledge_search',
+  'knowledge_fetch',
   'load_skill',
   'connector',
   'computer_list',
@@ -21,6 +23,7 @@ export const READONLY_TOOLS: ReadonlySet<ToolName> = new Set([
 /** Auto-mode tools that pause for Approve / Deny. */
 export const HIGH_RISK_TOOLS: ReadonlySet<ToolName> = new Set([
   'fs_write',
+  'knowledge_write',
   'terminal',
   'switch_mode',
   'computer_act'

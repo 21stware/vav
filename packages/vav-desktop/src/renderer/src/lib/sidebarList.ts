@@ -31,17 +31,25 @@ export function groupingOptions(t: Translate): { value: SidebarGroupingMode; lab
   ]
 }
 
+const TARGET_LABEL: Record<'file' | 'knowledge' | 'data', MessageKey> = {
+  file: 'sidebar.filter.target.file',
+  knowledge: 'sidebar.filter.target.knowledge',
+  data: 'sidebar.filter.target.data'
+}
+
 export function filterValueLabel(filter: SidebarSessionFilter, t: Translate): string {
-  switch (filter.kind) {
-    case 'none':
-      return t('sidebar.filter.none')
-    case 'active':
-      return t('sidebar.filter.active')
-    case 'favorite':
-      return t('sidebar.filter.favorite')
-    case 'workspace':
-      return basename(filter.path)
-  }
+  const object =
+    filter.object && filter.object !== 'none' ? t(TARGET_LABEL[filter.object]) : null
+  const kind =
+    filter.kind === 'active'
+      ? t('sidebar.filter.active')
+      : filter.kind === 'favorite'
+        ? t('sidebar.filter.favorite')
+        : filter.kind === 'workspace'
+          ? basename(filter.path)
+          : null
+  if (kind && object) return `${kind} · ${object}`
+  return object ?? kind ?? t('sidebar.filter.none')
 }
 
 export type ConversationSubtitle =
@@ -223,11 +231,14 @@ export function sidebarListModeOfConversation(row: ListModeRow): SidebarListMode
   if (kind === 'file') return 'fileSessions'
   if (kind === 'timer') return 'timers'
   if (kind === 'db') return 'databases'
+  if (kind === 'knowledge') return 'knowledge'
   if (row.archived) return 'archive'
   return 'main'
 }
 
 export function conversationFitsListMode(row: ListModeRow, mode: SidebarListMode): boolean {
+  if (mode === 'main') return sessionKindOf(row) === 'workspace' && !row.archived
+  if (mode === 'archive') return sessionKindOf(row) === 'workspace' && !!row.archived
   return sidebarListModeOfConversation(row) === mode
 }
 
@@ -274,6 +285,12 @@ export function nextConversationForListMode(
     const live = matches.filter((row) => !row.archived)
     const named = live.filter((row) => !isDraftDbTitle(row.title, 'Untitled-db-connection'))
     const ranked = named.length ? named : live.length ? live : matches
+    ranked.sort((a, b) => b.updatedAt - a.updatedAt)
+    return ranked[0]?.id ?? null
+  }
+  if (mode === 'knowledge') {
+    const live = matches.filter((row) => !row.archived)
+    const ranked = live.length ? live : matches
     ranked.sort((a, b) => b.updatedAt - a.updatedAt)
     return ranked[0]?.id ?? null
   }

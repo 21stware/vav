@@ -17,10 +17,7 @@ import { Sidebar } from './components/Sidebar'
 import { SessionDetail } from './components/SessionDetail'
 import { PipView } from './components/PipView'
 import { useTerminalAppearance } from './lib/useTerminalAppearance'
-import { WorkspaceView } from './components/WorkspaceView'
-import { FileSessionView } from './components/FileSessionView'
-import { FileRecentsPanel } from './components/FileRecentsPanel'
-import { ScheduleEditor } from './components/ScheduleEditor'
+import { ApplicationsPanel } from './components/ApplicationsPanel'
 import { AppToast } from './components/AppToast'
 import { RemoteFolderPicker } from './components/RemoteFolderPicker'
 import { UpdateCorner } from './components/UpdateCorner'
@@ -40,12 +37,15 @@ import {
   loadSidebarWidth,
   persistSidebarWidth
 } from './lib/sidebarWidth'
+import {
+  APPLICATIONS_WIDTH_DEFAULT,
+  clampApplicationsWidth,
+  loadApplicationsWidth,
+  persistApplicationsWidth
+} from './lib/applicationsWidth'
 import { useT } from './i18n/useT'
 import { useAttentionSeen } from './lib/useAttentionSeen'
 import { installSwarmHistoryBridge } from './lib/swarmHistoryBridge'
-import { conversationFitsListMode } from './lib/sidebarList'
-import { isTimerDefinition } from '@shared/sessionKind'
-
 type LaunchPhase = 'checking' | 'keychain' | 'booting' | 'ready' | 'no-preload'
 
 /** First paint: stay blank until secrets.status() — don't flash the welcome tour. */
@@ -138,14 +138,9 @@ export default function App(): React.JSX.Element {
       store.setSidebarVisible(true)
       void store.selectConversation(event.conversationId).then(async () => {
         const next = useSessionStore.getState()
-        // File-bound sessions live under File sessions — jump the list there.
         const meta = next.conversations.find((c) => c.id === event.conversationId)
-        if (meta?.fileId) {
-          next.setSidebarListMode('fileSessions')
-        } else if (meta?.sessionKind === 'timer') {
+        if (meta?.sessionKind === 'timer') {
           next.setSidebarListMode('timers')
-        } else if (meta?.sessionKind === 'db') {
-          next.setSidebarListMode('databases')
         } else if (meta?.archived) {
           next.setSidebarListMode('archive')
         } else {
@@ -240,12 +235,13 @@ export default function App(): React.JSX.Element {
       className={`app-shell${panelFlushTop ? ' panel-flush-top' : ' panel-shell-chrome'}`}
       data-testid="app-shell"
     >
-      <div className="body-split">
+      <div className="body-split" data-shell="list-agent-app">
         <SidebarSlot
           floating={floating}
           chrome={panelFlushTop ? <Titlebar variant="sidebar" /> : null}
         />
-        <DetailSlot />
+        <AgentSlot />
+        <ApplicationsSlot />
       </div>
       {/* When the sidebar is open it hosts the chip; otherwise pin bottom-left. */}
       {!sidebarVisible ? <UpdateCorner /> : null}
@@ -288,103 +284,24 @@ function CategoryEmpty({
   )
 }
 
-function DetailSlot(): React.JSX.Element {
+function AgentSlot(): React.JSX.Element {
   const t = useT()
+  const visible = useSessionStore((s) => s.agentVisible)
   const listMode = useSessionStore((s) => s.sidebarListMode)
-  const createScheduledConversation = useSessionStore((s) => s.createScheduledConversation)
-  const createDbConversation = useSessionStore((s) => s.createDbConversation)
-  const activeConversation = useSessionStore((s) =>
-    s.conversations.find((c) => c.id === s.activeId)
-  )
-  const fits =
-    !!activeConversation && conversationFitsListMode(activeConversation, listMode)
+  const hasActive = useSessionStore((s) => s.conversations.some((c) => c.id === s.activeId))
 
-  // File-bound sessions: file canvas + agent (list lives in sidebar File).
-  if (activeConversation && fits && activeConversation.fileId) {
-    return (
-      <FileSessionView
-        conversationId={activeConversation.id}
-        fileId={activeConversation.fileId}
-      />
-    )
-  }
-  // Scheduled task (group) → config. Task (run session) → agent log. Empty → create.
-  if (listMode === 'timers') {
-    if (activeConversation && fits && !isTimerDefinition(activeConversation)) {
-      const wd = activeConversation.workingDirectory
-      return (
-        <WorkspaceView
-          conversationId={activeConversation.id}
-          workdir={wd && !wd.startsWith('__') ? wd : null}
+  return (
+    <div className="agent-column" data-testid="agent-column" hidden={!visible}>
+      {!hasActive && listMode === 'archive' ? (
+        <CategoryEmpty
+          title={t('sidebar.archiveEmptyTitle')}
+          description={t('sidebar.archiveEmptyDesc')}
         />
-      )
-    }
-    if (activeConversation && fits && isTimerDefinition(activeConversation)) {
-      return <ScheduleEditor conversationId={activeConversation.id} />
-    }
-    return (
-      <CategoryEmpty
-        title={t('sidebar.timersEmptyTitle')}
-        description={t('sidebar.timersEmptyDesc')}
-      >
-        <button
-          className="btn secondary"
-          data-testid="empty-create-scheduled"
-          title={t('timer.new')}
-          onClick={() => void createScheduledConversation()}
-        >
-          {t('timer.new')}
-        </button>
-      </CategoryEmpty>
-    )
-  }
-  if (listMode === 'databases') {
-    if (activeConversation && fits) {
-      const wd = activeConversation.workingDirectory
-      return (
-        <WorkspaceView
-          conversationId={activeConversation.id}
-          workdir={wd && !wd.startsWith('__') ? wd : null}
-        />
-      )
-    }
-    return (
-      <CategoryEmpty title={t('sidebar.dbEmptyTitle')} description={t('sidebar.dbEmptyDesc')}>
-        <button
-          className="btn secondary"
-          data-testid="empty-create-db"
-          title={t('db.new')}
-          onClick={() => void createDbConversation()}
-        >
-          {t('db.new')}
-        </button>
-      </CategoryEmpty>
-    )
-  }
-  // Session surface + optional right file preview (session state).
-  // Workspace groups only aggregate/pin in the sidebar — no group selection.
-  if (activeConversation && fits) {
-    const wd = activeConversation.workingDirectory
-    return (
-      <WorkspaceView
-        conversationId={activeConversation.id}
-        workdir={wd && !wd.startsWith('__') ? wd : null}
-      />
-    )
-  }
-  if (listMode === 'fileSessions') {
-    return <FileRecentsPanel />
-  }
-  if (listMode === 'archive') {
-    return (
-      <CategoryEmpty
-        title={t('sidebar.archiveEmptyTitle')}
-        description={t('sidebar.archiveEmptyDesc')}
-      />
-    )
-  }
-  // No session yet — empty chat surface; first send / file add mints the session.
-  return <SessionDetail />
+      ) : (
+        <SessionDetail />
+      )}
+    </div>
+  )
 }
 
 function Titlebar({
@@ -398,6 +315,68 @@ function Titlebar({
       <ShellLeadingControls />
       <span className="spacer" />
     </header>
+  )
+}
+
+function ApplicationsSlot(): React.JSX.Element | null {
+  const t = useT()
+  const visible = useSessionStore((s) => s.applicationsVisible)
+  const [applicationsWidth, setApplicationsWidth] = useState(loadApplicationsWidth)
+  const columnRef = useRef<HTMLDivElement>(null)
+
+  const startApplicationsResize = (event: ReactPointerEvent<HTMLElement>): void => {
+    const startX = event.clientX
+    const startWidth = applicationsWidth
+    let latest = startWidth
+    let raf = 0
+    let pendingX = startX
+
+    startCapturedPointerDrag(event, {
+      cursor: 'col-resize',
+      onMove: (e) => {
+        pendingX = e.clientX
+        if (raf) return
+        raf = requestAnimationFrame(() => {
+          raf = 0
+          latest = clampApplicationsWidth(startWidth - (pendingX - startX))
+          if (columnRef.current) columnRef.current.style.width = `${latest}px`
+        })
+      },
+      onUp: () => {
+        if (raf) cancelAnimationFrame(raf)
+        setApplicationsWidth(latest)
+        persistApplicationsWidth(latest)
+        window.dispatchEvent(new Event('vav:resize-end'))
+      }
+    })
+  }
+
+  const resetApplicationsWidth = (): void => {
+    setApplicationsWidth(APPLICATIONS_WIDTH_DEFAULT)
+    persistApplicationsWidth(APPLICATIONS_WIDTH_DEFAULT)
+    window.dispatchEvent(new Event('vav:resize-end'))
+  }
+
+  return (
+    <div
+      className="applications-column app-column"
+      ref={columnRef}
+      data-testid="app-column"
+      data-applications-column=""
+      style={{ width: applicationsWidth }}
+      hidden={!visible}
+    >
+      <div
+        className="applications-col-resizer"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label={t('applications.resize')}
+        title={t('applications.resize')}
+        onPointerDown={startApplicationsResize}
+        onDoubleClick={resetApplicationsWidth}
+      />
+      <ApplicationsPanel />
+    </div>
   )
 }
 
@@ -500,8 +479,9 @@ function SidebarSlot({
     // whole session list on every toggle.
     return (
       <div
-        className="sidebar-column"
+        className="sidebar-column list-column"
         ref={columnRef}
+        data-testid="list-column"
         style={{ width: sidebarWidth }}
         hidden={!visible}
       >

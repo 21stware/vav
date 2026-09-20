@@ -44,10 +44,12 @@ function loadAgentWidth(): number {
  */
 export function FileSessionView({
   conversationId,
-  fileId
+  fileId,
+  hideAgent = false
 }: {
   conversationId: string
   fileId: string
+  hideAgent?: boolean
 }): React.JSX.Element {
   const t = useT()
   const [resolved, setResolved] = useState<{
@@ -65,9 +67,9 @@ export function FileSessionView({
   const showFileList = useSessionStore((s) => s.showFileList)
   const fileHistory = useFileSessionHistory(fileId, conversationId, resolved?.path ?? null)
   const sidebarFloating = useSidebarFloatMode()
-  const showShellLeading = !(sidebarVisible && !sidebarFloating)
+  const showShellLeading = !hideAgent && !(sidebarVisible && !sidebarFloating)
   const shellLeading = showShellLeading ? <ShellLeadingControls /> : null
-  const backToFileList = (
+  const backToFileList = hideAgent ? null : (
     <Button
       variant="secondary"
       size="sm"
@@ -78,8 +80,12 @@ export function FileSessionView({
   )
 
   useEffect(() => {
+    if (hideAgent) {
+      reportFileSessionAgentOpen(null)
+      return
+    }
     reportFileSessionAgentOpen(agentOpen, agentWidth)
-  }, [agentOpen, agentWidth])
+  }, [hideAgent, agentOpen, agentWidth])
   useEffect(() => () => reportFileSessionAgentOpen(null), [])
 
   useEffect(() => {
@@ -167,10 +173,10 @@ export function FileSessionView({
               origin="session"
               parentConversationId={conversationId}
               embedded
-              agentPanelOpen={agentOpen}
-              onToggleAgentPanel={() => setAgentOpen((v) => !v)}
+              agentPanelOpen={hideAgent ? false : agentOpen}
+              onToggleAgentPanel={hideAgent ? undefined : () => setAgentOpen((v) => !v)}
               shellLeading={shellLeading}
-              onBackToFileList={showFileList}
+              onBackToFileList={hideAgent ? null : showFileList}
             />
           </Suspense>
         ) : (
@@ -186,6 +192,7 @@ export function FileSessionView({
         )}
       </section>
 
+      {hideAgent ? null : (
       <aside
         className={`workspace-view-agent${agentOpen ? '' : ' is-collapsed'}`}
         style={{ width: agentOpen ? agentWidth : 0 }}
@@ -206,6 +213,7 @@ export function FileSessionView({
           <SessionDetail variant="preview-edit" fileSessionChrome={fileHistory} />
         </div>
       </aside>
+      )}
     </div>
   )
 }

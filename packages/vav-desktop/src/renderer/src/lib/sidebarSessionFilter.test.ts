@@ -33,15 +33,34 @@ function conv(partial: Partial<ConversationMeta> & Pick<ConversationMeta, 'id'>)
 
 describe('sidebarSessionFilter', () => {
   it('round-trips none / active / favorite / workspace', () => {
-    assert.deepEqual(parseSidebarSessionFilter(undefined), { kind: 'none' })
-    assert.deepEqual(parseSidebarSessionFilter('active'), { kind: 'active' })
-    assert.deepEqual(parseSidebarSessionFilter('favorite'), { kind: 'favorite' })
+    assert.deepEqual(parseSidebarSessionFilter(undefined), { kind: 'none', object: 'none' })
+    assert.deepEqual(parseSidebarSessionFilter('active'), { kind: 'active', object: 'none' })
+    assert.deepEqual(parseSidebarSessionFilter('favorite'), { kind: 'favorite', object: 'none' })
     assert.deepEqual(parseSidebarSessionFilter('ws:/Users/me/repo'), {
       kind: 'workspace',
-      path: '/Users/me/repo'
+      path: '/Users/me/repo',
+      object: 'none'
     })
     assert.equal(encodeSidebarSessionFilter({ kind: 'favorite' }), 'favorite')
     assert.equal(encodeSidebarSessionFilter({ kind: 'workspace', path: '/a' }), 'ws:/a')
+    assert.equal(encodeSidebarSessionFilter({ kind: 'none', object: 'file' }), 'none|obj:file')
+    assert.deepEqual(parseSidebarSessionFilter('active|obj:knowledge'), {
+      kind: 'active',
+      object: 'knowledge'
+    })
+  })
+
+  it('matches target object file / knowledge / data', () => {
+    const file = conv({ id: 'f', fileId: 'ino' })
+    const note = conv({ id: 'k', sessionKind: 'knowledge' })
+    const data = conv({ id: 'd', sessionKind: 'db' })
+    const chat = conv({ id: 'c' })
+    const ctx = { running: false, unread: false, favoriteIds: new Set<string>() }
+    assert.equal(conversationMatchesFilter(file, { kind: 'none', object: 'file' }, ctx), true)
+    assert.equal(conversationMatchesFilter(chat, { kind: 'none', object: 'file' }, ctx), false)
+    assert.equal(conversationMatchesFilter(note, { kind: 'none', object: 'knowledge' }, ctx), true)
+    assert.equal(conversationMatchesFilter(data, { kind: 'none', object: 'data' }, ctx), true)
+    assert.equal(conversationMatchesFilter(chat, { kind: 'none', object: 'data' }, ctx), false)
   })
 
   it('matches running or unread for Running and unread', () => {
@@ -143,7 +162,7 @@ describe('isSessionUnread', () => {
 
 describe('pipSessionFilter', () => {
   it('uses Running and unread when the sidebar has no filter', () => {
-    assert.deepEqual(pipSessionFilter({ kind: 'none' }), { kind: 'active' })
+    assert.deepEqual(pipSessionFilter({ kind: 'none' }), { kind: 'active', object: 'none' })
   })
 
   it('keeps the sidebar workspace / favorite filter', () => {

@@ -4085,6 +4085,11 @@ html:has(.token-usage-popup) #root {
   /* Single-line nav: match icon box height so label centers with glyph. */
   gap: 9px;
   padding: 0 10px;
+  border-radius: var(--list-row-radius, 8px);
+}
+
+.settings-nav .conv-row:not(.selected):not(.multi):hover {
+  background: var(--bg-hover);
 }
 
 /* Fixed icon column — Lucide defaults to baseline, which sits off text center. */
@@ -6093,10 +6098,13 @@ html:has(.remote-folder-window) #root {
 }
 
 .inline-review-files {
-  --inline-review-row: 32px;
+  --inline-review-row: 36px;
   list-style: none;
   margin: 0;
-  padding: 0;
+  padding: 2px var(--list-inset-x, 6px) 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
   max-height: calc(var(--inline-review-row) * 3.5);
   overflow-x: hidden;
   overflow-y: auto;
@@ -6104,21 +6112,16 @@ html:has(.remote-folder-window) #root {
 }
 
 .inline-review-file {
-  border-top: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
   min-width: 0;
-}
-
-.inline-review-file:first-child {
-  border-top: 0;
 }
 
 .inline-review-file-main {
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 2px 6px 2px 2px;
+  padding: 1px 0;
   min-width: 0;
-  height: var(--inline-review-row);
+  min-height: var(--inline-review-row);
   box-sizing: border-box;
 }
 
@@ -6133,9 +6136,10 @@ html:has(.remote-folder-window) #root {
   color: inherit;
   font: inherit;
   text-align: left;
-  padding: 5px 4px;
-  border-radius: 6px;
+  padding: 5px 8px;
+  border-radius: var(--list-row-radius, 8px);
   cursor: default;
+  transition: background var(--dur-hover) ease;
 }
 
 .inline-review-file-row:hover {

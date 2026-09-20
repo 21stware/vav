@@ -29,7 +29,13 @@ function runStatusLabel(status: TimerRun['status'], t: ReturnType<typeof useT>):
   return t('timer.runSkipped')
 }
 
-export function TimerJobsPanel(): React.JSX.Element {
+export function TimerJobsPanel({
+  embedded = false,
+  onOpenDetail
+}: {
+  embedded?: boolean
+  onOpenDetail?: () => void
+} = {}): React.JSX.Element {
   const t = useT()
   const selectConversation = useSessionStore((s) => s.selectConversation)
   const requestDelete = useSessionStore((s) => s.requestDelete)
@@ -42,7 +48,8 @@ export function TimerJobsPanel(): React.JSX.Element {
   const conversations = useSessionStore((s) => s.conversations)
   const activeId = useSessionStore((s) => s.activeId)
   const selectedIds = useSessionStore((s) => s.selectedIds)
-  const query = useSessionStore((s) => s.sidebarQuery)
+  const sidebarQuery = useSessionStore((s) => s.sidebarQuery)
+  const query = embedded ? '' : sidebarQuery
   const createScheduledConversation = useSessionStore((s) => s.createScheduledConversation)
   const setSidebarQuery = useSessionStore((s) => s.setSidebarQuery)
   const favoriteIds = useSessionStore((s) => s.settings.favoriteConversationIds)
@@ -128,6 +135,7 @@ export function TimerJobsPanel(): React.JSX.Element {
   const openJob = async (job: TimerJob): Promise<void> => {
     if (job.conversationId) {
       await selectConversation(job.conversationId)
+      onOpenDetail?.()
       return
     }
     showToast({ kind: 'info', title: t('timer.openFailed') })
@@ -343,14 +351,16 @@ export function TimerJobsPanel(): React.JSX.Element {
           title={t('sidebar.timersEmptyTitle')}
           description={t('sidebar.timersEmptyDesc')}
         >
-          <button
-            className="btn secondary"
-            data-testid="sidebar-create-scheduled"
-            title={t('timer.new')}
-            onClick={() => void createScheduledConversation()}
-          >
-            {t('timer.new')}
-          </button>
+          {embedded ? null : (
+            <button
+              className="btn secondary"
+              data-testid="sidebar-create-scheduled"
+              title={t('timer.new')}
+              onClick={() => void createScheduledConversation()}
+            >
+              {t('timer.new')}
+            </button>
+          )}
         </EmptyState>
       ) : null}
       {visibleJobs.map((job) => {
@@ -407,7 +417,7 @@ export function TimerJobsPanel(): React.JSX.Element {
                     additive: event.metaKey || event.ctrlKey,
                     range: event.shiftKey,
                     rangeIds: orderedIds
-                  })
+                  }).then(() => onOpenDetail?.())
                   return
                 }
                 void openJob(job)

@@ -1,34 +1,57 @@
 import type { ConversationMeta } from '@shared/types'
+import { sessionKindOf } from '@shared/sessionKind'
+
+export type SidebarSessionObject = 'none' | 'file' | 'knowledge' | 'data'
 
 export type SidebarSessionFilter =
-  | { kind: 'none' }
-  | { kind: 'active' }
-  | { kind: 'favorite' }
-  | { kind: 'workspace'; path: string }
+  | { kind: 'none'; object?: SidebarSessionObject }
+  | { kind: 'active'; object?: SidebarSessionObject }
+  | { kind: 'favorite'; object?: SidebarSessionObject }
+  | { kind: 'workspace'; path: string; object?: SidebarSessionObject }
 
 export const SIDEBAR_FILTER_NONE = 'none'
 export const SIDEBAR_FILTER_ACTIVE = 'active'
 export const SIDEBAR_FILTER_FAVORITE = 'favorite'
+export const SIDEBAR_OBJECT_NONE = 'none'
+export const SIDEBAR_OBJECTS = ['none', 'file', 'knowledge', 'data'] as const
 const WORKSPACE_PREFIX = 'ws:'
+const OBJECT_SUFFIX = '|obj:'
+
+export function sessionObjectOf(filter: SidebarSessionFilter): SidebarSessionObject {
+  return filter.object ?? 'none'
+}
 
 export function encodeSidebarSessionFilter(filter: SidebarSessionFilter): string {
-  if (filter.kind === 'workspace') return `${WORKSPACE_PREFIX}${filter.path}`
-  return filter.kind
+  const base = filter.kind === 'workspace' ? `${WORKSPACE_PREFIX}${filter.path}` : filter.kind
+  const object = sessionObjectOf(filter)
+  return object === 'none' ? base : `${base}${OBJECT_SUFFIX}${object}`
 }
 
 export function parseSidebarSessionFilter(raw: string | undefined | null): SidebarSessionFilter {
-  if (!raw || raw === SIDEBAR_FILTER_NONE) return { kind: 'none' }
-  if (raw === SIDEBAR_FILTER_ACTIVE) return { kind: 'active' }
-  if (raw === SIDEBAR_FILTER_FAVORITE) return { kind: 'favorite' }
-  if (raw.startsWith(WORKSPACE_PREFIX)) {
-    const path = raw.slice(WORKSPACE_PREFIX.length)
-    if (path) return { kind: 'workspace', path }
+  if (!raw) return { kind: 'none', object: 'none' }
+  const split = raw.indexOf(OBJECT_SUFFIX)
+  const left = split >= 0 ? raw.slice(0, split) : raw
+  const objectRaw = split >= 0 ? raw.slice(split + OBJECT_SUFFIX.length) : 'none'
+  const object: SidebarSessionObject =
+    objectRaw === 'file' || objectRaw === 'knowledge' || objectRaw === 'data' ? objectRaw : 'none'
+  if (!left || left === SIDEBAR_FILTER_NONE) return { kind: 'none', object }
+  if (left === SIDEBAR_FILTER_ACTIVE) return { kind: 'active', object }
+  if (left === SIDEBAR_FILTER_FAVORITE) return { kind: 'favorite', object }
+  if (left.startsWith(WORKSPACE_PREFIX)) {
+    const path = left.slice(WORKSPACE_PREFIX.length)
+    if (path) return { kind: 'workspace', path, object }
   }
-  return { kind: 'none' }
+  return { kind: 'none', object }
+}
+
+export function isValidSidebarSessionFilter(raw: string): boolean {
+  const parsed = parseSidebarSessionFilter(raw)
+  if (parsed.kind === 'workspace') return parsed.path.length > 0
+  return parsed.kind === 'none' || parsed.kind === 'active' || parsed.kind === 'favorite'
 }
 
 export function isSidebarSessionFilterEnabled(filter: SidebarSessionFilter): boolean {
-  return filter.kind !== 'none'
+  return filter.kind !== 'none' || sessionObjectOf(filter) !== 'none'
 }
 
 /**
@@ -36,7 +59,9 @@ export function isSidebarSessionFilterEnabled(filter: SidebarSessionFilter): boo
  * Running and unread (running + done) — the compact monitor set.
  */
 export function pipSessionFilter(sidebarFilter: SidebarSessionFilter): SidebarSessionFilter {
-  return sidebarFilter.kind === 'none' ? { kind: 'active' } : sidebarFilter
+  return sidebarFilter.kind === 'none'
+    ? { kind: 'active', object: sessionObjectOf(sidebarFilter) }
+    : sidebarFilter
 }
 
 function sameWorkdir(left: string | null | undefined, right: string): boolean {
@@ -44,6 +69,17 @@ function sameWorkdir(left: string | null | undefined, right: string): boolean {
   const a = left.replace(/[\\/]+$/, '')
   const b = right.replace(/[\\/]+$/, '')
   return a === b
+}
+
+function conversationMatchesObject(
+  conversation: ConversationMeta,
+  object: SidebarSessionObject
+): boolean {
+  if (object === 'none') return true
+  const kind = sessionKindOf(conversation)
+  if (object === 'file') return kind === 'file'
+  if (object === 'knowledge') return kind === 'knowledge'
+  return kind === 'db'
 }
 
 export function conversationMatchesFilter(
@@ -58,6 +94,7 @@ export function conversationMatchesFilter(
   }
 ): boolean {
   if (ctx.focused) return true
+  if (!conversationMatchesObject(conversation, sessionObjectOf(filter))) return false
   switch (filter.kind) {
     case 'none':
       return true

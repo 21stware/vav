@@ -78,23 +78,31 @@ describe('listedSidebarGroups', () => {
     assert.deepEqual(ids, ['idle', 'run'])
   })
 
-  it('keeps timer sessions out of the main project list and archive', () => {
+  it('keeps only workspace conversations in the session list', () => {
     const rows = [
       conv({ id: 'live', title: 'Chat' }),
+      conv({ id: 'arch', title: 'Old chat', archived: true, archivedAt: 3 }),
       conv({ id: 'timer', title: 'Run', sessionKind: 'timer', timerJobId: 'j', timerRunId: 'r' }),
       conv({ id: 'arch-timer', title: 'Old', sessionKind: 'timer', archived: true, archivedAt: 2 }),
-      conv({ id: 'db', title: 'Prod', sessionKind: 'db' })
+      conv({ id: 'db', title: 'Prod', sessionKind: 'db' }),
+      conv({ id: 'note', title: 'Notes', sessionKind: 'knowledge' }),
+      conv({ id: 'file', title: 'Doc', fileId: 'ino' })
     ]
     const main = listedSidebarGroups(rows, opts).flatMap((g) => g.conversations.map((c) => c.id))
     assert.deepEqual(main, ['live'])
     const archived = listedSidebarGroups(rows, { ...opts, archiveView: true }).flatMap((g) =>
       g.conversations.map((c) => c.id)
     )
-    assert.deepEqual(archived, [])
+    assert.deepEqual(archived, ['arch'])
     const databases = listedSidebarGroups(rows, { ...opts, databasesView: true })
     assert.deepEqual(
       databases.map((g) => ({ key: g.key, kind: g.kind, ids: g.conversations.map((c) => c.id) })),
       [{ key: 'db:db', kind: 'database', ids: ['db'] }]
+    )
+    const knowledge = listedSidebarGroups(rows, { ...opts, knowledgeView: true })
+    assert.deepEqual(
+      knowledge.map((g) => g.conversations.map((c) => c.id)),
+      [['note']]
     )
   })
 

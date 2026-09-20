@@ -8,7 +8,7 @@ import {
   type ReactNode,
   type RefObject
 } from 'react'
-import { Clock, Plus, Search } from 'lucide-react'
+import { Clock, Plus, Search, X } from 'lucide-react'
 import { buildWorkspaceFocusContext } from '@shared/agentContextInject'
 import { DEFAULT_CLI_AGENTS, enabledCliAgents, type AgentConfig } from '@shared/types'
 import type { FileSessionMeta } from '@shared/ipc'
@@ -599,6 +599,7 @@ export function SessionDetail({
         showSearch={isVavMode || swarmMulti}
         showShellLeading={showShellLeading}
         fileSessionChrome={chromeSession}
+        onClose={undefined}
       />
     ) : null
 
@@ -810,7 +811,8 @@ export function AgentModeChrome({
   /** Single-file vav: session name / history / new in this same chrome row. */
   fileSessionChrome = null,
   /** Isolated window: Reveal in List, pinned with history / search. */
-  trail = null
+  trail = null,
+  onClose
 }: {
   conversationId: string
   agentBinaryName: string | null
@@ -820,6 +822,7 @@ export function AgentModeChrome({
   trail?: ReactNode
   /** Unused: split actions moved to the empty-area context menu. */
   hideSplit?: boolean
+  onClose?: () => void
 }): React.JSX.Element {
   const t = useT()
   const cliMode = useWorkspaceStore((s) => !!s.workspaces[conversationId]?.cliMode)
@@ -852,7 +855,7 @@ export function AgentModeChrome({
 
   const showFileSessionChrome = !!(fs && isChat && fs.sessions.length > 0)
   const trailing = fs?.trail ?? trail
-  const showTrailing = showFileSessionChrome || (showSearch && isChat) || !!trailing
+  const showTrailing = showFileSessionChrome || (showSearch && isChat) || !!trailing || !!onClose
 
   return (
     <div
@@ -914,6 +917,16 @@ export function AgentModeChrome({
             ) : null}
 
             {trailing ? <div className="agent-mode-chrome-trail">{trailing}</div> : null}
+
+            {onClose ? (
+              <Button
+                icon={<X size={15} strokeWidth={2} />}
+                variant="ghost"
+                testId="close-agent"
+                title={t('agent.close')}
+                onClick={onClose}
+              />
+            ) : null}
           </div>
         ) : null}
       </div>

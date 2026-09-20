@@ -1,9 +1,9 @@
 /**
- * Session kinds. Workspace rows are the main sidebar. File, timer, and db
- * conversations share ConversationStore but stay out of listMeta.
- * Timer / db rows are published via listClientMeta for their category panels.
+ * Session kinds. The list column shows workspace conversations only.
+ * file / timer / db / knowledge are app objects (storage, scheduled, data, knowledge).
+ * listMeta stays workspace-only for host / account catalogs.
  */
-export type SessionKind = 'workspace' | 'file' | 'timer' | 'db'
+export type SessionKind = 'workspace' | 'file' | 'timer' | 'db' | 'knowledge'
 
 export function sessionKindOf(row: {
   fileId?: string | null
@@ -13,7 +13,8 @@ export function sessionKindOf(row: {
     row.sessionKind === 'timer' ||
     row.sessionKind === 'file' ||
     row.sessionKind === 'workspace' ||
-    row.sessionKind === 'db'
+    row.sessionKind === 'db' ||
+    row.sessionKind === 'knowledge'
   ) {
     return row.sessionKind
   }
@@ -21,12 +22,23 @@ export function sessionKindOf(row: {
   return 'workspace'
 }
 
-/** Main sidebar / phone session list / bootstrap pick. */
+/** List-column session rows. App objects are not sessions. */
 export function isWorkspaceSession(row: {
   fileId?: string | null
   sessionKind?: SessionKind | null
 }): boolean {
   return sessionKindOf(row) === 'workspace'
+}
+
+/** Alias of isWorkspaceSession — the list is only agent conversations. */
+export const isListSession = isWorkspaceSession
+
+/** Note, scheduled task, db connection, or storage file — lives in app, not list. */
+export function isAppObjectSession(row: {
+  fileId?: string | null
+  sessionKind?: SessionKind | null
+}): boolean {
+  return !isWorkspaceSession(row)
 }
 
 /** Schedule editor — not a fired run conversation. */
@@ -39,4 +51,8 @@ export function isTimerDefinition(row: {
 
 export function isDbSession(row: { sessionKind?: SessionKind | null }): boolean {
   return row.sessionKind === 'db'
+}
+
+export function isKnowledgeSession(row: { sessionKind?: SessionKind | null }): boolean {
+  return row.sessionKind === 'knowledge'
 }

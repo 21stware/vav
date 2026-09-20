@@ -12,7 +12,7 @@ import { basename } from './path'
 import { isTemporaryWorkspace } from './format'
 import { tt } from '../i18n/useT'
 import { conversationOnMachine } from '@shared/workspaceHost'
-import { sessionKindOf } from '@shared/sessionKind'
+import { isListSession, sessionKindOf } from '@shared/sessionKind'
 import {
   conversationMatchesFilter,
   type SidebarSessionFilter
@@ -322,6 +322,7 @@ export function listedSidebarGroups(
     fileSessionsView: boolean
     archiveView: boolean
     databasesView?: boolean
+    knowledgeView?: boolean
     excludeIds?: ReadonlySet<string>
     query: string
     windowMachineId: string | null | undefined
@@ -371,20 +372,44 @@ export function listedSidebarGroups(
     })
     return [...pinned.map((row) => toGroup(row, true)), ...rest.map((row) => toGroup(row, false))]
   }
+  if (opts.knowledgeView) {
+    const rows = conversations
+      .filter((c) => sessionKindOf(c) === 'knowledge' && !c.archived)
+      .filter((c) => !opts.excludeIds?.has(c.id))
+      .filter((c) => conversationOnMachine(c, opts.windowMachineId))
+      .filter((c) => !needle || c.title.toLowerCase().includes(needle))
+    const pinned = rows.filter((c) => c.pinned).sort(byPinTimeDesc)
+    const rest = rows.filter((c) => !c.pinned).sort(byUpdatedDesc)
+    const toGroup = (conversation: ConversationMeta, isPinned: boolean): ConversationGroup => ({
+      key: `knowledge:${conversation.id}`,
+      label: conversation.title,
+      pinned: isPinned || undefined,
+      conversations: [conversation]
+    })
+    return [...pinned.map((row) => toGroup(row, true)), ...rest.map((row) => toGroup(row, false))]
+  }
   // File-bound sessions live only under “File sessions” — never in workspace
   // groups. listMeta already omits them; the store still hydrates them for
   // FileSessionView, so we must filter here or a Downloads/file click looks
   // like a normal project session that “wrongly” opens the file canvas.
   if (opts.archiveView) {
     const rows = conversations
-      .filter((c) => c.archived && !c.fileId && sessionKindOf(c) !== 'timer' && sessionKindOf(c) !== 'db')
+      .filter((c) => isListSession(c) && c.archived)
       .filter((c) => conversationOnMachine(c, opts.windowMachineId))
       .filter((c) => !needle || c.title.toLowerCase().includes(needle))
+      .filter((c) =>
+        conversationMatchesFilter(c, opts.sessionFilter, {
+          running: opts.running(c.id),
+          unread: opts.unread(c.id),
+          favoriteIds: opts.favoriteIds,
+          focused: c.id === opts.focusedId
+        })
+      )
       .sort((a, b) => (b.archivedAt ?? b.updatedAt) - (a.archivedAt ?? a.updatedAt))
     return [{ key: 'archive', label: '', conversations: rows }]
   }
   const matched = conversations
-    .filter((c) => !c.archived && !c.fileId && sessionKindOf(c) !== 'timer' && sessionKindOf(c) !== 'db')
+    .filter((c) => isListSession(c) && !c.archived)
     .filter((c) => conversationOnMachine(c, opts.windowMachineId))
     .filter((c) => !needle || c.title.toLowerCase().includes(needle))
     .filter((c) =>
@@ -399,8 +424,6 @@ export function listedSidebarGroups(
   for (const row of matched) {
     if (row.swarmParentId) keep.add(row.swarmParentId)
   }
-  const rows = conversations.filter(
-    (c) => keep.has(c.id) && !c.archived && !c.fileId && sessionKindOf(c) !== 'timer' && sessionKindOf(c) !== 'db'
-  )
+  const rows = conversations.filter((c) => keep.has(c.id) && !c.archived)
   return groupConversations(rows, opts.searching, opts.groupingMode, opts.tmp, opts.pinnedWorkspaces)
 }

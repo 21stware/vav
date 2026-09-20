@@ -1,41 +1,18 @@
 import { useEffect, useState } from 'react'
 import {
   AGENT_MIN_WIDTH,
-  FILE_SESSION_AGENT_MIN_WIDTH,
   PIP_WINDOW_MIN_HEIGHT,
   PIP_WINDOW_MIN_WIDTH,
   windowMinHeight,
   windowMinWidth,
   type WindowShellKind
 } from '@shared/shellMinSize'
-import { isDbSession } from '@shared/sessionKind'
 import { useSessionStore } from '../state/sessionStore'
 import { loadSidebarWidth, SIDEBAR_WIDTH_CHANGED } from './sidebarWidth'
 import { isCompanionSessionShell } from './windowKind'
 
-let fileSessionAgentOpen: boolean | null = null
-let fileSessionAgentWidth: number | null = null
-const columnListeners = new Set<() => void>()
-
-function emitColumns(): void {
-  for (const listener of columnListeners) listener()
-}
-
-/** File-session agent drawer — null when that surface is unmounted. */
-export function reportFileSessionAgentOpen(open: boolean | null, width?: number): void {
-  const nextWidth = open && typeof width === 'number' && Number.isFinite(width) ? width : null
-  if (fileSessionAgentOpen === open && fileSessionAgentWidth === nextWidth) return
-  fileSessionAgentOpen = open
-  fileSessionAgentWidth = nextWidth
-  emitColumns()
-}
-
-function subscribeShellColumns(listener: () => void): () => void {
-  columnListeners.add(listener)
-  return () => {
-    columnListeners.delete(listener)
-  }
-}
+/** File-session agent drawer used to report width; the main shell no longer hosts it. */
+export function reportFileSessionAgentOpen(_open: boolean | null, _width?: number): void {}
 
 /**
  * Push column floors onto the native BrowserWindow min-size so the frame
@@ -45,14 +22,10 @@ export function useWindowMinSize(): void {
   const pictureInPicture = useSessionStore((s) => s.pictureInPicture)
   const shell: WindowShellKind = isCompanionSessionShell() ? 'session' : 'main'
   const sidebarVisible = useSessionStore((s) => s.sidebarVisible)
-  const previewOpen = useSessionStore((s) => s.filePreviewOpen)
+  const applicationsVisible = useSessionStore((s) => s.applicationsVisible)
+  const agentVisible = useSessionStore((s) => s.agentVisible)
   const toolsCollapsed = useSessionStore((s) => s.toolsCollapsed)
-  const conversation = useSessionStore((s) =>
-    s.conversations.find((row) => row.id === s.activeId)
-  )
   const [sidebarWidth, setSidebarWidth] = useState(loadSidebarWidth)
-  const [fileAgentOpen, setFileAgentOpen] = useState(() => fileSessionAgentOpen)
-  const [fileAgentWidth, setFileAgentWidth] = useState(() => fileSessionAgentWidth)
 
   useEffect(() => {
     const onWidth = (event: Event): void => {
@@ -67,32 +40,17 @@ export function useWindowMinSize(): void {
     return () => window.removeEventListener(SIDEBAR_WIDTH_CHANGED, onWidth)
   }, [])
 
-  useEffect(
-    () =>
-      subscribeShellColumns(() => {
-        setFileAgentOpen(fileSessionAgentOpen)
-        setFileAgentWidth(fileSessionAgentWidth)
-      }),
-    []
-  )
-
-  const isFileSession = Boolean(conversation?.fileId)
-  const previewVisible =
-    shell === 'main' && (isFileSession || isDbSession(conversation ?? {}) || previewOpen)
-  const agentVisible = isFileSession ? fileAgentOpen !== false : true
-
   const width = pictureInPicture
     ? PIP_WINDOW_MIN_WIDTH
     : windowMinWidth({
         sidebarVisible: shell === 'main' && sidebarVisible,
         sidebarWidth,
-        agentVisible,
-        agentMinWidth: isFileSession ? FILE_SESSION_AGENT_MIN_WIDTH : AGENT_MIN_WIDTH,
-        agentWidth: isFileSession ? (fileAgentWidth ?? undefined) : undefined,
-        previewVisible,
-        // Floor only — never the live drawer width. applyWindowMinSize grows the
-        // frame when it is below the floor; WorkspaceView then gives that delta
-        // to the preview, which raises the floor again (window walks off-screen).
+        agentVisible: shell === 'main' ? agentVisible : true,
+        agentMinWidth: AGENT_MIN_WIDTH,
+        previewVisible: shell === 'main' && applicationsVisible,
+        // Floor only — never the live column width. applyWindowMinSize grows the
+        // frame when it is below the floor; a live width then raises the floor
+        // again (window walks off-screen).
         previewWidth: undefined,
         shell
       })
@@ -105,7 +63,6 @@ export function useWindowMinSize(): void {
 
   useEffect(() => {
     const api = window.vav?.window?.setMinSize
-    if (typeof api !== 'function') return
-    void api({ width, height })
+    if (typeof api === 'function') void api({ width, height })
   }, [width, height])
 }

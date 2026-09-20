@@ -1,4 +1,13 @@
-import { Archive, Clock, Database, FileText, MessageSquare, Settings2, type LucideIcon } from 'lucide-react'
+import {
+  Archive,
+  BookOpen,
+  Clock,
+  Database,
+  HardDrive,
+  MessageSquare,
+  Settings2,
+  type LucideIcon
+} from 'lucide-react'
 import {
   isSidebarCategoryVisible,
   parseSidebarVisibleCategories,
@@ -26,9 +35,9 @@ const CATEGORIES: {
   },
   {
     mode: 'fileSessions',
-    icon: FileText,
+    icon: HardDrive,
     testId: 'sidebar-category-file',
-    labelKey: 'sidebar.category.file'
+    labelKey: 'sidebar.category.storage'
   },
   {
     mode: 'timers',
@@ -40,7 +49,13 @@ const CATEGORIES: {
     mode: 'databases',
     icon: Database,
     testId: 'sidebar-category-db',
-    labelKey: 'sidebar.category.db'
+    labelKey: 'sidebar.category.data'
+  },
+  {
+    mode: 'knowledge',
+    icon: BookOpen,
+    testId: 'sidebar-category-knowledge',
+    labelKey: 'sidebar.category.knowledge'
   },
   {
     mode: 'archive',
@@ -52,8 +67,9 @@ const CATEGORIES: {
 
 const OPTIONAL_LABEL: Record<SidebarOptionalCategory, MessageKey> = {
   timers: 'sidebar.category.scheduled',
-  fileSessions: 'sidebar.category.file',
-  databases: 'sidebar.category.db',
+  fileSessions: 'sidebar.category.storage',
+  databases: 'sidebar.category.data',
+  knowledge: 'sidebar.category.knowledge',
   archive: 'sidebar.category.archived'
 }
 

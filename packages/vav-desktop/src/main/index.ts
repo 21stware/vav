@@ -214,6 +214,8 @@ import { registerSettingsIpc } from '@main/ipc/registerSettingsIpc'
 import { registerConnectorIpc } from '@main/ipc/registerConnectorIpc'
 import { registerTimerIpc } from '@main/ipc/registerTimerIpc'
 import { registerDbIpc } from '@main/ipc/registerDbIpc'
+import { registerKnowledgeIpc } from '@main/ipc/registerKnowledgeIpc'
+import { KnowledgeStore } from '@main/store/KnowledgeStore'
 import { createConnectorRegistry } from '@main/connectors/registry'
 import { TimerStore } from '@main/store/TimerStore'
 import { DbConnectionStore } from '@main/store/DbConnectionStore'
@@ -669,6 +671,7 @@ const dbConnectionStore = new DbConnectionStore(
   })
 )
 const postgres = new PostgresService(dbConnectionStore)
+const knowledgeStore = new KnowledgeStore(app.getPath('userData'))
 const connectorRegistry = createConnectorRegistry({
   creds: () => ({
     cloudflare: {
@@ -1558,13 +1561,15 @@ const agent = new AgentRuntime({
   skills: skillService,
   plugins: pluginService,
   fileSessions: fileSessionStore,
+  knowledge: knowledgeStore,
   connectors: connectorRegistry,
   computer: createCuaComputerHost(),
   emit: handleAgentEvent,
   onFileReadOnlyChange: (conversationId, readOnly) => {
     broadcast(IPC.fileSessionReadOnlyChanged, { sessionId: conversationId, readOnly })
     publishConversations()
-  }
+  },
+  onKnowledgeChanged: () => broadcast(IPC.knowledgeChanged, null)
 })
 
 timerScheduler = new TimerScheduler({
@@ -8406,6 +8411,34 @@ return c as text`
           }
         )
       }
+    },
+    duckdb
+  )
+  registerKnowledgeIpc(
+    ipcMain,
+    knowledgeStore,
+    conversationStore,
+    documentRetrieval,
+    () => broadcast(IPC.knowledgeChanged, null),
+    {
+      publishConversations,
+      createDefinitionConversation: () => {
+        const settings = settingsStore.get()
+        const workdir = resolveNewWorkdir()
+        const defaultHost = resolveDefaultChatHost(settings.defaultAgentId)
+        return conversationStore.create(
+          workdir,
+          modelForNewConversation(defaultHost),
+          {
+            sessionKind: 'knowledge',
+            title: t('knowledge.untitled'),
+            approvalMode: settings.defaultApprovalMode ?? 'auto',
+            thinkingLevel: parseThinkingLevel(settings.defaultThinkingLevel),
+            cliHost: defaultHost,
+            accountId: accountIdForSession(workdir, defaultHost)
+          }
+        )
+      }
     }
   )
   registerPreviewShellIpc(ipcMain, {
@@ -8997,6 +9030,7 @@ if (singleInstance) {
     conversationStore.load({ model: settings.defaultModel, mintWorkdir: resolveNewWorkdir })
     timerStore.load()
     dbConnectionStore.load()
+    knowledgeStore.load()
     timerScheduler?.start()
     logStore.load()
     appLog().system(LOG_EVENT.systemBoot, 'App ready', {

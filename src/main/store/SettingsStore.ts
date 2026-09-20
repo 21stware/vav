@@ -462,16 +462,24 @@ export class SettingsStore {
       s.defaultMachineId = s.defaultMachineId.trim()
     }
     if (typeof s.sidebarSessionFilter !== 'string') s.sidebarSessionFilter = 'none'
-    else if (
-      s.sidebarSessionFilter !== 'none' &&
-      s.sidebarSessionFilter !== 'active' &&
-      s.sidebarSessionFilter !== 'favorite' &&
-      !(s.sidebarSessionFilter.startsWith('ws:') && s.sidebarSessionFilter.length > 3)
-    ) {
-      s.sidebarSessionFilter = 'none'
-    } else if (s.sidebarSessionFilter.startsWith('ws:')) {
-      const path = s.sidebarSessionFilter.slice(3)
-      if (!path || !existsSync(path)) s.sidebarSessionFilter = 'none'
+    else {
+      const [kindPart] = s.sidebarSessionFilter.split('|obj:')
+      const objectPart = s.sidebarSessionFilter.includes('|obj:')
+        ? s.sidebarSessionFilter.slice(s.sidebarSessionFilter.indexOf('|obj:') + 5)
+        : ''
+      const kindOk =
+        kindPart === 'none' ||
+        kindPart === 'active' ||
+        kindPart === 'favorite' ||
+        (kindPart.startsWith('ws:') && kindPart.length > 3)
+      const objectOk = !objectPart || objectPart === 'file' || objectPart === 'knowledge' || objectPart === 'data'
+      if (!kindOk || !objectOk) s.sidebarSessionFilter = 'none'
+      else if (kindPart.startsWith('ws:')) {
+        const path = kindPart.slice(3)
+        if (!path || !existsSync(path)) {
+          s.sidebarSessionFilter = objectPart ? `none|obj:${objectPart}` : 'none'
+        }
+      }
     }
     if (!Array.isArray(s.favoriteConversationIds)) s.favoriteConversationIds = []
     s.favoriteConversationIds = [

@@ -215,6 +215,8 @@ export interface AgentRuntimeDeps {
   plugins?: import('../plugins/PluginService').PluginService
   mcpTools?: import('../plugins/mcpClient').McpToolBridge
   fileSessions?: FileSessionStore
+  knowledge?: import('../store/KnowledgeStore').KnowledgeStore
+  onKnowledgeChanged?: () => void
   /** Sync preview chrome when the agent flips Read/Edit via switch_mode. */
   onFileReadOnlyChange?: (conversationId: string, readOnly: boolean) => void
   /** Current / session-pinned VAV account. Falls back to the legacy API key. */
@@ -674,7 +676,12 @@ export class AgentRuntime {
       (conversation.fileId && this.deps.fileSessions
         ? this.deps.fileSessions.pathForFileId(conversation.fileId)
         : null)
-    let openFilePathForPrompt: string | null = conversation.focusedFilePath || null
+    let openFilePathForPrompt: string | null =
+      conversation.focusedFilePath ||
+      conversation.dataFilePath ||
+      (conversation.knowledgeHostId
+        ? this.deps.knowledge?.get(conversation.knowledgeHostId)?.storedPath ?? null
+        : null)
     if (logicalOpenPath && this.deps.files.workingCopies) {
       try {
         const wc = await this.deps.files.workingCopies.ensure(logicalOpenPath, {
@@ -725,6 +732,11 @@ export class AgentRuntime {
       : undefined
 
     const dbSession = conversation.sessionKind === 'db'
+    const dataFilePath = conversation.dataFilePath?.trim() || ''
+    const knowledgeHost =
+      conversation.sessionKind === 'knowledge' && conversation.knowledgeHostId
+        ? this.deps.knowledge?.get(conversation.knowledgeHostId) ?? null
+        : null
     const dbId = conversation.dbConnectionId?.trim() || ''
     const dbRow = dbSession && dbId ? this.deps.postgres?.connection(dbId) : undefined
     let dbSchema: Array<{ name: string; columns: string[]; rowCount: number }> | null = null
@@ -754,10 +766,19 @@ export class AgentRuntime {
                 skillCatalog: this.deps.skills?.catalogForPrompt() ?? null,
                 pluginContext: turn.pluginContext || null,
                 dbSession,
+                dataFilePath: dataFilePath || null,
                 dbDriver: dbRow ? DB_DRIVER_DEFAULTS[dbRow.driver].label : undefined,
                 dbTitle: dbRow ? dbConnectionTitle(dbRow) : null,
                 dbTable: conversation.focusedDbTable ?? null,
                 dbSchema,
+                knowledgeHost: knowledgeHost
+                  ? {
+                      id: knowledgeHost.id,
+                      title: knowledgeHost.title,
+                      kind: knowledgeHost.kind,
+                      path: knowledgeHost.storedPath
+                    }
+                  : null,
                 computerUse: Boolean(this.deps.computer?.available())
               }),
               messages: history,
@@ -1433,9 +1454,17 @@ export class AgentRuntime {
       tinyfishSearchKey: () => this.deps.secrets.get('tinyfish'),
       selectionAnchor: () => turn.selectionRefs,
       defaultDocPath: () => {
+        const live = this.deps.conversations.get(conversationId)
+        if (live?.dataFilePath) return live.dataFilePath
+        if (live?.knowledgeHostId) {
+          const host = this.deps.knowledge?.get(live.knowledgeHostId)
+          if (host?.storedPath) return host.storedPath
+        }
         if (!conversation.fileId || !this.deps.fileSessions) return null
         return this.deps.fileSessions.pathForFileId?.(conversation.fileId) ?? null
       },
+      knowledge: this.deps.knowledge,
+      knowledgeChanged: () => this.deps.onKnowledgeChanged?.(),
       isFileReadOnly: () =>
         !!this.deps.conversations.get(conversationId)?.fileReadOnly,
       setFileReadOnly: (readOnly) => this.setConversationFileReadOnly(conversationId, readOnly),

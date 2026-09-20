@@ -42,7 +42,6 @@ import {
   conversationFitsListMode,
   conversationSubtitle,
   conversationSelectionRunClass,
-  adjacentRunClass,
   flattenSessionTitle,
   groupingOptions,
   hostMachineLabel,
@@ -53,8 +52,7 @@ import {
   shouldReconcileSidebarSelection
 } from '../lib/sidebarList'
 import { ConvBracket, type SwarmBracketKind } from './sidebar/ConvBracket'
-import { TimerJobsPanel } from './sidebar/TimerJobsPanel'
-import { SidebarCategoryBar } from './sidebar/SidebarCategoryBar'
+import { SidebarNav } from './sidebar/SidebarNav'
 import { SidebarServiceBar } from './sidebar/SidebarServiceBar'
 import { RenameField } from './sidebar/RenameField'
 import {
@@ -168,7 +166,7 @@ export function Sidebar({
   const setSidebarQuery = useSessionStore((s) => s.setSidebarQuery)
   const selectConversation = useSessionStore((s) => s.selectConversation)
   const createConversation = useSessionStore((s) => s.createConversation)
-  const createDbConversation = useSessionStore((s) => s.createDbConversation)
+  const beginNewSession = useSessionStore((s) => s.beginNewSession)
   const ensureScheduledConversation = useSessionStore((s) => s.ensureScheduledConversation)
   const ensureDbConversation = useSessionStore((s) => s.ensureDbConversation)
   const dbSchemas = useSessionStore((s) => s.dbSchemas)
@@ -198,7 +196,7 @@ export function Sidebar({
   const [collapsedKeys, setCollapsedKeys] = useState<Set<string>>(() => new Set())
   const [pinnedCollapsed, setPinnedCollapsed] = useState(false)
   const [fileSessionRows, setFileSessionRows] = useState<FileSessionListEntry[]>([])
-  const [fileSessionsLoading, setFileSessionsLoading] = useState(false)
+  const [, setFileSessionsLoading] = useState(false)
 
   useEffect(() => {
     if (!searchOpen) return
@@ -241,7 +239,7 @@ export function Sidebar({
   const [dbConnections, setDbConnections] = useState<DbConnection[]>([])
 
   useEffect(() => {
-    if (!databasesView || !window.vav?.db?.list) return
+    if (!window.vav?.db?.list) return
     let cancelled = false
     const refresh = async (): Promise<void> => {
       const rows = await window.vav.db.list()
@@ -271,7 +269,7 @@ export function Sidebar({
     return window.vav.db.onChanged(() => {
       void refresh()
     })
-  }, [databasesView, setDbSchema])
+  }, [setDbSchema])
 
   // Rasterize the foot-menu glyphs ahead of the first open.
   useEffect(() => {
@@ -399,9 +397,8 @@ export function Sidebar({
   const groups = useMemo(
     () =>
       listedSidebarGroups(mergeConnectedDbConversations(conversations, dbConnections), {
-        fileSessionsView,
+        fileSessionsView: false,
         archiveView,
-        databasesView,
         query,
         windowMachineId,
         sessionFilter,
@@ -442,8 +439,6 @@ export function Sidebar({
     tmp,
     pinnedWorkspaces,
     archiveView,
-    fileSessionsView,
-    databasesView,
     dbConnections,
     dbSchemas,
     turnBusyKey,
@@ -657,6 +652,7 @@ export function Sidebar({
     },
     [deleteSelectedFileSessions, filteredFileSessions, onNavigate, selectConversation, t]
   )
+  void fileSessionMenuItems
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
@@ -973,30 +969,6 @@ export function Sidebar({
     })
   }
 
-  const importSessions = async (): Promise<void> => {
-    const result = await window.vav.conversations.importPack()
-    if (result.ok === false) {
-      if (result.cancelled) return
-      showToast({
-        kind: 'error',
-        title: t('sidebar.importFailed'),
-        description: result.error
-      })
-      return
-    }
-    showToast({
-      kind: 'success',
-      title: t('sidebar.importOk'),
-      description: t('sidebar.importOkDesc', {
-        count: result.importedIds.length,
-        blobs: result.blobCount
-      })
-    })
-    if (result.importedIds[0]) {
-      void selectConversation(result.importedIds[0])
-    }
-  }
-
   const visibleIds = visible.map((c) => c.id)
   const selectionRunClass = (id: string): string =>
     conversationSelectionRunClass(id, selectedIds, visibleIds)
@@ -1004,7 +976,10 @@ export function Sidebar({
   const openListMenu = (anchor: HTMLElement): void => {
     const applyFilter = (next: SidebarSessionFilter): void => {
       void updateSettings({
-        sidebarSessionFilter: encodeSidebarSessionFilter(next)
+        sidebarSessionFilter: encodeSidebarSessionFilter({
+          ...next,
+          object: next.object ?? sessionFilter.object ?? 'none'
+        })
       })
     }
     const recent = recentsForMachine(recentDirs, windowMachineId)
@@ -1053,6 +1028,63 @@ export function Sidebar({
         })
       }
     }
+    items.push(
+      { label: '', divider: true },
+      { label: t('sidebar.filter.target'), header: true },
+      {
+        label: t('sidebar.filter.target.none'),
+        checked: (sessionFilter.object ?? 'none') === 'none',
+        onSelect: () => applyFilter({ ...sessionFilter, object: 'none' })
+      },
+      {
+        label: t('sidebar.filter.target.file'),
+        checked: sessionFilter.object === 'file',
+        onSelect: () => applyFilter({ ...sessionFilter, object: 'file' })
+      },
+      {
+        label: t('sidebar.filter.target.knowledge'),
+        checked: sessionFilter.object === 'knowledge',
+        onSelect: () => applyFilter({ ...sessionFilter, object: 'knowledge' })
+      },
+      {
+        label: t('sidebar.filter.target.data'),
+        checked: sessionFilter.object === 'data',
+        onSelect: () => applyFilter({ ...sessionFilter, object: 'data' })
+      },
+      { label: '', divider: true },
+      {
+        label: t('sidebar.menu.import'),
+        icon: lucideMenuIcon('import'),
+        onSelect: () => {
+          void (async () => {
+            const result = await window.vav.conversations.importPack()
+            if (result.ok === false) {
+              if (result.cancelled) return
+              showToast({
+                kind: 'error',
+                title: t('sidebar.importFailed'),
+                description: result.error
+              })
+              return
+            }
+            showToast({
+              kind: 'success',
+              title: t('sidebar.importOk'),
+              description: t('sidebar.importOkDesc', {
+                count: result.importedIds.length,
+                blobs: result.blobCount
+              })
+            })
+          })()
+        }
+      },
+      {
+        label: t('sidebar.category.archived'),
+        icon: lucideMenuIcon('archive'),
+        checked: listMode === 'archive',
+        onSelect: () => activateSidebarListMode(listMode === 'archive' ? 'main' : 'archive')
+      }
+    )
     void showMenu(items, menuAnchor(anchor))
   }
 
@@ -1403,7 +1435,9 @@ export function Sidebar({
   }
 
   return (
-    <aside className={`sidebar${floating ? ' floating' : ''}`} data-testid="sidebar">
+    <aside className={`sidebar${floating ? ' floating' : ''}`} data-testid="sidebar" data-column="list">
+      <SidebarNav />
+      <div className="sidebar-rule" role="separator" />
       <div className="sidebar-search">
         <div className="sidebar-search-field">
           <Search
@@ -1444,13 +1478,13 @@ export function Sidebar({
             </button>
           )}
         </div>
-        {listMode === 'main' && (
-          <button
+        <button
             type="button"
             className={`sidebar-list-menu${isSidebarSessionFilterEnabled(sessionFilter) ? ' is-active' : ''}`}
             data-testid="sidebar-list-menu"
             data-grouping={groupingMode}
             data-filter={sessionFilter.kind}
+            data-target={sessionFilter.object ?? 'none'}
             title={t('sidebar.listMenu')}
             aria-label={t('sidebar.listMenu')}
             aria-haspopup="menu"
@@ -1458,7 +1492,6 @@ export function Sidebar({
           >
             <ListFilter size={14} aria-hidden />
           </button>
-        )}
       </div>
 
       <div className="sidebar-list" id="sessions" ref={listRef} tabIndex={-1}>
@@ -1467,9 +1500,7 @@ export function Sidebar({
           conversations.filter(
             (c) =>
               !c.archived &&
-              !c.fileId &&
-              c.sessionKind !== 'timer' &&
-              c.sessionKind !== 'db' &&
+              conversationFitsListMode(c, 'main') &&
               conversationOnMachine(c, windowMachineId)
           ).length === 0 &&
           groupingMode !== 'workspace' && (
@@ -1487,7 +1518,7 @@ export function Sidebar({
               className="btn secondary"
               title={t('common.newSession')}
               onClick={() => {
-                void createConversation({ machineId: windowMachineId })
+                beginNewSession()
                 onNavigate?.()
               }}
             >
@@ -1501,16 +1532,7 @@ export function Sidebar({
             description={t('sidebar.archiveEmptyDesc')}
           />
         )}
-        {fileSessionsView && !fileSessionsLoading && filteredFileSessions.length === 0 && !searching && (
-          <EmptyState
-            title={t('sidebar.fileSessionsEmptyTitle')}
-            description={t('sidebar.fileSessionsEmptyDesc')}
-          />
-        )}
-        {timersView && (
-          <TimerJobsPanel />
-        )}
-        {databasesView && searching && visible.length === 0 && (
+        {(listMode === 'main' || archiveView) && searching && visible.length === 0 && (
           <EmptyState title={t('sidebar.noMatchTitle')} description={t('sidebar.noMatchDesc')}>
             <button
               className="btn secondary"
@@ -1521,44 +1543,7 @@ export function Sidebar({
             </button>
           </EmptyState>
         )}
-        {databasesView && !searching && visible.length === 0 && (
-          <EmptyState title={t('sidebar.dbEmptyTitle')} description={t('sidebar.dbEmptyDesc')}>
-            <button
-              className="btn secondary"
-              data-testid="sidebar-create-db"
-              title={t('db.new')}
-              onClick={() => {
-                void createDbConversation()
-                onNavigate?.()
-              }}
-            >
-              {t('db.new')}
-            </button>
-          </EmptyState>
-        )}
-        {fileSessionsView && searching && filteredFileSessions.length === 0 && (
-          <EmptyState title={t('sidebar.noMatchTitle')} description={t('sidebar.noMatchDesc')}>
-            <button
-              className="btn secondary"
-              title={t('sidebar.clearFilter')}
-              onClick={() => setSidebarQuery('')}
-            >
-              {t('sidebar.clearFilter')}
-            </button>
-          </EmptyState>
-        )}
-        {listMode === 'main' && searching && visible.length === 0 && (
-          <EmptyState title={t('sidebar.noMatchTitle')} description={t('sidebar.noMatchDesc')}>
-            <button
-              className="btn secondary"
-              title={t('sidebar.clearFilter')}
-              onClick={() => setSidebarQuery('')}
-            >
-              {t('sidebar.clearFilter')}
-            </button>
-          </EmptyState>
-        )}
-        {listMode === 'main' &&
+        {(listMode === 'main' || archiveView) &&
           !searching &&
           visible.length === 0 &&
           isSidebarSessionFilterEnabled(sessionFilter) && (
@@ -1576,132 +1561,7 @@ export function Sidebar({
           </EmptyState>
         )}
 
-        {fileSessionsView && (
-          <div className="file-session-list" role="list">
-            {filteredFileSessions.map((row, index) => {
-              const isActive = row.sessionId === activeId
-              const isMultiSelected = selectedIds.includes(row.sessionId)
-              const prevMulti =
-                index > 0 && selectedIds.includes(filteredFileSessions[index - 1]!.sessionId)
-              const nextMulti =
-                index < filteredFileSessions.length - 1 &&
-                selectedIds.includes(filteredFileSessions[index + 1]!.sessionId)
-              const runClass = isMultiSelected ? adjacentRunClass(prevMulti, nextMulti) : ''
-              const statusLabel =
-                row.pathStatus === 'dir_missing'
-                  ? t('sidebar.dirNotExist')
-                  : row.pathStatus === 'file_missing'
-                    ? t('sidebar.fileNotExist')
-                    : null
-              const pathLabel = basename(row.path) || row.path
-              // Flatten auto-titles: strip markdown hashes / leading whitespace.
-              const title = flattenSessionTitle(row.title)
-              const turn = turns[row.sessionId]
-              const awaiting = !!turn?.awaitingToolCallId
-              const running = !!turn?.isRunning && !awaiting
-              const unreadBadge = sessionUnreadBadge(
-                awaiting,
-                running,
-                activityById[row.sessionId]
-              )
-              return (
-                <button
-                  type="button"
-                  role="listitem"
-                  key={`${row.fileId}:${row.sessionId}`}
-                  className={`file-session-item${isActive ? ' is-active' : ''}${
-                    isMultiSelected ? ` multi ${runClass}` : ''
-                  }${statusLabel ? ' is-missing' : ''}`}
-                  data-conversation-id={row.sessionId}
-                  title={`${title}\n${row.path}`}
-                  onClick={(event) => {
-                    // Ignore the second half of a double-click pair (open window).
-                    if (event.detail > 1) return
-                    const additive = event.metaKey || event.ctrlKey
-                    const range = event.shiftKey
-                    void selectConversation(row.sessionId, {
-                      additive,
-                      range,
-                      rangeIds: fileSessionOrderedIds,
-                      fileSession: fileSessionSelectHint(row)
-                    })
-                    // Multi-select keeps the float open so the user can keep picking.
-                    if (additive || range) return
-                    // Floating: delay close so dblclick can open the companion.
-                    if (floating && onNavigate) {
-                      if (fileClickTimerRef.current) clearTimeout(fileClickTimerRef.current)
-                      fileClickTimerRef.current = setTimeout(() => {
-                        fileClickTimerRef.current = null
-                        onNavigate()
-                      }, 280)
-                      return
-                    }
-                    onNavigate?.()
-                  }}
-                  onDoubleClick={(event) => {
-                    event.preventDefault()
-                    if (fileClickTimerRef.current) {
-                      clearTimeout(fileClickTimerRef.current)
-                      fileClickTimerRef.current = null
-                    }
-                    // Same as regular sessions: companion window. File sessions
-                    // open the file-preview shell (canvas + agent), not bare chat.
-                    void selectConversation(row.sessionId, {
-                      fileSession: fileSessionSelectHint(row)
-                    })
-                    void window.vav.window.openFilePreview(row.path, {
-                      origin: 'session',
-                      conversationId: row.sessionId,
-                      surface: 'file'
-                    })
-                    onNavigate?.()
-                  }}
-                  onContextMenu={(event) => {
-                    event.preventDefault()
-                    event.stopPropagation()
-                    if (fileClickTimerRef.current) {
-                      clearTimeout(fileClickTimerRef.current)
-                      fileClickTimerRef.current = null
-                    }
-                    // Finder-style: right-click inside a multi-selection keeps
-                    // the set and operates on all of it; outside collapses to one.
-                    const targets =
-                      selectedIds.length > 1 && selectedIds.includes(row.sessionId)
-                        ? selectedIds
-                        : [row.sessionId]
-                    if (targets.length === 1 && selectedIds.length > 1) {
-                      void selectConversation(row.sessionId, {
-                        fileSession: fileSessionSelectHint(row)
-                      })
-                    }
-                    void showMenu(fileSessionMenuItems(targets))
-                  }}
-                >
-                  <span className="file-session-item-title">{middleTruncate(title)}</span>
-                  {sessionSecondLine(
-                    statusLabel
-                      ? `${pathLabel} · ${statusLabel}`
-                      : `${pathLabel} · ${relativeTime(row.updatedAt)}`,
-                    running,
-                    editedIds.has(row.sessionId),
-                    t('sidebar.edited')
-                  )}
-                  {unreadBadge === 'awaiting' && (
-                    <span className="conv-badge awaiting" title={t('sidebar.badge.pending')} />
-                  )}
-                  {unreadBadge === 'done' && (
-                    <span className="conv-badge done" title={t('sidebar.badge.done')} />
-                  )}
-                  {unreadBadge === 'failed' && (
-                    <span className="conv-badge failed" title={t('sidebar.badge.failed')} />
-                  )}
-                </button>
-              )
-            })}
-          </div>
-        )}
-
-        {!fileSessionsView && !timersView && pinnedGroups.length > 0 && (
+        {pinnedGroups.length > 0 && (
           <div className="conv-pinned-section">
             <button
               type="button"
@@ -1722,31 +1582,16 @@ export function Sidebar({
           </div>
         )}
 
-        {!fileSessionsView && !timersView && mainGroups.map(renderGroup)}
+        {mainGroups.map(renderGroup)}
       </div>
-
-      <UpdateCorner variant="inline" />
 
       <div className="sidebar-foot">
-        <div className="sidebar-nav-block">
-          <SidebarCategoryBar />
-          <SidebarServiceBar
-            sessionMenuItems={[
-              {
-                label: t('sidebar.menu.import'),
-                icon: lucideMenuIcon('import'),
-                onSelect: () => void importSessions()
-              },
-              {
-                label: t('sidebar.category.archived'),
-                icon: lucideMenuIcon('archive'),
-                checked: archiveView,
-                onSelect: () => activateSidebarListMode('archive')
-              }
-            ]}
-          />
-        </div>
+        <SidebarServiceBar
+          variant="nav"
+          onOpen={() => useSessionStore.getState().setApplicationsMode('devices')}
+        />
       </div>
+      <UpdateCorner variant="inline" />
     </aside>
   )
 }

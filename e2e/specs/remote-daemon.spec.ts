@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { test, expect, type Page } from '@playwright/test'
+import { test, expect } from '@playwright/test'
 import { connectPhone } from '../../src/main/cli/vavPhoneClient.ts'
 import { parseDaemonPairing } from '../../src/shared/daemonProtocol.ts'
 import {
@@ -20,11 +20,6 @@ import {
   switchSidebarInstance
 } from '../launch'
 import { startVavServer } from '../startVavServer'
-
-async function revealSidebarCategory(page: Page, label: string): Promise<void> {
-  await page.locator('[data-testid="sidebar-category-config"]').click()
-  await chooseNativeMenu(page, label)
-}
 
 /**
  * Desktop VAV pairs with a real headless vav-server, then a session's files list
@@ -946,7 +941,7 @@ test('File category on a paired host lists that machine, not This Mac', async ()
       'data-machine-id',
       paired.host.id
     )
-    await revealSidebarCategory(page, 'File')
+    await page.locator('[data-testid="applications-tab-storage"]').click()
     await expect(page.locator('[data-testid="file-recents"]')).toBeVisible()
     await expect(page.locator('[data-testid="file-source-select"] option[value="thisMac"]')).toHaveText(
       'E2E Daemon'

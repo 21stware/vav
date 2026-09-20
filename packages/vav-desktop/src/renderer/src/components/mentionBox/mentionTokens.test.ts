@@ -3,10 +3,14 @@ import { describe, it } from 'node:test'
 import {
   appMentionToken,
   appNameFromToken,
+  collectDataMentionPaths,
   collectFileMentionPaths,
+  dataMentionToken,
+  expandComposerMentionTokens,
   expandFileMentionTokens,
   fileMentionToken,
-  findComposerPills
+  findComposerPills,
+  knowledgeMentionToken
 } from './mentionTokens.ts'
 
 describe('app tokens', () => {
@@ -72,5 +76,32 @@ describe('file tokens', () => {
     assert.equal(a, '@file[shot.png]')
     assert.equal(b, '@file[shot 2.png]')
     assert.equal(expandFileMentionTokens(`${a} ${b}`), '/a/shot.png /b/shot.png')
+  })
+})
+
+describe('data and knowledge tokens', () => {
+  it('expands a data file token to its path and collects it', () => {
+    const token = dataMentionToken({
+      conversationId: 'd1',
+      title: 'sales.csv',
+      path: '/tmp/sales.csv'
+    })
+    assert.equal(token, '@data[sales.csv]')
+    assert.equal(expandComposerMentionTokens(`use ${token}`), 'use /tmp/sales.csv')
+    assert.deepEqual(collectDataMentionPaths(`use ${token}`), ['/tmp/sales.csv'])
+  })
+
+  it('expands a knowledge token to a host reference', () => {
+    const token = knowledgeMentionToken({ hostId: 'h1', title: 'Launch notes' })
+    assert.equal(token, '@knowledge[Launch notes]')
+    assert.equal(
+      expandComposerMentionTokens(`search ${token}`),
+      'search Knowledge "Launch notes" (host h1)'
+    )
+    const pills = findComposerPills(`search ${token}`)
+    assert.deepEqual(
+      pills.map((p) => `${p.kind}:${p.name}`),
+      ['knowledge:Launch notes']
+    )
   })
 })

@@ -2,8 +2,16 @@ import { ChevronDown, ChevronRight, File as FileIcon, Folder } from 'lucide-reac
 import type { FileEntry, FileViewMode } from '@shared/types'
 import { useT, tt } from '../../i18n/useT'
 import { filterFileEntries } from '../../lib/remoteFolderPick'
+import { showMenu } from '../../lib/nativeMenu'
+import { storageCrossSurfaceItems } from '../../lib/storageCrossActions'
 import { InlineAlert } from '../ui'
 import { FolderEmptyState } from './FolderEmpty'
+
+function openStorageFileMenu(path: string, event: { clientX: number; clientY: number }): void {
+  const items = storageCrossSurfaceItems(path)
+  if (items.length === 0) return
+  void showMenu(items, { x: event.clientX, y: event.clientY })
+}
 
 export type FilePickDirs = Record<string, FileEntry[]>
 
@@ -222,6 +230,13 @@ function PickTreeRow({
           if (entry.isDirectory) onEnterDir(entry.path)
           else onOpenFile?.(entry.path)
         }}
+        onContextMenu={(event) => {
+          if (entry.isDirectory) return
+          event.preventDefault()
+          event.stopPropagation()
+          onSelect(entry)
+          openStorageFileMenu(entry.path, event)
+        }}
       >
         <span className="disclosure" aria-hidden>
           {entry.isDirectory ? (
@@ -333,6 +348,13 @@ function PickColumnBrowser({
                     onDoubleClick={() => {
                       if (entry.isDirectory) onEnterDir(entry.path)
                       else onOpenFile?.(entry.path)
+                    }}
+                    onContextMenu={(event) => {
+                      if (entry.isDirectory) return
+                      event.preventDefault()
+                      event.stopPropagation()
+                      onSelect(entry)
+                      openStorageFileMenu(entry.path, event)
                     }}
                   >
                     {entry.isDirectory ? (

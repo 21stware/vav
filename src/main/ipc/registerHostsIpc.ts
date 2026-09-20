@@ -1,5 +1,6 @@
 import type { IpcMain } from 'electron'
 import { IPC, type HostDiscoveryPeer } from '@shared/ipc'
+import { resolveSpecialFolder, type SpecialFolderKind } from '@shared/specialFolders'
 import { hostJoin, isLocalMachine, LOCAL_MACHINE_ID, normalizeMachineId } from '@shared/workspaceHost'
 import { decorateHosts } from '../host/decorateHosts'
 import { mapHostDirectoryEntries } from '../host/hostDirList'
@@ -72,6 +73,36 @@ export function registerHostsIpc(
     if (isLocalMachine(machineId)) return windows.localHome()
     return attach.homeOf(machineId)
   })
+  ipcMain.handle(
+    IPC.hostsSpecialFolder,
+    async (_event, machineId: string, kind: SpecialFolderKind) => {
+      const folderKind = kind === 'icloud' || kind === 'cloudDisk' ? kind : 'home'
+      if (isLocalMachine(machineId)) {
+        return resolveSpecialFolder(folderKind, windows.localHome())
+      }
+      const home = await attach.homeOf(machineId)
+      if (folderKind === 'home') {
+        return { kind: 'home' as const, path: home || null, available: Boolean(home) }
+      }
+      if (folderKind === 'cloudDisk') {
+        return { kind: 'cloudDisk' as const, path: null, available: false }
+      }
+      const guessed = resolveSpecialFolder('icloud', home || undefined)
+      const icloudPath = guessed.path
+      if (!icloudPath) return guessed
+      try {
+        const listing = await (async () => {
+          const host = registry.get(normalizeMachineId(machineId)) ?? registry.hostFor(machineId)
+          if (!host.info.online) return null
+          await host.fs.readdir(icloudPath)
+          return icloudPath
+        })()
+        return { kind: 'icloud' as const, path: listing, available: Boolean(listing) }
+      } catch {
+        return { kind: 'icloud' as const, path: guessed.path, available: false }
+      }
+    }
+  )
   ipcMain.handle(IPC.hostsShow, (_event, machineId: string) => {
     void windows.show(machineId)
   })

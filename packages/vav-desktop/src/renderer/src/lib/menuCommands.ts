@@ -28,7 +28,7 @@ export function handleMenuCommand(command: MenuCommand): void {
   const store = useSessionStore.getState()
   switch (command) {
     case 'new-conversation':
-      void store.createConversation()
+      store.beginNewSession()
       break
     case 'focus-composer':
       store.focusComposer()

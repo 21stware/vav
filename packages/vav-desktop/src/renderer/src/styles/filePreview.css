@@ -2626,7 +2626,8 @@
 }
 
 /* Pick chrome — ::after + pointer-events:none so cell text stays copyable. */
-.file-viewer-body.selecting .csv-sheet .preview-select-region {
+.file-viewer-body.selecting .csv-sheet .preview-select-region,
+.sqlite-root.selecting .csv-sheet .preview-select-region {
   border-radius: 2px;
   transition: none;
   cursor: text;
@@ -2640,11 +2641,13 @@
  * (itself a containing block for ::after) — and this selector outranks
  * `.csv-sheet-colhead`, so setting `relative` here thaws the frozen header.
  */
-.file-viewer-body.selecting .csv-sheet td.preview-select-region {
+.file-viewer-body.selecting .csv-sheet td.preview-select-region,
+.sqlite-root.selecting .csv-sheet td.preview-select-region {
   position: relative;
 }
 
-.file-viewer-body.selecting .csv-sheet .preview-select-region::after {
+.file-viewer-body.selecting .csv-sheet .preview-select-region::after,
+.sqlite-root.selecting .csv-sheet .preview-select-region::after {
   content: '';
   position: absolute;
   inset: 0;
@@ -2657,13 +2660,17 @@
 
 .file-viewer-body.selecting
   .csv-sheet
+  .preview-select-region:hover:not(.selected):not(:has(.preview-select-region:hover))::after,
+.sqlite-root.selecting
+  .csv-sheet
   .preview-select-region:hover:not(.selected):not(:has(.preview-select-region:hover))::after {
   outline: 1px dashed var(--accent);
   outline-offset: -1px;
   background: color-mix(in srgb, var(--accent) 6%, transparent);
 }
 
-.file-viewer-body.selecting .csv-sheet .preview-select-region.selected::after {
+.file-viewer-body.selecting .csv-sheet .preview-select-region.selected::after,
+.sqlite-root.selecting .csv-sheet .preview-select-region.selected::after {
   outline: 2px solid var(--accent);
   outline-offset: -1px;
   background: color-mix(in srgb, var(--accent) 12%, transparent);
@@ -5247,7 +5254,7 @@
 }
 
 /* File tree rows — fixed metrics so Retina zoom / long CJK names stay aligned.
-   No hover wash, no bg/color transitions, no OS text-select flash on dblclick. */
+   Hover is a quiet wash only; no color transitions, no OS text-select flash on dblclick. */
 .tree-row[draggable='true'],
 .file-viewer-name[draggable='true'] {
   -webkit-user-drag: element;
@@ -5264,7 +5271,7 @@
   max-height: 28px;
   max-width: 100%;
   padding-right: 8px;
-  border-radius: 6px;
+  border-radius: var(--list-row-radius, 8px);
   cursor: default;
   white-space: nowrap;
   font-size: 13px;
@@ -5276,6 +5283,11 @@
   min-width: 0;
   content-visibility: auto;
   contain-intrinsic-size: auto 28px;
+  transition: background var(--dur-hover) ease;
+}
+
+.tree-row:not(.selected):not(.open):hover {
+  background: var(--bg-hover);
 }
 
 .tree-row.selected {

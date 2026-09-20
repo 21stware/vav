@@ -12,6 +12,9 @@ import type {
   TurnErrorKind
 } from '@shared/types'
 import type { SqliteDatabaseInfo } from '@shared/ipc'
+import type { StorageSource } from '@shared/storageSource'
+import type { ApplicationsMode } from './sessionTypes'
+import { applicationsModeForConversation } from '../lib/applicationsWidth'
 import { DEFAULT_CLI_AGENTS, DEFAULT_SETTINGS } from '@shared/types'
 import type { WorkspaceHostInfo } from '@shared/workspaceHost'
 import type { IncomingController } from '@shared/daemonProtocol'
@@ -76,8 +79,9 @@ import {
   updateCommentCardInMap
 } from './sessionCommentCards'
 import {
+  collectDataMentionPaths,
   collectFileMentionPaths,
-  expandFileMentionTokens
+  expandComposerMentionTokens
 } from '../components/mentionBox/mentionTokens'
 
 export {
@@ -90,6 +94,7 @@ export {
 
 export type {
   AgentModelCatalogEntry,
+  ApplicationsMode,
   DialogState,
   LiveUsage,
   QueuedMessage,
@@ -112,7 +117,7 @@ import { tt } from '../i18n/useT'
 import { isDraftScheduledTitle } from '../lib/draftEditorTitle'
 import { isTemporaryWorkspace } from '../lib/format'
 import { conversationFitsListMode, nextConversationForListMode } from '../lib/sidebarList'
-import { isTimerDefinition } from '@shared/sessionKind'
+import { isDbSession, isKnowledgeSession, isTimerDefinition, isWorkspaceSession } from '@shared/sessionKind'
 import { isCompanionSessionShell, isMainSessionShell, readWindowMachineId } from '../lib/windowKind'
 import { isLocalMachine, normalizeMachineId } from '@shared/workspaceHost'
 import { compactionForLeaf } from '@shared/compaction'
@@ -202,7 +207,22 @@ interface SessionState {
    * File category main pane: Recent files vs This Mac. Survives opening a
    * file so Back to file list can restore the same source.
    */
-  filesSource: 'recent' | 'thisMac'
+  filesSource: StorageSource
+  /** Right-hand Knowledge / Storage / Data column. */
+  applicationsMode: ApplicationsMode
+  applicationsVisible: boolean
+  /** App object open in the right column — independent of the workspace agent. */
+  focusedAppObjectId: string | null
+  setApplicationsMode(mode: ApplicationsMode): void
+  focusAppObject(id: string): void
+  restoreWorkspaceAgent(): void
+  toggleApplications(): void
+  /** Center agent column. Closed from the agent chrome; New session / a row opens it. */
+  agentVisible: boolean
+  setAgentVisible(visible: boolean): void
+  toggleAgent(): void
+  /** Show the empty composer shell without minting a conversation. */
+  beginNewSession(): void
   /** Selected table inside the active database session. Null = connection info. */
   activeDbTable: string | null
   /** Cached live-DB schema by connection id. */
@@ -478,6 +498,12 @@ interface SessionState {
   ensureScheduledConversation(): void
   /** New database connection: mint the row, select it, then edit in the form. */
   createDbConversation(): Promise<void>
+  /** Bind a local CSV / TSV / SQLite / Parquet file as a Data resource. */
+  createDataFromFile(path: string): Promise<void>
+  /** New knowledge note. */
+  createKnowledgeNote(): Promise<void>
+  /** Ingest a document into Knowledge. */
+  importKnowledgeDocument(path: string): Promise<void>
   /** DB category: keep a connection selected. Empty list stays empty. */
   ensureDbConversation(): void
   /** ⌘D / ⌘⇧D: mint a sibling agent session and split the Thread surface. */
@@ -683,7 +709,7 @@ interface SessionState {
   pictureInPicture: boolean
   setPictureInPicture(enabled: boolean): Promise<void>
   setSidebarListMode(mode: SidebarListMode): void
-  setFilesSource(source: 'recent' | 'thisMac'): void
+  setFilesSource(source: StorageSource): void
   /** Leave the file canvas and show Recent files / This Mac again. */
   showFileList(): void
   /** Switch Task / File / Scheduled / Archived and clear the list search. */
@@ -732,6 +758,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   pictureInPicture: false,
   sidebarListMode: 'main',
   filesSource: 'recent',
+  applicationsMode: 'storage',
+  applicationsVisible: true,
+  focusedAppObjectId: null,
+  agentVisible: globalLayout.agentVisible,
   activeDbTable: null,
   dbSchemas: {},
   toolsLayouts: sessionToolsLayouts,
@@ -953,11 +983,20 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   setFilePreviewOpen(open) {
-    set({ filePreviewOpen: open })
+    set({
+      filePreviewOpen: open,
+      ...(open ? { applicationsVisible: true, applicationsMode: 'storage' as const } : {})
+    })
   },
 
   toggleFilePreview() {
-    set((state) => ({ filePreviewOpen: !state.filePreviewOpen }))
+    set((state) => {
+      const open = !state.filePreviewOpen
+      return {
+        filePreviewOpen: open,
+        ...(open ? { applicationsVisible: true, applicationsMode: 'storage' as const } : {})
+      }
+    })
   },
 
   setSessionPreview(preview) {
@@ -1040,6 +1079,13 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       void cacheCreatedAt
       target = meta
     }
+    if (
+      target &&
+      (isDbSession(target) || isKnowledgeSession(target) || isTimerDefinition(target))
+    ) {
+      get().focusAppObject(target.id)
+      return
+    }
     let nextSelection = nextConversationSelection({
       id,
       selectedIds,
@@ -1071,12 +1117,17 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         : id === activeId
           ? get().activeDbTable
           : (target?.focusedDbTable ?? null)
+    const appMode = target ? applicationsModeForConversation(target) : null
     set({
       activeId: id,
       selectedIds: nextSelection,
       activeGroupId: null,
       activeDbTable: nextDbTable,
       sessionPreview: { kind: 'file' },
+      agentVisible: true,
+      ...(appMode
+        ? { applicationsMode: appMode, applicationsVisible: true, sidebarListMode: 'main' as const }
+        : {}),
       ...(toolsLayoutsPatch ? { toolsLayouts: toolsLayoutsPatch } : {}),
       ...activeToolsFields(sessionTools)
     })
@@ -1190,12 +1241,18 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   async createScheduledConversation() {
     if (!window.vav?.timers?.createScheduled) return
-    set({ sidebarListMode: 'timers' })
+    set({
+      sidebarListMode: 'main',
+      applicationsMode: 'scheduled',
+      applicationsVisible: true
+    })
     try {
       const result = await window.vav.timers.createScheduled()
       set((state) => ({
         ...seedEmptyConversationPatch(state, result.conversation),
-        sidebarListMode: 'timers'
+        sidebarListMode: 'main',
+        applicationsMode: 'scheduled',
+        applicationsVisible: true
       }))
       await get().selectConversation(result.conversation.id)
       get().focusComposer()
@@ -1219,12 +1276,19 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   async createDbConversation() {
     if (!window.vav?.db?.create) return
-    set({ sidebarListMode: 'databases', activeDbTable: null })
+    set({
+      sidebarListMode: 'main',
+      applicationsMode: 'data',
+      applicationsVisible: true,
+      activeDbTable: null
+    })
     try {
       const result = await window.vav.db.create()
       set((state) => ({
         ...seedEmptyConversationPatch(state, result.conversation),
-        sidebarListMode: 'databases',
+        sidebarListMode: 'main',
+        applicationsMode: 'data',
+        applicationsVisible: true,
         activeDbTable: null
       }))
       await get().selectConversation(result.conversation.id)
@@ -1237,11 +1301,98 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     }
   },
 
+  async createDataFromFile(path) {
+    if (!window.vav?.db?.createFromFile) return
+    set({
+      sidebarListMode: 'main',
+      applicationsMode: 'data',
+      applicationsVisible: true,
+      activeDbTable: null
+    })
+    try {
+      const result = await window.vav.db.createFromFile(path)
+      if (!result) {
+        get().showToast({ kind: 'error', title: tt('data.unsupportedFile') })
+        return
+      }
+      set((state) => ({
+        ...seedEmptyConversationPatch(state, result.conversation),
+        sidebarListMode: 'main',
+        applicationsMode: 'data',
+        applicationsVisible: true,
+        activeDbTable: null
+      }))
+      await get().selectConversation(result.conversation.id)
+    } catch (err) {
+      get().showToast({
+        kind: 'error',
+        title: tt('data.addFileFailed'),
+        description: err instanceof Error ? err.message : String(err)
+      })
+    }
+  },
+
+  async createKnowledgeNote() {
+    if (!window.vav?.knowledge?.createNote) return
+    set({
+      sidebarListMode: 'main',
+      applicationsMode: 'knowledge',
+      applicationsVisible: true
+    })
+    try {
+      const result = await window.vav.knowledge.createNote()
+      set((state) => ({
+        ...seedEmptyConversationPatch(state, result.conversation),
+        sidebarListMode: 'main',
+        applicationsMode: 'knowledge',
+        applicationsVisible: true
+      }))
+      await get().selectConversation(result.conversation.id)
+      get().focusComposer()
+    } catch (err) {
+      get().showToast({
+        kind: 'error',
+        title: tt('knowledge.createFailed'),
+        description: err instanceof Error ? err.message : String(err)
+      })
+    }
+  },
+
+  async importKnowledgeDocument(path) {
+    if (!window.vav?.knowledge?.importDocument) return
+    set({
+      sidebarListMode: 'main',
+      applicationsMode: 'knowledge',
+      applicationsVisible: true
+    })
+    try {
+      const result = await window.vav.knowledge.importDocument(path)
+      if (!result) return
+      set((state) => ({
+        ...seedEmptyConversationPatch(state, result.conversation),
+        sidebarListMode: 'main',
+        applicationsMode: 'knowledge',
+        applicationsVisible: true
+      }))
+      await get().selectConversation(result.conversation.id)
+    } catch (err) {
+      get().showToast({
+        kind: 'error',
+        title: tt('knowledge.importFailed'),
+        description: err instanceof Error ? err.message : String(err)
+      })
+    }
+  },
+
   setActiveDbTable(table) {
     const next = table?.trim() || null
     if (get().activeDbTable === next) return
     set({ activeDbTable: next })
-    const id = get().activeId
+    const focused = get().focusedAppObjectId
+    const id =
+      focused && isDbSession(get().conversations.find((row) => row.id === focused) ?? {})
+        ? focused
+        : get().activeId
     if (id) void get().setFocusedDbTable(id, next)
   },
 
@@ -2155,8 +2306,11 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const refs = previewRefs[activeId] ?? []
     const cards = commentCards[activeId] ?? []
     const leftoverContext = resolveComposerContextFile(contextFiles, activeId)
-    const mentionedFiles = collectFileMentionPaths(text)
-    text = expandFileMentionTokens(text)
+    const mentionedFiles = [
+      ...collectFileMentionPaths(text),
+      ...collectDataMentionPaths(text)
+    ]
+    text = expandComposerMentionTokens(text)
     const files = mergeComposerFilePaths(leftoverContext, [...attachments, ...mentionedFiles])
     const activeConversation = conversations.find((c) => c.id === activeId)
     const activeHost = activeConversation?.cliHost ?? null
@@ -2782,16 +2936,121 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     set({ filesSource: source })
   },
 
-  showFileList() {
+  setApplicationsMode(mode) {
+    set({ applicationsMode: mode, applicationsVisible: true })
+    get().restoreWorkspaceAgent()
+  },
+
+  focusAppObject(id) {
+    const row = get().conversations.find((item) => item.id === id)
+    if (!row) return
+    const mode = applicationsModeForConversation(row)
     set({
-      sidebarListMode: 'fileSessions',
+      focusedAppObjectId: id,
+      applicationsVisible: true,
+      ...(mode ? { applicationsMode: mode } : {}),
+      ...(isDbSession(row) ? { activeDbTable: row.focusedDbTable ?? get().activeDbTable } : {})
+    })
+    get().restoreWorkspaceAgent()
+  },
+
+  restoreWorkspaceAgent() {
+    const { conversations, activeId, windowMachineId } = get()
+    const current = conversations.find((row) => row.id === activeId)
+    if (!current || isWorkspaceSession(current)) return
+    if (current.fileId || current.sessionKind === 'file') return
+    const nextId = nextConversationForListMode(
+      conversations,
+      'main',
+      activeId,
+      normalizeMachineId(windowMachineId)
+    )
+    if (nextId && nextId !== activeId) {
+      void get().selectConversation(nextId)
+      return
+    }
+    set({
       activeId: '',
-      selectedIds: []
+      selectedIds: [],
+      agentVisible: true,
+      ...activeToolsFields(DEFAULT_SESSION_TOOLS)
+    })
+    get().focusComposer()
+  },
+
+  toggleApplications() {
+    set((state) => ({ applicationsVisible: !state.applicationsVisible }))
+  },
+
+  setAgentVisible(visible) {
+    set((state) => {
+      if (state.agentVisible === visible) return {}
+      saveGlobalLayout({ agentVisible: visible })
+      return { agentVisible: visible }
     })
   },
 
+  toggleAgent() {
+    set((state) => {
+      const agentVisible = !state.agentVisible
+      saveGlobalLayout({ agentVisible })
+      return { agentVisible }
+    })
+  },
+
+  beginNewSession() {
+    const { activeId, agentVisible } = get()
+    if (!activeId && agentVisible) {
+      get().setToolsCollapsed(true)
+      get().focusComposer()
+      return
+    }
+    set({
+      activeId: '',
+      selectedIds: [],
+      agentVisible: true,
+      ...activeToolsFields(DEFAULT_SESSION_TOOLS)
+    })
+    saveGlobalLayout({ agentVisible: true })
+    get().focusComposer()
+  },
+
+  showFileList() {
+    const { conversations, activeId, windowMachineId } = get()
+    const current = conversations.find((row) => row.id === activeId)
+    set({
+      applicationsMode: 'storage',
+      applicationsVisible: true
+    })
+    if (!current?.fileId) return
+    const nextId = nextConversationForListMode(
+      conversations,
+      'main',
+      activeId,
+      normalizeMachineId(windowMachineId)
+    )
+    if (nextId && nextId !== activeId) void get().selectConversation(nextId)
+    else set({ activeId: '', selectedIds: [] })
+  },
+
   activateSidebarListMode(mode) {
-    const { sidebarListMode } = get()
+    if (mode === 'fileSessions') {
+      get().setApplicationsMode('storage')
+      return
+    }
+    if (mode === 'databases') {
+      get().setApplicationsMode('data')
+      return
+    }
+    if (mode === 'knowledge') {
+      get().setApplicationsMode('knowledge')
+      return
+    }
+    if (mode === 'timers') {
+      get().setApplicationsMode('scheduled')
+      return
+    }
+    const { sidebarListMode, conversations, activeId, windowMachineId } = get()
     if (sidebarListMode === mode) return
     set({
       sidebarListMode: mode,
@@ -2800,8 +3059,17 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     })
     // AppKit leaves the workdir / path-chip menu up when only the renderer swaps.
     void window.vav?.window?.closePopupMenu?.()
-    if (mode === 'timers') get().ensureScheduledConversation()
-    if (mode === 'databases') get().ensureDbConversation()
+    if (mode !== 'main' && mode !== 'archive') return
+    const current = conversations.find((row) => row.id === activeId)
+    if (current && conversationFitsListMode(current, mode)) return
+    const nextId = nextConversationForListMode(
+      conversations,
+      mode,
+      activeId,
+      normalizeMachineId(windowMachineId)
+    )
+    if (nextId) void get().selectConversation(nextId)
+    else set({ activeId: '', selectedIds: [] })
   },
 
   toggleToolsPanel() {

@@ -28,7 +28,7 @@ import type {
   TokenSnapshot
 } from '@shared/types'
 import { conversationOnMachine, isLocalMachine, LOCAL_MACHINE_ID } from '@shared/workspaceHost'
-import { isWorkspaceSession, sessionKindOf } from '@shared/sessionKind'
+import { isWorkspaceSession } from '@shared/sessionKind'
 import { mergeAdoptedHostMessages } from '@shared/remoteControlApply'
 import { isSparseRemoteConversation, UNKNOWN_REMOTE_MODEL } from '@shared/remoteDesktop'
 import { parseThinkingLevel } from '@shared/thinkingLevel'
@@ -198,6 +198,8 @@ export class ConversationStore {
       if (conversation.timerRunId === undefined) conversation.timerRunId = null
       if (conversation.timerRunAt === undefined) conversation.timerRunAt = null
       if (conversation.dbConnectionId === undefined) conversation.dbConnectionId = null
+      if (conversation.knowledgeHostId === undefined) conversation.knowledgeHostId = null
+      if (conversation.dataFilePath === undefined) conversation.dataFilePath = null
       if (conversation.fileReadOnly === undefined) conversation.fileReadOnly = false
       if (conversation.agentBinaryName === undefined) conversation.agentBinaryName = null
       if (conversation.cliHost === undefined) conversation.cliHost = null
@@ -262,10 +264,9 @@ export class ConversationStore {
       .sort((a, b) => b.updatedAt - a.updatedAt)
   }
 
-  /** Workspace + timer + db rows for the renderer. File-preview sessions stay omitted. */
+  /** Every conversation the desktop store hydrates. The list column filters to workspace sessions. */
   listClientMeta(): ConversationMeta[] {
     return this.conversations
-      .filter((c) => sessionKindOf(c) !== 'file')
       .map(conversationToMeta)
       .sort((a, b) => b.updatedAt - a.updatedAt)
   }
@@ -318,6 +319,8 @@ export class ConversationStore {
       timerRunId?: string | null
       timerRunAt?: number | null
       dbConnectionId?: string | null
+      knowledgeHostId?: string | null
+      dataFilePath?: string | null
       title?: string
       fileReadOnly?: boolean
       approvalMode?: import('@shared/types').ApprovalMode
@@ -367,6 +370,8 @@ export class ConversationStore {
       timerRunId: options?.timerRunId ?? null,
       timerRunAt: options?.timerRunAt ?? null,
       dbConnectionId: options?.dbConnectionId ?? null,
+      knowledgeHostId: options?.knowledgeHostId ?? null,
+      dataFilePath: options?.dataFilePath ?? null,
       fileReadOnly: options?.fileReadOnly ?? false,
       agentBinaryName: cliHost,
       cliHost,
@@ -419,6 +424,8 @@ export class ConversationStore {
       timerRunId: null,
       timerRunAt: null,
       dbConnectionId: null,
+      knowledgeHostId: null,
+      dataFilePath: null,
       fileReadOnly: false,
       accountId: source.accountId ?? null,
       messages: (source.messages ?? []).map((message) => ({
@@ -595,11 +602,18 @@ export class ConversationStore {
       cacheCreatedAt: cloned.cacheCreatedAt ?? null,
       cacheExpiresAt: cloned.cacheExpiresAt ?? null,
       fileId: null,
-      sessionKind: cloned.sessionKind === 'timer' || cloned.sessionKind === 'db' ? cloned.sessionKind : 'workspace',
+      sessionKind:
+        cloned.sessionKind === 'timer' ||
+        cloned.sessionKind === 'db' ||
+        cloned.sessionKind === 'knowledge'
+          ? cloned.sessionKind
+          : 'workspace',
       timerJobId: cloned.timerJobId ?? null,
       timerRunId: cloned.timerRunId ?? null,
       timerRunAt: cloned.timerRunAt ?? null,
       dbConnectionId: cloned.dbConnectionId ?? null,
+      knowledgeHostId: cloned.knowledgeHostId ?? null,
+      dataFilePath: cloned.dataFilePath ?? null,
       fileReadOnly: false,
       agentBinaryName: cloned.agentBinaryName ?? null,
       cliHost: cloned.cliHost ?? null,

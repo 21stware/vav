@@ -18,6 +18,7 @@ import { InlineAlert } from '../ui'
 import { FolderEmptyState } from './FolderEmpty'
 import { prefetchForPath } from '../../lib/prefetchHeavy'
 import { openFileInSessionPreview } from '../../lib/openSessionFile'
+import { storageCrossSurfaceItems } from '../../lib/storageCrossActions'
 import { expandedAfterCollapseAll, EXPAND_ALL_MAX_DIRS } from '../../lib/filesPanelExpand'
 
 export type FilesCreateState = { dir: string; name: string }
@@ -667,6 +668,7 @@ async function showEntryMenu(
             addFilesToComposer([entry.path], id)
           }
         },
+        ...storageCrossSurfaceItems(entry.path),
         { label: '', divider: true },
         ...(options.onPreview
           ? [{ label: tt('common.preview'), onSelect: () => options.onPreview?.(entry.path) }]

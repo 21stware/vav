@@ -1,4 +1,4 @@
-import { ChevronDown, House, Monitor } from 'lucide-react'
+import { ChevronDown, House, Monitor, Smartphone } from 'lucide-react'
 import { isLocalMachine, listedServices, normalizeMachineId } from '@shared/workspaceHost'
 import { useSessionStore } from '../../state/sessionStore'
 import { useT } from '../../i18n/useT'
@@ -6,10 +6,18 @@ import { menuAnchor, showMenu, type MenuItem } from '../../lib/nativeMenu'
 import { lucideMenuIcon } from '../../lib/menuIcons'
 
 export function SidebarServiceBar({
-  sessionMenuItems = []
+  sessionMenuItems = [],
+  variant = 'instance',
+  label,
+  testId = 'sidebar-connect',
+  onOpen
 }: {
   /** Session-management actions folded into the active service's menu. */
   sessionMenuItems?: MenuItem[]
+  variant?: 'instance' | 'nav'
+  label?: string
+  testId?: string
+  onOpen?: () => void
 } = {}): React.JSX.Element | null {
   const t = useT()
   const hosts = useSessionStore((s) => s.hosts)
@@ -19,6 +27,7 @@ export function SidebarServiceBar({
   const setDefaultMachine = useSessionStore((s) => s.setDefaultMachine)
   const incomingControllers = useSessionStore((s) => s.incomingControllers)
   const remoteControlStatus = useSessionStore((s) => s.remoteControlStatus)
+  const appMode = useSessionStore((s) => s.applicationsMode)
   const incoming =
     incomingControllers.some((row) => row.online) || (remoteControlStatus?.clients.length ?? 0) > 0
 
@@ -82,29 +91,45 @@ export function SidebarServiceBar({
     void showMenu(items, menuAnchor(anchor))
   }
 
+  const navLabel = label ?? t('sidebar.devices')
   const title = isLocalMachine(current.id)
     ? `${current.name}${incoming ? ` · ${t('sidebar.connect')}` : ''}`
     : current.name
 
   return (
-    <div className="sidebar-instance-switch" data-testid="sidebar-service-bar">
+    <div
+      className={variant === 'nav' ? 'sidebar-nav-devices' : 'sidebar-instance-switch'}
+      data-testid="sidebar-service-bar"
+    >
       <button
         type="button"
-        className="sidebar-instance-trigger"
-        data-testid="sidebar-connect"
+        className={variant === 'nav' ? 'sidebar-nav-item' : 'sidebar-instance-trigger'}
+        data-testid={testId}
+        data-app={variant === 'nav' ? 'devices' : undefined}
+        data-active={variant === 'nav' && appMode === 'devices' ? 'true' : 'false'}
         data-machine-id={current.id}
-        title={title}
-        aria-label={t('sidebar.switchService')}
+        title={variant === 'nav' ? `${navLabel} · ${title}` : title}
+        aria-label={variant === 'nav' ? navLabel : t('sidebar.switchService')}
         aria-haspopup="menu"
-        onClick={(event) => openMenu(event.currentTarget)}
+        onClick={(event) => {
+          onOpen?.()
+          openMenu(event.currentTarget)
+        }}
       >
-        {isLocalMachine(current.id) ? (
+        {variant === 'nav' ? (
+          <Smartphone size={14} aria-hidden />
+        ) : isLocalMachine(current.id) ? (
           <House size={14} aria-hidden />
         ) : (
           <Monitor size={14} aria-hidden />
         )}
-        <span className="sidebar-instance-name">{current.name}</span>
-        <ChevronDown className="sidebar-foot-connect-chevron" size={11} aria-hidden />
+        <span className={variant === 'nav' ? undefined : 'sidebar-instance-name'}>
+          {variant === 'nav' ? navLabel : current.name}
+        </span>
+        {variant === 'nav' ? <span className="sidebar-nav-machine">{current.name}</span> : null}
+        {variant === 'nav' ? null : (
+          <ChevronDown className="sidebar-foot-connect-chevron" size={11} aria-hidden />
+        )}
       </button>
     </div>
   )

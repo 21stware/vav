@@ -84,7 +84,18 @@ export interface SearchState {
   tick: number
 }
 
-/** Sidebar list: main sessions, archive, file-bound sessions, timer jobs, or db connections. */
-export type SidebarListMode = 'main' | 'archive' | 'fileSessions' | 'timers' | 'databases'
+/** Sidebar list: sessions, archive, or scheduled jobs. */
+export type SidebarListMode = 'main' | 'archive' | 'timers' | 'fileSessions' | 'databases' | 'knowledge'
+
+/** Right-hand app column (storage / data / knowledge / scheduled / devices). */
+export type ApplicationsMode = 'scheduled' | 'storage' | 'data' | 'knowledge' | 'devices'
+
+export const APPLICATIONS_MODES = [
+  'scheduled',
+  'storage',
+  'data',
+  'knowledge',
+  'devices'
+] as const
 
 export type { QueuedMessage } from './sessionQueue'

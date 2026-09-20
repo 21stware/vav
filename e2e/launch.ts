@@ -670,8 +670,14 @@ export async function waitForHostWindow(
 export async function ensureSelectedSession(page: Page): Promise<void> {
   const selected = page.locator('[data-testid="session-row"].selected')
   if ((await selected.count()) > 0) return
+  const row = page.locator('[data-testid="session-row"]').first()
+  if ((await row.count()) > 0) {
+    await row.click()
+    await expect(selected).toBeVisible({ timeout: 15_000 })
+    return
+  }
   await page.locator('[data-testid="new-session"]').click()
-  await expect(selected).toBeVisible({ timeout: 15_000 })
+  await expect(page.locator('.empty-state-session')).toBeVisible({ timeout: 15_000 })
 }
 
 /** Pair a daemon and wait for the sidebar accordion to expand onto it. */

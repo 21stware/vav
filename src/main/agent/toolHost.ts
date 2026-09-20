@@ -10,6 +10,7 @@ import type { WebFetchService } from '../web/WebFetchService'
 import type { StickyShell } from '../terminal/StickyShell'
 import type { SkillService } from './SkillService'
 import type { ConnectorRegistry } from '../connectors/registry'
+import type { KnowledgeToolHost } from './toolsKnowledge'
 
 export interface ToolDetails {
   /** Full human-facing text for the tool card. */
@@ -46,6 +47,8 @@ export interface ToolHost {
   duckdb?: DuckDbService
   postgres?: PostgresService
   dbConnectionId?: () => string | null
+  knowledge?: KnowledgeToolHost
+  knowledgeChanged?: () => void
   webSearch?: WebSearchService
   webFetch?: WebFetchService
   skills?: SkillService

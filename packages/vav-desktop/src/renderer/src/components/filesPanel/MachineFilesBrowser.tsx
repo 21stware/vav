@@ -41,18 +41,26 @@ function markLoading(dir: string): (current: string[]) => string[] {
   return (current) => (current.includes(dir) ? current : [...current, dir])
 }
 
-export function MachineFilesBrowser(): React.JSX.Element {
+export function MachineFilesBrowser({
+  root,
+  persistKey
+}: {
+  root?: string
+  persistKey?: string
+} = {}): React.JSX.Element {
   const t = useT()
   const machineId = normalizeMachineId(useSessionStore((s) => s.windowMachineId))
+  const pathKey = persistKey ?? machineId
   const hostHome = useSessionStore(
     (s) => s.hosts.find((host) => normalizeMachineId(host.id) === machineId)?.home ?? ''
   )
+  const resolvedHome = root || hostHome
   const recentDirs = useSessionStore((s) => s.settings.recentWorkspaceDirectories)
   const fileViewMode = useSessionStore((s) => s.settings.fileViewMode ?? 'tree')
   const recents = recentsForMachine(recentDirs, machineId)
 
-  const [path, setPath] = useState(lastPathByMachine.get(machineId) ?? hostHome)
-  const [home, setHome] = useState(hostHome)
+  const [path, setPath] = useState(lastPathByMachine.get(pathKey) ?? resolvedHome)
+  const [home, setHome] = useState(resolvedHome)
   const [dirs, setDirs] = useState<FilePickDirs>({})
   const [loadingDirs, setLoadingDirs] = useState<string[]>([])
   const [dirErrors, setDirErrors] = useState<Record<string, string>>({})
@@ -67,7 +75,7 @@ export function MachineFilesBrowser(): React.JSX.Element {
     const applyHome = (next: string): void => {
       if (!alive || !next) return
       setHome(next)
-      if (lastPathByMachine.get(machineId)) return
+      if (lastPathByMachine.get(pathKey)) return
       setPath(next)
       setSelected(null)
       setExpanded([])
@@ -77,12 +85,12 @@ export function MachineFilesBrowser(): React.JSX.Element {
       setDirErrors({})
     }
     void window.vav.hosts.home(machineId).then((value) => {
-      applyHome(value || hostHome)
+      applyHome(root || value || hostHome)
     })
     return () => {
       alive = false
     }
-  }, [hostHome, machineId])
+  }, [hostHome, machineId, pathKey, root])
 
   useEffect(() => {
     if (!path) return
@@ -113,8 +121,8 @@ export function MachineFilesBrowser(): React.JSX.Element {
   }, [path, machineId])
 
   useEffect(() => {
-    if (path) lastPathByMachine.set(machineId, path)
-  }, [path, machineId])
+    if (path) lastPathByMachine.set(pathKey, path)
+  }, [path, pathKey])
 
   const columnsKey = columnPath.join('\0')
   useEffect(() => {

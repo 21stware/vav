@@ -31,7 +31,13 @@ function loadAgentWidth(): number {
   return AGENT_DEFAULT
 }
 
-export function DbWorkspace({ conversationId }: { conversationId: string }): React.JSX.Element {
+export function DbWorkspace({
+  conversationId,
+  hideAgent = false
+}: {
+  conversationId: string
+  hideAgent?: boolean
+}): React.JSX.Element {
   const t = useT()
   const activeDbTable = useSessionStore((s) => s.activeDbTable)
   const setActiveDbTable = useSessionStore((s) => s.setActiveDbTable)
@@ -57,7 +63,7 @@ export function DbWorkspace({ conversationId }: { conversationId: string }): Rea
 
   const sidebarVisible = useSessionStore((s) => s.sidebarVisible)
   const sidebarFloating = useSidebarFloatMode()
-  const showShellLeading = !(sidebarVisible && !sidebarFloating)
+  const showShellLeading = !hideAgent && !(sidebarVisible && !sidebarFloating)
   const shellLeading = showShellLeading ? <ShellLeadingControls /> : null
 
   useEffect(() => {
@@ -281,6 +287,7 @@ export function DbWorkspace({ conversationId }: { conversationId: string }): Rea
         </div>
       </section>
 
+      {hideAgent ? null : (
       <aside
         className={`workspace-view-agent${agentOpen ? '' : ' is-collapsed'}`}
         style={{ width: agentOpen ? agentWidth : 0 }}
@@ -301,6 +308,7 @@ export function DbWorkspace({ conversationId }: { conversationId: string }): Rea
           <SessionDetail variant="preview-edit" fileSessionChrome={dbHistory} />
         </div>
       </aside>
+      )}
     </div>
   )
 }

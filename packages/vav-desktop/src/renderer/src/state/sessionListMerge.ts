@@ -15,7 +15,13 @@ function isHiddenSidebarSession(row: {
   fileId?: string | null
   sessionKind?: import('@shared/sessionKind.ts').SessionKind | null
 }): boolean {
-  return !!row.fileId || row.sessionKind === 'timer' || row.sessionKind === 'db'
+  return (
+    !!row.fileId ||
+    row.sessionKind === 'timer' ||
+    row.sessionKind === 'db' ||
+    row.sessionKind === 'knowledge' ||
+    row.sessionKind === 'file'
+  )
 }
 
 /** Deleted file / timer rows. listMeta omits them, so merge must not resurrect. */
@@ -74,7 +80,7 @@ export function prependConversationIfMissing<C extends { id: string }>(
   return conversations.some((c) => c.id === meta.id) ? conversations : [meta, ...conversations]
 }
 
-/** Sidebar ids for shift-range select: archive vs live, never file-preview rows. */
+/** Sidebar ids for shift-range select: workspace sessions only. */
 export function listedConversationIdsForSelect(
   conversations: Array<{
     id: string
@@ -86,8 +92,9 @@ export function listedConversationIdsForSelect(
 ): string[] {
   return conversations
     .filter((c) => {
-      if (c.sessionKind === 'timer' || c.sessionKind === 'db') return false
-      return archived ? c.archived && !c.fileId : !c.archived && !c.fileId
+      const kind = c.sessionKind ?? (c.fileId ? 'file' : 'workspace')
+      if (kind !== 'workspace') return false
+      return archived ? !!c.archived : !c.archived
     })
     .map((c) => c.id)
 }
@@ -104,7 +111,7 @@ export type FileSessionSelectHint = {
 }
 
 /**
- * File-preview sessions are omitted from listMeta / listClientMeta. Clicking
+ * File-preview sessions used to be omitted from listMeta. Clicking
  * one must still paint FileSessionView before conversations.get returns (and
  * even when get misses because the body lives on spawned vav-server).
  */

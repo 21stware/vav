@@ -1465,6 +1465,14 @@ export interface VavApi {
       connection: import('./dbConnection').DbConnection
       conversation: import('./types').ConversationMeta
     }>
+    /** Bind a local CSV / TSV / SQLite / Parquet file as a Data resource. */
+    createFromFile(path: string): Promise<{
+      conversation: import('./types').ConversationMeta
+      path: string
+      format: import('./dataFile').DataFileFormat | null
+    } | null>
+    fileSchema(path: string): Promise<SqliteDatabaseInfo | { error: string }>
+    fileQuery(path: string, sql: string): Promise<SqliteQueryResult>
     /** Another chat bound to an existing connection (history). */
     createSession(connectionId: string): Promise<{
       connection: import('./dbConnection').DbConnection
@@ -1489,6 +1497,32 @@ export interface VavApi {
       offset: number,
       limit: number
     ): Promise<SqliteQueryResult>
+    onChanged(handler: () => void): () => void
+  }
+
+  /** Knowledge hosts: ingested documents + markdown notes. */
+  knowledge: {
+    list(): Promise<import('./knowledge').KnowledgeHost[]>
+    get(id: string): Promise<import('./knowledge').KnowledgeHost | null>
+    getForConversation(
+      conversationId: string
+    ): Promise<import('./knowledge').KnowledgeHost | null>
+    createNote(): Promise<{
+      host: import('./knowledge').KnowledgeHost
+      conversation: import('./types').ConversationMeta
+    }>
+    importDocument(path: string): Promise<{
+      host: import('./knowledge').KnowledgeHost
+      conversation: import('./types').ConversationMeta
+    } | null>
+    readNote(id: string): Promise<import('./knowledge').KnowledgeNote | null>
+    writeNote(
+      id: string,
+      markdown: string
+    ): Promise<import('./knowledge').KnowledgeNote | null>
+    rename(id: string, title: string): Promise<import('./knowledge').KnowledgeHost | null>
+    remove(id: string): Promise<boolean>
+    refresh(id: string): Promise<import('./knowledge').KnowledgeHost | null>
     onChanged(handler: () => void): () => void
   }
 
@@ -1886,6 +1920,10 @@ export interface VavApi {
     discovered(): Promise<HostDiscoveryPeer[]>
     listDir(machineId: string, path: string): Promise<DirectoryListing>
     home(machineId: string): Promise<string>
+    specialFolder(
+      machineId: string,
+      kind: import('./specialFolders').SpecialFolderKind
+    ): Promise<import('./specialFolders').SpecialFolderResult>
     show(machineId: string): Promise<void>
     /** Machine the main shell is currently showing. */
     active(): Promise<string>
@@ -2296,6 +2334,9 @@ export const IPC = {
   timersChanged: 'vav:timers:changed',
   dbList: 'vav:db:list',
   dbCreate: 'vav:db:create',
+  dbCreateFromFile: 'vav:db:create-from-file',
+  dbFileSchema: 'vav:db:file-schema',
+  dbFileQuery: 'vav:db:file-query',
   dbCreateSession: 'vav:db:create-session',
   dbGetForConversation: 'vav:db:get-for-conversation',
   dbEnsureForConversation: 'vav:db:ensure-for-conversation',
@@ -2306,6 +2347,18 @@ export const IPC = {
   dbSchema: 'vav:db:schema',
   dbQueryTable: 'vav:db:query-table',
   dbChanged: 'vav:db:changed',
+  knowledgeList: 'vav:knowledge:list',
+  knowledgeGet: 'vav:knowledge:get',
+  knowledgeGetForConversation: 'vav:knowledge:get-for-conversation',
+  knowledgeCreateNote: 'vav:knowledge:create-note',
+  knowledgeImportDocument: 'vav:knowledge:import-document',
+  knowledgeReadNote: 'vav:knowledge:read-note',
+  knowledgeWriteNote: 'vav:knowledge:write-note',
+  knowledgeRename: 'vav:knowledge:rename',
+  knowledgeRemove: 'vav:knowledge:remove',
+  knowledgeRefresh: 'vav:knowledge:refresh',
+  knowledgeChanged: 'vav:knowledge:changed',
+  hostsSpecialFolder: 'vav:hosts:special-folder',
 
   agentsResolveBinary: 'vav:agents:resolve-binary',
   agentsProbeBinaries: 'vav:agents:probe-binaries',

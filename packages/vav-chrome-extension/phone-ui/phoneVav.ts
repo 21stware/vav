@@ -2340,6 +2340,54 @@ export function installPhoneVav(transport: PhoneTransport): PhoneVavHandle {
       },
       onChanged: () => () => undefined
     },
+    db: {
+      list: async () => [],
+      create: async () => {
+        throw new Error('unavailable')
+      },
+      createFromFile: async () => null,
+      fileSchema: async () => ({ error: 'unavailable' }),
+      fileQuery: async () => ({
+        columns: [],
+        rows: [],
+        total: 0,
+        offset: 0,
+        limit: 0,
+        error: 'unavailable'
+      }),
+      createSession: async () => null,
+      getForConversation: async () => null,
+      ensureForConversation: async () => null,
+      update: async () => null,
+      remove: async () => false,
+      test: async () => ({ ok: false, error: 'unavailable' }),
+      open: async () => null,
+      schema: async () => ({ error: 'unavailable' }),
+      queryTable: async () => ({
+        columns: [],
+        rows: [],
+        total: 0,
+        offset: 0,
+        limit: 0,
+        error: 'unavailable'
+      }),
+      onChanged: () => () => undefined
+    },
+    knowledge: {
+      list: async () => [],
+      get: async () => null,
+      getForConversation: async () => null,
+      createNote: async () => {
+        throw new Error('unavailable')
+      },
+      importDocument: async () => null,
+      readNote: async () => null,
+      writeNote: async () => null,
+      rename: async () => null,
+      remove: async () => false,
+      refresh: async () => null,
+      onChanged: () => () => undefined
+    },
     fileSessions: {
       open: async (path: string) => {
         const plane = await daemonReady()
@@ -2934,6 +2982,7 @@ export function installPhoneVav(transport: PhoneTransport): PhoneVavHandle {
         }
       },
       home: async () => host?.home || '',
+      specialFolder: async (_machineId, kind) => ({ kind, path: null, available: false }),
       show: async () => undefined,
       active: async () => 'local',
       openFolder: async () => undefined,

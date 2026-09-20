@@ -35,14 +35,18 @@ export const DEFAULT_SESSION_TOOLS: SessionToolsLayout = {
 
 export type GlobalLayoutPrefs = {
   sidebarVisible: boolean
+  agentVisible: boolean
 }
 
 export function parseGlobalLayout(raw: string | null | undefined): GlobalLayoutPrefs {
-  const fallback: GlobalLayoutPrefs = { sidebarVisible: true }
+  const fallback: GlobalLayoutPrefs = { sidebarVisible: true, agentVisible: true }
   if (!raw) return fallback
   try {
     const parsed = JSON.parse(raw) as Partial<GlobalLayoutPrefs>
-    return { sidebarVisible: parsed.sidebarVisible ?? true }
+    return {
+      sidebarVisible: parsed.sidebarVisible ?? true,
+      agentVisible: parsed.agentVisible ?? true
+    }
   } catch {
     return fallback
   }
@@ -125,9 +129,10 @@ export function loadGlobalLayout(): GlobalLayoutPrefs {
   }
 }
 
-export function saveGlobalLayout(prefs: GlobalLayoutPrefs): void {
+export function saveGlobalLayout(prefs: Partial<GlobalLayoutPrefs>): void {
   try {
-    localStorage.setItem(GLOBAL_LAYOUT_KEY, JSON.stringify(prefs))
+    const next = { ...loadGlobalLayout(), ...prefs }
+    localStorage.setItem(GLOBAL_LAYOUT_KEY, JSON.stringify(next))
   } catch {
     // Private mode or a full quota: layout simply falls back to defaults.
   }

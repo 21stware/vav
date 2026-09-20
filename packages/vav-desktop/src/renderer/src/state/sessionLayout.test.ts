@@ -11,9 +11,11 @@ import {
 
 describe('sessionLayout parse', () => {
   it('defaults a missing sidebar and merges partial tools maps', () => {
-    assert.deepEqual(parseGlobalLayout(null), { sidebarVisible: true })
-    assert.deepEqual(parseGlobalLayout('{'), { sidebarVisible: true })
+    assert.deepEqual(parseGlobalLayout(null), { sidebarVisible: true, agentVisible: true })
+    assert.deepEqual(parseGlobalLayout('{'), { sidebarVisible: true, agentVisible: true })
     assert.equal(parseGlobalLayout('{"sidebarVisible":false}').sidebarVisible, false)
+    assert.equal(parseGlobalLayout('{"sidebarVisible":false}').agentVisible, true)
+    assert.equal(parseGlobalLayout('{"agentVisible":false}').agentVisible, false)
     const map = parseSessionToolsMap('{"c1":{"toolsCollapsed":false,"panelHeight":400}}')
     assert.equal(map.c1?.toolsCollapsed, false)
     assert.equal(map.c1?.panelHeight, 400)
