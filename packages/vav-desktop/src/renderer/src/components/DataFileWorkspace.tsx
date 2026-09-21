@@ -3,6 +3,7 @@ import type { SqliteDatabaseInfo } from '@shared/ipc'
 import { FILE_SESSION_AGENT_MIN_WIDTH } from '@shared/shellMinSize'
 import { useT } from '../i18n/useT'
 import { applyBlockPick, selectedBlockIdsForPath } from '../lib/applyBlockPick'
+import { appColumnPickConversationId, syncWorkspaceAgentFocusedPath } from '../lib/workspaceAgentContext'
 import { useSidebarFloatMode } from '../lib/sidebarLayout'
 import { startCapturedPointerDrag } from '../lib/capturedPointerDrag'
 import { reportFileSessionAgentOpen } from '../lib/useWindowMinSize'
@@ -108,8 +109,16 @@ export function DataFileWorkspace({
     })
   }, [])
 
+  const pickConversationId = appColumnPickConversationId(hideAgent, conversationId)
+  const commentTick = useSessionStore((s) => s.commentCards[pickConversationId]?.length ?? 0)
+  void commentTick
   const sourcePath = activeDbTable ? `${path}/${activeDbTable}` : path
-  const selectedIds = selectedBlockIdsForPath(conversationId, sourcePath)
+  const selectedIds = selectedBlockIdsForPath(pickConversationId, sourcePath)
+
+  useEffect(() => {
+    if (!hideAgent) return
+    syncWorkspaceAgentFocusedPath(path)
+  }, [hideAgent, path])
 
   return (
     <div className="workspace-view file-session-view" ref={rootRef} data-testid="data-file-workspace">
@@ -145,7 +154,7 @@ export function DataFileWorkspace({
               if (!hint) return
               const table = activeDbTable || schema.tables[0]?.name || ''
               applyBlockPick({
-                conversationId,
+                conversationId: pickConversationId,
                 sourcePath,
                 badge: label,
                 block: {

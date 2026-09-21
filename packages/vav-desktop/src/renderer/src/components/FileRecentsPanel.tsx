@@ -125,12 +125,17 @@ export function FileRecentsPanel({
         </header>
       )}
       {source === 'thisMac' ? (
-        <MachineFilesBrowser key={`mac:${windowMachineId}`} persistKey={`mac:${windowMachineId}`} />
+        <MachineFilesBrowser
+          key={`mac:${windowMachineId}`}
+          persistKey={`mac:${windowMachineId}`}
+          onFileOpened={onOpenDetail}
+        />
       ) : browseIcloud ? (
         <MachineFilesBrowser
           key={`icloud:${windowMachineId}:${icloud!.path}`}
           root={icloud!.path!}
           persistKey={`icloud:${windowMachineId}`}
+          onFileOpened={onOpenDetail}
         />
       ) : source === 'icloud' && icloud === null ? (
         <div className="muted tiny" style={{ padding: 16 }}>

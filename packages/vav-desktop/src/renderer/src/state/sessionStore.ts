@@ -117,7 +117,7 @@ import { tt } from '../i18n/useT'
 import { isDraftScheduledTitle } from '../lib/draftEditorTitle'
 import { isTemporaryWorkspace } from '../lib/format'
 import { conversationFitsListMode, nextConversationForListMode } from '../lib/sidebarList'
-import { isDbSession, isKnowledgeSession, isTimerDefinition, isWorkspaceSession } from '@shared/sessionKind'
+import { isAppObjectSession, isDbSession, isTimerDefinition, isWorkspaceSession } from '@shared/sessionKind'
 import { isCompanionSessionShell, isMainSessionShell, readWindowMachineId } from '../lib/windowKind'
 import { isLocalMachine, normalizeMachineId } from '@shared/workspaceHost'
 import { compactionForLeaf } from '@shared/compaction'
@@ -1079,10 +1079,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       void cacheCreatedAt
       target = meta
     }
-    if (
-      target &&
-      (isDbSession(target) || isKnowledgeSession(target) || isTimerDefinition(target))
-    ) {
+    if (target && isAppObjectSession(target)) {
       get().focusAppObject(target.id)
       return
     }
@@ -2958,7 +2955,6 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const { conversations, activeId, windowMachineId } = get()
     const current = conversations.find((row) => row.id === activeId)
     if (!current || isWorkspaceSession(current)) return
-    if (current.fileId || current.sessionKind === 'file') return
     const nextId = nextConversationForListMode(
       conversations,
       'main',

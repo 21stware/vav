@@ -731,13 +731,12 @@ export class AgentRuntime {
       ? toPiReasoning(parseThinkingLevel(conversation.thinkingLevel))
       : undefined
 
-    const dbSession = conversation.sessionKind === 'db'
-    const dataFilePath = conversation.dataFilePath?.trim() || ''
-    const knowledgeHost =
-      conversation.sessionKind === 'knowledge' && conversation.knowledgeHostId
-        ? this.deps.knowledge?.get(conversation.knowledgeHostId) ?? null
-        : null
     const dbId = conversation.dbConnectionId?.trim() || ''
+    const dbSession = conversation.sessionKind === 'db' || Boolean(dbId)
+    const dataFilePath = conversation.dataFilePath?.trim() || ''
+    const knowledgeHost = conversation.knowledgeHostId
+      ? this.deps.knowledge?.get(conversation.knowledgeHostId) ?? null
+      : null
     const dbRow = dbSession && dbId ? this.deps.postgres?.connection(dbId) : undefined
     let dbSchema: Array<{ name: string; columns: string[]; rowCount: number }> | null = null
     if (dbSession && dbId && this.deps.postgres) {

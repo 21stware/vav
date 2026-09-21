@@ -14,7 +14,8 @@ import { FileSessionView } from './FileSessionView'
 import { DataFileWorkspace } from './DataFileWorkspace'
 import { DbWorkspace } from './DbWorkspace'
 import { KnowledgeWorkspace } from './knowledge/KnowledgeWorkspace'
-import { SessionPreviewPane, usePreviewFilePath } from './SessionPreviewPane'
+import { SessionPreviewPane } from './SessionPreviewPane'
+import { usePreviewFilePath } from './usePreviewFilePath'
 import { ScheduleEditor } from './ScheduleEditor'
 import { TimerJobsPanel } from './sidebar/TimerJobsPanel'
 import { SidebarServiceBar } from './sidebar/SidebarServiceBar'
@@ -66,7 +67,9 @@ export function ApplicationsPanel(): React.JSX.Element {
   const detailKey = `${mode}:${conversation?.id ?? ''}:${storageDetail ?? ''}:${deviceId ?? ''}`
 
   useEffect(() => {
-    seedRef.current = { mode, key: detailKey }
+    // Reset the seed key so a focused object created during the mode change
+    // (create-from-file, open file) still opens detail.
+    seedRef.current = { mode, key: '' }
     setPane('list')
     if (mode !== 'devices') setDeviceId(null)
   }, [mode])
@@ -203,7 +206,7 @@ function AppChrome({
     if (store.applicationsVisible) store.toggleApplications()
   }
   return (
-    <header className="app-chrome">
+    <header className="app-chrome" data-testid="app-chrome">
       <div className="app-chrome-leading">
         {onBack ? (
           <Button

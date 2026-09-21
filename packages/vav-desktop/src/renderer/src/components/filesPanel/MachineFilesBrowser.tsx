@@ -43,10 +43,12 @@ function markLoading(dir: string): (current: string[]) => string[] {
 
 export function MachineFilesBrowser({
   root,
-  persistKey
+  persistKey,
+  onFileOpened
 }: {
   root?: string
   persistKey?: string
+  onFileOpened?: () => void
 } = {}): React.JSX.Element {
   const t = useT()
   const machineId = normalizeMachineId(useSessionStore((s) => s.windowMachineId))
@@ -284,7 +286,11 @@ export function MachineFilesBrowser({
           onToggleExpand={toggleExpand}
           onEnterDir={enterDir}
           onColumnPath={setColumnPath}
-          onOpenFile={(filePath) => void openFileSessionFromPath(filePath)}
+          onOpenFile={(filePath) => {
+            void openFileSessionFromPath(filePath).then((opened) => {
+              if (opened) onFileOpened?.()
+            })
+          }}
         />
       )}
     </div>

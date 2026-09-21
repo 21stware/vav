@@ -12,6 +12,7 @@ import { FILE_SESSION_AGENT_MIN_WIDTH } from '@shared/shellMinSize'
 import { useSessionStore } from '../state/sessionStore'
 import { useT } from '../i18n/useT'
 import { basename } from '../lib/path'
+import { workspaceAgentConversationIdFrom } from '../lib/workspaceAgentContext'
 import { useFileSessionHistory } from '../lib/useBoundSessionHistory'
 import { useSidebarFloatMode } from '../lib/sidebarLayout'
 import { startCapturedPointerDrag } from '../lib/capturedPointerDrag'
@@ -64,6 +65,7 @@ export function FileSessionView({
   agentWidthRef.current = agentWidth
 
   const sidebarVisible = useSessionStore((s) => s.sidebarVisible)
+  const workspaceAgentId = useSessionStore(workspaceAgentConversationIdFrom)
   const showFileList = useSessionStore((s) => s.showFileList)
   const fileHistory = useFileSessionHistory(fileId, conversationId, resolved?.path ?? null)
   const sidebarFloating = useSidebarFloatMode()
@@ -172,6 +174,7 @@ export function FileSessionView({
               path={resolved!.path}
               origin="session"
               parentConversationId={conversationId}
+              contextConversationId={hideAgent ? workspaceAgentId : conversationId}
               embedded
               agentPanelOpen={hideAgent ? false : agentOpen}
               onToggleAgentPanel={hideAgent ? undefined : () => setAgentOpen((v) => !v)}

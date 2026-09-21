@@ -91,6 +91,7 @@ type UnsavedIntent = 'close'
 export function FileViewer({
   path: initialPath,
   parentConversationId,
+  contextConversationId = null,
   embedded = false,
   agentPanelOpen: agentPanelOpenProp,
   onToggleAgentPanel,
@@ -102,6 +103,11 @@ export function FileViewer({
   path: string
   origin?: 'dock' | 'session'
   parentConversationId?: string | null
+  /**
+   * Conversation that receives block picks + open-file context.
+   * App column passes the workspace agent so the middle composer sees the pick.
+   */
+  contextConversationId?: string | null
   /** Workspace view: no titlebar drag chrome / no nested agent drawer. */
   embedded?: boolean
   /** Workspace split-pane: agent column open (for toolbar toggle). */
@@ -175,7 +181,7 @@ export function FileViewer({
   const selectConversation = useSessionStore((s) => s.selectConversation)
   const createConversation = useSessionStore((s) => s.createConversation)
   const agentCommentCards = useSessionStore((s) => {
-    const id = agentConversationId ?? parentConversationId ?? null
+    const id = contextConversationId ?? agentConversationId ?? parentConversationId ?? null
     return id ? (s.commentCards[id] ?? EMPTY_COMMENT_CARDS) : EMPTY_COMMENT_CARDS
   })
   const conversations = useSessionStore((s) => s.conversations)
@@ -695,7 +701,8 @@ export function FileViewer({
    * can make Read view/copy-only (pick then requires Edit).
    * Read always blocks *writing* the file (tools + Save).
    */
-  const pickConversationId = agentConversationId ?? parentConversationId ?? null
+  const pickConversationId =
+    contextConversationId ?? agentConversationId ?? parentConversationId ?? null
   const allowReadModeSelection = useSessionStore(
     (s) => s.settings.previewReadModeSelection !== false
   )
@@ -951,6 +958,15 @@ export function FileViewer({
       toolsCollapsed: () => useSessionStore.getState().toolsCollapsed
     })
   }
+
+  // App column: keep the workspace agent pointed at this file without stealing
+  // the file-session identity used for working copies / fileSessions.
+  useEffect(() => {
+    if (!embedded || !filePath || isClipPath(filePath)) return
+    const id = contextConversationId ?? parentConversationId
+    if (!id) return
+    void useSessionStore.getState().attachContextFile(id, filePath)
+  }, [embedded, contextConversationId, parentConversationId, filePath])
 
   // Embedded (FileSessionView / Workspace Peek): bind parent + enclosed-dir tray.
   // Standalone uses ensureFileSession on mount instead.

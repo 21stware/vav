@@ -25,11 +25,10 @@ export function fileSessionSelectHint(
 
 async function revealInMainShell(
   conversationId: string,
-  mode: 'fileSessions' | 'databases',
+  _mode: 'fileSessions' | 'databases',
   hint?: FileSessionSelectHint
 ): Promise<void> {
   const store = useSessionStore.getState()
-  store.setSidebarListMode(mode)
   await store.selectConversation(conversationId, hint ? { fileSession: hint } : undefined)
 }
 

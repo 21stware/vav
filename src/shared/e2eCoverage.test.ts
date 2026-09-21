@@ -25,12 +25,14 @@ const REQUIRED = {
   '工作区功能': [
     'e2e/specs/workspace.spec.ts',
     'e2e/specs/workdir.spec.ts',
+    'e2e/specs/app-column-context.spec.ts',
     'e2e/specs/desktop-vav-server-matrix.spec.ts',
     'e2e/specs/phone-ui.spec.ts',
     'e2e/specs/chrome-extension.spec.ts'
   ],
   '文件查看与选择对话': [
     'e2e/specs/files-preview.spec.ts',
+    'e2e/specs/app-column-context.spec.ts',
     'e2e/specs/desktop-vav-server-matrix.spec.ts',
     'e2e/specs/phone-ui.spec.ts',
     'e2e/specs/chrome-extension.spec.ts',
@@ -161,6 +163,19 @@ const BEHAVIOR = {
     needles: ['files-new-file', 'hello.md', 'launchWorkbench', 'git-subtabs', 'segment-commits']
   },
   '文件查看与选择对话': { file: 'e2e/specs/files-preview.spec.ts', needles: ['file-preview', 'hello.md', 'launchWorkbench'] },
+  '右侧应用列与 Agent 上下文': {
+    file: 'e2e/specs/app-column-context.spec.ts',
+    needles: [
+      'applications-object-detail',
+      'comment-card',
+      'data-file-workspace',
+      'td[data-block-id]',
+      'peekContext',
+      'createDataFromFile',
+      'app-chrome',
+      'launchWorkbench'
+    ]
+  },
   '远程连接': {
     file: 'e2e/specs/phone-remote.spec.ts',
     needles: [
@@ -610,6 +625,12 @@ describe('e2e feature coverage', () => {
     assert.match(session, /settings-nav-connect/)
     assert.match(session, /file-source-select/)
     assert.match(session, /back-to-file-list/)
+    const appColumn = readFileSync(join(root, 'e2e/specs/app-column-context.spec.ts'), 'utf8')
+    assert.match(appColumn, /launchWorkbench/)
+    assert.match(appColumn, /comment-card/)
+    assert.match(appColumn, /data-file-workspace/)
+    assert.match(appColumn, /E2E_SESSION_ID/)
+    assert.match(appColumn, /peekContext/)
     const boot = readFileSync(join(root, 'e2e/specs/boot.spec.ts'), 'utf8')
     assert.match(boot, /launchWorkbench/)
     const sidebarMenu = readFileSync(join(root, 'e2e/specs/sidebar-menu.spec.ts'), 'utf8')

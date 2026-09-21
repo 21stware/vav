@@ -46,6 +46,7 @@ import {
 import { useT } from './i18n/useT'
 import { useAttentionSeen } from './lib/useAttentionSeen'
 import { installSwarmHistoryBridge } from './lib/swarmHistoryBridge'
+import { installE2eBridge } from './lib/e2eBridge'
 type LaunchPhase = 'checking' | 'keychain' | 'booting' | 'ready' | 'no-preload'
 
 /** First paint: stay blank until secrets.status() — don't flash the welcome tour. */
@@ -157,6 +158,7 @@ export default function App(): React.JSX.Element {
       if (event.toast) store.setErrorBanner(event.toast)
     })
     const offInstall = installInstallRunBridge()
+    const offE2e = installE2eBridge()
     return () => {
       offTurn()
       offFs()
@@ -174,6 +176,7 @@ export default function App(): React.JSX.Element {
       offCli()
       offHistory()
       offInstall()
+      offE2e()
     }
   }, [])
 

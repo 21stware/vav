@@ -43,6 +43,8 @@ describe('isWorkspaceSession', () => {
     assert.equal(isWorkspaceSession({ sessionKind: 'workspace', fileId: null }), true)
     assert.equal(isListSession({}), true)
     assert.equal(isAppObjectSession({ sessionKind: 'db' }), true)
+    assert.equal(isAppObjectSession({ fileId: 'a' }), true)
+    assert.equal(isAppObjectSession({ sessionKind: 'file' }), true)
     assert.equal(isAppObjectSession({}), false)
   })
 })

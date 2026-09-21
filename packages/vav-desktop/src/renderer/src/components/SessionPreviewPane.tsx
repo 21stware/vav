@@ -1,7 +1,7 @@
 import { Component, Suspense, lazy, type ErrorInfo, type ReactNode } from 'react'
 import { X } from 'lucide-react'
 import { useSessionStore } from '../state/sessionStore'
-import { useWorkspaceStore } from '../state/workspaceStore'
+import { workspaceAgentConversationIdFrom } from '../lib/workspaceAgentContext'
 import { useT } from '../i18n/useT'
 import { Button, EmptyState } from './ui'
 import { GitDiffPreview, GitPatchPreview } from './GitChangesPanel'
@@ -43,6 +43,7 @@ class PreviewErrorBoundary extends Component<
 export function SessionPreviewPane({ path }: { path: string | null }): React.JSX.Element {
   const t = useT()
   const activeId = useSessionStore((s) => s.activeId)
+  const contextConversationId = useSessionStore(workspaceAgentConversationIdFrom)
   const sessionPreview = useSessionStore((s) => s.sessionPreview)
   const closeFilePreview = useSessionStore((s) => s.setFilePreviewOpen)
   const close = (): void => closeFilePreview(false)
@@ -99,6 +100,7 @@ export function SessionPreviewPane({ path }: { path: string | null }): React.JSX
             path={path}
             origin="session"
             parentConversationId={activeId}
+            contextConversationId={contextConversationId}
             embedded
             onClose={close}
           />
@@ -115,24 +117,4 @@ export function SessionPreviewPane({ path }: { path: string | null }): React.JSX
       <EmptyState title={t('workspace.selectFile')} description={t('workspace.selectFileDesc')} />
     </div>
   )
-}
-
-export function usePreviewFilePath(workdir: string | null): string | null {
-  const activeId = useSessionStore((s) => s.activeId)
-  const selectedPath = useWorkspaceStore((s) =>
-    activeId ? (s.workspaces[activeId]?.selectedPath ?? null) : null
-  )
-  const workspaceRoot = useWorkspaceStore((s) =>
-    activeId ? (s.workspaces[activeId]?.root ?? null) : null
-  )
-  const workspaceDirs = useWorkspaceStore((s) =>
-    activeId ? s.workspaces[activeId]?.dirs : undefined
-  )
-  if (!selectedPath) return null
-  if (selectedPath === workspaceRoot || (workdir && selectedPath === workdir)) return null
-  for (const entries of Object.values(workspaceDirs ?? {})) {
-    const hit = entries.find((e) => e.path === selectedPath)
-    if (hit) return hit.isDirectory ? null : selectedPath
-  }
-  return selectedPath
 }

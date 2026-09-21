@@ -6,6 +6,7 @@ import { useT } from '../../i18n/useT'
 import { useSidebarFloatMode } from '../../lib/sidebarLayout'
 import { startCapturedPointerDrag } from '../../lib/capturedPointerDrag'
 import { reportFileSessionAgentOpen } from '../../lib/useWindowMinSize'
+import { syncWorkspaceAgentFocusedPath } from '../../lib/workspaceAgentContext'
 import { useSessionStore } from '../../state/sessionStore'
 import { Button, EmptyState } from '../ui'
 import { SessionDetail } from '../SessionDetail'
@@ -72,6 +73,11 @@ export function KnowledgeWorkspace({
       void load()
     })
   }, [load])
+
+  useEffect(() => {
+    if (!hideAgent) return
+    syncWorkspaceAgentFocusedPath(host?.storedPath ?? host?.sourcePath)
+  }, [hideAgent, host?.storedPath, host?.sourcePath])
 
   const startResize = useCallback((event: ReactPointerEvent<HTMLElement>): void => {
     const startX = event.clientX

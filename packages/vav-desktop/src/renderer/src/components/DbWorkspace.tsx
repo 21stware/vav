@@ -6,6 +6,7 @@ import type { SqliteDatabaseInfo } from '@shared/ipc'
 import { FILE_SESSION_AGENT_MIN_WIDTH } from '@shared/shellMinSize'
 import { useT } from '../i18n/useT'
 import { applyBlockPick, selectedBlockIdsForPath } from '../lib/applyBlockPick'
+import { appColumnPickConversationId } from '../lib/workspaceAgentContext'
 import { useSidebarFloatMode } from '../lib/sidebarLayout'
 import { startCapturedPointerDrag } from '../lib/capturedPointerDrag'
 import { reportFileSessionAgentOpen } from '../lib/useWindowMinSize'
@@ -42,7 +43,8 @@ export function DbWorkspace({
   const activeDbTable = useSessionStore((s) => s.activeDbTable)
   const setActiveDbTable = useSessionStore((s) => s.setActiveDbTable)
   const setDbSchema = useSessionStore((s) => s.setDbSchema)
-  const commentTick = useSessionStore((s) => s.commentCards[conversationId]?.length ?? 0)
+  const pickConversationId = appColumnPickConversationId(hideAgent, conversationId)
+  const commentTick = useSessionStore((s) => s.commentCards[pickConversationId]?.length ?? 0)
   void commentTick
   const conversationDbId = useSessionStore(
     (s) => s.conversations.find((row) => row.id === conversationId)?.dbConnectionId ?? null
@@ -178,7 +180,7 @@ export function DbWorkspace({
 
   const connectionLabel = stableDatabaseTitle(connection, t('db.untitled'))
   const sourcePath = activeDbTable ? `${connectionLabel}/${activeDbTable}` : connectionLabel
-  const selectedIds = selectedBlockIdsForPath(conversationId, sourcePath)
+  const selectedIds = selectedBlockIdsForPath(pickConversationId, sourcePath)
   const showConfig = editingConnection
   const showTable = !showConfig && !!schema && schema.tables.length > 0
   const showEmpty = !showConfig && !!schema && schema.tables.length === 0
@@ -262,7 +264,7 @@ export function DbWorkspace({
                 if (!hint) return
                 const table = activeDbTable || schema.tables[0]?.name || ''
                 applyBlockPick({
-                  conversationId,
+                  conversationId: pickConversationId,
                   sourcePath,
                   badge: connectionLabel,
                   block: {
