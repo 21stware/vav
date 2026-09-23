@@ -4,6 +4,8 @@ User-facing changes by release. Unreleased work lives at the top until the next 
 
 ## Unreleased
 
+## 1.32.0
+
 Settings → Workspace can choose the app data folder (conversations and app info; default `~/.vav`, including iCloud) and the temporary-workspace folder (system temp by default). A custom temp folder is never cleaned by the OS; both rows show how much disk they use. Changing app data requires a restart.
 
 In an isolated session window, ⌘N (Ctrl+N) starts a new session in that window. ⌘⇧N (Ctrl+Shift+N) opens another isolated window. The title bar has a new-session button.
