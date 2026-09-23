@@ -7,7 +7,7 @@ out/
 packages/vav-chrome-extension/extension/phone/
 release/
 release-sidecars/
-dist/
+/dist/
 build/.electron-brand-stamp
 build/brand-pack.json
 build/file-icons/preview.png

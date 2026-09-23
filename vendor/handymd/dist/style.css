@@ -1,0 +1,362 @@
+/* handymd —— Bear 风格默认主题。所有颜色/字号走 CSS 变量，方便覆盖。 */
+
+.handymd {
+  --hm-font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue",
+    "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  --hm-mono: "SF Mono", SFMono-Regular, ui-monospace, Menlo, Consolas, monospace;
+  --hm-fg: #3d3a35;
+  --hm-fg-dim: #a8a29a;
+  --hm-marker: #c5beb2;
+  --hm-accent: #c9603c;
+  --hm-code-fg: #b8433c;
+  --hm-code-bg: rgba(135, 131, 120, 0.13);
+  --hm-codeblock-bg: #f6f3ee;
+  --hm-quote-border: #ddd6ca;
+  --hm-quote-fg: #6f6a60;
+  --hm-tag-bg: #efe9df;
+  --hm-tag-fg: #8a7d68;
+  --hm-hr: #e2dccf;
+  --hm-table-border: #e2dccf;
+  --hm-table-header-bg: rgba(135, 131, 120, 0.08);
+  --hm-selection: rgba(201, 96, 60, 0.18);
+}
+
+.handymd .ProseMirror {
+  font-family: var(--hm-font);
+  color: var(--hm-fg);
+  font-size: 16px;
+  line-height: 1.75;
+  outline: none;
+  caret-color: var(--hm-accent);
+  /* 左侧留出标题层级图标的 gutter */
+  padding: 24px 32px 24px 52px;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+.handymd .ProseMirror ::selection,
+.handymd .ProseMirror::selection {
+  background: var(--hm-selection);
+}
+
+.handymd .hm-block {
+  min-height: 1.75em;
+}
+
+/* ---- Concealed：标记符隐藏。font-size:0 而非 display:none，
+       光标测量与点击定位仍然正确。 ---- */
+.handymd .hm-concealed {
+  font-size: 0 !important;
+  letter-spacing: 0 !important;
+}
+
+/* Revealed：标记符可见但弱化 */
+.handymd .hm-marker {
+  color: var(--hm-marker);
+}
+
+/* ---- 行内语义样式（Concealed / Revealed 均保留） ---- */
+.handymd .hm-strong {
+  font-weight: 700;
+}
+.handymd .hm-em {
+  font-style: italic;
+}
+.handymd .hm-strike {
+  text-decoration: line-through;
+  color: var(--hm-fg-dim);
+}
+/* 高亮笔 ==mark== */
+.handymd .hm-mark {
+  background: color-mix(in srgb, var(--hm-accent) 22%, transparent);
+  border-radius: 2px;
+  padding: 0 2px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+/* 空标题末尾空格：保留字号给光标落脚，颜色透明不露源码 */
+.handymd .hm-caret-pad {
+  font-size: inherit !important;
+  letter-spacing: normal !important;
+  color: transparent;
+}
+.handymd .hm-code {
+  font-family: var(--hm-mono);
+  font-size: 0.88em;
+  color: var(--hm-code-fg);
+  background: var(--hm-code-bg);
+  border-radius: 4px;
+  padding: 1px 4px;
+}
+.handymd .hm-link {
+  color: var(--hm-accent);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--hm-accent) 45%, transparent);
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.handymd .hm-image-alt {
+  color: var(--hm-accent);
+}
+.handymd img.hm-image {
+  max-width: 100%;
+  border-radius: 8px;
+  display: block;
+  margin: 4px 0;
+}
+.handymd .hm-tag {
+  background: var(--hm-tag-bg);
+  color: var(--hm-tag-fg);
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-size: 0.85em;
+}
+
+/* ---- 块级样式 ---- */
+.handymd .hm-heading {
+  font-weight: 700;
+  line-height: 1.4;
+  margin: 0.45em 0 0.15em;
+  position: relative;
+}
+
+/* 标题层级图标：绝对定位在文本前侧 gutter，不挤占标题行文本 */
+.handymd .hm-heading-badge {
+  position: absolute;
+  left: -34px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 18px;
+  height: 18px;
+  color: var(--hm-marker);
+  font-size: 16px;
+  line-height: 1;
+  user-select: none;
+  pointer-events: none;
+}
+.handymd .hm-heading-badge svg {
+  display: block;
+}
+.handymd .hm-h1 { font-size: 1.7em; }
+.handymd .hm-h2 { font-size: 1.42em; }
+.handymd .hm-h3 { font-size: 1.2em; }
+.handymd .hm-h4,
+.handymd .hm-h5,
+.handymd .hm-h6 { font-size: 1.05em; }
+
+.handymd .hm-quote {
+  border-left: 3px solid var(--hm-quote-border);
+  padding-left: 12px;
+  color: var(--hm-quote-fg);
+}
+
+.handymd .hm-todo-checked {
+  color: var(--hm-fg-dim);
+  text-decoration: line-through;
+}
+.handymd input.hm-checkbox {
+  appearance: auto;
+  accent-color: var(--hm-accent);
+  width: 15px;
+  height: 15px;
+  margin: 0 8px 0 0;
+  vertical-align: -2px;
+  cursor: pointer;
+}
+.handymd .hm-bullet-dot {
+  color: var(--hm-accent);
+  font-weight: 700;
+  margin-right: 8px;
+}
+.handymd .hm-list-num {
+  color: var(--hm-accent);
+}
+/* Leading indent spaces → fixed nest gutter (width set inline in rem). */
+.handymd .hm-list-indent {
+  display: inline-block;
+  font-size: 0 !important;
+  letter-spacing: 0 !important;
+  line-height: 0;
+  height: 1rem;
+  vertical-align: text-top;
+  overflow: hidden;
+  white-space: pre;
+}
+
+/* 代码块：围栏行 + 代码行共用底色，视觉上连成一个面板 */
+.handymd .hm-code-line,
+.handymd .hm-fence-line {
+  font-family: var(--hm-mono);
+  font-size: 0.88em;
+  line-height: 1.6;
+  background: var(--hm-codeblock-bg);
+  padding-left: 14px;
+  padding-right: 14px;
+}
+.handymd .hm-fence-open {
+  border-radius: 8px 8px 0 0;
+  padding-top: 6px;
+}
+.handymd .hm-fence-close {
+  border-radius: 0 0 8px 8px;
+  padding-bottom: 6px;
+}
+.handymd .hm-code-lang {
+  color: var(--hm-fg-dim);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  user-select: none;
+}
+
+/* ---- Diagram block（```mermaid）：Concealed 时源码整块隐藏 ----
+   开行承载图表 widget；体行 / 闭行折叠为零高（源码仍在文档里，序列化无损）。
+   Revealed（光标进入区域）时三种行都回到代码块样式。 */
+.handymd .hm-block.hm-diagram-hidden {
+  min-height: 0;
+  height: 0;
+  line-height: 0;
+  overflow: hidden;
+}
+.handymd .hm-block.hm-diagram-host {
+  min-height: 0;
+  line-height: 0;
+}
+.handymd .hm-diagram {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 2.4em;
+  line-height: 1.5;
+  background: var(--hm-codeblock-bg);
+  border-radius: 8px;
+  padding: 14px;
+  margin: 4px 0;
+  cursor: pointer; /* 点击进入源码编辑 */
+  user-select: none;
+  overflow-x: auto;
+}
+.handymd .hm-diagram svg {
+  max-width: 100%;
+  height: auto;
+}
+.handymd .hm-diagram-loading,
+.handymd .hm-diagram-empty {
+  color: var(--hm-fg-dim);
+  font-family: var(--hm-mono);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.handymd .hm-diagram-empty {
+  border: 1px dashed var(--hm-quote-border);
+  background: transparent;
+}
+.handymd .hm-diagram-error {
+  color: var(--hm-code-fg);
+  font-family: var(--hm-mono);
+  font-size: 12px;
+  white-space: pre-wrap;
+  justify-content: flex-start;
+  text-align: left;
+}
+
+/* 分隔线 */
+.handymd .hm-hr-line {
+  position: relative;
+}
+.handymd hr.hm-hr {
+  border: none;
+  border-top: 1px solid var(--hm-hr);
+  margin: 0.7em 0;
+  display: inline-block;
+  width: 100%;
+}
+
+/* 表格：Concealed 用 widget（.hm-table-visual）画列；源码行折叠。
+   每行是独立 block，边框必须拼成「一张表」——禁止行间空隙与双边线。 */
+.handymd .hm-table.hm-table-rendered {
+  position: relative;
+  min-height: 0 !important;
+  line-height: 0;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: none;
+}
+.handymd .hm-table.hm-table-first,
+.handymd .hm-table.hm-table-only {
+  margin-top: 0.75em !important;
+}
+.handymd .hm-table.hm-table-last,
+.handymd .hm-table.hm-table-only {
+  margin-bottom: 0.75em !important;
+}
+.handymd .hm-table-visual {
+  display: flex;
+  align-items: stretch;
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 1.75em;
+  line-height: 1.75;
+  padding: 0;
+  margin: 0;
+  /* 单线网格：上边叠进上一行底边，避免双线 / 镂空层 */
+  margin-top: -1px;
+  border: 1px solid var(--hm-table-border);
+  background: transparent;
+  border-radius: 0;
+  cursor: text;
+  user-select: none;
+}
+.handymd .hm-table-first .hm-table-visual,
+.handymd .hm-table-only .hm-table-visual {
+  margin-top: 0;
+  border-top-left-radius: 8px;
+  border-top-right-radius: 8px;
+}
+.handymd .hm-table-last .hm-table-visual,
+.handymd .hm-table-only .hm-table-visual {
+  border-bottom-left-radius: 8px;
+  border-bottom-right-radius: 8px;
+}
+.handymd .hm-table-visual-header {
+  font-weight: 600;
+  background: var(--hm-table-header-bg);
+}
+.handymd .hm-table-visual .hm-table-cell {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 8px 12px;
+  box-sizing: border-box;
+  overflow-wrap: anywhere;
+}
+.handymd .hm-table-visual .hm-table-cell[data-col]:not([data-col='0']) {
+  border-left: 1px solid var(--hm-table-border);
+}
+/* 源码态（光标在行内）：普通文本行，管道符弱化可见 */
+.handymd .hm-table.hm-table-source {
+  min-height: 1.75em;
+  line-height: 1.75;
+  font-family: var(--hm-mono);
+  font-size: 0.92em;
+}
+/* 分隔行：彻底从布局中拿走，否则会在表头与首行间顶出空隙 */
+.handymd .hm-table.hm-table-sep {
+  display: block !important;
+  height: 0 !important;
+  min-height: 0 !important;
+  max-height: 0 !important;
+  line-height: 0 !important;
+  overflow: hidden !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  border: none !important;
+  opacity: 0;
+  pointer-events: none;
+  font-size: 0 !important;
+}
+
+/* 只读态光标 */
+.handymd .ProseMirror[contenteditable="false"] {
+  caret-color: transparent;
+}

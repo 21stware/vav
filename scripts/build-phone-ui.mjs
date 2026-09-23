@@ -31,7 +31,8 @@ const STUB_MODULES = new Set([
   'xlsx',
   '@aiden0z/pptx-renderer',
   'electron',
-  'node-pty'
+  'node-pty',
+  'shiki'
 ])
 
 await build({
@@ -54,7 +55,8 @@ await build({
   logLevel: process.env.VAV_PACK_QUIET === '1' ? 'warning' : 'info',
   alias: {
     '@shared': join(root, 'src', 'shared'),
-    '@': join(root, 'packages/vav-desktop/src/renderer/src')
+    '@': join(root, 'packages/vav-desktop/src/renderer/src'),
+    shiki: join(root, 'packages/vav-desktop/src/renderer/src/lib/shikiStub.ts')
   },
   loader: {
     '.css': 'css',
@@ -95,6 +97,7 @@ await build({
             export const utils = { decode_range: () => ({ s: { r: 0, c: 0 }, e: { r: 0, c: 0 } }) };
             export const read = () => ({ SheetNames: [], Sheets: {} });
             export const write = fn;
+            export const createHighlighter = fn;
           `,
           loader: 'js'
         }))
