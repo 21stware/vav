@@ -39,9 +39,13 @@ export type IpcHandleHost = {
     channel: string,
     listener: (event: unknown, ...args: unknown[]) => unknown
   ) => unknown
+  on?: (
+    channel: string,
+    listener: (event: unknown, ...args: unknown[]) => unknown
+  ) => unknown
 }
 
-/** Wrap `ipcMain.handle` so guest frames cannot invoke privileged channels. */
+/** Wrap `ipcMain.handle` / `ipcMain.on` so guest frames cannot invoke privileged channels. */
 export function installTrustedIpcGuard(
   ipcMain: IpcHandleHost,
   isAppRendererUrl: (url: string) => boolean
@@ -63,4 +67,18 @@ export function installTrustedIpcGuard(
         throw err
       }
     })) as IpcHandleHost['handle']
+
+  if (typeof ipcMain.on !== 'function') return
+  const originalOn = ipcMain.on.bind(ipcMain)
+  ipcMain.on = ((
+    channel: string,
+    listener: (event: unknown, ...args: unknown[]) => unknown
+  ) =>
+    originalOn(channel, (event, ...args) => {
+      if (!isTrustedIpcSender(event as IpcSenderLike, isAppRendererUrl)) {
+        console.error(`[ipc] blocked untrusted sender for ${channel}`)
+        return
+      }
+      return listener(event, ...args)
+    })) as IpcHandleHost['on']
 }

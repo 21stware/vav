@@ -196,6 +196,10 @@ test('Workspace, Notifications, About, Usage, Command Line, and File Association
     await expect(settings.locator('[data-testid="settings-default-dir"]')).toHaveValue(
       harness.workspace
     )
+    await expect(settings.locator('[data-testid="settings-app-data"]')).not.toHaveValue('')
+    await expect(settings.locator('[data-testid="settings-app-data-size"]')).toBeVisible()
+    await expect(settings.locator('[data-testid="settings-temp-dir"]')).not.toHaveValue('')
+    await expect(settings.locator('[data-testid="settings-temp-dir-size"]')).toBeVisible()
     await settings.locator('[data-testid="settings-nav-connectors"]').click()
     await expect(settings.locator('[data-testid="settings-connectors"]')).toBeVisible()
     await expect(settings.locator('[data-testid="settings-connector-login-github"]')).toBeVisible()

@@ -2,15 +2,17 @@
 
 Requires **Node 22+** (CI and `@21stware/vav-server` use 22). macOS or Windows for a full desktop build; unit tests run on Linux too.
 
+Use **npm** for install and the lockfile (`package-lock.json`). `bun` is only a runner for the `dev:vav-*` scripts; do not commit `bun.lock`.
+
 ```bash
 npm ci
-npm test              # globbed unit tests (skips *.live.test.ts)
+npm test              # globbed unit tests (skips *.live.test.ts and *.browser.test.ts)
 npm run typecheck
 npm run build         # typecheck + electron-vite
 npm run build:bundle  # electron-vite only (used by release packaging)
 ```
 
-`npm test` discovers `src/**/*.test.ts` and `scripts/**/*.test.mjs`. Network-backed files (`*.live.test.ts`) are opt-in: `npm run test:live`. Playwright Electron e2e is local-only (`npm run test:e2e`).
+`npm test` discovers `src/**/*.test.ts` and `scripts/**/*.test.mjs`. Network-backed files (`*.live.test.ts`) are opt-in: `npm run test:live`. Chrome browser files (`*.browser.test.ts`) are opt-in locally (`npm run test:browser`) because they launch Chrome and use the desktop discover ports; CI still runs them. Playwright Electron e2e is local-only (`npm run test:e2e`).
 
 Do not add new tests only to a hardcoded list — the runner globs.
 

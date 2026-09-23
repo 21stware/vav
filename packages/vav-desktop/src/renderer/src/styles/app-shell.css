@@ -112,12 +112,26 @@
   /* Vertical clearance for windows whose leading edge is a sidebar rather than
      a title bar, so the buttons never land on a row. */
   --chrome-gutter: 42px;
+  /* Effective lead for the first content chrome. Rail mode subtracts the
+     capsule so leftover space is not reserved twice. */
+  --chrome-lead-content: var(--chrome-lead);
+  --applications-column-pad: 8px;
 
   /* Docked list column width (matches .sidebar). */
   --sidebar-width: 232px;
   --sidebar-min-width: 190px;
-  --agent-min-width: 360px;
+  /* Collapsed capsule: inner width + leading/trailing inset (in-flow, not overlay). */
+  --sidebar-rail-width: 48px;
+  --sidebar-rail-inset: 8px;
+  --sidebar-rail-reserved: calc(
+    var(--sidebar-rail-inset) + var(--sidebar-rail-width) + var(--sidebar-rail-inset)
+  );
+  --agent-min-width: 400px;
   --preview-min-width: 320px;
+  /* Preview floor + `.applications-column` pad (both sides). */
+  --applications-min-width: 336px;
+  /* Preferred app-column size. The used width can be smaller — see `.body-split`. */
+  --applications-width: 380px;
   --file-agent-min-width: 280px;
 
   /* Motion. The built-in CSS easings are too weak to read as deliberate, so
@@ -245,8 +259,6 @@ html[data-summoning] .tools-body {
   .inline-review,
   .update-corner,
   .db-preview-swap,
-  .db-connect-body:not(.is-embedded) .db-connect-card,
-  .schedule-editor-body .schedule-editor-card,
   .agents-add-menu {
     transform: none !important;
   }
@@ -427,7 +439,10 @@ select {
 .app-shell {
   display: flex;
   flex-direction: column;
+  width: 100%;
   height: 100%;
+  min-width: 0;
+  overflow: hidden;
   contain: layout style;
   background:
     radial-gradient(120% 80% at 8% -10%, var(--accent-veil), transparent 62%),
@@ -452,7 +467,9 @@ html[data-resizing='true'] *::after {
 html[data-resizing='true'] .detail::before,
 html[data-resizing='true'] .detail::after,
 html[data-resizing='true'] .settings-main::before,
-html[data-resizing='true'] .settings-main::after {
+html[data-resizing='true'] .settings-main::after,
+html[data-resizing='true'] .applications-column::before,
+html[data-resizing='true'] .applications-column::after {
   content: none;
 }
 
@@ -471,9 +488,17 @@ html[data-resizing='true'] .body-split {
 
 /* While resizing, main process pauses vibrancy; keep sidebar solid here too. */
 html[data-resizing='true'] .sidebar-column,
-html[data-resizing='true'] .applications-column,
 html[data-resizing='true'] .app-shell .body-split > .sidebar:not(.floating) {
   background: var(--bg-window);
+}
+
+html[data-resizing='true'] .workbench-home {
+  background: var(--bg-content);
+}
+
+/* The panel itself is already opaque — no repaint guard needed on the column. */
+html[data-resizing='true'] .applications-panel {
+  transition: none;
 }
 
 html[data-resizing='true'] .tools-body,
@@ -519,10 +544,12 @@ html[data-resizing='true'] webview {
   position: relative; /* anchor for .sidebar-col-resizer */
   display: flex;
   flex-direction: column;
-  flex: 0 0 auto;
+  /* Preferred width is the flex base. Shrink is allowed so a narrower shell
+     never pushes the split past the viewport; the app column yields first. */
+  flex: 0 1 auto;
   width: var(--sidebar-width);
-  min-width: var(--sidebar-min-width);
-  max-width: 420px;
+  min-width: 0;
+  max-width: min(420px, 100%);
   min-height: 0;
   align-self: stretch;
   /* Win/Linux: solid. macOS: clear so BrowserWindow vibrancy shows through. */
@@ -535,9 +562,114 @@ html[data-resizing='true'] webview {
   display: none !important;
 }
 
+/*
+ * Collapsed list: stay in the flex split so the agent column starts after
+ * the capsule. The reserved strip shares the agent plate — same fill, no
+ * rule — while the floating pill sits on that wash.
+ */
+.sidebar-column.is-rail {
+  position: relative;
+  z-index: 2;
+  top: auto;
+  left: auto;
+  bottom: auto;
+  flex: 0 1 auto;
+  align-self: stretch;
+  box-sizing: border-box;
+  width: var(--sidebar-rail-reserved);
+  min-width: 0;
+  max-width: min(var(--sidebar-rail-reserved), 100%);
+  height: auto;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  overflow: visible;
+  background: var(--bg-content);
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  -webkit-app-region: no-drag;
+}
+
+.sidebar-rail-pill {
+  position: relative;
+  z-index: 1;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: var(--sidebar-rail-width);
+  margin: calc(var(--chrome-gutter) + 10px) var(--sidebar-rail-inset) 8px;
+  padding: 6px 0;
+  border-radius: 999px;
+  background: var(--bg-sunken);
+  border: 0.5px solid var(--border);
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  -webkit-app-region: no-drag;
+}
+
+.sidebar-rail-pill > .sidebar {
+  flex: 0 0 auto;
+  min-width: 0;
+  max-width: none;
+  width: 100%;
+}
+
+.sidebar-column:not(.is-rail) .sidebar-nav-history {
+  display: none;
+}
+
+.sidebar-column.is-rail .titlebar.sidebar-chrome {
+  display: none;
+}
+
+.sidebar-column.is-rail .sidebar-primary-nav {
+  align-items: center;
+  padding: 2px 0;
+}
+
+.sidebar-column.is-rail .sidebar-nav-item {
+  box-sizing: border-box;
+  width: 36px;
+  height: 36px;
+  min-width: 36px;
+  max-width: 36px;
+  flex: 0 0 36px;
+  justify-content: center;
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
+  border-radius: 999px;
+}
+
+.sidebar-column.is-rail .sidebar-nav-item > span,
+.sidebar-column.is-rail .sidebar-search,
+.sidebar-column.is-rail .sidebar-rule,
+.sidebar-column.is-rail .sidebar-list,
+.sidebar-column.is-rail .update-corner {
+  display: none;
+}
+
+.sidebar-column.is-rail .sidebar-foot {
+  padding: 4px 0 0;
+  align-items: center;
+  border-top: 0;
+}
+
+.sidebar-column.is-rail .sidebar-nav-devices {
+  display: flex;
+  justify-content: center;
+  width: auto;
+  min-width: 36px;
+  flex: 0 0 auto;
+}
+
 .sidebar-column > .sidebar {
   flex: 1 1 auto;
   min-height: 0;
+  min-width: 0;
   width: 100%;
   max-width: none;
 }
@@ -576,8 +708,12 @@ html[data-resizing='true'] webview {
   position: relative;
   display: flex;
   flex-direction: column;
-  flex: 1 1 auto;
-  min-width: var(--agent-min-width);
+  /* Floor is the flex base, not a min-width that can overflow the shell.
+     Extra space lands here; a tight shell shrinks this only after the app
+     column (much higher flex-shrink) has given up its preferred width. */
+  flex: 1 1 var(--agent-min-width);
+  min-width: 0;
+  max-width: 100%;
   min-height: 0;
   align-self: stretch;
 }
@@ -601,19 +737,482 @@ html[data-resizing='true'] webview {
 
 .applications-column {
   position: relative;
+  isolation: isolate;
   display: flex;
   flex-direction: column;
-  flex: 0 0 auto;
-  min-width: 320px;
-  max-width: 720px;
+  /* Preferred width (`--applications-width`) is the flex base. Shrink factor
+     is far above the agent and the sidebar, so opening the agent or any
+     sibling/container change reclaims space immediately — no window resize. */
+  flex: 0 100 auto;
+  width: var(--applications-width);
+  min-width: 0;
+  max-width: 100%;
   min-height: 0;
   align-self: stretch;
-  background: transparent;
-  box-shadow: none;
+  /* Same plate as the agent `.detail` — the rounded card sits on this wash. */
+  background: var(--bg-content);
+  padding: var(--applications-column-pad);
+  box-sizing: border-box;
 }
 
 .applications-column[hidden] {
   display: none !important;
+}
+
+.workbench-home {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0%;
+  min-width: 0;
+  max-width: 100%;
+  min-height: 0;
+  align-self: stretch;
+  background: var(--bg-content);
+  box-shadow: inset 0.5px 0 0 var(--border);
+}
+
+.workbench-home[hidden] {
+  display: none !important;
+}
+
+.workbench-home-chrome {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  min-height: var(--toolbar-height);
+  padding: 0 12px;
+}
+
+.workbench-home-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 36px 32px 48px;
+  box-sizing: border-box;
+}
+
+.workbench-home[data-empty='true'] .workbench-home-body {
+  padding-top: 28px;
+  padding-bottom: 28px;
+  /* Blank field around the centered stack. The body is the scrollport, so the
+     drag region has to be this element, not a descendant. */
+  -webkit-app-region: drag;
+}
+
+.workbench-home[data-empty='true'] .workbench-home-stage {
+  -webkit-app-region: no-drag;
+}
+
+.workbench-home[data-empty='true'] .workbench-home-body::before,
+.workbench-home[data-empty='true'] .workbench-home-body::after {
+  content: '';
+  align-self: stretch;
+  pointer-events: auto;
+  -webkit-app-region: drag;
+  min-height: 0;
+}
+
+.workbench-home[data-empty='true'] .workbench-home-body::before {
+  flex: 0.48 1 0;
+}
+
+.workbench-home[data-empty='true'] .workbench-home-body::after {
+  flex: 0.52 1 0;
+}
+
+.workbench-home-stage {
+  width: min(640px, 100%);
+  flex: 0 0 auto;
+}
+
+/* Sections build up in a short cascade — hero first, sessions last. */
+.workbench-home-stage > * {
+  animation: empty-in 320ms var(--ease-out) both;
+}
+
+.workbench-home-stage > *:nth-child(2) {
+  animation-delay: 50ms;
+}
+
+.workbench-home-stage > *:nth-child(3) {
+  animation-delay: 100ms;
+}
+
+.workbench-home-stage > *:nth-child(4) {
+  animation-delay: 150ms;
+}
+
+:root[data-reduce-motion='true'] .workbench-home-stage > *,
+html[data-summoning] .workbench-home-stage > * {
+  animation: none;
+}
+
+.workbench-home-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  margin: 0 0 36px;
+  color: var(--text);
+}
+
+.workbench-home-mark {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 64px;
+  height: 64px;
+  margin-bottom: 14px;
+  color: var(--text);
+}
+
+/* A breath of accent behind the mark — the hero's only colour field. */
+.workbench-home-mark::before {
+  content: '';
+  position: absolute;
+  inset: -30px;
+  border-radius: 50%;
+  background: radial-gradient(50% 50% at 50% 50%, var(--accent-soft), transparent 72%);
+  pointer-events: none;
+}
+
+.workbench-home-mark .agent-brand-mark {
+  background: transparent;
+  box-shadow: none;
+}
+
+/* Ground the glyph plate so it reads as an object, not a pasted bitmap. */
+.workbench-home-mark .agent-brand-mark img {
+  filter: drop-shadow(0 5px 14px rgba(20, 20, 28, 0.16));
+}
+
+:root[data-theme='dark'] .workbench-home-mark .agent-brand-mark img {
+  filter: drop-shadow(0 5px 14px rgba(0, 0, 0, 0.5));
+}
+
+.workbench-home-user {
+  margin: 2px 0 0;
+  max-width: 22em;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: -0.015em;
+  line-height: 1.35;
+}
+
+.workbench-home-hero .workbench-home-stats {
+  margin-top: 22px;
+}
+
+.workbench-home-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  width: 100%;
+}
+
+@media (max-width: 520px) {
+  .workbench-home-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.workbench-home-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-height: 86px;
+  padding: 11px 12px 10px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-raised);
+  box-shadow: var(--shadow-card);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color var(--dur-hover) ease,
+    box-shadow var(--dur-hover) ease,
+    transform var(--dur-press) var(--ease-out);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .workbench-home-stat:hover {
+    border-color: var(--border-strong);
+    box-shadow: var(--shadow-raised);
+    transform: translateY(-1px);
+  }
+}
+
+.workbench-home-stat:active {
+  transform: scale(0.97);
+  box-shadow: var(--shadow-card);
+}
+
+.workbench-home-stat-label {
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-weight: 550;
+  letter-spacing: -0.01em;
+}
+
+.workbench-home-stat-value {
+  font-size: 19px;
+  font-weight: 620;
+  letter-spacing: -0.03em;
+  line-height: 1.15;
+  font-variant-numeric: tabular-nums;
+}
+
+.workbench-home-stat-meta {
+  color: var(--text-tertiary);
+  font-size: 11px;
+  letter-spacing: -0.01em;
+}
+
+.workbench-home-stat-bar {
+  display: block;
+  width: 100%;
+  height: 3px;
+  margin-top: auto;
+  border-radius: 999px;
+  background: var(--bg-sunken);
+  overflow: hidden;
+}
+
+.workbench-home-stat-bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+}
+
+.workbench-home-stat[data-exhausted='true'] .workbench-home-stat-bar-fill {
+  background: var(--danger);
+}
+
+.workbench-home-spark {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  width: 100%;
+  height: 18px;
+  margin-top: auto;
+}
+
+.workbench-home-spark-bar {
+  flex: 1 1 0;
+  min-width: 0;
+  border-radius: 1.5px;
+  background: color-mix(in srgb, var(--accent) 72%, var(--text));
+  opacity: 0.55;
+}
+
+.workbench-home-title {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 680;
+  letter-spacing: -0.045em;
+  line-height: 1.1;
+}
+
+.workbench-home-desc {
+  margin: 8px 0 0;
+  max-width: 22em;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.workbench-home-nav {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 8px;
+}
+
+.workbench-home-nav-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  min-height: 84px;
+  padding: 12px 12px 11px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-raised);
+  box-shadow: var(--shadow-card);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color var(--dur-hover) ease,
+    box-shadow var(--dur-hover) ease,
+    transform var(--dur-press) var(--ease-out);
+}
+
+/* Icon well: a soft inset tile so the glyph sits in material, not on it. */
+.workbench-home-nav-icon {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: linear-gradient(180deg, var(--bg-content), var(--bg-sunken));
+  box-shadow: inset 0 0 0 1px var(--border);
+  color: var(--text-secondary);
+  transition:
+    background var(--dur-hover) ease,
+    color var(--dur-hover) ease;
+}
+
+.workbench-home-nav-item.is-primary .workbench-home-nav-icon {
+  background: var(--accent);
+  box-shadow: none;
+  color: var(--accent-fg);
+}
+
+.workbench-home-nav-item > span:last-child {
+  font-size: 13px;
+  font-weight: 550;
+  letter-spacing: -0.015em;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .workbench-home-nav-item:hover {
+    border-color: var(--border-strong);
+    box-shadow: var(--shadow-raised);
+    transform: translateY(-1px);
+  }
+
+  .workbench-home-nav-item:hover .workbench-home-nav-icon {
+    color: var(--text);
+  }
+
+  .workbench-home-nav-item.is-primary:hover .workbench-home-nav-icon {
+    background: var(--accent-hover);
+    color: var(--accent-fg);
+  }
+}
+
+.workbench-home-nav-item:active {
+  transform: scale(0.97);
+  box-shadow: var(--shadow-card);
+}
+
+.workbench-home-composer {
+  margin-top: 40px;
+  margin-bottom: 40px;
+  width: 100%;
+}
+
+.workbench-home-composer .composer,
+.workbench-home-composer .composer-context {
+  width: 100%;
+  max-width: none;
+  padding: 0;
+}
+
+.workbench-home-composer .composer-workspace-btn {
+  max-width: 160px;
+}
+
+.workbench-home-composer .composer-workspace-btn .session-run-level {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workbench-home-sessions {
+  margin-top: 0;
+}
+
+.workbench-home-sessions-empty {
+  margin: 0;
+  padding: 8px 10px;
+  color: var(--text-tertiary);
+  font-size: 13px;
+}
+
+.workbench-home-sessions-title {
+  margin: 0 0 8px;
+  padding: 0 10px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 550;
+  letter-spacing: -0.01em;
+}
+
+.workbench-home-session-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.workbench-home-session {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 36px;
+  padding: 6px 10px 6px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background var(--dur-hover) ease,
+    transform var(--dur-press) var(--ease-out);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .workbench-home-session:hover {
+    background: var(--bg-hover);
+  }
+}
+
+.workbench-home-session:active {
+  transform: scale(0.97);
+}
+
+.workbench-home-session-icon {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: linear-gradient(180deg, var(--bg-raised), var(--bg-sunken));
+  box-shadow: inset 0 0 0 1px var(--border);
+  color: var(--text-tertiary);
+  transition: color var(--dur-hover) ease;
+}
+
+.workbench-home-session:hover .workbench-home-session-icon {
+  color: var(--text-secondary);
+}
+
+.workbench-home-session-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.workbench-home-session-meta {
+  flex: 0 0 auto;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
 
 .applications-column > .applications-panel {
@@ -627,7 +1226,7 @@ html[data-resizing='true'] webview {
   position: absolute;
   top: 0;
   bottom: 0;
-  left: -2px;
+  left: 5px;
   width: 5px;
   z-index: 40;
   cursor: col-resize;
@@ -655,14 +1254,27 @@ html[data-resizing='true'] webview {
 .applications-panel {
   display: flex;
   flex-direction: column;
+  align-items: stretch;
   min-height: 0;
   min-width: 0;
-  margin: 8px;
+  margin: 0;
+  isolation: isolate;
+  container-type: inline-size;
+  container-name: app-column;
+  /* Real border — inset box-shadow was painted over by full-bleed children. */
   border-radius: var(--radius-lg);
   background: var(--bg-content);
   border: 1px solid var(--border);
-  box-shadow: none;
+  box-shadow: var(--shadow-card);
   overflow: hidden;
+}
+
+.applications-main {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
 }
 
 .applications-tabs {
@@ -744,9 +1356,294 @@ html[data-resizing='true'] webview {
   min-height: 0;
 }
 
-.applications-home > .empty-state {
+.applications-home > .empty-state,
+.applications-object-body > .empty-state,
+.file-recents-body > .empty-state,
+.storage-source-body > .empty-state {
   flex: 1 1 auto;
   padding: 28px 20px;
+  -webkit-app-region: drag;
+}
+
+/*
+ * Empty trays sit in scrollports, and a scrollport drops descendant window-drag
+ * regions. Nothing here scrolls — the stack is centered in the pane — so the
+ * tray itself is the drag surface (padding included).
+ */
+:is(.applications-object-body, .file-recents-body):has(> .empty-state),
+.storage-source-body:has(> .empty-state),
+.applications-home:has(> .empty-state) {
+  overflow: hidden;
+  -webkit-app-region: drag;
+}
+
+.file-recents-body:has(> .empty-state)::before,
+.file-recents-body:has(> .empty-state)::after {
+  display: none;
+}
+
+.empty-state:has(.app-empty-mark) .empty-logo {
+  min-height: 0;
+  margin-bottom: 2px;
+  opacity: 1;
+  color: var(--text);
+}
+
+.empty-state:has(.app-empty-mark) .empty-title {
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.022em;
+  line-height: 1.25;
+  max-width: 16em;
+}
+
+.empty-state:has(.app-empty-mark) .empty-desc {
+  font-size: 13px;
+  line-height: 1.5;
+  max-width: 22em;
+}
+
+.app-empty-mark {
+  display: block;
+  width: 88px;
+  height: 72px;
+}
+
+.app-empty-mark-plate {
+  fill: var(--bg-content);
+}
+
+.app-empty-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  padding-top: 6px;
+  width: min(100%, 22em);
+}
+
+@container app-column (max-width: 300px) {
+  .app-empty-mark {
+    width: 76px;
+    height: 62px;
+  }
+
+  .empty-state:has(.app-empty-mark) .empty-title {
+    font-size: 15px;
+  }
+}
+
+.app-empty-actions .btn {
+  min-height: 28px;
+  height: 28px;
+  padding: 0 11px;
+  font-size: 12.5px;
+}
+
+/*
+ * Illustrated app empty states (and the no-match trays above) are window
+ * chrome. Optical spacers are `pointer-events: none` by default, which both
+ * skips them in the drag-region map and lets the press fall through the blank
+ * field. Keep actions clickable.
+ */
+.empty-state:has(.app-empty-mark) {
+  -webkit-app-region: drag;
+}
+
+:is(
+    .applications-home,
+    .applications-object-body,
+    .file-recents-body,
+    .storage-source-body
+  )
+  > .empty-state:not(.empty-state-session)::before,
+:is(
+    .applications-home,
+    .applications-object-body,
+    .file-recents-body,
+    .storage-source-body
+  )
+  > .empty-state:not(.empty-state-session)::after,
+.empty-state:not(.empty-state-session):has(.app-empty-mark)::before,
+.empty-state:not(.empty-state-session):has(.app-empty-mark)::after {
+  pointer-events: auto;
+  -webkit-app-region: drag;
+}
+
+:is(
+    .applications-home,
+    .applications-object-body,
+    .file-recents-body,
+    .storage-source-body
+  )
+  > .empty-state
+  :is(button, .btn, a, input, select, textarea, label),
+.empty-state:has(.app-empty-mark) :is(button, .btn, a, input, select, textarea, label),
+.empty-state:has(.app-empty-mark) .app-empty-actions {
+  -webkit-app-region: no-drag;
+}
+
+.app-mode-tabs {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  min-height: 36px;
+  padding: 0 8px;
+  box-sizing: border-box;
+  box-shadow: inset 0 -0.5px 0 var(--border);
+  -webkit-app-region: drag;
+}
+
+.app-mode-tabs-items,
+.app-mode-tabs-items.sidebar-service-bar {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.app-mode-tabs-back {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 28px;
+  width: 28px;
+  height: 28px;
+}
+
+.app-mode-tabs-back .btn.icon-only {
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+}
+
+.app-mode-tabs-divider {
+  flex: 0 0 1px;
+  width: 1px;
+  height: 16px;
+  margin: 0 2px;
+  background: var(--border);
+}
+
+.app-mode-tabs:not(:has(.applications-content-bar-trailing > *)) .app-mode-tabs-divider,
+.applications-content-bar-trailing:not(:has(> *)) {
+  display: none;
+}
+
+.app-mode-tabs > .spacer {
+  align-self: stretch;
+  flex: 1 1 auto;
+  min-width: 12px;
+  -webkit-app-region: drag;
+}
+
+.app-chrome > .spacer {
+  align-self: stretch;
+  flex: 1 1 auto;
+  min-width: 12px;
+  -webkit-app-region: drag;
+}
+
+.applications-content-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  min-height: 36px;
+  padding: 0 8px;
+  box-sizing: border-box;
+  box-shadow: inset 0 -0.5px 0 var(--border);
+  -webkit-app-region: drag;
+}
+
+.applications-content-bar > .spacer {
+  flex: 1 1 auto;
+  min-width: 12px;
+}
+
+.applications-content-bar-trailing {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex: 0 0 auto;
+  gap: 2px;
+}
+
+.applications-content-bar:not(:has(.applications-content-bar-trailing > *)) {
+  display: none;
+}
+
+.app-mode-tabs button,
+.app-mode-tabs .btn,
+.app-mode-tabs a,
+.app-mode-tabs input,
+.app-mode-tabs select,
+.app-mode-tabs .sidebar-nav-item,
+.applications-content-bar button,
+.applications-content-bar .btn,
+.applications-content-bar a,
+.applications-content-bar input,
+.applications-content-bar select,
+.applications-content-bar .sidebar-nav-item,
+.app-chrome button,
+.app-chrome .btn,
+.app-chrome a,
+.app-chrome input,
+.app-chrome select,
+.app-chrome .sidebar-nav-item {
+  -webkit-app-region: no-drag;
+}
+
+.applications-content-bar-trailing .btn {
+  height: 28px;
+  padding: 0 8px;
+  font-size: 12.5px;
+  font-weight: 510;
+  letter-spacing: -0.012em;
+}
+
+.applications-content-bar-trailing .btn.icon-only {
+  width: 28px;
+  min-width: 28px;
+  padding: 0;
+}
+
+.applications-content-bar-trailing .sidebar-nav-devices {
+  width: auto;
+}
+
+.applications-content-bar-trailing .sidebar-nav-item {
+  width: auto;
+  height: 32px;
+  padding: 0 8px;
+}
+
+.app-mode-tabs .shell-leading-controls {
+  flex-direction: row;
+  gap: 4px;
+  padding: 0;
+}
+
+/* Active mode is a raised pill — wayfinding you can see at a glance. */
+.app-mode-tabs .app-mode-tab[data-expanded='true'] {
+  color: var(--accent-text, var(--accent));
+  background: var(--bg-raised);
+  box-shadow:
+    var(--shadow-card),
+    inset 0 0 0 1px var(--border);
+  transition:
+    gap var(--dur-pop) var(--ease-out),
+    background var(--dur-hover) ease,
+    color var(--dur-hover) ease,
+    box-shadow var(--dur-hover) ease,
+    transform var(--dur-press) var(--ease-out);
+}
+
+.app-mode-tabs .applications-content-bar-trailing {
+  min-width: 0;
 }
 
 .app-chrome {
@@ -755,10 +1652,14 @@ html[data-resizing='true'] webview {
   justify-content: space-between;
   gap: 8px;
   flex: 0 0 auto;
-  min-height: 44px;
-  padding: 0 8px 0 6px;
+  height: var(--toolbar-height);
+  min-height: var(--toolbar-height);
+  box-sizing: border-box;
+  padding: 0 10px;
   background: transparent;
   box-shadow: inset 0 -0.5px 0 var(--border);
+  overflow: hidden;
+  -webkit-app-region: drag;
 }
 
 .app-chrome-leading,
@@ -774,52 +1675,54 @@ html[data-resizing='true'] webview {
 }
 
 .app-chrome-trailing {
-  flex: 0 1 auto;
+  flex: 0 0 auto;
   justify-content: flex-end;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 2px;
 }
 
 .app-chrome-title {
   margin: 0;
   padding: 0 4px;
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 15px;
+  font-size: 13.5px;
   font-weight: 600;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.014em;
   line-height: 1.2;
 }
 
 .app-chrome-back.btn {
-  width: 32px;
-  height: 32px;
-  min-width: 32px;
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
   padding: 0;
   border-radius: 8px;
   color: var(--accent-text, var(--accent));
 }
 
 .app-chrome-trailing .btn {
-  height: 30px;
+  height: 28px;
   padding: 0 8px;
-  font-size: 13px;
+  font-size: 12.5px;
   font-weight: 510;
   letter-spacing: -0.012em;
 }
 
 .app-chrome-trailing .btn.icon-only {
-  width: 30px;
-  min-width: 30px;
+  width: 28px;
+  min-width: 28px;
   padding: 0;
 }
 
 .app-chrome-select.file-source-select {
-  flex: 0 1 148px;
-  width: 148px;
-  max-width: min(148px, 42vw);
+  flex: 1 1 72px;
+  width: auto;
+  min-width: 0;
+  max-width: 148px;
 }
 
 .app-chrome-trailing .sidebar-nav-devices {
@@ -832,6 +1735,64 @@ html[data-resizing='true'] webview {
   padding: 0 8px;
 }
 
+/* Narrow app column: one chrome row, icon-only actions, shrinking title/select.
+   520px — two Chinese action labels ("新建数据库连接" + "添加数据文件") overflow
+   well before the old 400px cut, so collapse labels earlier. */
+@container app-column (max-width: 520px) {
+  .applications-content-bar-trailing .btn:not(.icon-only),
+  .app-chrome-trailing .btn:not(.icon-only) {
+    width: 28px;
+    min-width: 28px;
+    padding: 0;
+    gap: 0;
+    font-size: 0;
+    letter-spacing: 0;
+    overflow: hidden;
+  }
+
+  .applications-content-bar-trailing .btn:not(.icon-only) > :not(svg),
+  .app-chrome-trailing .btn:not(.icon-only) > :not(svg) {
+    display: none;
+  }
+
+  .applications-content-bar-trailing .sidebar-nav-item,
+  .app-chrome-trailing .sidebar-nav-item {
+    width: 28px;
+    min-width: 28px;
+    height: 28px;
+    padding: 0;
+    justify-content: center;
+  }
+
+  .applications-content-bar-trailing .sidebar-nav-item > span,
+  .app-chrome-trailing .sidebar-nav-item > span {
+    display: none;
+  }
+
+  .app-chrome-select.file-source-select,
+  .applications-object-toolbar .file-source-select {
+    flex-basis: 112px;
+    width: 112px;
+    max-width: 112px;
+  }
+
+  .applications-object-toolbar.is-search-fixed .sidebar-search-field {
+    flex-basis: 140px;
+    width: 140px;
+    max-width: 140px;
+  }
+
+  .app-mode-tabs .sidebar-service-chip[data-expanded='true'] {
+    justify-content: center;
+    gap: 0;
+    flex: 0 0 auto;
+  }
+
+  .app-mode-tabs .sidebar-service-chip[data-expanded='true'] .sidebar-service-label-clip {
+    grid-template-columns: 0fr;
+  }
+}
+
 .applications-split {
   display: flex;
   flex-direction: column;
@@ -841,16 +1802,27 @@ html[data-resizing='true'] webview {
 }
 
 .applications-object-list {
+  display: flex;
+  flex-direction: column;
   flex: 1 1 auto;
   min-height: 0;
   min-width: 0;
-  overflow: auto;
+  overflow: hidden;
 }
 
 .applications-object-list > .applications-home,
 .applications-object-list > .file-recents,
-.applications-object-list > .timer-jobs {
-  min-height: 100%;
+.applications-object-list > .timer-jobs,
+.applications-object-list .applications-home,
+.applications-object-list .timer-jobs,
+.applications-object-list .file-recents,
+.applications-object-list .file-mac-browser {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 .applications-split[data-pane='detail'] .applications-object-list {
@@ -872,22 +1844,75 @@ html[data-resizing='true'] webview {
 .applications-object-detail > .detail,
 .applications-object-detail > .workspace-view {
   flex: 1 1 auto;
+  min-width: 0;
   min-height: 0;
   border: 0;
   border-radius: 0;
   background: transparent;
 }
 
-.applications-object-toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  padding: 8px 10px 4px;
+.applications-panel .workspace-view-preview,
+.applications-panel .file-session-preview,
+.applications-panel .workspace-view.file-session-view > .workspace-view-preview {
+  min-width: 0;
 }
 
-.applications-home:has(.applications-object-rows) {
-  padding: 4px var(--list-inset-x) 10px;
+.applications-object-toolbar.sidebar-search {
+  flex: 0 0 auto;
+  width: 100%;
+  min-width: 0;
+  padding: 10px 8px 6px;
   box-sizing: border-box;
+}
+
+.applications-object-toolbar > .spacer {
+  flex: 1 1 auto;
+  min-width: 8px;
+}
+
+.applications-object-toolbar.is-search-fixed .sidebar-search-field {
+  flex: 0 0 180px;
+  width: 180px;
+  max-width: 180px;
+}
+
+.applications-object-toolbar .file-source-select {
+  flex: 0 0 148px;
+  width: 148px;
+  max-width: 148px;
+}
+
+/* Scoped search face: quiet tinted well at rest, raised on focus. The caret is
+   still the focus indicator — no web-style accent ring (same as sidebar). */
+.applications-object-toolbar .sidebar-search-field .text-field,
+.applications-object-toolbar .sidebar-search-field .text-field:focus {
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--text) 4%, transparent);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+
+.applications-object-toolbar .sidebar-search-field .text-field:focus {
+  background: var(--bg-raised);
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+}
+
+.applications-object-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.applications-home:has(.applications-object-rows),
+.applications-home:has(.applications-object-body) {
+  padding: 0 0 10px;
+  box-sizing: border-box;
+}
+
+.applications-object-body .applications-object-rows {
+  padding: 0 8px 10px;
 }
 
 .applications-object-rows {
@@ -902,7 +1927,7 @@ html[data-resizing='true'] webview {
 .applications-object-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 9px;
   width: 100%;
   min-height: 40px;
   padding: 7px 10px;
@@ -913,7 +1938,10 @@ html[data-resizing='true'] webview {
   font-size: 13px;
   letter-spacing: -0.012em;
   text-align: left;
-  cursor: pointer;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
+  box-sizing: border-box;
   transition: background var(--dur-hover) ease;
 }
 
@@ -933,31 +1961,106 @@ html[data-resizing='true'] webview {
   background: color-mix(in srgb, var(--bg-hover) 65%, var(--accent-soft));
 }
 
-.applications-object-row[data-active='true'] {
+.applications-object-row[data-active='true'],
+.applications-object-row.multi,
+.applications-object-row[data-selected='true'] {
   background: var(--accent-soft);
   color: var(--text);
 }
 
-:root[data-platform='darwin'][data-vibrancy='true'] .applications-object-row[data-active='true'] {
+:root[data-platform='darwin'][data-vibrancy='true'] .applications-object-row[data-active='true'],
+:root[data-platform='darwin'][data-vibrancy='true'] .applications-object-row.multi,
+:root[data-platform='darwin'][data-vibrancy='true'] .applications-object-row[data-selected='true'] {
   background: color-mix(in srgb, var(--text) 11%, transparent);
 }
 
 :root[data-theme='dark'][data-platform='darwin'][data-vibrancy='true']
-  .applications-object-row[data-active='true'] {
+  .applications-object-row[data-active='true'],
+:root[data-theme='dark'][data-platform='darwin'][data-vibrancy='true']
+  .applications-object-row.multi,
+:root[data-theme='dark'][data-platform='darwin'][data-vibrancy='true']
+  .applications-object-row[data-selected='true'] {
   background: color-mix(in srgb, #fff 12%, transparent);
 }
 
-.applications-object-row-title {
+/* Contiguous multi-select: flatten shared corners only. Never shift margin/gap. */
+
+.applications-object-row-title,
+.applications-object-row .rename-field {
   flex: 1 1 auto;
   min-width: 0;
+}
+
+.applications-object-row-title {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-weight: 500;
+  pointer-events: none;
 }
 
-.applications-object-row[data-active='true'] .applications-object-row-title {
-  font-weight: 550;
+.applications-object-row-copy {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.applications-object-row-copy .applications-object-row-title,
+.applications-object-row-copy .rename-field {
+  flex: 0 1 auto;
+  width: 100%;
+}
+
+.applications-object-row:has(.applications-object-row-sub) {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  column-gap: 9px;
+  row-gap: 1px;
+  align-items: center;
+  min-height: 48px;
+  padding-top: 6px;
+  padding-bottom: 6px;
+}
+
+.applications-object-row:has(.applications-object-row-sub) .applications-object-row-copy {
+  display: contents;
+}
+
+.applications-object-row:has(.applications-object-row-sub) .applications-object-row-icon {
+  grid-column: 1;
+  grid-row: 1 / span 2;
+}
+
+.applications-object-row:has(.applications-object-row-sub) .applications-object-row-title,
+.applications-object-row:has(.applications-object-row-sub) .rename-field {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.applications-object-row:has(.applications-object-row-sub) .applications-object-row-tag {
+  grid-column: 3;
+  grid-row: 1;
+  align-self: center;
+}
+
+.applications-object-row:has(.applications-object-row-sub) .applications-object-row-sub {
+  grid-column: 2 / -1;
+  grid-row: 2;
+}
+
+.applications-object-row-sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 450;
+  line-height: 1.35;
+  letter-spacing: 0.01em;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
 }
 
 .applications-object-row-meta {
@@ -970,7 +2073,9 @@ html[data-resizing='true'] webview {
   flex: 0 0 auto;
   color: var(--text-tertiary);
   opacity: 0.55;
-  transition: opacity var(--dur-hover) ease;
+  transition:
+    opacity var(--dur-hover) ease,
+    transform var(--dur-hover) var(--ease-out);
 }
 
 .applications-object-row:hover .applications-object-row-chevron,
@@ -978,9 +2083,88 @@ html[data-resizing='true'] webview {
   opacity: 0.85;
 }
 
+.applications-object-row:hover .applications-object-row-chevron {
+  transform: translateX(1px);
+}
+
+/* Kind chip: raised tile with a hairline so rows scan by type before words. */
+.applications-object-row-icon {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  background: linear-gradient(180deg, var(--bg-raised), var(--bg-sunken));
+  box-shadow: inset 0 0 0 1px var(--border);
+  color: var(--text-secondary);
+  transition:
+    background var(--dur-hover) ease,
+    color var(--dur-hover) ease,
+    box-shadow var(--dur-hover) ease;
+}
+
+.applications-object-row-icon svg {
+  display: block;
+  width: 14px;
+  height: 14px;
+}
+
+.applications-object-row[data-active='true'] .applications-object-row-icon {
+  background: var(--bg-raised);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--accent) 26%, transparent),
+    var(--shadow-card);
+  color: var(--accent-text);
+}
+
+.applications-object-row-icon.is-missing {
+  color: color-mix(in srgb, var(--danger) 72%, var(--text-secondary));
+}
+
+/* Category tag: quiet pill for the row's kind word (数据库 / 文件 / 本机…). */
+.applications-object-row-tag {
+  flex: 0 0 auto;
+  padding: 1.5px 7px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+  color: var(--text-tertiary);
+  font-size: 10.5px;
+  font-weight: 520;
+  letter-spacing: 0.012em;
+  line-height: 1.45;
+  white-space: nowrap;
+}
+
+.applications-object-row-tag.is-local {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+.applications-object-row[data-active='true'] .applications-object-row-tag {
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+.applications-object-row[data-active='true'] .applications-object-row-tag.is-local {
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
 .applications-object-list .timer-jobs {
-  padding: 4px var(--list-inset-x) 10px;
+  padding: 0;
   box-sizing: border-box;
+}
+
+.applications-object-list .timer-jobs .applications-object-toolbar {
+  padding-left: 8px;
+  padding-right: 8px;
+}
+
+.applications-object-list .timer-jobs .conv-row,
+.applications-object-list .timer-jobs .empty-state {
+  margin-left: 8px;
+  margin-right: 8px;
 }
 
 .applications-object-list .timer-jobs .conv-row {
@@ -1010,6 +2194,8 @@ html[data-resizing='true'] webview {
 .applications-object-list .file-recents.is-embedded .file-recents-body {
   padding: 0;
   align-items: stretch;
+  justify-content: flex-start;
+  overflow: hidden;
 }
 
 .applications-object-list .file-recents.is-embedded .file-recents-body::before,
@@ -1017,9 +2203,13 @@ html[data-resizing='true'] webview {
   display: none;
 }
 
-.applications-object-list .file-recents.is-embedded .file-recents-card {
+.applications-object-list .file-recents.is-embedded .file-recents-card,
+.applications-object-list .file-recents.is-embedded .applications-object-body {
+  flex: 1 1 auto;
+  min-height: 0;
   width: 100%;
   max-width: none;
+  overflow: auto;
   border-radius: 0;
   background: transparent;
   box-shadow: none;
@@ -1030,7 +2220,7 @@ html[data-resizing='true'] webview {
 }
 
 .applications-object-list .file-recents.is-embedded .inline-review-files {
-  padding: 4px var(--list-inset-x) 10px;
+  padding: 4px 8px 10px;
 }
 
 .applications-object-list .file-recents.is-embedded .inline-review-file {
@@ -1046,7 +2236,65 @@ html[data-resizing='true'] webview {
 .applications-object-list .file-recents.is-embedded .inline-review-file-row {
   min-height: 40px;
   padding: 7px 10px;
+}
+
+/*
+ * Merge adjacent picks into one block — same language as .sidebar-list .conv-row.multi.
+ * Paint the 1px list gap with box-shadow so height never changes.
+ */
+.applications-object-rows > li.multi:has(+ li.multi) .applications-object-row,
+.file-recents-files > li.multi:has(+ li.multi) .applications-object-row {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.applications-object-rows > li.multi + li.multi .applications-object-row,
+.file-recents-files > li.multi + li.multi .applications-object-row {
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+  box-shadow: 0 -1px 0 var(--accent-soft);
+}
+
+:root[data-platform='darwin'][data-vibrancy='true']
+  .applications-object-rows
+  > li.multi
+  + li.multi
+  .applications-object-row,
+:root[data-platform='darwin'][data-vibrancy='true']
+  .file-recents-files
+  > li.multi
+  + li.multi
+  .applications-object-row {
+  box-shadow: 0 -1px 0 color-mix(in srgb, var(--text) 11%, transparent);
+}
+
+:root[data-theme='dark'][data-platform='darwin'][data-vibrancy='true']
+  .applications-object-rows
+  > li.multi
+  + li.multi
+  .applications-object-row,
+:root[data-theme='dark'][data-platform='darwin'][data-vibrancy='true']
+  .file-recents-files
+  > li.multi
+  + li.multi
+  .applications-object-row {
+  box-shadow: 0 -1px 0 color-mix(in srgb, #fff 12%, transparent);
+}
+
+.applications-object-row.multi.run-only {
   border-radius: var(--list-row-radius);
+}
+
+.applications-object-row.multi.run-start {
+  border-radius: var(--list-row-radius) var(--list-row-radius) 0 0;
+}
+
+.applications-object-row.multi.run-middle {
+  border-radius: 0;
+}
+
+.applications-object-row.multi.run-end {
+  border-radius: 0 0 var(--list-row-radius) var(--list-row-radius);
 }
 
 .applications-object-list .file-recents.is-embedded .inline-review-file-name {
@@ -1055,20 +2303,95 @@ html[data-resizing='true'] webview {
   letter-spacing: -0.012em;
 }
 
+.storage-locations.segmented {
+  flex: 0 0 auto;
+  display: flex;
+  width: calc(100% - 16px);
+  margin: 8px 8px 4px;
+  box-sizing: border-box;
+}
+
+.storage-locations .storage-location-row {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 26px;
+  padding: 0 6px;
+  justify-content: center;
+}
+
+.storage-location-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@container app-column (max-width: 420px) {
+  .storage-location-label {
+    display: none;
+  }
+
+  .storage-locations .storage-location-row,
+  .storage-locations .storage-location-row:has(.segmented-icon) {
+    padding: 0;
+  }
+}
+
+.storage-source-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
 .applications-object-list .file-recents.is-embedded .inline-review-file-meta {
   font-size: 11.5px;
 }
 
 .applications-device-detail {
-  padding: 16px 14px 20px;
-  gap: 6px;
+  padding: 20px 16px 24px;
+  gap: 5px;
+}
+
+.applications-device-hero {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  margin: 0 0 8px;
+}
+
+.applications-device-hero-icon {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  background: var(--bg-raised);
+  box-shadow: inset 0 0 0 1px var(--border);
+  color: var(--text-secondary);
+}
+
+.applications-device-hero-icon svg {
+  display: block;
+  width: 20px;
+  height: 20px;
+}
+
+.applications-device-hero-text {
+  min-width: 0;
 }
 
 .applications-device-name {
   margin: 0;
-  font-size: 22px;
-  font-weight: 650;
-  letter-spacing: -0.028em;
+  font-size: 19px;
+  font-weight: 630;
+  letter-spacing: -0.024em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .applications-device-meta {
@@ -1165,8 +2488,8 @@ html[data-resizing='true'] webview {
 
 /*
  * Main shell: no floating “card” chrome around the agent surface — continuous
- * with the window wash. Sidebar docked (panel-flush-top) or collapsed
- * (panel-shell-chrome) both go edge-to-edge under the traffic lights.
+ * with the window wash. Expanded sidebar (panel-flush-top) or collapsed
+ * capsule (panel-shell-chrome) both let the session meet the window top.
  */
 .app-shell .body-split {
   padding: 0;
@@ -1193,15 +2516,13 @@ html[data-resizing='true'] webview {
  * layer never reads as a hole. These fills stay put: do not key them off
  * transient html attributes or a restore will restyle the column.
  */
-:root[data-platform='darwin'][data-vibrancy='true'] .sidebar-column,
-:root[data-platform='darwin'][data-vibrancy='true'] .applications-column,
+:root[data-platform='darwin'][data-vibrancy='true'] .sidebar-column:not(.is-rail),
 :root[data-platform='darwin'][data-vibrancy='true'] .app-shell .body-split > .sidebar:not(.floating),
 :root[data-platform='darwin'][data-vibrancy='true'] .settings-nav {
   background: color-mix(in srgb, var(--bg-window) 38%, transparent) !important;
 }
 
-:root[data-theme='light'][data-platform='darwin'][data-vibrancy='true'] .sidebar-column,
-:root[data-theme='light'][data-platform='darwin'][data-vibrancy='true'] .applications-column,
+:root[data-theme='light'][data-platform='darwin'][data-vibrancy='true'] .sidebar-column:not(.is-rail),
 :root[data-theme='light'][data-platform='darwin'][data-vibrancy='true']
   .app-shell
   .body-split
@@ -1211,24 +2532,50 @@ html[data-resizing='true'] webview {
 }
 
 @media (prefers-reduced-transparency: reduce) {
-  :root[data-platform='darwin'][data-vibrancy='true'] .sidebar-column,
-  :root[data-platform='darwin'][data-vibrancy='true'] .applications-column,
+  :root[data-platform='darwin'][data-vibrancy='true'] .sidebar-column:not(.is-rail),
   :root[data-platform='darwin'][data-vibrancy='true'] .app-shell .body-split > .sidebar:not(.floating),
   :root[data-platform='darwin'][data-vibrancy='true'] .settings-nav {
     background: var(--bg-window) !important;
   }
+
+  .sidebar-rail-pill {
+    background: var(--bg-sunken);
+    border-color: var(--border-strong);
+  }
+}
+
+:root[data-platform='darwin'][data-vibrancy='true'] .sidebar-column.is-rail,
+:root[data-platform='darwin'][data-vibrancy='true'] .workbench-home {
+  background: var(--bg-content) !important;
+}
+
+/* App column shares the agent plate — not glass — so the card gutters match. */
+:root[data-platform='darwin'][data-vibrancy='true'] .applications-column {
+  background: var(--bg-content) !important;
+}
+
+:root[data-theme='light'][data-platform='darwin'][data-vibrancy='true'] .applications-column {
+  background: var(--bg-content) !important;
 }
 
 :root[data-platform='darwin'][data-vibrancy='false'] html,
 :root[data-platform='darwin'][data-vibrancy='false'] body,
 :root[data-platform='darwin'][data-vibrancy='false'] #root,
 :root[data-platform='darwin'][data-vibrancy='false'] .app-shell,
-:root[data-platform='darwin'][data-vibrancy='false'] .sidebar-column,
-:root[data-platform='darwin'][data-vibrancy='false'] .applications-column,
+:root[data-platform='darwin'][data-vibrancy='false'] .sidebar-column:not(.is-rail),
 :root[data-platform='darwin'][data-vibrancy='false'] .app-shell .body-split > .sidebar:not(.floating),
 :root[data-platform='darwin'][data-vibrancy='false'] .settings-window,
 :root[data-platform='darwin'][data-vibrancy='false'] .settings-nav {
   background: var(--bg-window) !important;
+}
+
+:root[data-platform='darwin'][data-vibrancy='false'] .sidebar-column.is-rail,
+:root[data-platform='darwin'][data-vibrancy='false'] .workbench-home {
+  background: var(--bg-content) !important;
+}
+
+:root[data-platform='darwin'][data-vibrancy='false'] .applications-column {
+  background: var(--bg-content) !important;
 }
 
 /* Settings content pane stays opaque so forms sit on cardboard, not glass. */
@@ -1262,26 +2609,70 @@ html[data-resizing='true'] webview {
   -webkit-app-region: drag;
 }
 
-/* Collapsed session: agent chrome is the window top bar (lead clears lights). */
-.app-shell.panel-shell-chrome .terminal-host-chrome.has-shell-leading {
-  padding-left: var(--chrome-lead);
+.app-shell[data-chrome-lead='rail'] {
+  --chrome-lead-content: max(12px, calc(var(--chrome-lead) - var(--sidebar-rail-reserved)));
+}
+
+/*
+ * First content chrome at the window top: indent past the traffic lights.
+ * `flush` is a narrow / floating list; `rail` keeps the leftover lead after
+ * the capsule. Docked `sidebar` already clears the lights in the list titlebar.
+ */
+.app-shell[data-chrome-lead='flush'] .agent-column:not([hidden]) .terminal-host-chrome,
+.app-shell[data-chrome-lead='rail'] .agent-column:not([hidden]) .terminal-host-chrome,
+.app-shell[data-chrome-lead='flush'] .agent-column:not([hidden]) .file-viewer-header,
+.app-shell[data-chrome-lead='rail'] .agent-column:not([hidden]) .file-viewer-header,
+.app-shell[data-chrome-lead='flush'] .agent-column:not([hidden]) .workspace-preview-chrome,
+.app-shell[data-chrome-lead='rail'] .agent-column:not([hidden]) .workspace-preview-chrome {
+  padding-left: var(--chrome-lead-content);
   height: var(--toolbar-height);
   min-height: var(--toolbar-height);
   box-sizing: border-box;
   -webkit-app-region: drag;
 }
 
-/*
- * Workspace + collapsed sidebar: shell + file title on the preview top row.
- * Agent column is full-height (flush to window top) — no full-width titlebar.
- */
-.app-shell.panel-shell-chrome .file-viewer-header.has-shell-leading,
-.app-shell.panel-shell-chrome .workspace-preview-chrome.has-shell-leading {
-  padding-left: var(--chrome-lead);
+.app-shell[data-chrome-lead='flush']:not(:has(.agent-column:not([hidden]))) .app-mode-tabs,
+.app-shell[data-chrome-lead='rail']:not(:has(.agent-column:not([hidden]))) .app-mode-tabs {
+  padding-left: max(
+    8px,
+    calc(var(--chrome-lead-content) - var(--applications-column-pad))
+  );
   min-height: var(--toolbar-height);
   height: var(--toolbar-height);
   box-sizing: border-box;
   -webkit-app-region: drag;
+}
+
+.app-shell[data-chrome-lead='flush']:not(:has(.agent-column:not([hidden]))) .applications-content-bar,
+.app-shell[data-chrome-lead='rail']:not(:has(.agent-column:not([hidden]))) .applications-content-bar,
+.app-shell[data-chrome-lead='flush']:not(:has(.agent-column:not([hidden]))) .app-chrome,
+.app-shell[data-chrome-lead='rail']:not(:has(.agent-column:not([hidden]))) .app-chrome {
+  /* App column already insets `--applications-column-pad`; only the remainder. */
+  padding-left: max(
+    var(--applications-column-pad),
+    calc(var(--chrome-lead-content) - var(--applications-column-pad))
+  );
+  min-height: var(--toolbar-height);
+  height: var(--toolbar-height);
+  box-sizing: border-box;
+  -webkit-app-region: drag;
+}
+
+.app-shell[data-chrome-lead='flush']:not(:has(.agent-column:not([hidden]))):not(
+    :has(.applications-column:not([hidden]))
+  )
+  .workbench-home-chrome,
+.app-shell[data-chrome-lead='rail']:not(:has(.agent-column:not([hidden]))):not(
+    :has(.applications-column:not([hidden]))
+  )
+  .workbench-home-chrome {
+  padding-left: var(--chrome-lead-content);
+  -webkit-app-region: drag;
+}
+
+.app-shell.is-sidebar-rail .workbench-home {
+  padding-top: 0;
+  box-shadow: none;
 }
 
 .app-shell.panel-flush-top .terminal-host-chrome button,
@@ -1301,7 +2692,35 @@ html[data-resizing='true'] webview {
 .app-shell.panel-shell-chrome .file-viewer-header.has-shell-leading select,
 .app-shell.panel-shell-chrome .file-viewer-header.has-shell-leading .btn,
 .app-shell.panel-shell-chrome .workspace-preview-chrome.has-shell-leading button,
-.app-shell.panel-shell-chrome .workspace-preview-chrome.has-shell-leading .btn {
+.app-shell.panel-shell-chrome .workspace-preview-chrome.has-shell-leading .btn,
+.app-shell.is-sidebar-rail .file-viewer-header button,
+.app-shell.is-sidebar-rail .file-viewer-header label,
+.app-shell.is-sidebar-rail .file-viewer-header select,
+.app-shell.is-sidebar-rail .file-viewer-header .btn,
+.app-shell.is-sidebar-rail .workspace-preview-chrome button,
+.app-shell.is-sidebar-rail .workspace-preview-chrome .btn,
+.app-shell.is-sidebar-rail .app-mode-tabs button,
+.app-shell.is-sidebar-rail .app-mode-tabs .btn,
+.app-shell.is-sidebar-rail .applications-content-bar button,
+.app-shell.is-sidebar-rail .applications-content-bar .btn,
+.app-shell.is-sidebar-rail .app-chrome button,
+.app-shell.is-sidebar-rail .app-chrome .btn,
+.app-shell[data-chrome-lead='flush'] .app-mode-tabs button,
+.app-shell[data-chrome-lead='flush'] .app-mode-tabs .btn,
+.app-shell[data-chrome-lead='flush'] .applications-content-bar button,
+.app-shell[data-chrome-lead='flush'] .applications-content-bar .btn,
+.app-shell[data-chrome-lead='flush'] .app-chrome button,
+.app-shell[data-chrome-lead='flush'] .app-chrome .btn,
+.app-shell[data-chrome-lead='flush'] .file-viewer-header button,
+.app-shell[data-chrome-lead='flush'] .file-viewer-header label,
+.app-shell[data-chrome-lead='flush'] .file-viewer-header select,
+.app-shell[data-chrome-lead='flush'] .file-viewer-header .btn,
+.app-shell[data-chrome-lead='flush'] .workspace-preview-chrome button,
+.app-shell[data-chrome-lead='flush'] .workspace-preview-chrome .btn,
+.app-shell[data-chrome-lead='flush'] .workbench-home-chrome button,
+.app-shell[data-chrome-lead='flush'] .workbench-home-chrome .btn,
+.app-shell.is-sidebar-rail .workbench-home-chrome button,
+.app-shell.is-sidebar-rail .workbench-home-chrome .btn {
   -webkit-app-region: no-drag;
 }
 
@@ -1317,6 +2736,8 @@ html[data-resizing='true'] webview {
 .titlebar .btn.icon-only,
 .shell-leading-controls .btn.icon-only,
 .agent-mode-chrome-trailing .btn.icon-only,
+.app-mode-tabs .btn.icon-only,
+.app-chrome .btn.icon-only,
 .file-viewer-header .btn.icon-only,
 .workspace-preview-chrome .btn.icon-only,
 .workspace-preview-empty-bar .btn.icon-only,
@@ -1328,6 +2749,8 @@ html[data-resizing='true'] webview {
 .titlebar .btn.icon-only svg,
 .shell-leading-controls .btn.icon-only svg,
 .agent-mode-chrome-trailing .btn.icon-only svg,
+.app-mode-tabs .btn.icon-only svg,
+.app-chrome .btn.icon-only svg,
 .file-viewer-header .btn.icon-only svg,
 .workspace-preview-chrome .btn.icon-only svg,
 .workspace-preview-empty-bar .btn.icon-only svg,
@@ -1435,10 +2858,11 @@ html[data-resizing='true'] webview {
 .workspace-view-agent-inner {
   display: flex;
   flex-direction: column;
+  width: 100%;
   height: 100%;
   min-width: 0;
   min-height: 0;
-  flex: 0 0 auto;
+  flex: 1 1 auto;
 }
 
 .workspace-view-agent-inner.is-collapsed {
@@ -1484,6 +2908,9 @@ html[data-resizing='true'] webview {
   /* Lead clears native traffic lights; modest trail so the label isn’t flush. */
   padding: 0 12px 0 var(--chrome-lead);
   border-bottom: 0;
+  /* Override `.titlebar { drag }` — isolation + glass otherwise swallows
+     no-drag on the overlay buttons. Spacer below is the drag strip. */
+  -webkit-app-region: no-drag;
 }
 
 .session-window .titlebar.bare.session-window-titlebar::before {
@@ -1511,8 +2938,10 @@ html[data-resizing='true'] webview {
 
 /*
  * Isolated window chrome fills the titlebar so history / search / Reveal
- * sit on the trailing edge. The empty mid-span is the window drag strip;
- * only the actual controls opt out.
+ * sit on the trailing edge. App-region is painted in DOM order, not z-index,
+ * so a parent `drag` (or a later empty-transcript `drag`) steals clicks from
+ * transparent header buttons. Default the chrome to no-drag; only the empty
+ * mid-span is the window drag strip.
  */
 .session-window-titlebar-chrome {
   flex: 1 1 auto;
@@ -1520,7 +2949,7 @@ html[data-resizing='true'] webview {
   display: flex;
   align-items: center;
   justify-content: flex-start;
-  -webkit-app-region: drag;
+  -webkit-app-region: no-drag;
 }
 
 .session-window-titlebar-chrome .terminal-host-chrome.agent-mode-chrome {
@@ -1536,6 +2965,11 @@ html[data-resizing='true'] webview {
   gap: 0;
 }
 
+.session-window-titlebar-chrome .agent-mode-swarm-toggle,
+.session-window-titlebar-chrome .agent-mode-shell-leading,
+.session-window-titlebar-chrome .agent-mode-segment,
+.session-window-titlebar-chrome .agent-mode-chrome-trailing,
+.session-window-titlebar-chrome .agent-mode-chrome-trail,
 .session-window-titlebar-chrome button,
 .session-window-titlebar-chrome .btn,
 .session-window-titlebar-chrome label,
@@ -1679,6 +3113,9 @@ html[data-resizing='true'] webview {
 .session-window .transcript:has(> .transcript-inner > .empty-state-session) {
   padding-top: var(--session-titlebar-h);
   padding-bottom: 12px;
+  /* Overlay header is earlier in the DOM. A full-box drag here would cover
+     the titlebar buttons; empty-state optical spacers still drag the canvas. */
+  -webkit-app-region: no-drag;
 }
 
 .session-window .detail:has(> .banner) .transcript,
@@ -1708,14 +3145,12 @@ html[data-resizing='true'] webview {
 }
 
 /*
- * Main-panel agent chrome floats over the log. Frost sits on a ::before
- * plate clipped to the header (strongest at the top, lightest at the
- * bar’s own bottom) and follows `--chrome-solid` (off at scroll top).
+ * Main-panel agent chrome floats over the log. The bar is an opaque plate
+ * so transcript content never shows through the controls.
  */
 .app-shell:not(.session-window) .detail:has(> .session-surfaces) {
   --agent-chrome-h: var(--toolbar-height);
   --agent-chrome-pad: calc(var(--agent-chrome-h) + 8px);
-  --chrome-solid: 0;
 }
 
 .app-shell:not(.session-window) .detail:has(> .session-surfaces) > .terminal-host-chrome.agent-mode-chrome {
@@ -1731,41 +3166,11 @@ html[data-resizing='true'] webview {
   overflow: hidden;
   isolation: isolate;
   pointer-events: none;
-  background: transparent;
-}
-
-.app-shell:not(.session-window) .detail:has(> .session-surfaces) > .terminal-host-chrome.agent-mode-chrome::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  pointer-events: none;
-  backdrop-filter:
-    blur(calc(var(--chrome-solid) * 20px))
-    saturate(calc(1 + var(--chrome-solid) * 0.8))
-    brightness(calc(1 + var(--chrome-solid) * 0.08));
-  -webkit-backdrop-filter:
-    blur(calc(var(--chrome-solid) * 20px))
-    saturate(calc(1 + var(--chrome-solid) * 0.8))
-    brightness(calc(1 + var(--chrome-solid) * 0.08));
-  -webkit-mask-image: var(--chrome-glass-mask);
-  mask-image: var(--chrome-glass-mask);
+  background: var(--bg-content);
 }
 
 .app-shell:not(.session-window) .detail:has(> .session-surfaces) > .terminal-host-chrome.agent-mode-chrome > * {
   pointer-events: auto;
-}
-
-@media (prefers-reduced-transparency: reduce) {
-  .app-shell:not(.session-window) .detail:has(> .session-surfaces) > .terminal-host-chrome.agent-mode-chrome::before {
-    backdrop-filter: none;
-    -webkit-backdrop-filter: none;
-    background: color-mix(
-      in srgb,
-      var(--bg-content) calc(var(--chrome-solid) * 92%),
-      transparent
-    );
-  }
 }
 
 .app-shell:not(.session-window) .detail:has(> .session-surfaces) > .banner {
@@ -1814,9 +3219,12 @@ html[data-resizing='true'] webview {
 
 .body-split {
   position: relative;
-  flex: 1;
+  flex: 1 1 auto;
   display: flex;
+  width: 100%;
+  min-width: 0;
   min-height: 0;
+  overflow: hidden;
   padding: 0 8px 8px;
   gap: 2px;
 }
@@ -2308,6 +3716,14 @@ kbd {
 .sidebar-float-host[data-leaving] .sidebar-float-scrim {
   opacity: 0;
   pointer-events: none;
+}
+
+.sidebar-float-chrome {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  height: var(--toolbar-height);
+  padding: 0 8px;
 }
 
 .sidebar-float-panel {
@@ -3065,17 +4481,21 @@ kbd {
   border-radius: 0;
   background: transparent;
   box-shadow: none;
+  min-height: 0;
 }
 
 /*
- * Surface wash: content column only (not sidebar, not document preview).
+ * Surface wash: agent plate, settings, and the app-column wash behind the
+ * rounded card (not sidebar, not document preview, not inside the app).
  * ::before tiles the ink; ::after fades that ink into the plate so the
  * texture is strong at the top and gone before the composer.
  */
 .detail::before,
 .detail::after,
 .settings-main::before,
-.settings-main::after {
+.settings-main::after,
+.applications-column::before,
+.applications-column::after {
   content: none;
   position: absolute;
   inset: 0;
@@ -3084,12 +4504,14 @@ kbd {
 }
 
 .detail > *,
-.settings-main > * {
+.settings-main > *,
+.applications-column > * {
   z-index: 1;
 }
 
 :root[data-surface-pattern]:not([data-surface-pattern='none']) .detail::before,
-:root[data-surface-pattern]:not([data-surface-pattern='none']) .settings-main::before {
+:root[data-surface-pattern]:not([data-surface-pattern='none']) .settings-main::before,
+:root[data-surface-pattern]:not([data-surface-pattern='none']) .applications-column::before {
   content: '';
   inset: 0 0 auto;
   height: var(--surface-pattern-band);
@@ -3106,7 +4528,8 @@ kbd {
 }
 
 :root[data-surface-pattern]:not([data-surface-pattern='none']) .detail::after,
-:root[data-surface-pattern]:not([data-surface-pattern='none']) .settings-main::after {
+:root[data-surface-pattern]:not([data-surface-pattern='none']) .settings-main::after,
+:root[data-surface-pattern]:not([data-surface-pattern='none']) .applications-column::after {
   content: '';
   inset: 0 0 auto;
   height: var(--surface-pattern-band);
@@ -3120,13 +4543,15 @@ kbd {
 
 /* Light paper swallows a tinted wash. Use darker ink + a bit more hold. */
 :root[data-theme='light'][data-surface-pattern]:not([data-surface-pattern='none']) .detail::before,
-:root[data-theme='light'][data-surface-pattern]:not([data-surface-pattern='none']) .settings-main::before {
+:root[data-theme='light'][data-surface-pattern]:not([data-surface-pattern='none']) .settings-main::before,
+:root[data-theme='light'][data-surface-pattern]:not([data-surface-pattern='none']) .applications-column::before {
   background-color: var(--surface-pattern-color, color-mix(in srgb, var(--accent) 38%, var(--text)));
   opacity: calc(var(--surface-pattern-opacity, 0.16) * 1.65);
 }
 
 :root[data-theme='light'][data-surface-pattern]:not([data-surface-pattern='none']) .detail::after,
-:root[data-theme='light'][data-surface-pattern]:not([data-surface-pattern='none']) .settings-main::after {
+:root[data-theme='light'][data-surface-pattern]:not([data-surface-pattern='none']) .settings-main::after,
+:root[data-theme='light'][data-surface-pattern]:not([data-surface-pattern='none']) .applications-column::after {
   height: 132px;
   background: linear-gradient(
     180deg,
@@ -3136,8 +4561,16 @@ kbd {
   );
 }
 
+/* App interiors stay clean — the wash lives behind the rounded wrapper. */
+:root[data-surface-pattern]:not([data-surface-pattern='none']) .applications-panel .detail::before,
+:root[data-surface-pattern]:not([data-surface-pattern='none']) .applications-panel .detail::after,
+:root[data-theme='light'][data-surface-pattern]:not([data-surface-pattern='none']) .applications-panel .detail::before,
+:root[data-theme='light'][data-surface-pattern]:not([data-surface-pattern='none']) .applications-panel .detail::after {
+  content: none;
+}
+
 /* Transcript column; Plan overlays this area without taking layout height.
-   ComposerContext (file/quote/comment bubbles) sits at the bottom of this
+   ComposerContext (file/comment bubbles) sits at the bottom of this
    flex column so chip show/hide only shrinks the log — dock stays fixed. */
 .detail-stream {
   position: relative;
@@ -3181,7 +4614,7 @@ kbd {
 }
 
 /* Bubbles above the dock, still inside the Agent log column.
-   Modes: empty (unmounted) · comments · quote · queue · combinations.
+   Modes: empty (unmounted) · comments · queue · combinations.
    Always share the same reading column as composer + tools-header. */
 .composer-context {
   flex: 0 0 auto;
@@ -3217,6 +4650,91 @@ kbd {
   gap: 4px;
   /* Comments own more vertical mass — tighten into the composer. */
   padding-bottom: 4px;
+}
+
+/* Ambient app location — a breadcrumb, not an attachment chip. */
+.app-context {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin: 0 10px;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  font: inherit;
+  font-size: 11px;
+  line-height: 1.3;
+  text-align: left;
+  cursor: default;
+  transition:
+    color 160ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1)),
+    background 160ms var(--ease-out, cubic-bezier(0.23, 1, 0.32, 1));
+}
+
+.app-context:hover {
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+}
+
+.app-context:active {
+  transform: scale(0.99);
+}
+
+.app-context-icon {
+  flex: 0 0 auto;
+  display: inline-flex;
+  color: inherit;
+  opacity: 0.85;
+  line-height: 0;
+}
+
+.app-context-kind,
+.app-context-detail,
+.app-context-selection {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-context-sep {
+  flex: 0 0 auto;
+  opacity: 0.45;
+}
+
+.app-context[data-level='list'] .app-context-kind {
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.app-context[data-level='list'] .app-context-detail {
+  color: var(--text-tertiary);
+}
+
+.app-context[data-level='item'] .app-context-kind {
+  color: var(--text-tertiary);
+}
+
+.app-context[data-level='item'] .app-context-detail {
+  color: var(--text);
+  font-weight: 550;
+}
+
+.app-context[data-level='selected'] {
+  color: var(--accent-text);
+}
+
+.app-context[data-level='selected'] .app-context-kind,
+.app-context[data-level='selected'] .app-context-detail {
+  color: var(--text-tertiary);
+  font-weight: 400;
+}
+
+.app-context[data-level='selected'] .app-context-selection {
+  color: var(--accent-text);
+  font-weight: 550;
 }
 
 .composer-context.has-message-queue {
@@ -4561,6 +6079,16 @@ kbd {
   contain-intrinsic-size: auto 132px;
 }
 
+/*
+ * The thinking well hangs 16px into the reading gutter. content-visibility
+ * always paints a containment box, so that overhang is sliced off the left,
+ * and a skipped turn can stay locked to its intrinsic size — the finished
+ * answer then never paints. Turns that host a well opt out.
+ */
+.message-turn.assistant:has(.thinking-viewport) {
+  content-visibility: visible;
+}
+
 .transcript-virtual-item {
   display: flex;
   flex-direction: column;
@@ -4661,32 +6189,6 @@ kbd {
   100% {
     background: transparent;
   }
-}
-
-.message-quote-ref {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  max-width: 100%;
-  margin-bottom: 4px;
-  padding: 4px 8px;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: var(--bg-hover);
-  color: var(--text-secondary);
-  font-size: 11px;
-  text-align: left;
-  cursor: default;
-}
-
-.message-quote-ref span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.message-quote-ref:hover {
-  color: var(--text);
 }
 
 /* User message context stack — mirrors composer chips/cards after send. */
@@ -6046,21 +7548,102 @@ mark {
 
 .reasoning-body {
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
   line-height: 1.6;
-  max-height: 240px;
-  overflow-y: auto;
   font-size: 12.5px;
   color: var(--text-secondary);
 }
 
 .reasoning-flat .reasoning-body {
-  max-height: none;
   font-size: 13px;
   line-height: 1.65;
 }
 
-.reasoning-call.is-live .reasoning-body {
-  max-height: none;
+/*
+ * One reading well for a live think and for an expanded thinking process.
+ * Height stays fixed so the trace scrolls inside the turn instead of pushing
+ * the answer down. Fades are painted only on edges that still have more text.
+ */
+.thinking-viewport {
+  --thinking-viewport-h: 160px;
+  --thinking-fade: 28px;
+  --thinking-viewport-bg: color-mix(in srgb, var(--bg-sunken) 58%, var(--bg-content));
+  position: relative;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  height: var(--thinking-viewport-h);
+  min-height: var(--thinking-viewport-h);
+  border: 1px solid color-mix(in srgb, var(--border-strong) 85%, transparent);
+  border-radius: var(--radius);
+  background: var(--thinking-viewport-bg);
+  overflow: hidden;
+}
+
+.thinking-viewport-scroll {
+  position: absolute;
+  inset: 0;
+  /* clip, not hidden: hidden would make the inline axis a scrollport and
+     can shift the text so the left edge is cut off. */
+  overflow-x: clip;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 10px 12px;
+}
+
+.thinking-viewport-content,
+.thinking-process-body {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.thinking-viewport-fade {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: var(--thinking-fade);
+  pointer-events: none;
+  z-index: 1;
+  opacity: 0;
+  transition: opacity var(--dur-hover) ease;
+}
+
+.thinking-viewport-fade.top {
+  top: 0;
+  background: linear-gradient(to bottom, var(--thinking-viewport-bg), transparent);
+}
+
+.thinking-viewport-fade.bottom {
+  bottom: 0;
+  background: linear-gradient(to top, var(--thinking-viewport-bg), transparent);
+}
+
+.thinking-viewport.is-overflow-top .thinking-viewport-fade.top,
+.thinking-viewport.is-overflow-bottom .thinking-viewport-fade.bottom {
+  opacity: 1;
+}
+
+/* The process well is the scroller. Nested reasoning wells flatten into it. */
+.thinking-process-body .thinking-viewport {
+  height: auto;
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  overflow: visible;
+}
+
+.thinking-process-body .thinking-viewport-fade {
+  display: none;
+}
+
+.thinking-process-body .thinking-viewport-scroll {
+  position: static;
+  inset: auto;
+  height: auto;
+  overflow: visible;
+  overscroll-behavior: auto;
+  padding: 0;
 }
 
 .process-text-body {
@@ -6956,9 +8539,25 @@ button.tool-row {
   grid-template-rows: 1fr;
 }
 
+/*
+ * An open thinking well is a fixed 160px frame. 1fr in an auto-height grid
+ * plus min-height:0 on the clip can resolve the row to 0 once the trace stops
+ * growing, which drops the thought and the answer out of view together.
+ * Keep 1fr so the row still animates; the well itself is the height floor.
+ */
+.thinking-process.expanded > .tool-detail,
+.reasoning-call.expanded > .tool-detail {
+  grid-template-rows: 1fr;
+}
+
 .tool-detail-inner {
   overflow: hidden;
   min-height: 0;
+}
+
+.thinking-process.expanded > .tool-detail > .tool-detail-inner,
+.reasoning-call.expanded > .tool-detail > .tool-detail-inner {
+  min-height: var(--thinking-viewport-h, 160px);
 }
 
 /* The detail spans the full text column rather than indenting under the row:
@@ -6967,13 +8566,38 @@ button.tool-row {
   margin: 5px 8px 3px;
 }
 
-.thinking-process.expanded > .tool-detail > .tool-detail-inner > .thinking-process-body {
+.thinking-process-body {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  margin: 4px 4px 8px 18px;
-  padding: 2px 0 2px 8px;
-  border-left: 1px solid color-mix(in srgb, var(--text) 10%, transparent);
+}
+
+/*
+ * The well is wider than the log column: same side inset as the composer card.
+ * The shell grows into the reading gutter; the header row pads back so its
+ * label stays on the text edge, and the frame uses the full wider width.
+ */
+.message.assistant > .thinking-process,
+.message.assistant > .reasoning-call {
+  --thinking-viewport-h: 160px;
+  margin-left: calc(var(--composer-gutter) - var(--reading-gutter));
+  margin-right: calc(var(--composer-gutter) - var(--reading-gutter));
+}
+
+.message.assistant > .thinking-process > .tool-row,
+.message.assistant > .reasoning-call > .tool-row {
+  padding-left: calc(8px + var(--reading-gutter) - var(--composer-gutter));
+  padding-right: calc(8px + var(--reading-gutter) - var(--composer-gutter));
+}
+
+.message.assistant > .thinking-viewport {
+  margin-left: calc(var(--composer-gutter) - var(--reading-gutter));
+  margin-right: calc(var(--composer-gutter) - var(--reading-gutter));
+}
+
+.message.assistant > .thinking-process.expanded > .tool-detail > .tool-detail-inner > .thinking-viewport,
+.message.assistant > .reasoning-call.expanded > .tool-detail > .tool-detail-inner > .thinking-viewport {
+  margin: 4px 0 8px;
 }
 
 .thinking-process-body > .tool-call {
@@ -8499,9 +10123,9 @@ button.tool-row {
 }
 
 .file-source-select {
-  flex: 0 1 220px;
-  width: 220px;
-  max-width: min(220px, 48vw);
+  flex: 0 0 148px;
+  width: 148px;
+  max-width: 148px;
 }
 
 .file-source-select .font-select-field,
@@ -8525,6 +10149,10 @@ button.tool-row {
   min-height: 220px;
 }
 
+.applications-object-list .file-mac-browser .files-browser {
+  min-height: 0;
+}
+
 .data-home-actions {
   display: flex;
   flex-wrap: wrap;
@@ -8538,7 +10166,8 @@ button.tool-row {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  min-height: 220px;
+  flex: 1;
+  min-height: 0;
   padding: 32px 24px;
   text-align: center;
 }
@@ -8556,31 +10185,422 @@ button.tool-row {
   flex: 1;
 }
 
-.knowledge-note-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  padding: 6px 10px;
-  border-bottom: 1px solid var(--border-subtle, rgba(128, 128, 128, 0.18));
+.knowledge-note-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
 }
 
-.knowledge-note-textarea,
-.knowledge-note-preview {
+.applications-home.knowledge-library {
+  flex-direction: row;
+}
+
+.knowledge-library-main {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+.knowledge-folder-rail {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 176px;
+  width: 176px;
+  min-height: 0;
+  padding: 8px 6px 8px 8px;
+  box-sizing: border-box;
+  box-shadow: inset -0.5px 0 0 var(--border);
+}
+
+.knowledge-folder-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.knowledge-folder,
+.knowledge-folder-add {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  min-height: 30px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  letter-spacing: -0.011em;
+  text-align: left;
+  cursor: default;
+}
+
+.knowledge-folder-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.knowledge-folder-icon {
+  flex: 0 0 auto;
+  display: inline-flex;
+  color: var(--text-tertiary);
+}
+
+.knowledge-folder-count {
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-tertiary);
+}
+
+.knowledge-folder:hover,
+.knowledge-folder-add:hover {
+  background: var(--bg-hover);
+}
+
+.knowledge-folder[data-active='true'] {
+  background: var(--accent-soft);
+}
+
+.knowledge-folder[data-active='true'] .knowledge-folder-icon,
+.knowledge-folder[data-active='true'] .knowledge-folder-name {
+  color: var(--text);
+}
+
+.knowledge-folder.is-drop {
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
+.knowledge-folder.is-renaming {
+  padding: 2px 4px;
+}
+
+.knowledge-folder-add {
+  flex: 0 0 auto;
+  margin-top: 6px;
+  color: var(--text-secondary);
+}
+
+.applications-object-row.knowledge-note-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto auto;
+  column-gap: 12px;
+  row-gap: 3px;
+  align-items: baseline;
+  min-height: 72px;
+  padding: 9px 12px 10px;
+}
+
+.knowledge-note-row.is-dragging,
+.applications-object-row.is-dragging {
+  opacity: 0.45;
+}
+
+.knowledge-note-row-title {
+  grid-column: 1;
+  grid-row: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-family: var(--font-reading);
+  font-size: 15px;
+  font-weight: 560;
+  letter-spacing: -0.022em;
+  line-height: 1.25;
+}
+
+.knowledge-note-row-title > span,
+.knowledge-note-row-title .rename-field {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.knowledge-note-row-mark {
+  flex: 0 0 auto;
+  color: var(--text-tertiary);
+}
+
+.knowledge-note-row-when {
+  grid-column: 2;
+  grid-row: 1;
+  font-size: 11px;
+  font-weight: 480;
+  letter-spacing: 0.01em;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.knowledge-note-row-preview {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  white-space: normal;
+  overflow-wrap: break-word;
+  font-size: 12.5px;
+  font-weight: 450;
+  line-height: 1.35;
+  color: var(--text-secondary);
+}
+
+.knowledge-note-row-preview.is-empty {
+  color: var(--text-tertiary);
+}
+
+.object-masthead {
+  flex: 0 0 auto;
+  min-width: 0;
+  padding: 14px 16px 2px;
+}
+
+.object-masthead.is-reading {
+  padding: 16px 32px 0 52px;
+}
+
+.object-masthead-title {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 17px;
+  font-weight: 590;
+  letter-spacing: -0.03em;
+  line-height: 1.25;
+  color: var(--text);
+}
+
+.object-masthead.is-reading .object-masthead-title {
+  font-family: var(--font-reading);
+  font-size: 22px;
+  font-weight: 560;
+  white-space: normal;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.knowledge-note-title {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  outline: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 17px;
+  font-weight: 590;
+  letter-spacing: -0.03em;
+  line-height: 1.25;
+  cursor: text;
+  user-select: text;
+  -webkit-user-select: text;
+  -webkit-app-region: no-drag;
+}
+
+.object-masthead.is-reading .knowledge-note-title {
+  font-family: var(--font-reading);
+  font-size: 22px;
+  font-weight: 560;
+}
+
+.knowledge-note-title.is-chrome {
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 6em;
+  height: 22px;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.011em;
+  line-height: 22px;
+}
+
+.file-viewer-lead:has(.knowledge-note-title) {
+  flex: 1 1 auto;
+}
+
+.knowledge-note-title::placeholder {
+  color: var(--text-tertiary);
+  font-weight: 500;
+}
+
+.knowledge-note-title.is-untitled {
+  color: var(--text-tertiary);
+  font-weight: 500;
+  text-decoration: underline;
+  text-decoration-style: dashed;
+  text-decoration-color: color-mix(in srgb, var(--text-tertiary) 70%, transparent);
+  text-underline-offset: 5px;
+}
+
+.knowledge-note-title.is-untitled:hover {
+  color: var(--text-secondary);
+  text-decoration-style: solid;
+  text-decoration-color: var(--text-secondary);
+}
+
+.knowledge-note-title:focus,
+.knowledge-note-title.is-untitled:focus {
+  color: var(--text);
+  font-weight: 560;
+  background: transparent;
+  box-shadow: none;
+  text-decoration: none;
+}
+
+/* The stored title is the leading heading. The page title field edits it,
+   so that line stays in the document without drawing a second title. */
+.knowledge-note-editor.has-masthead .knowledge-note-handymd {
+  position: relative;
+  flex: none;
+  overflow: visible;
+  min-height: 0;
+}
+
+.knowledge-note-editor.has-masthead .ProseMirror > .hm-h1:first-child {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.knowledge-note-editor.has-masthead .ProseMirror {
+  padding-top: 10px;
+}
+
+.object-facts-stage {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.object-facts {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: 16px;
+  row-gap: 2px;
+  min-height: 32px;
+  padding: 7px 16px;
+  box-sizing: border-box;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  font-weight: 480;
+  letter-spacing: 0.012em;
+  line-height: 1.35;
+  font-variant-numeric: tabular-nums;
+  box-shadow: inset 0 0.5px 0 var(--border);
+  -webkit-app-region: no-drag;
+  user-select: none;
+}
+
+.object-facts.is-inline {
+  min-height: 0;
+  padding: 2px 0 0;
+  box-shadow: none;
+}
+
+.object-fact {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.object-fact-label {
+  flex: 0 0 auto;
+  font-weight: 500;
+  color: var(--text-tertiary);
+}
+
+.object-fact-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 560;
+  letter-spacing: -0.011em;
+  color: var(--text-secondary);
+}
+
+.knowledge-note-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  padding: 8px 14px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  background: var(--bg-sunken);
+  border-bottom: 1px solid var(--border);
+}
+
+.knowledge-note-handymd {
   flex: 1;
   min-height: 0;
-  padding: 16px 18px 24px;
   overflow: auto;
 }
 
-.knowledge-note-textarea {
-  width: 100%;
-  border: 0;
-  resize: none;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  line-height: 1.55;
-  outline: none;
+.knowledge-note-editor .handymd {
+  --hm-font: var(--font-reading);
+  min-height: 0;
+  --hm-mono: var(--font-code);
+  --hm-fg: var(--text);
+  --hm-fg-dim: var(--text-secondary);
+  --hm-marker: var(--text-tertiary);
+  --hm-accent: var(--accent);
+  --hm-code-fg: var(--tone-write);
+  --hm-code-bg: var(--accent-soft);
+  --hm-codeblock-bg: var(--bg-sunken);
+  --hm-quote-border: var(--border-strong);
+  --hm-quote-fg: var(--text-secondary);
+  --hm-tag-bg: var(--accent-soft);
+  --hm-tag-fg: var(--accent-text);
+  --hm-hr: var(--border-strong);
+  --hm-table-border: var(--border-strong);
+  --hm-table-header-bg: var(--accent-veil);
+  --hm-selection: var(--accent-soft);
+  min-height: 100%;
+}
+
+.knowledge-note-editor .ProseMirror {
+  min-height: 48vh;
+  box-sizing: border-box;
+  /* Body is user-select:none app-wide — the editor must opt back in. */
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
 }
 
 .file-session-item-title {
@@ -8657,61 +10677,66 @@ button.tool-row {
   align-self: stretch;
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: stretch;
   justify-content: flex-start;
-  padding: 20px 24px 32px;
+  padding: 16px 20px 28px;
   box-sizing: border-box;
 }
 
-/* Optical vertical center — same spacer language as pane empty states. */
-.db-connect-body::before,
-.db-connect-body::after,
-.schedule-editor-body::before,
-.schedule-editor-body::after {
-  content: '';
-  align-self: stretch;
-  pointer-events: none;
-  min-height: 0;
-}
-
-.db-connect-body::before,
-.schedule-editor-body::before {
-  flex: 0.42 1 0;
-}
-
-.db-connect-body::after,
-.schedule-editor-body::after {
-  flex: 0.58 1 0;
+.schedule-editor-body {
+  align-items: center;
+  justify-content: safe center;
 }
 
 .db-connect-card,
 .schedule-editor-card {
   flex: none;
-  width: min(100%, 360px);
+  width: 100%;
+  max-width: 520px;
   display: flex;
   flex-direction: column;
   gap: 16px;
+  padding: 0;
+  box-sizing: border-box;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
   -webkit-app-region: no-drag;
 }
 
-/* Landing surfaces (fresh DB connection / new scheduled task) rise in like the
-   keychain gate and empty states, instead of snapping. The embedded DB editor
-   is left out — its entrance is owned by `.db-preview-swap` in the workbench. */
+/* DB workspace header: hairline under the chrome, kind glyph by the name,
+   breadcrumb suffix ("conn / table") one step quieter than the title. */
+.db-workspace-header {
+  box-shadow: inset 0 -0.5px 0 var(--border);
+}
+
+.db-workspace-header-icon {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  background: var(--bg-raised);
+  box-shadow: inset 0 0 0 1px var(--border);
+  color: var(--text-secondary);
+}
+
+.db-workspace-header-icon svg {
+  display: block;
+  width: 13px;
+  height: 13px;
+}
+
+.db-workspace-header-table {
+  color: var(--text-tertiary);
+  font-weight: 550;
+}
+
 .db-connect-body:not(.is-embedded) .db-connect-card,
 .schedule-editor-body .schedule-editor-card {
   opacity: 1;
-  transform: translateY(0);
-  transition:
-    opacity var(--dur-pop) var(--ease-out),
-    transform var(--dur-pop) var(--ease-out);
-}
-
-@starting-style {
-  .db-connect-body:not(.is-embedded) .db-connect-card,
-  .schedule-editor-body .schedule-editor-card {
-    opacity: 0;
-    transform: translateY(6px);
-  }
 }
 
 /* Workbench DB preview swaps between connect / table / error / loading. Keyed on
@@ -8719,6 +10744,7 @@ button.tool-row {
    data the user is reading. */
 .db-preview-swap {
   flex: 1 1 auto;
+  min-width: 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -8738,6 +10764,7 @@ button.tool-row {
 
 .db-preview-swap > .sqlite-root {
   flex: 1 1 auto;
+  min-width: 0;
   min-height: 0;
 }
 
@@ -8829,6 +10856,11 @@ button.tool-row {
   max-width: none;
   align-self: stretch;
   padding: 0;
+}
+
+.schedule-editor-card .session-run-controls {
+  justify-content: flex-start;
+  flex-wrap: wrap;
 }
 
 .schedule-editor-picker {
@@ -8956,6 +10988,7 @@ button.tool-row {
   display: flex;
   flex-direction: column;
   min-width: 0;
+  min-height: 0;
 }
 
 .files-missing-root {
@@ -9612,8 +11645,20 @@ button.tool-row {
 .empty-state-session::after {
   content: '';
   align-self: stretch;
-  pointer-events: none;
+  pointer-events: auto;
+  -webkit-app-region: drag;
   min-height: 0;
+}
+
+/* New-session canvas fills the log. The transcript is the scrollport, so it
+   owns the drag region; the name and controls stay clickable. */
+.transcript:has(> .transcript-inner > .empty-state-session) {
+  -webkit-app-region: drag;
+}
+
+.transcript:has(> .transcript-inner > .empty-state-session)
+  :is(button, .btn, a, input, select, textarea, label, .empty-agent-name, .linkish) {
+  -webkit-app-region: no-drag;
 }
 
 .empty-state-session::before {
@@ -9752,13 +11797,18 @@ button.tool-row {
 
 .empty-state.is-entering .empty-logo-mark,
 .empty-state.is-entering .empty-title,
-.empty-state.is-entering .empty-desc {
+.empty-state.is-entering .empty-desc,
+.empty-state.is-entering .app-empty-actions {
   animation: empty-in 320ms var(--ease-out) backwards;
 }
 
 .empty-state.is-entering .empty-title,
 .empty-state.is-entering .empty-desc {
   animation-delay: 40ms;
+}
+
+.empty-state.is-entering .app-empty-actions {
+  animation-delay: 90ms;
 }
 
 @keyframes empty-in {

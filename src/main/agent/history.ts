@@ -22,7 +22,6 @@ import type {
   TextContent,
   ToolCall
 } from '@earendil-works/pi-ai'
-import { composeQuotedUserText } from '../../shared/quote.ts'
 import { composeContextUserText } from '../../shared/previewContext.ts'
 import {
   compactionBoundaryIndex,
@@ -103,22 +102,15 @@ export function buildHistory(
       continue
     }
     if (message.role === 'user') {
-      const quote =
-        message.quoteMessageId && message.quoteSummary && message.quoteRole
-          ? {
-              messageId: message.quoteMessageId,
-              summary: message.quoteSummary,
-              role: message.quoteRole
-            }
-          : null
-      // Stored content is the bubble body; quote marker, preview context and
-      // attachments are reconstituted for the model only. Image attachments
-      // additionally ride along as ImageContent parts (vision models) — the
-      // Attachments text line still lists every path, inlined or not.
+      // Stored content is the bubble body; preview context and attachments
+      // are reconstituted for the model only. Image attachments additionally
+      // ride along as ImageContent parts (vision models) — the Attachments
+      // text line still lists every path, inlined or not.
       const text = composeContextUserText(
-        composeQuotedUserText(message.content, quote),
+        message.content,
         message.contextBlocks,
-        message.attachments
+        message.attachments,
+        message.appColumnFocus
       )
       const parts: (TextContent | ImageContent)[] = []
       if (inlineImages) {

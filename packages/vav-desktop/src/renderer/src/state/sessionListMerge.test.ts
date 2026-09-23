@@ -155,6 +155,17 @@ describe('nextConversationSelection', () => {
       }),
       ['c']
     )
+    assert.deepEqual(
+      nextConversationSelection({
+        id: 'c',
+        selectedIds: ['a'],
+        activeId: 'a',
+        range: true,
+        rangeIds: ['a', 'c', 'b'],
+        listedIds: ['a', 'b', 'c']
+      }),
+      ['a', 'c']
+    )
   })
 })
 
@@ -322,10 +333,11 @@ describe('listedConversationIdsForSelect', () => {
       row({ id: 'arch', archived: true }),
       row({ id: 'file', fileId: 'f1' }),
       row({ id: 'arch-file', archived: true, fileId: 'f2' }),
-      row({ id: 'timer', sessionKind: 'timer' })
+      row({ id: 'timer', sessionKind: 'timer' }),
+      row({ id: 'run', sessionKind: 'timer', timerRunId: 'job-1' })
     ]
-    assert.deepEqual(listedConversationIdsForSelect(rows, false), ['live'])
-    assert.deepEqual(listedConversationIdsForSelect(rows, undefined), ['live'])
+    assert.deepEqual(listedConversationIdsForSelect(rows, false), ['live', 'run'])
+    assert.deepEqual(listedConversationIdsForSelect(rows, undefined), ['live', 'run'])
     assert.deepEqual(listedConversationIdsForSelect(rows, true), ['arch'])
   })
 })

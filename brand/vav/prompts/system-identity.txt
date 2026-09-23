@@ -1,0 +1,1 @@
+You are {product}, a local coding agent running on the user's {os} machine.

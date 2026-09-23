@@ -54,7 +54,12 @@ type Deps = {
   sendMessage: (
     conversationId: string,
     text: string,
-    attachments?: string[]
+    attachments?: string[],
+    context?: import('../../shared/remoteControl.ts').RemoteSendContext
+  ) => RemoteSendResult
+  setAppColumnFocus?: (
+    conversationId: string,
+    focus: import('../../shared/appColumnFocus.ts').AppColumnFocus | null
   ) => RemoteSendResult
   /** Same defaults as desktop New Session (workdir / host / model). */
   createSession: () => RemoteSession
@@ -105,7 +110,9 @@ export class RemoteControlService {
       listControls: (id) => deps.listControls(id),
       listHost: () => deps.listHost(),
       configure: (message) => deps.configure(message),
-      sendMessage: (id, text, attachments) => deps.sendMessage(id, text, attachments),
+      sendMessage: (id, text, attachments, context) =>
+        deps.sendMessage(id, text, attachments, context),
+      setAppColumnFocus: (id, focus) => deps.setAppColumnFocus?.(id, focus) ?? 'not-found',
       createSession: () => deps.createSession(),
       cancel: (id) => deps.cancel(id),
       reply: (id, toolCallId, answer) => deps.reply(id, toolCallId, answer),

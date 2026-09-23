@@ -34,7 +34,8 @@ const TOOL_NAME_KEYS: Partial<Record<ToolName, MessageKey>> = {
   request_for_secret: 'tool.secret',
   switch_mode: 'tool.switchMode',
   task: 'tool.task',
-  plan_doc: 'tool.planDoc'
+  plan_doc: 'tool.planDoc',
+  app: 'tool.app'
 }
 
 function localizedToolName(tool: ToolName, t: ReturnType<typeof useT>): string {

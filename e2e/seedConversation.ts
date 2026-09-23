@@ -269,7 +269,7 @@ export function buildAcpGoalConversation(workspace: string, now = Date.now()) {
   return conversation
 }
 
-/** Branch, quote, subtask, cancelled, approval, request — extra agent chrome. */
+/** Branch, subtask, cancelled, approval, request — extra agent chrome. */
 export function buildRichConversation(workspace: string, now = Date.now()) {
   const hello = join(workspace, 'hello.md')
   const conversation = baseConversation(now, workspace)
@@ -298,9 +298,6 @@ export function buildRichConversation(workspace: string, now = Date.now()) {
       role: 'user',
       content: 'Follow the second take.',
       createdAt: now + 3,
-      quoteMessageId: 'e2e-asst-1b',
-      quoteSummary: 'branch B conclusion',
-      quoteRole: 'assistant',
       blocks: [{ kind: 'text', text: 'Follow the second take.' }]
     },
     {

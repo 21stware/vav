@@ -100,13 +100,11 @@ describe('composer send helpers', () => {
     assert.equal(isEmptyComposerSend('', [], [], [{ ref: { id: 'c' } }]), false)
     assert.equal(hasUnsentComposerDraft({ text: ' hi ' }), true)
     assert.equal(hasUnsentComposerDraft({ attachments: ['/a.png'] }), true)
-    assert.equal(hasUnsentComposerDraft({ quote: { messageId: 'm', summary: 'q', role: 'user' } }), true)
     assert.equal(hasUnsentComposerDraft({ text: '  ', attachments: [] }), false)
     assert.deepEqual(
       unsentComposerIds({
         drafts: { a: 'hello', b: '' },
         attachments: { c: ['/x'] },
-        quotes: {},
         previewRefs: {},
         commentCards: {}
       }),
@@ -130,7 +128,6 @@ describe('composer send helpers', () => {
       attachments,
       previewRefs: [],
       commentCards: [],
-      quote: null,
       contextFile: '/a.ts',
       now: 1,
       id: 'q-fixed'
@@ -193,7 +190,6 @@ describe('composer send helpers', () => {
       {
         drafts: { a: 'hello', b: 'keep' },
         attachments: { a: ['/x'] },
-        quotes: { a: { messageId: 'm', summary: 'q' } },
         previewRefs: { a: [{ id: 'r', filePath: '/a.ts' }] },
         commentCards: { a: [{ ref: { id: 'c', filePath: '/a.ts' }, comment: 'n' }] },
         contextFiles: { a: '/notes.md', b: '/keep.ts' }
@@ -203,7 +199,6 @@ describe('composer send helpers', () => {
     assert.equal(patch.drafts.a, '')
     assert.equal(patch.drafts.b, 'keep')
     assert.deepEqual(patch.attachments.a, [])
-    assert.equal(patch.quotes.a, null)
     assert.deepEqual(patch.previewRefs.a, [])
     assert.deepEqual(patch.commentCards.a, [])
     assert.equal(patch.contextFiles.a, null)
@@ -217,7 +212,6 @@ describe('composer send helpers', () => {
       attachments: [],
       previewRefs: [],
       commentCards: [],
-      quote: null,
       contextFile: null,
       now: 2,
       id: 'q-1'
@@ -227,7 +221,6 @@ describe('composer send helpers', () => {
         messageQueues: { a: [], b: [item] },
         drafts: { a: 'later', b: 'keep' },
         attachments: { a: ['/x'] },
-        quotes: { a: { messageId: 'm', summary: 'q' } },
         previewRefs: { a: [{ id: 'r', filePath: '/a.ts' }] },
         commentCards: { a: [{ ref: { id: 'c', filePath: '/a.ts' }, comment: 'n' }] },
         contextFiles: { a: '/notes.md' }
@@ -250,7 +243,6 @@ describe('composer send helpers', () => {
       attachments: [],
       previewRefs: [],
       commentCards: [],
-      quote: null,
       contextFile: null,
       now: 2,
       id: 'q-1'
@@ -259,7 +251,6 @@ describe('composer send helpers', () => {
       messageQueues: { a: [item], b: [item] },
       drafts: {},
       attachments: {},
-      quotes: {},
       previewRefs: {},
       commentCards: {}
     }

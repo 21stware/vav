@@ -14,6 +14,7 @@ import {
   type ReactNode
 } from 'react'
 import { X } from 'lucide-react'
+import { brandDisplayName } from '@shared/brandIdentity'
 import { tt } from '../i18n/useT'
 import { entranceStarted, markEntranceStarted } from '../lib/emptyEntrance'
 import wordmark from '../assets/wordmark.png'
@@ -623,7 +624,7 @@ export function EmptyState({
   const hero = (
     <>
       {logoNode && (
-        <span className="empty-logo" role="img" aria-label={logoAlt ?? logoLabel ?? 'VAV'}>
+        <span className="empty-logo" role="img" aria-label={logoAlt ?? logoLabel ?? brandDisplayName()}>
           <span className="empty-logo-mark">{logoNode}</span>
         </span>
       )}

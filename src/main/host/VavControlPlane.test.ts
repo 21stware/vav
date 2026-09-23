@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { createConnection } from 'node:net'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, before, describe, it } from 'node:test'
@@ -727,6 +727,48 @@ describe('VavControlPlane', { concurrency: false }, () => {
       assert.ok(connectors.some((row) => row.id === 'github'))
     } finally {
       plane.dispose()
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('watches loaded workdirs and can create a Knowledge note', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vav-plane-knowledge-'))
+    const host = createLocalWorkspaceHost({ name: 'plane-knowledge' })
+    const ws = join(dir, 'Workspace')
+    await mkdir(ws, { recursive: true })
+    const plane = createVavControlPlane({
+      stateDir: dir,
+      host,
+      secret: () => SECRET,
+      appVersion: 'test',
+      tmp: dir
+    })
+    plane.load()
+    try {
+      assert.ok(plane.knowledge.rootDir.startsWith(dir))
+      const created = plane.knowledge.createNote('Digest', null)
+      plane.knowledge.writeNote(created.id, '# Digest\n\nok')
+      assert.equal(plane.knowledge.readNote(created.id)?.markdown.includes('ok'), true)
+      assert.equal(plane.files.isAllowedPath(created.storedPath!), true)
+
+      plane.conversations.create(ws, 'test')
+      plane.conversations.flush()
+      plane.dispose()
+
+      const again = createVavControlPlane({
+        stateDir: dir,
+        host,
+        secret: () => SECRET,
+        appVersion: 'test',
+        tmp: dir
+      })
+      again.load()
+      try {
+        assert.equal(again.files.isAllowedPath(join(ws, 'out.md')), true)
+      } finally {
+        again.dispose()
+      }
+    } finally {
       await rm(dir, { recursive: true, force: true })
     }
   })

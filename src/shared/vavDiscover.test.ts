@@ -44,11 +44,13 @@ describe('vavDiscover', () => {
     assert.equal(local.app, 'vav-server')
     assert.equal(local.proto, 1)
     assert.equal(local.loopback, true)
+    assert.equal(local.hasSecret, true)
     assert.equal(local.secret, '0123456789abcdef01234567')
     assert.equal(local.wsPath, '/vav')
     assert.equal(local.port, 4750)
     const lan = buildDiscoverPayload({ name: 'office', version: '1.19.0', secret }, false)
     assert.equal(lan.loopback, false)
+    assert.equal(lan.hasSecret, true)
     assert.equal(lan.secret, undefined)
     assert.equal(lan.hasKey, undefined)
     const keyed = buildDiscoverPayload(

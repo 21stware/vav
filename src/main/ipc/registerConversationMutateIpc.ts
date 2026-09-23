@@ -6,6 +6,7 @@ import { vendorIdFromEndpoint } from '@shared/llmVendors'
 import { LOCAL_MACHINE_ID, isLocalMachine } from '@shared/workspaceHost'
 import { conversationToMeta } from '../store/conversationMeta'
 import type { Conversation, ConversationMeta } from '@shared/types'
+import { appColumnFocusEqual, type AppColumnFocus } from '@shared/appColumnFocus'
 import { locateTempWorkspaceToDir } from '../fs/locateTempWorkspace'
 import type { HostFs } from '../host/HostFs'
 import { LOG_EVENT } from '@shared/appLog'
@@ -106,6 +107,10 @@ export type ConversationMutateIpcHost = {
     patch: { model?: string; agent?: string }
   ) => Promise<boolean>
   forwardSetWorkspace?: (id: string, path: string | null) => Promise<boolean>
+  forwardSetAppColumnFocus?: (
+    id: string,
+    focus: AppColumnFocus | null
+  ) => Promise<boolean>
   forwardDeleteMessage?: (
     id: string,
     messageId: string
@@ -267,6 +272,7 @@ export function registerConversationMutateIpc(
     if (existing && (existing.focusedFilePath ?? null) === path) {
       return store.listMeta()
     }
+    if (path) host.grantPath(path)
     store.updateMeta(id, { focusedFilePath: path })
     return store.listMeta()
   })
@@ -280,6 +286,20 @@ export function registerConversationMutateIpc(
     store.updateMeta(id, { focusedDbTable: next })
     return store.listMeta()
   })
+
+  ipcMain.handle(
+    IPC.convSetAppColumnFocus,
+    async (_event, id: string, focus: AppColumnFocus | null) => {
+      const existing = store.get(id)
+      const next = focus && typeof focus === 'object' ? focus : null
+      if (existing && appColumnFocusEqual(existing.appColumnFocus, next)) {
+        return store.listMeta()
+      }
+      store.updateMeta(id, { appColumnFocus: next })
+      await host.forwardSetAppColumnFocus?.(id, next)
+      return store.listMeta()
+    }
+  )
 
   ipcMain.handle(IPC.convAccountQuota, async (_event, id: string, hostOverride?: unknown) => {
     const conversation = store.get(id)

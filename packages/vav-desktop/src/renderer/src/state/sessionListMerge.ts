@@ -7,6 +7,7 @@
  * only real conversation activity (messages) bumps `updatedAt` on main.
  */
 
+import { isListSession } from '@shared/sessionKind.ts'
 import { regenerateActiveLeaf } from '@shared/thread.ts'
 
 export { regenerateActiveLeaf }
@@ -58,6 +59,7 @@ export type ConversationListItem = {
   archivedAt: number | null
   fileId?: string | null
   sessionKind?: import('@shared/sessionKind.ts').SessionKind | null
+  timerRunId?: string | null
 }
 
 /** Optimistic one-row patch; file-preview sessions stay in the local list. */
@@ -80,22 +82,19 @@ export function prependConversationIfMissing<C extends { id: string }>(
   return conversations.some((c) => c.id === meta.id) ? conversations : [meta, ...conversations]
 }
 
-/** Sidebar ids for shift-range select: workspace sessions only. */
+/** Fallback ids for shift-range select when the UI does not pass visible order. */
 export function listedConversationIdsForSelect(
   conversations: Array<{
     id: string
     archived?: boolean
     fileId?: string | null
     sessionKind?: import('@shared/sessionKind.ts').SessionKind | null
+    timerRunId?: string | null
   }>,
   archived: boolean | undefined
 ): string[] {
   return conversations
-    .filter((c) => {
-      const kind = c.sessionKind ?? (c.fileId ? 'file' : 'workspace')
-      if (kind !== 'workspace') return false
-      return archived ? !!c.archived : !c.archived
-    })
+    .filter((c) => isListSession(c) && (archived ? !!c.archived : !c.archived))
     .map((c) => c.id)
 }
 

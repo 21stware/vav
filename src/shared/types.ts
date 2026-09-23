@@ -16,6 +16,10 @@ import { DEFAULT_AUTO_UPDATE_POLICY, type AutoUpdatePolicy } from './updatePolic
 import { VAV_DEFAULT_MODEL_ID } from './vavModelList.ts'
 import { LOCAL_MACHINE_ID, type WorkspaceRef } from './workspaceHost.ts'
 import type { SessionKind } from './sessionKind.ts'
+import type { AppColumnFocus } from './appColumnFocus.ts'
+import type { AppFolderLibraries } from './appFolders.ts'
+
+export type { AppColumnFocus } from './appColumnFocus.ts'
 
 export type { AutoUpdatePolicy } from './updatePolicy.ts'
 export { AUTO_UPDATE_POLICIES, DEFAULT_AUTO_UPDATE_POLICY } from './updatePolicy.ts'
@@ -50,6 +54,26 @@ export type ToolName =
   | 'knowledge_search'
   | 'knowledge_fetch'
   | 'knowledge_write'
+  /** Create an app Note. Not a filesystem write. */
+  | 'note_write'
+  /** Replace an existing app Note. Not a filesystem write. */
+  | 'note_edit'
+  /** Create an Analysis / Data object. Not a filesystem write. */
+  | 'analysis_write'
+  /** Update an existing Analysis / Data object. */
+  | 'analysis_edit'
+  /** Create a Scheduled task. Not a filesystem write. */
+  | 'schedule_write'
+  /** Update an existing Scheduled task. */
+  | 'schedule_edit'
+  /** Add a file to the Storage catalog. */
+  | 'storage_write'
+  /** Replace a file in the Storage catalog. */
+  | 'storage_edit'
+  /** Notes folders: list, rename, move, delete, merge. */
+  | 'knowledge_library'
+  /** App-column resources addressed as `vav://app/…`. */
+  | 'app'
   | 'load_skill'
   | 'connector'
   | 'switch_mode'
@@ -94,6 +118,16 @@ export const TOOL_LABELS: Record<ToolName, string> = {
   knowledge_search: '检索知识',
   knowledge_fetch: '取回知识块',
   knowledge_write: '写入笔记',
+  note_write: '写入笔记',
+  note_edit: '编辑笔记',
+  analysis_write: '写入分析',
+  analysis_edit: '编辑分析',
+  schedule_write: '写入日程',
+  schedule_edit: '编辑日程',
+  storage_write: '写入存储',
+  storage_edit: '编辑存储',
+  knowledge_library: '整理笔记',
+  app: '应用资源',
   load_skill: '加载技能',
   connector: '连接器',
   switch_mode: '切换到编辑',
@@ -220,14 +254,10 @@ export interface ChatMessage {
   errorText?: string
   /** Raw host / JSON-RPC payload, kept for diagnostics. Not shown in the UI. */
   errorDetail?: string
-  /** Quoted prior message (composer 引用); content stays user-typed only. */
-  quoteMessageId?: string
-  quoteSummary?: string
-  quoteRole?: 'user' | 'assistant'
   /**
    * Preview block references attached in the composer (file-preview edit).
    * Reconstituted into the model text as hidden context; the bubble body
-   * stays user-typed only, exactly like {@link quoteSummary}.
+   * stays user-typed only.
    */
   contextBlocks?: PreviewRef[]
   /**
@@ -236,6 +266,11 @@ export interface ChatMessage {
    * file via system prompt / focusedFilePath while this remains set.
    */
   contextFile?: string
+  /**
+   * App-column selection at send time (page + open / highlighted object).
+   * Reconstituted into the model text; the bubble body stays user-typed only.
+   */
+  appColumnFocus?: AppColumnFocus | null
   /**
    * Paperclip paths attached at send time. Shown as tiles; reconstituted for
    * the model in history (not baked into {@link content}).
@@ -246,13 +281,6 @@ export interface ChatMessage {
    * in the transcript — not a full-screen takeover.
    */
   changeSetId?: string
-}
-
-/** Pending quote attached to the composer before send (main-chat.rpml §引用). */
-export interface QuoteDraft {
-  messageId: string
-  summary: string
-  role: 'user' | 'assistant'
 }
 
 /**
@@ -438,6 +466,11 @@ export interface ConversationMeta {
    * Null = connection settings. Fed into the built-in agent system prompt.
    */
   focusedDbTable?: string | null
+  /**
+   * Right-hand app column snapshot for the workspace agent.
+   * List / item / selected — not an attachment.
+   */
+  appColumnFocus?: AppColumnFocus | null
   /**
    * A turn / command finished and the user has not opened or focused this
    * session since. Keeps the row in the tray until the result is accessed.
@@ -1230,6 +1263,8 @@ export interface AppSettings {
   defaultMachineId: string
   /** Starred conversation ids, most recently starred first. */
   favoriteConversationIds: string[]
+  /** Analysis / Scheduled folder libraries. Notes keep their own store. */
+  appLibraries: AppFolderLibraries
   /** Files panel: indented tree vs Finder-style columns. */
   fileViewMode: FileViewMode
   /** Files panel sort field (Finder-style). */
@@ -1410,6 +1445,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
   sidebarSessionFilter: 'none',
   defaultMachineId: LOCAL_MACHINE_ID,
   favoriteConversationIds: [],
+  appLibraries: {
+    data: { folders: [], assignments: {} },
+    scheduled: { folders: [], assignments: {} }
+  },
   fileViewMode: 'tree',
   fileSortKey: 'name',
   fileSortAscending: true,
@@ -1710,6 +1749,23 @@ export type TurnEvent =
       type: 'file-draft'
       conversationId: string
       filePath: string
+      content?: string
+      append?: string
+      baseLen?: number
+    }
+  /**
+   * Streaming draft of a Knowledge note (`knowledge_write`, `app` write, or a
+   * file write onto the note's stored path). The open editor paints this
+   * immediately; the tool's final write is the durable copy.
+   */
+  | {
+      type: 'knowledge-draft'
+      conversationId: string
+      hostId: string
+      /** App-object conversation that owns the note, when one exists. */
+      noteConversationId: string | null
+      /** Heading or explicit title, once one is visible in the partial body. */
+      title: string | null
       content?: string
       append?: string
       baseLen?: number

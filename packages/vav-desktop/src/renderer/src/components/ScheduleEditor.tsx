@@ -17,12 +17,15 @@ import {
 } from '@shared/cronUi'
 import { useSessionStore } from '../state/sessionStore'
 import { useT } from '../i18n/useT'
-import { useSidebarFloatMode } from '../lib/sidebarLayout'
 import { isDraftScheduledTitle } from '../lib/draftEditorTitle'
-import { isTemporaryWorkspace, relativeTime } from '../lib/format'
+import { absoluteTime, isTemporaryWorkspace } from '../lib/format'
 import { basename } from '../lib/path'
-import { ShellLeadingControls } from './ShellLeadingControls'
+import { timerRunTimeLabel } from '../lib/timerSessions'
+import { countWritingUnits } from '../lib/writingStats'
+import { AgentModelPicker } from './AgentModelPicker'
 import { Composer } from './Composer'
+import { countFact, ObjectFacts, timeFact } from './ObjectFacts'
+import { SessionRunPicker } from './SessionRunPicker'
 import { Button, Toggle } from './ui'
 
 const WORKSPACE_MINT = 'mint'
@@ -89,14 +92,11 @@ export function ScheduleEditor({
   )
   const renameConversation = useSessionStore((s) => s.renameConversation)
   const showToast = useSessionStore((s) => s.showToast)
-  const sidebarVisible = useSessionStore((s) => s.sidebarVisible)
   const tmp = useSessionStore((s) => s.tmp)
   const recentDirs = useSessionStore((s) => s.settings.recentWorkspaceDirectories)
   const windowMachineId = useSessionStore((s) => s.windowMachineId)
   const setWorkingDirectory = useSessionStore((s) => s.setWorkingDirectory)
   const pickWorkingDirectory = useSessionStore((s) => s.pickWorkingDirectory)
-  const sidebarFloating = useSidebarFloatMode()
-  const showShellLeading = !(sidebarVisible && !sidebarFloating)
   const [job, setJob] = useState<TimerJob | null>(null)
   const [title, setTitle] = useState('')
   const [prompt, setPrompt] = useState('')
@@ -159,10 +159,6 @@ export function ScheduleEditor({
     if (!current) return null
     const nextPrompt = (patch.prompt ?? prompt).trim()
     const enabled = patch.enabled ?? current.enabled
-    if (enabled && !nextPrompt) {
-      showToast({ kind: 'error', title: t('timer.promptRequired') })
-      return current
-    }
     const schedule = scheduleFromVisual(patch.visual ?? visual)
     try {
       const updated = await window.vav.timers.updateJob(current.id, {
@@ -306,19 +302,6 @@ export function ScheduleEditor({
 
   return (
     <main className="detail" data-testid="schedule-editor">
-      <header
-        className={`terminal-host-chrome agent-mode-chrome${showShellLeading ? ' has-shell-leading' : ''}`}
-      >
-        <div className="agent-mode-chrome-row">
-          {showShellLeading ? (
-            <div className="agent-mode-shell-leading">
-              <ShellLeadingControls />
-            </div>
-          ) : null}
-          <span className="spacer" />
-        </div>
-      </header>
-
       <div className="schedule-editor-body">
         <div className="schedule-editor-card">
           <div className="schedule-editor-intro">
@@ -511,6 +494,13 @@ export function ScheduleEditor({
                 <ChevronDown className="font-select-chevron" size={14} strokeWidth={2} aria-hidden />
               </div>
             </label>
+
+            <div className="settings-field" data-testid="timer-model">
+              <span>{t('composer.agentModel')}</span>
+              <SessionRunPicker conversationId={conversationId}>
+                <AgentModelPicker conversationId={conversationId} />
+              </SessionRunPicker>
+            </div>
           </div>
 
           <Composer
@@ -542,13 +532,25 @@ export function ScheduleEditor({
             />
           </div>
 
-          {job?.nextRunAt ? (
-            <p className="schedule-editor-next">
-              {t('timer.nextRun', { when: relativeTime(job.nextRunAt) })}
-            </p>
-          ) : null}
         </div>
       </div>
+      {job ? (
+        <ObjectFacts
+          items={[
+            timeFact('created', t('object.fact.created'), job.createdAt),
+            timeFact('updated', t('object.fact.updated'), job.updatedAt),
+            countFact('words', t('object.fact.words'), countWritingUnits(prompt)),
+            job.nextRunAt
+              ? {
+                  id: 'next',
+                  label: t('object.fact.next'),
+                  value: timerRunTimeLabel(job.nextRunAt),
+                  title: absoluteTime(job.nextRunAt)
+                }
+              : null
+          ]}
+        />
+      ) : null}
     </main>
   )
 }

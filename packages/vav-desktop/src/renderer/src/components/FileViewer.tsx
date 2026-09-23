@@ -98,7 +98,8 @@ export function FileViewer({
   onPickBlock,
   shellLeading = null,
   onClose = null,
-  onBackToFileList = null
+  onBackToFileList = null,
+  hideHeader = false
 }: {
   path: string
   origin?: 'dock' | 'session'
@@ -124,6 +125,8 @@ export function FileViewer({
   onClose?: (() => void) | null
   /** File category canvas in the main window: return to Recent files / This Mac. */
   onBackToFileList?: (() => void) | null
+  /** App column already has chrome — skip the floating file-name row. */
+  hideHeader?: boolean
 }): React.JSX.Element {
   const t = useT()
   const [filePath, setFilePath] = useState(initialPath)
@@ -959,14 +962,14 @@ export function FileViewer({
     })
   }
 
-  // App column: keep the workspace agent pointed at this file without stealing
-  // the file-session identity used for working copies / fileSessions.
+  // App column owns ambient focus separately (AppContextBar). Do not pin the
+  // open file as a composer attachment chip.
   useEffect(() => {
-    if (!embedded || !filePath || isClipPath(filePath)) return
+    if (!embedded || hideHeader || !filePath || isClipPath(filePath)) return
     const id = contextConversationId ?? parentConversationId
     if (!id) return
-    void useSessionStore.getState().attachContextFile(id, filePath)
-  }, [embedded, contextConversationId, parentConversationId, filePath])
+    void useSessionStore.getState().setFocusedFile(id, filePath)
+  }, [embedded, hideHeader, contextConversationId, parentConversationId, filePath])
 
   // Embedded (FileSessionView / Workspace Peek): bind parent + enclosed-dir tray.
   // Standalone uses ensureFileSession on mount instead.
@@ -1946,7 +1949,7 @@ export function FileViewer({
 
   const fileColumn = (
     <>
-      {fileHeader}
+      {hideHeader ? null : fileHeader}
       <div
         className={`file-preview-main${selectable ? ' has-selection-hud' : ''}`}
         ref={previewMainRef}
@@ -1969,7 +1972,8 @@ export function FileViewer({
           className={`file-viewer-body${selectable ? ' selecting pick-mode' : ''}`}
           data-pad={bodyPad}
           onClickCapture={(event) => {
-            // Markdown / office / HTML previews: never follow hyperlinks.
+            // Previews do not navigate — except opt-in `a[data-allow-nav]`
+            // (PDF annotation links: dest jump / http(s) open).
             suppressHyperlinkClick(event)
           }}
         >
@@ -1994,7 +1998,7 @@ export function FileViewer({
 
   return (
     <div
-      className={`file-preview-shell${agentPanelOpen && !embedded ? ' agent-open' : ''}${embedded ? ' embedded' : ''}`}
+      className={`file-preview-shell${agentPanelOpen && !embedded ? ' agent-open' : ''}${embedded ? ' embedded' : ''}${hideHeader ? ' hide-header' : ''}`}
       data-testid={embedded ? undefined : 'file-preview-window'}
     >
       {embedded ? (

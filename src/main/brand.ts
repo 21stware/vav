@@ -1,15 +1,22 @@
 import { app, nativeImage, nativeTheme, type NativeImage } from 'electron'
 import { existsSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
+import { BRAND } from '../shared/brand.generated.ts'
 import { isDevRuntime } from './devRuntime'
 import { isE2eRuntime, resolveE2eUserData } from './e2eRuntime'
+import {
+  ensureDir,
+  expandUserPath,
+  readAppPathOverrides,
+  resolveAppDataDir
+} from './store/appPaths.ts'
 
-export const APP_NAME_RELEASE = 'VAV'
-export const APP_NAME_DEV = 'VAV Dev'
-export const APP_ID_RELEASE = 'com.vav.app'
-export const APP_ID_DEV = 'dev.vav.app'
-export const APP_USER_DATA_RELEASE = 'vav'
-export const APP_USER_DATA_DEV = 'vav-dev'
+export const APP_NAME_RELEASE = BRAND.displayName
+export const APP_NAME_DEV = BRAND.displayNameDev
+export const APP_ID_RELEASE = BRAND.appId
+export const APP_ID_DEV = BRAND.appIdDev
+export const APP_USER_DATA_RELEASE = BRAND.userDataDir
+export const APP_USER_DATA_DEV = BRAND.userDataDirDev
 
 /**
  * Menu / About / window titles / Dock process name.
@@ -226,9 +233,29 @@ export function pinUserDataPath(): void {
       }
       return
     }
-    const target = join(app.getPath('appData'), APP_USER_DATA_DIR)
+    const legacy = join(app.getPath('appData'), APP_USER_DATA_DIR)
+    const overrides = readAppPathOverrides(legacy)
+    const target = resolveAppDataDir({
+      overrides,
+      legacyDir: legacy,
+      preferLegacyWhenEmpty: isDevRuntime()
+    })
+    ensureDir(target)
     if (app.getPath('userData') !== target) {
       app.setPath('userData', target)
+    }
+    // Keep Chromium caches off iCloud / ~/.vav so only conversations and
+    // app info follow the chosen folder.
+    try {
+      const cacheDir = join(legacy, 'Cache')
+      mkdirSync(cacheDir, { recursive: true })
+      app.setPath('cache', cacheDir)
+    } catch {
+      /* cache path is best-effort */
+    }
+    const configured = expandUserPath(overrides.appDataDir ?? '')
+    if (configured && !process.env.VAV_HOME?.trim()) {
+      process.env.VAV_HOME = configured
     }
   } catch (err) {
     console.error('[brand] pinUserDataPath failed', err)
@@ -257,6 +284,6 @@ export function applyBranding(): void {
     applicationName: APP_NAME,
     applicationVersion: app.getVersion(),
     version: app.getVersion(),
-    copyright: 'Copyright © VAV'
+    copyright: BRAND.copyright
   })
 }

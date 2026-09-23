@@ -103,4 +103,45 @@ describe('installTrustedIpcGuard', () => {
       /untrusted frame/
     )
   })
+
+  it('wraps ipcMain.on and drops untrusted senders', async () => {
+    const { installTrustedIpcGuard } = await import('./ipcTrust.ts')
+    const listeners = new Map<string, (event: unknown, ...args: unknown[]) => unknown>()
+    const ipc = {
+      handle() {},
+      on(channel: string, listener: (event: unknown, ...args: unknown[]) => unknown) {
+        listeners.set(channel, listener)
+      }
+    }
+    installTrustedIpcGuard(ipc, isApp)
+    const seen: unknown[] = []
+    ipc.on('ptyWrite', (_event, data) => {
+      seen.push(data)
+    })
+    const run = listeners.get('ptyWrite')
+    assert.ok(run)
+    const main = { id: 1, url: appUrl }
+    const trusted = {
+      sender: {
+        isDestroyed: () => false,
+        mainFrame: main,
+        getURL: () => appUrl
+      },
+      senderFrame: main
+    }
+    run(trusted, 'ok')
+    run(sender({ frameIsMain: false }), 'guest')
+    run(
+      {
+        sender: {
+          isDestroyed: () => false,
+          mainFrame: main,
+          getURL: () => 'https://evil.example/'
+        },
+        senderFrame: { url: 'https://evil.example/' }
+      },
+      'web'
+    )
+    assert.deepEqual(seen, ['ok'])
+  })
 })

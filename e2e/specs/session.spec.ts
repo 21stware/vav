@@ -16,14 +16,23 @@ test('sidebar lists the session, groups by workspace, and archives stay reachabl
     await expect(page.getByText('E2E session')).toBeVisible()
     await expect(page.locator('[data-testid="sidebar"]')).toBeVisible()
     await expect(page.locator('[data-testid="sidebar-primary-nav"]')).toBeVisible()
+    await expect(page.locator('[data-testid="home-page"]')).toBeVisible()
     await expect(page.locator('[data-testid="new-session"]')).toBeVisible()
+    await expect(page.locator('[data-testid="sidebar-history"]')).toBeHidden()
+    await expect(page.locator('[data-testid="sidebar-services"]')).toBeVisible()
+    await expect(page.locator('[data-testid="sidebar-services"]')).toHaveAttribute(
+      'data-active',
+      'true'
+    )
+    await expect(page.locator('[data-testid="sidebar-primary-nav"] [data-testid="new-scheduled"]')).toHaveCount(0)
+    await expect(page.locator('[data-testid="sidebar-connect"]')).toBeVisible()
+    await expect(page.locator('[data-testid="app-column"]')).toBeVisible()
+    await expect(page.locator('[data-testid="applications-panel"]')).toBeVisible()
+    await expect(page.locator('[data-testid="app-mode-tabs"]')).toBeVisible()
     await expect(page.locator('[data-testid="new-scheduled"]')).toBeVisible()
     await expect(page.locator('[data-testid="applications-tab-storage"]')).toBeVisible()
     await expect(page.locator('[data-testid="applications-tab-data"]')).toBeVisible()
     await expect(page.locator('[data-testid="applications-tab-knowledge"]')).toBeVisible()
-    await expect(page.locator('[data-testid="sidebar-connect"]')).toBeVisible()
-    await expect(page.locator('[data-testid="app-column"]')).toBeVisible()
-    await expect(page.locator('[data-testid="applications-panel"]')).toBeVisible()
     await expect(page.locator('[data-testid="applications-tab-storage"]')).toHaveAttribute(
       'data-active',
       'true'
@@ -50,8 +59,8 @@ test('sidebar lists the session, groups by workspace, and archives stay reachabl
           'Target',
           'All',
           'File',
-          'Knowledge',
-          'Data'
+          'Notes',
+          'Analysis'
         ])
       )
     await chooseNativeMenu(page, 'None')
@@ -60,6 +69,19 @@ test('sidebar lists the session, groups by workspace, and archives stay reachabl
       'none'
     )
     await expect(page.getByText('E2E session')).toBeVisible()
+    await page.locator('#sessionsBtn').click()
+    await expect(page.locator('[data-testid="list-column"]')).toHaveAttribute('data-collapsed', 'true')
+    await expect(page.locator('[data-testid="new-session"]')).toBeVisible()
+    await expect(page.locator('[data-testid="sidebar-history"]')).toBeVisible()
+    await expect(page.locator('[data-testid="new-scheduled"]')).toBeVisible()
+    await expect(page.locator('[data-testid="sidebar-search"]')).toBeHidden()
+    await page.locator('[data-testid="sidebar-history"]').click()
+    await expect
+      .poll(async () => (await peekNativeMenu(page))?.map((item) => item.label) ?? [])
+      .toEqual(expect.arrayContaining(['E2E session']))
+    await chooseNativeMenu(page, 'E2E session')
+    await page.locator('#sessionsBtn').click()
+    await expect(page.locator('[data-testid="list-column"]')).not.toHaveAttribute('data-collapsed', 'true')
   } finally {
     await harness.dispose()
   }
@@ -104,9 +126,86 @@ test('new session is created and selected', async () => {
     )
     await page.locator('[data-testid="close-app"]').click()
     await expect(page.locator('[data-testid="app-column"]')).toBeHidden()
+    await expect(page.locator('[data-testid="sidebar-services"]')).toHaveAttribute(
+      'data-active',
+      'false'
+    )
     await page.locator('[data-testid="new-session"]').click()
     await expect(page.locator('[data-testid="agent-column"]')).toBeVisible()
     await expect(page.locator('.empty-state-session')).toBeVisible()
+    await page.locator('[data-testid="close-agent"]').click()
+    await expect(page.locator('[data-testid="agent-column"]')).toBeHidden()
+    await expect(page.locator('[data-testid="workbench-home"]')).toBeVisible()
+    await expect(page.locator('[data-testid="workbench-home-insights"]')).toBeVisible()
+    await expect(page.locator('[data-testid="workbench-home-nav"]')).toBeVisible()
+    await expect(page.locator('[data-testid="workbench-home-composer"]')).toBeVisible()
+    await expect(page.locator('[data-testid="workbench-home"] [data-testid="composer-input"]')).toBeVisible()
+    await expect(page.locator('[data-testid="workbench-home"] [data-testid="composer-workspace"]')).toBeVisible()
+    await expect(page.locator('[data-testid="workbench-home-sessions"]')).toBeVisible()
+    await expect(page.locator('[data-testid="home-session-row"]').getByText('E2E session')).toBeVisible()
+  } finally {
+    await harness.dispose()
+  }
+})
+
+test('home page closes session and app columns', async () => {
+  const harness = await launchWorkbench()
+  try {
+    const { page } = harness
+    await expect(page.locator('[data-testid="agent-column"]')).toBeVisible()
+    await expect(page.locator('[data-testid="app-column"]')).toBeVisible()
+    await expect(page.locator('[data-testid="home-page"]')).toHaveAttribute('aria-pressed', 'false')
+    await page.locator('[data-testid="home-page"]').click()
+    await expect(page.locator('[data-testid="agent-column"]')).toBeHidden()
+    await expect(page.locator('[data-testid="app-column"]')).toBeHidden()
+    await expect(page.locator('[data-testid="workbench-home"]')).toBeVisible()
+    await expect(page.locator('[data-testid="workbench-home-insights"]')).toBeVisible()
+    await expect(page.locator('[data-testid="home-page"]')).toHaveAttribute('aria-pressed', 'true')
+    await expect(page.locator('[data-testid="sidebar-services"]')).toHaveAttribute(
+      'data-active',
+      'false'
+    )
+  } finally {
+    await harness.dispose()
+  }
+})
+
+test('Services opens the right-hand panel and clears highlight when closed', async () => {
+  const harness = await launchWorkbench()
+  try {
+    const { page } = harness
+    await expect(page.locator('[data-testid="app-column"]')).toBeVisible()
+    await expect(page.locator('[data-testid="sidebar-services"]')).toHaveAttribute(
+      'data-active',
+      'true'
+    )
+    await expect(page.locator('[data-testid="app-mode-tabs"]')).toBeVisible()
+    await expect(page.locator('[data-testid="close-app"]')).toBeVisible()
+    await page.locator('[data-testid="close-app"]').click()
+    await expect(page.locator('[data-testid="app-column"]')).toBeHidden()
+    await expect(page.locator('[data-testid="sidebar-services"]')).toHaveAttribute(
+      'data-active',
+      'false'
+    )
+    await page.locator('[data-testid="sidebar-services"]').click()
+    await expect(page.locator('[data-testid="app-column"]')).toBeVisible()
+    await expect(page.locator('[data-testid="applications-panel"]')).not.toHaveAttribute(
+      'data-app',
+      'devices'
+    )
+    await expect(page.locator('[data-testid="app-mode-tabs"]')).toBeVisible()
+    await expect(page.locator('[data-testid="applications-tab-storage"]')).toBeVisible()
+    await expect(page.locator('[data-testid="sidebar-services"]')).toHaveAttribute(
+      'data-active',
+      'true'
+    )
+    await expect(page.locator('[data-testid="app-chrome"]')).toHaveCount(0)
+    await page.locator('[data-testid="sidebar-services"]').click()
+    await expect(page.locator('[data-testid="app-column"]')).toBeHidden()
+    await expect(page.locator('[data-testid="sidebar-services"]')).toHaveAttribute(
+      'data-active',
+      'false'
+    )
   } finally {
     await harness.dispose()
   }
@@ -139,23 +238,21 @@ test('Storage application shows recent files and Open File', async () => {
       'true'
     )
     await expect(page.locator('[data-testid="file-recents"]')).toBeVisible()
-    await expect(page.locator('[data-testid="file-source-select"]')).toHaveValue('recent')
-    await expect(page.locator('[data-testid="file-source-select"]')).toContainText('Recent files')
-    await expect(page.locator('[data-testid="file-source-select"] option[value="thisMac"]')).toHaveText(
-      'This Mac'
-    )
-    await expect(page.locator('[data-testid="file-source-select"] option[value="icloud"]')).toHaveText(
-      'iCloud'
-    )
-    await expect(page.locator('[data-testid="file-source-select"] option[value="cloudDisk"]')).toHaveText(
-      'CloudDisk'
-    )
+    await expect(page.locator('[data-testid="file-source-select"]')).toHaveAttribute('data-value', 'recent')
+    await expect(page.locator('[data-testid="storage-source-recent"]')).toHaveText('Recent files')
+    await expect(page.locator('[data-testid="storage-source-thisMac"]')).toHaveText('This Mac')
+    await expect(page.locator('[data-testid="storage-source-icloud"]')).toHaveText('iCloud')
+    await expect(page.locator('[data-testid="storage-source-cloudDisk"]')).toHaveText('CloudDisk')
     await expect(page.locator('[data-testid="open-a-file"]')).toBeVisible()
     await expect(page.locator('[data-testid="file-mac-browser"]')).toHaveCount(0)
     await page.locator('[data-testid="file-source-select"]').selectOption('thisMac')
+    await expect(page.locator('[data-testid="file-source-select"]')).toHaveAttribute('data-value', 'thisMac')
     await expect(page.locator('[data-testid="file-mac-browser"]')).toBeVisible()
-    await expect(page.locator('[data-testid="file-mac-path"]')).toBeVisible()
-    await expect(page.locator('[data-testid="file-mac-home"]')).toBeVisible()
+    await expect(page.locator('[data-testid="file-mac-filter"]')).toBeVisible()
+    await expect(page.locator('[data-testid="file-mac-path"]')).toHaveCount(0)
+    await expect(page.locator('[data-testid="file-mac-home"]')).toHaveCount(0)
+    await expect(page.locator('[data-testid="file-mac-parent"]')).toHaveCount(0)
+    await expect(page.locator('[data-testid="file-mac-recents"]')).toHaveCount(0)
     await expect(page.locator('[data-testid="open-a-file"]')).toHaveCount(0)
     await page.locator('[data-testid="file-source-select"]').selectOption('cloudDisk')
     await expect(page.getByText('CloudDisk coming soon')).toBeVisible()
@@ -174,32 +271,35 @@ test('File list Back to file list returns to This Mac or Recent files', async ()
     await page.locator('[data-testid="applications-tab-storage"]').click()
     await page.locator('[data-testid="file-source-select"]').selectOption('thisMac')
     await expect(page.locator('[data-testid="file-mac-browser"]')).toBeVisible()
-    await page.locator('[data-testid="file-mac-path"]').fill(workspace)
-    await page.locator('[data-testid="file-mac-path"]').press('Enter')
+    await page.evaluate((path) => {
+      const api = window.__vavE2e
+      if (!api) throw new Error('e2e store bridge missing')
+      api.browseStorage(path)
+    }, workspace)
     await expect(page.locator('[data-testid="remote-folder-entry-hello.md"]')).toBeVisible()
     await page.locator('[data-testid="remote-folder-entry-hello.md"]').dblclick()
     await expect(page.locator('[data-testid="file-preview-name"]')).toHaveText('hello.md')
     await expect(page.locator('[data-testid="applications-object-detail"]')).toBeVisible()
-    await expect(page.locator('[data-testid="back-to-file-list"]')).toBeVisible()
-    await page.locator('[data-testid="back-to-file-list"]').click()
+    await expect(page.locator('[data-testid="app-back"]')).toBeVisible()
+    await page.locator('[data-testid="app-back"]').click()
     await expect(page.locator('[data-testid="file-recents"]')).toBeVisible()
-    await expect(page.locator('[data-testid="file-source-select"]')).toHaveValue('thisMac')
+    await expect(page.locator('[data-testid="file-source-select"]')).toHaveAttribute('data-value', 'thisMac')
     await expect(page.locator('[data-testid="file-mac-browser"]')).toBeVisible()
-    await expect(page.locator('[data-testid="file-mac-path"]')).toHaveValue(workspace)
+    await expect(page.locator('[data-testid="remote-folder-entry-hello.md"]')).toBeVisible()
     await page.locator('[data-testid="file-source-select"]').selectOption('recent')
     await expect(page.locator('[data-testid="file-recent-row"]')).toBeVisible()
-    await page.locator('[data-testid="file-recent-row"]').click()
+    await page.locator('[data-testid="file-recent-row"]').dblclick()
     await expect(page.locator('[data-testid="file-preview-name"]')).toHaveText('hello.md')
-    await page.locator('[data-testid="back-to-file-list"]').click()
+    await page.locator('[data-testid="app-back"]').click()
     await expect(page.locator('[data-testid="file-recents"]')).toBeVisible()
-    await expect(page.locator('[data-testid="file-source-select"]')).toHaveValue('recent')
+    await expect(page.locator('[data-testid="file-source-select"]')).toHaveAttribute('data-value', 'recent')
     await expect(page.locator('[data-testid="file-recent-row"]')).toBeVisible()
   } finally {
     await harness.dispose()
   }
 })
 
-test('Scheduled task lives in the app, not the session list', async () => {
+test('Schedule lives in the app, not the session list', async () => {
   const harness = await launchWorkbench()
   try {
     const { page } = harness
@@ -215,6 +315,7 @@ test('Scheduled task lives in the app, not the session list', async () => {
     await expect(page.locator('[data-testid="timer-mode"]')).toBeVisible()
     await expect(page.locator('[data-testid="timer-workspace"]')).toBeVisible()
     await expect(page.locator('[data-testid="timer-workspace"]')).toHaveValue('mint')
+    await expect(page.locator('[data-testid="timer-model"]')).toBeVisible()
     await expect(page.locator('[data-testid="timer-prompt"]')).toBeVisible()
     await expect(page.locator('[data-testid="timer-enabled"]')).toBeVisible()
     await expect(page.locator('[data-testid="timer-run-now"]')).toBeVisible()
@@ -264,11 +365,32 @@ test('Knowledge application starts empty, then create opens a note', async () =>
       'data-active',
       'true'
     )
-    await expect(page.getByText('No knowledge yet')).toBeVisible()
+    await expect(page.getByText('No notes yet')).toBeVisible()
     await expect(page.locator('[data-testid="empty-create-note"]')).toBeVisible()
     await page.locator('[data-testid="empty-create-note"]').click()
     await expect(page.locator('[data-testid="knowledge-workspace"]')).toBeVisible()
-    await expect(page.locator('[data-testid="knowledge-note-editor"]')).toBeVisible()
+    await expect(page.locator('[data-testid="knowledge-workspace"] .file-viewer-name')).toHaveCount(0)
+    await expect(page.locator('[data-testid="app-chrome"]')).toHaveCount(0)
+    await expect(page.locator('[data-testid="knowledge-ask-agent"]')).toHaveCount(0)
+    await expect(page.locator('[data-testid="app-context"]')).toHaveAttribute('data-level', 'item')
+    await expect(page.locator('[data-testid="app-context"]')).toContainText('Untitled note')
+    const note = page.locator('[data-testid="knowledge-note-editor"]')
+    await expect(note).toBeVisible()
+    await expect(note).toHaveAttribute('data-phase', 'ready')
+    await expect(page.locator('[data-testid="app-back"]')).toBeVisible()
+    const surface = page.locator('[data-testid="knowledge-note-input"] .ProseMirror')
+    await expect(surface).toBeVisible()
+    await expect(page.locator('[data-testid="knowledge-note-preview"]')).toHaveCount(0)
+    await surface.click()
+    await page.keyboard.press('Meta+ArrowDown')
+    await page.keyboard.type('**hello**')
+    await page.keyboard.press('ArrowRight')
+    await expect(surface.locator('.hm-strong')).toBeVisible()
+    await expect(page.locator('[data-testid="knowledge-object-excerpt"]')).toContainText('hello')
+    await page.locator('[data-testid="app-back"]').click()
+    await expect(page.locator('[data-testid="applications-panel"]')).toHaveAttribute('data-pane', 'list')
+    await expect(page.locator('[data-testid="knowledge-object-excerpt"]')).toBeVisible()
+    await expect(page.locator('[data-testid="knowledge-object-excerpt"]')).toContainText('hello')
     await expect(page.locator('[data-testid="composer-input"]')).toBeVisible()
   } finally {
     await harness.dispose()

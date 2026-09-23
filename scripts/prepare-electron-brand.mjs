@@ -10,18 +10,32 @@
  * icon changes; npm install restores the stock bundle, which the path check
  * below detects.
  */
-import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { execFileSync, execSync } from 'node:child_process'
 
+const root = join(dirname(fileURLToPath(import.meta.url)), '..')
+
+function loadDevBrand() {
+  const slug = (process.env.BRAND || 'vav').trim() || 'vav'
+  const path = join(root, 'brand', slug, 'identity.json')
+  if (!existsSync(path)) {
+    return { displayNameDev: 'VAV Dev', appIdDev: 'dev.vav.app' }
+  }
+  const raw = JSON.parse(readFileSync(path, 'utf8'))
+  return {
+    displayNameDev: String(raw.displayNameDev || `${raw.displayName || 'VAV'} Dev`),
+    appIdDev: String(raw.appIdDev || 'dev.vav.app')
+  }
+}
+
+const devBrand = loadDevBrand()
 /** On-disk bundle / executable (lowercase — stable paths, npm electron layout). */
 const APP_SLUG = 'vav'
 /** Dock tooltip + Finder display name — distinct from the shipped VAV.app. */
-const APP_DISPLAY_NAME = 'VAV Dev'
-const BUNDLE_ID = 'dev.vav.app'
-
-const root = join(dirname(fileURLToPath(import.meta.url)), '..')
+const APP_DISPLAY_NAME = devBrand.displayNameDev
+const BUNDLE_ID = devBrand.appIdDev
 const iconSrc = join(root, 'build/icon.png')
 const distDir = join(root, 'node_modules/electron/dist')
 const pathFile = join(root, 'node_modules/electron/path.txt')
@@ -30,6 +44,23 @@ const brandedApp = join(distDir, `${APP_SLUG}.app`)
 const relativeExec = `${APP_SLUG}.app/Contents/MacOS/${APP_SLUG}`
 const stampFile = join(root, 'build/.electron-brand-stamp')
 
+function loadFileTypeManifest() {
+  const manifestPath = join(root, 'build/file-icons/manifest.json')
+  if (!existsSync(manifestPath)) {
+    throw new Error(`Missing ${manifestPath} — run python3 scripts/generate-file-type-icons.py first`)
+  }
+  return JSON.parse(readFileSync(manifestPath, 'utf8'))
+}
+
+function copyFileTypeIcons(resources) {
+  const dir = join(root, 'build/file-icons')
+  if (!existsSync(dir)) return
+  for (const name of readdirSync(dir)) {
+    if (!name.endsWith('.icns')) continue
+    execFileSync('cp', ['-f', join(dir, name), join(resources, name)], { stdio: 'ignore' })
+  }
+}
+
 function currentStamp() {
   const version = readFileSync(join(distDir, 'version'), 'utf8').trim()
   const iconMtime = existsSync(iconSrc) ? execSync(`stat -f %m "${iconSrc}"`).toString().trim() : '0'
@@ -37,8 +68,12 @@ function currentStamp() {
   const iconDarkMtime = existsSync(iconDark)
     ? execSync(`stat -f %m "${iconDark}"`).toString().trim()
     : '0'
+  const fileIconsManifest = join(root, 'build/file-icons/manifest.json')
+  const fileIconsMtime = existsSync(fileIconsManifest)
+    ? execSync(`stat -f %m "${fileIconsManifest}"`).toString().trim()
+    : '0'
   // Bump the trailing token when Info.plist shape changes (e.g. document types).
-  return `${version}:${iconMtime}:${iconDarkMtime}:${BUNDLE_ID}:dock-name-VAV-Dev:local-net-1:no-auto-term-1`
+  return `${version}:${iconMtime}:${iconDarkMtime}:${fileIconsMtime}:${BUNDLE_ID}:dock-name-VAV-Dev:local-net-1:no-auto-term-1:file-type-icons-1`
 }
 
 function isBranded() {
@@ -97,20 +132,43 @@ function patchInfoPlist(plistPath) {
   }
 
   // Accept file/folder drops on the Dock icon (README §2.5 / §5.17).
+  // Specific types carry their own document icons so Finder does not paint
+  // every bound file with the app tile.
   try {
     plistBuddy(plistPath, 'Delete :CFBundleDocumentTypes')
   } catch {
     // Absent — fine.
   }
   plistBuddy(plistPath, 'Add :CFBundleDocumentTypes array')
-  plistBuddy(plistPath, 'Add :CFBundleDocumentTypes:0 dict')
-  plistBuddy(plistPath, 'Add :CFBundleDocumentTypes:0:CFBundleTypeName string Item')
-  plistBuddy(plistPath, 'Add :CFBundleDocumentTypes:0:CFBundleTypeRole string Viewer')
-  plistBuddy(plistPath, 'Add :CFBundleDocumentTypes:0:LSHandlerRank string Alternate')
-  plistBuddy(plistPath, 'Add :CFBundleDocumentTypes:0:LSItemContentTypes array')
-  plistBuddy(plistPath, 'Add :CFBundleDocumentTypes:0:LSItemContentTypes:0 string public.item')
-  plistBuddy(plistPath, 'Add :CFBundleDocumentTypes:0:LSItemContentTypes:1 string public.folder')
-  plistBuddy(plistPath, 'Add :CFBundleDocumentTypes:0:LSItemContentTypes:2 string public.data')
+  const types = loadFileTypeManifest()
+  types.forEach((entry, index) => {
+    plistBuddy(plistPath, `Add :CFBundleDocumentTypes:${index} dict`)
+    plistBuddy(plistPath, `Add :CFBundleDocumentTypes:${index}:CFBundleTypeName string "${entry.label}"`)
+    plistBuddy(plistPath, `Add :CFBundleDocumentTypes:${index}:CFBundleTypeRole string Viewer`)
+    plistBuddy(plistPath, `Add :CFBundleDocumentTypes:${index}:LSHandlerRank string Alternate`)
+    plistBuddy(plistPath, `Add :CFBundleDocumentTypes:${index}:CFBundleTypeIconFile string ${entry.icon}.icns`)
+    plistBuddy(plistPath, `Add :CFBundleDocumentTypes:${index}:CFBundleTypeExtensions array`)
+    entry.extensions.forEach((ext, extIndex) => {
+      plistBuddy(
+        plistPath,
+        `Add :CFBundleDocumentTypes:${index}:CFBundleTypeExtensions:${extIndex} string ${ext}`
+      )
+    })
+    plistBuddy(plistPath, `Add :CFBundleDocumentTypes:${index}:LSItemContentTypes array`)
+    plistBuddy(
+      plistPath,
+      `Add :CFBundleDocumentTypes:${index}:LSItemContentTypes:0 string ${entry.uti}`
+    )
+  })
+  const catchAll = types.length
+  plistBuddy(plistPath, `Add :CFBundleDocumentTypes:${catchAll} dict`)
+  plistBuddy(plistPath, `Add :CFBundleDocumentTypes:${catchAll}:CFBundleTypeName string Item`)
+  plistBuddy(plistPath, `Add :CFBundleDocumentTypes:${catchAll}:CFBundleTypeRole string Viewer`)
+  plistBuddy(plistPath, `Add :CFBundleDocumentTypes:${catchAll}:LSHandlerRank string Alternate`)
+  plistBuddy(plistPath, `Add :CFBundleDocumentTypes:${catchAll}:LSItemContentTypes array`)
+  plistBuddy(plistPath, `Add :CFBundleDocumentTypes:${catchAll}:LSItemContentTypes:0 string public.item`)
+  plistBuddy(plistPath, `Add :CFBundleDocumentTypes:${catchAll}:LSItemContentTypes:1 string public.folder`)
+  plistBuddy(plistPath, `Add :CFBundleDocumentTypes:${catchAll}:LSItemContentTypes:2 string public.data`)
 
   const localNet =
     'VAV pairs with other computers and phones on your local network to open folders and run agents.'
@@ -193,6 +251,7 @@ export function prepareBrandedElectron() {
   execFileSync('cp', ['-f', join(resources, `${APP_SLUG}.icns`), join(resources, 'electron.icns')], {
     stdio: 'ignore'
   })
+  copyFileTypeIcons(resources)
   patchInfoPlist(join(brandedApp, 'Contents/Info.plist'))
   writeFileSync(pathFile, relativeExec)
   resign(brandedApp)

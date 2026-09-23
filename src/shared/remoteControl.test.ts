@@ -69,6 +69,82 @@ describe('parseClientMessage', () => {
     assert.deepEqual(msg, { type: 'send', conversationId: 'c1', text: 'hi' })
   })
 
+  it('accepts send with app column focus and preview refs', () => {
+    const msg = parseClientMessage({
+      type: 'send',
+      conversationId: 'c1',
+      text: 'summarize this',
+      appColumnFocus: {
+        kind: 'knowledge',
+        level: 'item',
+        title: 'Note',
+        path: '/tmp/n.md',
+        objectId: 'n1',
+        url: 'vav://app/knowledge?id=n1'
+      },
+      contextBlocks: [
+        {
+          id: '/tmp/n.md::p1',
+          filePath: '/tmp/n.md',
+          label: 'paragraph',
+          startLine: 1,
+          endLine: 2,
+          text: 'hello'
+        }
+      ]
+    })
+    assert.equal(msg?.type, 'send')
+    if (msg?.type !== 'send') return
+    assert.equal(msg.appColumnFocus?.kind, 'knowledge')
+    assert.equal(msg.appColumnFocus?.objectId, 'n1')
+    assert.equal(msg.contextBlocks?.[0]?.text, 'hello')
+  })
+
+  it('drops invalid focus on send instead of rejecting the turn', () => {
+    const msg = parseClientMessage({
+      type: 'send',
+      conversationId: 'c1',
+      text: 'hi',
+      appColumnFocus: { kind: 'nope', level: 'item', title: 'x' }
+    })
+    assert.deepEqual(msg, { type: 'send', conversationId: 'c1', text: 'hi' })
+  })
+
+  it('accepts focus persist and clear', () => {
+    assert.deepEqual(
+      parseClientMessage({
+        type: 'focus',
+        conversationId: 'c1',
+        appColumnFocus: {
+          kind: 'storage',
+          level: 'selected',
+          title: 'readme',
+          path: '/tmp/README.md',
+          objectId: null,
+          url: 'vav://app/storage?path=/tmp/README.md'
+        }
+      }),
+      {
+        type: 'focus',
+        conversationId: 'c1',
+        appColumnFocus: {
+          kind: 'storage',
+          level: 'selected',
+          title: 'readme',
+          path: '/tmp/README.md',
+          objectId: null,
+          url: 'vav://app/storage?path=/tmp/README.md'
+        }
+      }
+    )
+    assert.deepEqual(parseClientMessage({ type: 'focus', conversationId: 'c1', appColumnFocus: null }), {
+      type: 'focus',
+      conversationId: 'c1',
+      appColumnFocus: null
+    })
+    assert.equal(parseClientMessage({ type: 'focus', conversationId: 'c1' }), null)
+  })
+
   it('accepts send with images and a blank caption', () => {
     const msg = parseClientMessage({
       type: 'send',
@@ -358,5 +434,20 @@ describe('parseServerMessage', () => {
 
   it('rejects a turn without a conversation', () => {
     assert.equal(parseServerMessage({ type: 'turn', phase: 'running' }), null)
+  })
+
+  it('accepts app-apply open events', () => {
+    const msg = parseServerMessage({
+      type: 'app-apply',
+      event: { type: 'open', url: 'vav://app/knowledge?id=n1', kind: 'knowledge' }
+    })
+    assert.deepEqual(msg, {
+      type: 'app-apply',
+      event: { type: 'open', url: 'vav://app/knowledge?id=n1', kind: 'knowledge' }
+    })
+    assert.equal(
+      parseServerMessage({ type: 'app-apply', event: { type: 'open', url: 'x', kind: 'notes' } }),
+      null
+    )
   })
 })

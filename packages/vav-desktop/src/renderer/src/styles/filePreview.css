@@ -159,8 +159,9 @@
   position: relative;
   display: flex;
   flex-direction: column;
-  flex: 1 1 auto;
+  flex: 1 1 0%;
   min-width: 0;
+  max-width: 100%;
   min-height: 0;
   overflow: hidden;
 }
@@ -322,8 +323,13 @@
 
 /* Agent column is a peer of the file column (full height), not under the file header. */
 .file-preview-shell:not(.embedded) .preview-agent-panel {
-  flex: 0 0 auto;
+  /* Preferred width is the inline width. Shrink so opening the panel fits
+     the preview shell immediately, including when that shell itself just
+     changed size because another column opened. */
+  flex: 0 100 auto;
   align-self: stretch;
+  min-width: 0;
+  max-width: min(70%, 100%);
   height: auto;
   max-height: none;
   border-left: 1px solid var(--border);
@@ -425,6 +431,16 @@
 
 .file-preview-shell.embedded {
   --preview-chrome-h: var(--toolbar-height);
+}
+
+.file-preview-shell.hide-header {
+  --preview-chrome-h: 0px;
+}
+
+.applications-panel .file-preview-shell .file-viewer-header,
+.applications-panel .file-preview-shell .file-preview-statusbar {
+  left: 1px;
+  right: 1px;
 }
 
 .file-preview-shell .file-viewer-header,
@@ -1752,6 +1768,33 @@
   user-select: none;
 }
 
+/*
+ * Link annotations sit above the text layer so TOC / URI hits win, but the
+ * layer itself does not steal selection on empty space.
+ */
+.pdf-page .pdf-annotation-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.pdf-page .pdf-link-annotation {
+  position: absolute;
+  display: block;
+  box-sizing: border-box;
+  pointer-events: auto;
+  cursor: pointer;
+  background: transparent;
+  border-radius: 2px;
+}
+
+.pdf-page .pdf-link-annotation:hover,
+.pdf-page .pdf-link-annotation:focus-visible {
+  background: color-mix(in srgb, #2563eb 14%, transparent);
+}
+
 /* —— PPTX (@aiden0z/pptx-renderer HTML/SVG) —— stacked list like PDF —— */
 .pptx-root {
   background: var(--bg-sunken);
@@ -2460,6 +2503,7 @@
   display: flex;
   flex-direction: column;
   flex: 1;
+  min-width: 0;
   min-height: 0;
   background: var(--bg-content);
 }
@@ -2476,6 +2520,7 @@
 
 .csv-sheet-wrap {
   flex: 1;
+  min-width: 0;
   min-height: 0;
   overflow: auto;
   background: var(--bg-content);
@@ -2625,6 +2670,11 @@
   background: color-mix(in srgb, var(--accent) 5%, var(--bg-content));
 }
 
+/* DB grid: quiet row hover for scanning wide tables. */
+.sqlite-root .csv-sheet tbody tr:not(.row-selected):hover td:not(.selected):not(.is-pending) {
+  background: color-mix(in srgb, var(--text) 3.5%, transparent);
+}
+
 /* Pick chrome — ::after + pointer-events:none so cell text stays copyable. */
 .file-viewer-body.selecting .csv-sheet .preview-select-region,
 .sqlite-root.selecting .csv-sheet .preview-select-region {
@@ -2692,6 +2742,7 @@
 
 .sqlite-root {
   flex: 1;
+  min-width: 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -2709,12 +2760,13 @@
 .sqlite-root.nav-side .structured-doc-nav {
   display: flex;
   flex-direction: column;
-  flex: 0 0 200px;
-  max-width: 260px;
-  min-width: 148px;
+  flex: 0 0 168px;
+  max-width: 220px;
+  min-width: 132px;
   min-height: 0;
   border-bottom: none;
-  border-right: 1px solid var(--border);
+  border-right: 0.5px solid var(--border);
+  background: transparent;
 }
 
 .sqlite-root.nav-side .structured-doc-nav-scroll {
@@ -2722,8 +2774,8 @@
   min-height: 0;
   flex-direction: column;
   align-items: stretch;
-  gap: 2px;
-  padding: 8px;
+  gap: 1px;
+  padding: 6px 4px 8px 6px;
   overflow-x: hidden;
   overflow-y: auto;
 }
@@ -2732,7 +2784,8 @@
   max-width: none;
   width: 100%;
   justify-content: space-between;
-  border-radius: 7px;
+  min-height: 28px;
+  border-radius: 8px;
   border-color: transparent;
 }
 
@@ -2741,14 +2794,19 @@
 }
 
 .sqlite-root.nav-side .structured-doc-nav-item.active {
-  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  border-color: transparent;
 }
 
 .sqlite-panel {
   flex: 1;
+  min-width: 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
+}
+
+.sqlite-root.nav-side .sqlite-toolbar {
+  display: none;
 }
 
 .sqlite-toolbar {
@@ -2763,19 +2821,77 @@
 .sqlite-table-chip {
   border: 0;
   background: var(--bg-sunken);
+  box-shadow: inset 0 0 0 1px var(--border);
   color: var(--text);
   font: inherit;
   font-size: 12px;
   font-weight: 600;
-  padding: 2px 8px;
-  border-radius: 4px;
+  letter-spacing: -0.01em;
+  padding: 3px 9px;
+  border-radius: 7px;
   cursor: default;
+}
+
+/* Row count is a stat, not a label — park it on the right, tabular. */
+.sqlite-toolbar > span {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
 }
 
 .sqlite-sheet-wrap {
   flex: 1;
+  min-width: 0;
   min-height: 0;
   overflow: auto;
+  overflow-x: auto;
+  overscroll-behavior: contain;
+}
+
+/* One plate: hairline rows, no boxed grid, no sunken header wash. */
+.sqlite-root .csv-sheet th,
+.sqlite-root .csv-sheet td {
+  border-right: 0;
+  min-width: 4.5em;
+  padding: 0.4em 0.7em;
+}
+
+.sqlite-root .csv-sheet tr > *:first-child {
+  border-left: 0;
+}
+
+.sqlite-root .csv-sheet thead th {
+  border-top: 0;
+}
+
+.sqlite-root .csv-sheet th,
+.sqlite-root .csv-sheet td {
+  border-bottom-color: color-mix(in srgb, var(--border) 55%, transparent);
+}
+
+.sqlite-root .csv-sheet-colhead,
+.sqlite-root .csv-sheet th.csv-sheet-gutter,
+.sqlite-root .csv-sheet td.csv-sheet-gutter,
+.sqlite-root .csv-sheet th.csv-sheet-corner,
+.sqlite-root .csv-sheet .csv-sheet-corner,
+.sqlite-root .csv-sheet tbody td,
+.sqlite-root .csv-sheet tbody th.csv-sheet-gutter {
+  background-color: var(--bg-content);
+}
+
+.sqlite-root .csv-sheet-colhead {
+  box-shadow: 0 0.5px 0 var(--border);
+}
+
+.sqlite-root .csv-sheet th.csv-sheet-gutter,
+.sqlite-root .csv-sheet td.csv-sheet-gutter {
+  box-shadow: 0.5px 0 0 color-mix(in srgb, var(--border) 55%, transparent);
+}
+
+.sqlite-root .csv-sheet th.csv-sheet-corner,
+.sqlite-root .csv-sheet .csv-sheet-corner {
+  box-shadow:
+    0.5px 0 0 color-mix(in srgb, var(--border) 55%, transparent),
+    0 0.5px 0 var(--border);
 }
 
 .sqlite-sheet-wrap:not(.sqlite-sheet-skeleton-wrap) {
@@ -3155,6 +3271,23 @@
   color: var(--text-tertiary);
 }
 
+.assoc-row .file-type-icon {
+  flex: 0 0 auto;
+}
+
+.file-type-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  line-height: 0;
+}
+
+.file-type-icon svg {
+  display: block;
+  overflow: visible;
+}
+
 .assoc-row-meta {
   min-width: 0;
 }
@@ -3303,8 +3436,9 @@
   position: relative;
   display: flex;
   flex-direction: column;
-  flex: 1 1 auto;
-  min-width: var(--preview-min-width);
+  flex: 1 1 0%;
+  min-width: 0;
+  max-width: 100%;
   min-height: 0;
   overflow: hidden;
 }
@@ -3368,17 +3502,26 @@
   position: relative;
   display: flex;
   flex-direction: column;
-  flex: 0 0 auto;
+  /* Preferred width is the inline width. A high shrink factor lets the
+     drawer yield as soon as the workspace box changes — opening it, or the
+     shell around it, does not wait for a window resize. */
+  flex: 0 100 auto;
   min-width: 0;
+  max-width: 100%;
   min-height: 0;
   border-left: 1px solid var(--border);
   overflow: hidden;
   transition: width var(--dur-sheet) var(--ease-drawer);
 }
 
+.workspace-view-agent:not(.is-collapsed) {
+  max-width: min(70%, 100%);
+}
+
 .workspace-view-agent.is-collapsed {
   border-left: 0;
   min-width: 0;
+  max-width: 100%;
 }
 
 /*
@@ -3388,8 +3531,9 @@
  * is scoped to the modifier.
  */
 .workspace-view.preview-right > .workspace-view-agent {
-  flex: 1 1 auto;
-  min-width: var(--agent-min-width);
+  flex: 1 1 0%;
+  min-width: 0;
+  max-width: none;
   border-left: 0;
   transition: none;
 }
@@ -3402,7 +3546,9 @@
 }
 
 .workspace-view.preview-right > .workspace-view-preview:not(.is-collapsed) {
-  min-width: var(--preview-min-width);
+  flex: 0 100 auto;
+  min-width: 0;
+  max-width: min(70%, 100%);
 }
 
 .workspace-view.preview-right > .workspace-view-preview.is-collapsed {
@@ -3415,11 +3561,13 @@
 }
 
 .workspace-view.file-session-view > .workspace-view-agent:not(.is-collapsed) {
-  min-width: var(--file-agent-min-width);
+  min-width: 0;
+  max-width: min(70%, 100%);
 }
 
 .workspace-view.file-session-view > .workspace-view-preview {
-  min-width: var(--preview-min-width);
+  flex: 1 1 0%;
+  min-width: 0;
 }
 
 .workspace-view.preview-right.is-col-resizing > .workspace-view-preview {
@@ -5305,6 +5453,7 @@
 /* Folders are the structure and files are the contents; colour says which is
    which faster than the glyph shape does. */
 .tree-row > svg,
+.tree-row .file-type-icon,
 .tree-row .disclosure > svg {
   flex: 0 0 auto;
   width: var(--tree-icon);
@@ -5315,6 +5464,15 @@
   /* Override lucide width/height attrs when CSS zoom changes. */
   overflow: visible;
   color: var(--text-tertiary);
+}
+
+.tree-row .file-type-icon {
+  color: unset;
+}
+
+.tree-row .file-type-icon svg {
+  width: var(--tree-icon);
+  height: var(--tree-icon);
 }
 
 .tree-row .disclosure > svg {

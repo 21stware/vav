@@ -3,26 +3,28 @@ import { ChevronRight } from 'lucide-react'
 import { thinkingSeconds } from '@shared/thinkingLevel'
 import { useT } from '../i18n/useT'
 import { EXPAND_PROCESS_EVENT } from '../lib/mdMarks'
+import { ThinkingViewport } from './ThinkingViewport'
 
 /**
- * Collapsed-by-default shell for the non-final stretch of a finished turn.
- * Children are themselves collapsed rows (reasoning / tools / notes).
+ * Shell for the non-final stretch of a turn. The body is a fixed viewport,
+ * so it stays open; the header still toggles it. Children are themselves
+ * collapsed rows (reasoning / tools / notes).
  */
 export function ThinkingProcess({
   steps,
   durationMs,
-  collapseOnMount = false,
+  follow = false,
   children
 }: {
   steps: number
   durationMs?: number
-  /** Stream just hit the answer: paint open, then fold. */
-  collapseOnMount?: boolean
+  /** Stick the well to the newest step while the turn is still streaming. */
+  follow?: boolean
   children: ReactNode
 }): React.JSX.Element {
   const t = useT()
   const rootRef = useRef<HTMLDivElement>(null)
-  const [open, setOpen] = useState(collapseOnMount)
+  const [open, setOpen] = useState(true)
   useEffect(() => {
     const el = rootRef.current
     if (!el) return
@@ -30,17 +32,6 @@ export function ThinkingProcess({
     el.addEventListener(EXPAND_PROCESS_EVENT, onExpand)
     return () => el.removeEventListener(EXPAND_PROCESS_EVENT, onExpand)
   }, [])
-  useEffect(() => {
-    if (!collapseOnMount) return
-    let inner = 0
-    const outer = window.requestAnimationFrame(() => {
-      inner = window.requestAnimationFrame(() => setOpen(false))
-    })
-    return () => {
-      window.cancelAnimationFrame(outer)
-      window.cancelAnimationFrame(inner)
-    }
-  }, [collapseOnMount])
   const summary =
     durationMs != null
       ? t('composer.thinkingFor', { n: thinkingSeconds(durationMs) })
@@ -65,7 +56,9 @@ export function ThinkingProcess({
       </button>
       <div className="tool-detail" aria-hidden={!open}>
         <div className="tool-detail-inner">
-          <div className="thinking-process-body">{children}</div>
+          <ThinkingViewport follow={follow}>
+            <div className="thinking-process-body">{children}</div>
+          </ThinkingViewport>
         </div>
       </div>
     </div>

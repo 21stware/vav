@@ -104,7 +104,8 @@ export default defineConfig({
     resolve: {
       alias: {
         '@shared': resolve('src/shared'),
-        '@': resolve('packages/vav-desktop/src/renderer/src')
+        '@': resolve('packages/vav-desktop/src/renderer/src'),
+        shiki: resolve('packages/vav-desktop/src/renderer/src/lib/shikiStub.ts')
       }
     },
     build: {

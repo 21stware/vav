@@ -2,7 +2,9 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from
 import { dirname, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import {
+  coerceTimerCliHost,
   coerceTimerSchedule,
+  coerceTimerThinkingLevel,
   coerceTimerWorkdirPolicy,
   nextTimerRunAt,
   type TimerJob,
@@ -39,6 +41,11 @@ function coerceJob(raw: unknown, now: number): TimerJob | null {
     workdirPolicy: coerceTimerWorkdirPolicy(row.workdirPolicy),
     sourceWorkdir: typeof row.sourceWorkdir === 'string' ? row.sourceWorkdir : null,
     connectorIds: connectorIds as ConnectorId[],
+    model: typeof row.model === 'string' && row.model.trim() ? row.model.trim() : null,
+    cliHost: coerceTimerCliHost(row.cliHost),
+    accountId: typeof row.accountId === 'string' && row.accountId.trim() ? row.accountId.trim() : null,
+    thinkingLevel: coerceTimerThinkingLevel(row.thinkingLevel),
+    fast: row.fast === true,
     createdAt,
     updatedAt: typeof row.updatedAt === 'number' ? row.updatedAt : createdAt,
     lastRunAt,
@@ -134,6 +141,11 @@ export class TimerStore {
       workdirPolicy: coerceTimerWorkdirPolicy(input.workdirPolicy),
       sourceWorkdir: input.sourceWorkdir ?? null,
       connectorIds: (input.connectorIds ?? []).filter(isConnectorId),
+      model: input.model?.trim() || null,
+      cliHost: coerceTimerCliHost(input.cliHost),
+      accountId: input.accountId?.trim() || null,
+      thinkingLevel: coerceTimerThinkingLevel(input.thinkingLevel),
+      fast: input.fast === true,
       createdAt: now,
       updatedAt: now,
       lastRunAt: null,
@@ -164,6 +176,11 @@ export class TimerStore {
     }
     if (patch.sourceWorkdir !== undefined) job.sourceWorkdir = patch.sourceWorkdir
     if (patch.connectorIds) job.connectorIds = patch.connectorIds.filter(isConnectorId)
+    if (patch.model !== undefined) job.model = patch.model?.trim() || null
+    if (patch.cliHost !== undefined) job.cliHost = coerceTimerCliHost(patch.cliHost)
+    if (patch.accountId !== undefined) job.accountId = patch.accountId?.trim() || null
+    if (patch.thinkingLevel !== undefined) job.thinkingLevel = coerceTimerThinkingLevel(patch.thinkingLevel)
+    if (patch.fast !== undefined) job.fast = patch.fast === true
     job.updatedAt = now
     job.nextRunAt = job.enabled ? nextTimerRunAt(job.schedule, job.lastRunAt ?? now) : null
     this.persistJobs()

@@ -1,4 +1,5 @@
 import type { ChatMessage } from '@shared/types.ts'
+import { preferredActiveLeaf } from '@shared/thread.ts'
 
 /**
  * Disk snapshot vs in-memory turns that landed while `conversations.get`
@@ -66,7 +67,6 @@ export const SESSION_DELETE_MAPPED_KEYS = [
   'messageQueues',
   'drafts',
   'attachments',
-  'quotes',
   'previewRefs',
   'pickMode',
   'commentCards',
@@ -195,13 +195,17 @@ export function conversationFullHydratePatch<C, H>(
   cacheCreatedAt: Record<string, number | null>
   cacheExpiresAt: Record<string, number | null>
 } {
+  const merged = mergeHydratedMessages(conversation.messages, state.messages[id])
   return {
     messages: {
       ...state.messages,
-      [id]: mergeHydratedMessages(conversation.messages, state.messages[id])
+      [id]: merged
     },
     messagesHydrated: { ...state.messagesHydrated, [id]: true },
-    activeLeaf: { ...state.activeLeaf, [id]: conversation.activeLeafId },
+    activeLeaf: {
+      ...state.activeLeaf,
+      [id]: preferredActiveLeaf(merged, state.activeLeaf[id], conversation.activeLeafId)
+    },
     ...conversationHydrationMetaPatch(state, id, conversation)
   }
 }

@@ -87,14 +87,13 @@ export function appLog(): AppLogger {
 
 export function logUserSend(
   conversationId: string,
-  data: { chars: number; attachments: number; quoted?: boolean; contextBlocks?: number }
+  data: { chars: number; attachments: number; contextBlocks?: number }
 ): void {
   appLog().user(LOG_EVENT.userSend, 'Send', {
     conversationId,
     data: {
       chars: data.chars,
       attachments: data.attachments,
-      quoted: !!data.quoted,
       contextBlocks: data.contextBlocks ?? 0
     }
   })

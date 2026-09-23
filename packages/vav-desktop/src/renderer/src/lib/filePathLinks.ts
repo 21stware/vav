@@ -7,6 +7,11 @@
 
 import type MarkdownIt from 'markdown-it'
 import {
+  findAppResourceUrls,
+  isAppResourceUrl,
+  parseAppResourceUrl
+} from '@shared/appResourceUrl'
+import {
   findFilePathMentions,
   looksLikeFilePath,
   trimPathCandidate
@@ -57,6 +62,12 @@ const FILE_GLYPH =
 /** Visible chip label — basename only; the full path stays on `title`. */
 export function fileMentionDisplayName(path: string): string {
   const trimmed = trimPathCandidate(path.trim())
+  if (isAppResourceUrl(trimmed)) {
+    const ref = parseAppResourceUrl(trimmed)
+    if (ref?.path) return basename(ref.path) || ref.path
+    if (ref?.id) return ref.id
+    return ref?.kind ?? trimmed
+  }
   return basename(trimmed) || trimmed
 }
 
@@ -129,7 +140,7 @@ export function filePathLinksPlugin(md: MarkdownIt): void {
 
   md.renderer.rules.code_inline = (tokens, idx, options, env, self): string => {
     const content = tokens[idx]?.content ?? ''
-    if (looksLikeFilePath(content)) {
+    if (looksLikeFilePath(content) || isAppResourceUrl(content)) {
       return fileMentionHtml(trimPathCandidate(content))
     }
     return defaultCodeInline(tokens, idx, options, env, self)
@@ -138,7 +149,18 @@ export function filePathLinksPlugin(md: MarkdownIt): void {
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function pushSplitPaths(Token: any, text: string, out: MdToken[]): void {
-  const mentions = findFilePathMentions(text)
+  const mentions = [
+    ...findFilePathMentions(text).map((mention) => ({
+      path: mention.path,
+      index: mention.index,
+      raw: mention.raw
+    })),
+    ...findAppResourceUrls(text).map((mention) => ({
+      path: mention.url,
+      index: mention.index,
+      raw: mention.url
+    }))
+  ].sort((a, b) => a.index - b.index)
   if (mentions.length === 0) {
     const t = new Token('text', '', 0)
     t.content = text
@@ -147,6 +169,7 @@ function pushSplitPaths(Token: any, text: string, out: MdToken[]): void {
   }
   let last = 0
   for (const mention of mentions) {
+    if (mention.index < last) continue
     if (mention.index > last) {
       const t = new Token('text', '', 0)
       t.content = text.slice(last, mention.index)

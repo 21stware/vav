@@ -19,10 +19,11 @@ export function resolveFinishAlertPath(): string | null {
   const appPath = appPathSafe()
   const candidates = [
     typeof process.resourcesPath === 'string' ? join(process.resourcesPath, FILE_NAME) : '',
+    appPath ? join(appPath, 'resources', FILE_NAME) : '',
     appPath ? join(appPath, FILE_NAME) : '',
-    appPath ? join(appPath, '..', FILE_NAME) : '',
-    join(__dirname, '../../..', FILE_NAME),
-    join(__dirname, '../../../..', FILE_NAME),
+    join(__dirname, '../../..', 'resources', FILE_NAME),
+    join(__dirname, '../../../..', 'resources', FILE_NAME),
+    join(process.cwd(), 'resources', FILE_NAME),
     join(process.cwd(), FILE_NAME)
   ].filter(Boolean)
   return candidates.find((path) => existsSync(path)) ?? null

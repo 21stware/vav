@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { ChevronDown, ChevronRight, File as FileIcon, Folder, Plus } from 'lucide-react'
+import { ChevronDown, ChevronRight, Folder, Plus } from 'lucide-react'
+import { FileKindMark } from '../FileTypeIcon'
 import type { FileEntry } from '@shared/types'
 import { useSessionStore } from '../../state/sessionStore'
 import { useWorkspaceStore } from '../../state/workspaceStore'
@@ -257,7 +258,7 @@ function VirtualColumnRows({
               }
             }}
             onDoubleClick={() => {
-              if (!entry.isDirectory) openFileInSessionPreview(entry.path)
+              void import('../../lib/openInApp').then(({ openInApp }) => openInApp(entry.path))
             }}
             {...nativeFileDragProps(entry.path, { isDirectory: entry.isDirectory })}
             onContextMenu={(event) => {
@@ -286,7 +287,7 @@ function VirtualColumnRows({
             {entry.isDirectory ? (
               <Folder size={16} strokeWidth={1.75} aria-hidden />
             ) : (
-              <FileIcon size={16} strokeWidth={1.75} aria-hidden />
+              <FileKindMark path={entry.path} />
             )}
             <span className="tree-name">{entry.name}</span>
             {entry.isDirectory && (
@@ -507,7 +508,7 @@ function TreeRow({
           if (entry.isDirectory) void toggleExpand(activeId, entry.path)
         }}
         onDoubleClick={() => {
-          if (!entry.isDirectory) openFileInSessionPreview(entry.path)
+          void import('../../lib/openInApp').then(({ openInApp }) => openInApp(entry.path))
         }}
         onContextMenu={(event) => {
           event.preventDefault()
@@ -544,7 +545,7 @@ function TreeRow({
         {entry.isDirectory ? (
           <Folder size={16} strokeWidth={1.75} aria-hidden />
         ) : (
-          <FileIcon size={16} strokeWidth={1.75} aria-hidden />
+          <FileKindMark path={entry.path} />
         )}
         {renaming ? (
           <input
@@ -643,6 +644,19 @@ async function showEntryMenu(
 ): Promise<void> {
   const items: MenuItem[] = entry.isDirectory
     ? [
+        {
+          label: tt('files.openInApp'),
+          onSelect: () => void import('../../lib/openInApp').then(({ openInApp }) => openInApp(entry.path))
+        },
+        {
+          label: tt('files.addToComposer'),
+          onSelect: () => {
+            void import('../../lib/insertAgentPrompt').then(({ insertAgentPath }) =>
+              insertAgentPath(entry.path)
+            )
+          }
+        },
+        { label: '', divider: true },
         ...(options.expandAll
           ? [{ label: tt('common.expandAll'), onSelect: options.expandAll }]
           : []),

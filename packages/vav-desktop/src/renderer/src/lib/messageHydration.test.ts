@@ -192,6 +192,28 @@ describe('conversation cache maps', () => {
     assert.equal(next.cacheCreatedAt.a, 2)
   })
 
+  it('does not rewind the leaf onto the prompt once the reply is in the tree', () => {
+    const user = msg('u1', '金价')
+    const reply = { ...msg('a1', '最近在涨', 'u1'), role: 'assistant' as const }
+    const state = {
+      messages: { a: [user, reply] },
+      messagesHydrated: { a: true },
+      activeLeaf: { a: 'a1' },
+      compactions: { a: [] },
+      tokenHistories: { a: [] },
+      cacheCreatedAt: { a: null },
+      cacheExpiresAt: { a: null }
+    }
+    const next = conversationFullHydratePatch(state, 'a', {
+      messages: [user, reply],
+      activeLeafId: 'u1',
+      tokenHistory: [],
+      cacheCreatedAt: null,
+      cacheExpiresAt: null
+    })
+    assert.equal(next.activeLeaf.a, 'a1')
+  })
+
   it('merges new disk messages when returning to a hydrated remote session', () => {
     const state = {
       messages: { a: [msg('u0', 'older')] },

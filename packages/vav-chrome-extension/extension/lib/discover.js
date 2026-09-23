@@ -124,9 +124,10 @@ export async function probeDiscover(origin, ms = 1500) {
 }
 
 function rankFound(row) {
-  if (row.secret && row.hasKey === true) return 0
-  if (row.secret && row.hasKey !== false) return 1
-  if (row.secret) return 2
+  const trusted = row.secret || row.hasSecret
+  if (trusted && row.hasKey === true) return 0
+  if (trusted && row.hasKey !== false) return 1
+  if (trusted) return 2
   return 3
 }
 

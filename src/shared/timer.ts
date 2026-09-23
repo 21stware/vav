@@ -6,6 +6,8 @@
  * so a running vav-server can fire them.
  */
 import type { ConnectorId } from './connector.ts'
+import { isStructuredCliHost, type CliHostKind } from './cliHost.ts'
+import type { ThinkingLevel } from './types.ts'
 
 export type TimerScheduleKind = 'cron' | 'interval' | 'once'
 
@@ -32,6 +34,12 @@ export interface TimerJob {
   workdirPolicy: 'mint' | 'sticky' | 'source'
   sourceWorkdir: string | null
   connectorIds: ConnectorId[]
+  /** Provider / model used when the job fires. Missing on older jobs. */
+  model: string | null
+  cliHost: CliHostKind | null
+  accountId: string | null
+  thinkingLevel: ThinkingLevel | null
+  fast: boolean
   createdAt: number
   updatedAt: number
   lastRunAt: number | null
@@ -60,6 +68,67 @@ export interface TimerJobInput {
   workdirPolicy?: 'mint' | 'sticky' | 'source'
   sourceWorkdir?: string | null
   connectorIds?: ConnectorId[]
+  model?: string | null
+  cliHost?: CliHostKind | null
+  accountId?: string | null
+  thinkingLevel?: ThinkingLevel | null
+  fast?: boolean
+}
+
+export type TimerJobAgent = Pick<
+  TimerJob,
+  'model' | 'cliHost' | 'accountId' | 'thinkingLevel' | 'fast'
+>
+
+export function coerceTimerCliHost(raw: unknown): CliHostKind | null {
+  return isStructuredCliHost(typeof raw === 'string' ? raw : null) ? raw : null
+}
+
+export function coerceTimerThinkingLevel(raw: unknown): ThinkingLevel | null {
+  return raw === 'off' || raw === 'low' || raw === 'medium' || raw === 'high' || raw === 'max'
+    ? raw
+    : null
+}
+
+export function timerJobAgentFromConversation(row: {
+  model?: string | null
+  cliHost?: CliHostKind | null
+  accountId?: string | null
+  thinkingLevel?: ThinkingLevel | null
+  fast?: boolean
+}): TimerJobAgent {
+  return {
+    model: row.model?.trim() || null,
+    cliHost: row.cliHost ?? null,
+    accountId: row.accountId ?? null,
+    thinkingLevel: row.thinkingLevel ?? null,
+    fast: row.fast === true
+  }
+}
+
+/** Conversation fields to write when a job patch includes agent settings. */
+export function conversationPatchFromTimerJob(
+  patch: Partial<TimerJobAgent>
+): Partial<{
+  model: string
+  cliHost: CliHostKind | null
+  accountId: string | null
+  thinkingLevel: ThinkingLevel
+  fast: boolean
+}> {
+  const next: Partial<{
+    model: string
+    cliHost: CliHostKind | null
+    accountId: string | null
+    thinkingLevel: ThinkingLevel
+    fast: boolean
+  }> = {}
+  if (patch.model !== undefined && patch.model?.trim()) next.model = patch.model.trim()
+  if (patch.cliHost !== undefined) next.cliHost = patch.cliHost
+  if (patch.accountId !== undefined) next.accountId = patch.accountId
+  if (patch.thinkingLevel) next.thinkingLevel = patch.thinkingLevel
+  if (patch.fast !== undefined) next.fast = patch.fast === true
+  return next
 }
 
 export const TIMER_OUTPUT_FILE = 'output.md'
@@ -157,6 +226,33 @@ export function coerceTimerSchedule(raw: unknown): TimerSchedule | null {
   if (row.kind === 'once' && typeof row.at === 'number' && Number.isFinite(row.at)) {
     return { kind: 'once', at: row.at }
   }
+  return null
+}
+
+/**
+ * Agent / UI shorthand: cron expr, `every 1h` / `every 30m`, ISO datetime,
+ * or a JSON TimerSchedule.
+ */
+export function parseTimerScheduleInput(raw: string | null | undefined): TimerSchedule | null {
+  const text = raw?.trim() ?? ''
+  if (!text) return null
+  if (text.startsWith('{')) {
+    try {
+      return coerceTimerSchedule(JSON.parse(text) as unknown)
+    } catch {
+      return null
+    }
+  }
+  if (parseCronExpr(text)) return { kind: 'cron', expr: text }
+  const every = text.match(/^every\s+(\d+)\s*(m|min|mins|minute|minutes|h|hr|hrs|hour|hours)$/i)
+  if (every) {
+    const n = Number(every[1])
+    const unit = every[2]!.toLowerCase()
+    const ms = unit.startsWith('h') ? n * 3_600_000 : n * 60_000
+    return coerceTimerSchedule({ kind: 'interval', everyMs: ms })
+  }
+  const at = Date.parse(text)
+  if (Number.isFinite(at)) return { kind: 'once', at }
   return null
 }
 

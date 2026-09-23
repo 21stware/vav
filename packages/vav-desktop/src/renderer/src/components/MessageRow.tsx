@@ -4,7 +4,6 @@ import {
   ChevronLeft,
   ChevronRight,
   Copy,
-  CornerUpLeft,
   FileDiff,
   GitBranch,
   MessageSquare,
@@ -27,7 +26,7 @@ import { MarkdownView } from './MarkdownView'
 import { ReasoningBlock } from './ReasoningBlock'
 import { ProcessText } from './ProcessText'
 import { ThinkingProcess } from './ThinkingProcess'
-import { processThoughtMs, splitAssistantProcess } from '../lib/assistantProcess'
+import { processThoughtMs, splitSealedAssistantProcess } from '../lib/assistantProcess'
 
 import { ToolCard } from './ToolCard'
 import { Button } from './ui'
@@ -81,7 +80,7 @@ interface MessageRowProps {
   message: ChatMessage
   highlight?: string
   isCurrentMatch?: boolean
-  /** Bumped when this row should flash after a quote jump. */
+  /** Bumped when this row should flash after a jump. */
   flash?: number
   /** Branches hanging off this message: which one is showing, and how many. */
   branchIndex?: number
@@ -91,7 +90,6 @@ interface MessageRowProps {
   onStepBranch?: (key: string, step: number) => void
   onRegenerate?: (messageId: string) => void
   onEdit?: (messageId: string, text: string) => void
-  onQuote?: (message: ChatMessage) => void
   onFork?: (messageId: string) => void
   onContinueInNewSession?: (messageId: string) => void
   onDelete?: (messageId: string) => void
@@ -103,7 +101,7 @@ const USER_COLLAPSE_LINES = 5
 
 /**
  * Message action icon button with post-click feedback (Emil: state indication).
- * - `check`: blur → Check → restore (copy / quote / fork)
+ * - `check`: blur → Check → restore (copy / fork)
  * - `spin`: one-shot RotateCcw spin (regenerate)
  * - false: press scale only (opens another surface)
  */
@@ -212,7 +210,6 @@ export const MessageRow = memo(function MessageRow({
   onStepBranch,
   onRegenerate,
   onEdit,
-  onQuote,
   onFork,
   onContinueInNewSession,
   onDelete
@@ -224,7 +221,6 @@ export const MessageRow = memo(function MessageRow({
   const [branchPulse, setBranchPulse] = useState(0)
   const [branchSwitching, setBranchSwitching] = useState(false)
   const prevBranchIndex = useRef(branchIndex)
-  const scrollToMessage = useSessionStore((s) => s.scrollToMessage)
 
   useEffect(() => {
     if (!flash) return
@@ -308,7 +304,6 @@ export const MessageRow = memo(function MessageRow({
         onSelect: () => onRegenerate(message.id)
       })
     }
-    if (onQuote) actions.push({ label: t('message.quote'), onSelect: () => onQuote(message) })
     const branch: MenuItem[] = []
     if (onFork) {
       branch.push({
@@ -375,18 +370,6 @@ export const MessageRow = memo(function MessageRow({
       <div className="message-turn user" data-testid="message-user" onContextMenu={onContextMenu}>
         <div className="message-role">{t('message.roleYou')}</div>
         <div className="message-group user">
-          {message.quoteSummary && message.quoteMessageId && (
-            <button
-              type="button"
-              className="message-quote-ref"
-              data-testid="message-quote-ref"
-              title={`${message.quoteSummary}\n${t('composer.quoteJump')}`}
-              onClick={() => scrollToMessage(message.quoteMessageId!)}
-            >
-              <CornerUpLeft size={12} />
-              <span>{message.quoteSummary}</span>
-            </button>
-          )}
           <UserMessageContext
             contextFile={message.contextFile}
             contextBlocks={message.contextBlocks}
@@ -431,13 +414,6 @@ export const MessageRow = memo(function MessageRow({
                 onClick={() => onRegenerate(message.id)}
               />
             )}
-            {onQuote && (
-              <MessageActionButton
-                icon={<Quote size={12} />}
-                title={t('message.quote')}
-                onClick={() => onQuote(message)}
-              />
-            )}
             {onFork && (
               <MessageActionButton
                 icon={<GitBranch size={12} />}
@@ -478,7 +454,7 @@ export const MessageRow = memo(function MessageRow({
       <div className="message-role">{t('message.roleAgent')}</div>
       <div className={classes} id={`msg-${message.id}`}>
         {(() => {
-          const { process, conclusion } = splitAssistantProcess(message.blocks)
+          const { process, conclusion } = splitSealedAssistantProcess(message.blocks)
           const render = (
             item: (typeof process)[number],
             nested: boolean
@@ -552,14 +528,6 @@ export const MessageRow = memo(function MessageRow({
                   disabled={busy}
                   ack="spin"
                   onClick={() => onRegenerate(message.id)}
-                />
-              )}
-              {onQuote && (
-                <MessageActionButton
-                  icon={<Quote size={12} />}
-                  title={t('message.quote')}
-                  testId="message-quote"
-                  onClick={() => onQuote(message)}
                 />
               )}
               {onFork && (

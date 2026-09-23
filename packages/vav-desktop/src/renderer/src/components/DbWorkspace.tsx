@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
-import { Pencil } from 'lucide-react'
+import { Database, Pencil } from 'lucide-react'
 import { isDbAuthError, type DbConnection } from '@shared/dbConnection'
 import { stableDatabaseTitle } from '../lib/grouping'
 import type { SqliteDatabaseInfo } from '@shared/ipc'
@@ -7,12 +7,13 @@ import { FILE_SESSION_AGENT_MIN_WIDTH } from '@shared/shellMinSize'
 import { useT } from '../i18n/useT'
 import { applyBlockPick, selectedBlockIdsForPath } from '../lib/applyBlockPick'
 import { appColumnPickConversationId } from '../lib/workspaceAgentContext'
-import { useSidebarFloatMode } from '../lib/sidebarLayout'
+import { useShowShellLeading } from '../lib/sidebarLayout'
 import { startCapturedPointerDrag } from '../lib/capturedPointerDrag'
 import { reportFileSessionAgentOpen } from '../lib/useWindowMinSize'
 import { useSessionStore } from '../state/sessionStore'
 import { useDbSessionHistory } from '../lib/useBoundSessionHistory'
 import { Button, EmptyState } from './ui'
+import { countFact, ObjectFacts, ObjectMasthead, timeFact } from './ObjectFacts'
 import { SessionDetail } from './SessionDetail'
 import { ShellLeadingControls } from './ShellLeadingControls'
 import { SqliteView } from './SqliteView'
@@ -63,9 +64,8 @@ export function DbWorkspace({
   const agentWidthRef = useRef(agentWidth)
   agentWidthRef.current = agentWidth
 
-  const sidebarVisible = useSessionStore((s) => s.sidebarVisible)
-  const sidebarFloating = useSidebarFloatMode()
-  const showShellLeading = !hideAgent && !(sidebarVisible && !sidebarFloating)
+  const shellLeadingNeeded = useShowShellLeading()
+  const showShellLeading = !hideAgent && shellLeadingNeeded
   const shellLeading = showShellLeading ? <ShellLeadingControls /> : null
 
   useEffect(() => {
@@ -141,6 +141,13 @@ export function DbWorkspace({
     setActiveDbTable(schema.tables[0]!.name)
   }, [schema, activeDbTable, editingConnection, setActiveDbTable])
 
+  useEffect(() => {
+    if (!hideAgent) return
+    const onEdit = (): void => setEditingConnection((value) => !value)
+    window.addEventListener('vav:db-edit-connection', onEdit)
+    return () => window.removeEventListener('vav:db-edit-connection', onEdit)
+  }, [hideAgent])
+
   const startResize = useCallback((event: ReactPointerEvent<HTMLElement>): void => {
     const startX = event.clientX
     const startW = agentWidthRef.current
@@ -169,6 +176,7 @@ export function DbWorkspace({
       <DbConnectEditor
         conversationId={conversationId}
         initialConnection={connection}
+        embedded={hideAgent}
         onConnected={() => {
           openedRef.current = true
           setOpened(true)
@@ -199,6 +207,7 @@ export function DbWorkspace({
   return (
     <div className="workspace-view file-session-view" ref={rootRef} data-testid="db-workspace">
       <section className="workspace-view-preview file-session-preview" data-testid="db-browser">
+        {hideAgent ? <ObjectMasthead title={connectionLabel} /> : (
         <header
           className={`file-viewer-header db-workspace-header titlebar-drag${shellLeading ? ' has-shell-leading' : ''}`}
         >
@@ -206,6 +215,9 @@ export function DbWorkspace({
             {shellLeading ? (
               <div className="file-viewer-shell-leading titlebar-no-drag">{shellLeading}</div>
             ) : null}
+            <span className="db-workspace-header-icon" aria-hidden>
+              <Database strokeWidth={1.8} />
+            </span>
             <span
               className="file-viewer-name"
               title={activeDbTable ? `${connectionLabel} / ${activeDbTable}` : connectionLabel}
@@ -229,6 +241,7 @@ export function DbWorkspace({
             />
           </div>
         </header>
+        )}
         <div className="db-preview-swap" data-testid="db-preview-swap" key={swapMode}>
           {schemaError && !showConfig ? (
             <EmptyState
@@ -287,6 +300,18 @@ export function DbWorkspace({
             </div>
           )}
         </div>
+        <ObjectFacts
+          items={[
+            timeFact('created', t('object.fact.created'), connection.createdAt),
+            timeFact('updated', t('object.fact.updated'), connection.updatedAt),
+            countFact('tables', t('object.fact.tables'), schema?.tables.length),
+            countFact(
+              'rows',
+              t('object.fact.rows'),
+              schema ? schema.tables.reduce((sum, table) => sum + table.rowCount, 0) : null
+            )
+          ]}
+        />
       </section>
 
       {hideAgent ? null : (
@@ -297,7 +322,6 @@ export function DbWorkspace({
       >
         <div
           className={`workspace-view-agent-inner${agentOpen ? '' : ' is-collapsed'}`}
-          style={{ width: agentWidth }}
         >
           <div
             className="workspace-col-resizer workspace-col-resizer-start"

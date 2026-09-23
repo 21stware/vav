@@ -4,6 +4,7 @@ import { conversationToMeta } from '../store/conversationMeta'
 import type { KnowledgeStore } from '../store/KnowledgeStore'
 import type { ConversationStore } from '../store/ConversationStore'
 import type { Conversation } from '@shared/types'
+import { KNOWLEDGE_ALL_NOTES_ID } from '@shared/knowledge'
 import type { DocumentRetrievalService } from '../retrieval/DocumentRetrievalService'
 
 export type KnowledgeIpcHost = {
@@ -24,9 +25,9 @@ export function registerKnowledgeIpc(
   ipcMain.handle(IPC.knowledgeGetForConversation, async (_event, conversationId: string) => {
     return store.getForConversation(String(conversationId ?? '')) ?? null
   })
-  ipcMain.handle(IPC.knowledgeCreateNote, async () => {
+  ipcMain.handle(IPC.knowledgeCreateNote, async (_event, folderId?: string | null) => {
     const conversation = host.createDefinitionConversation()
-    const knowledge = store.createNote('', conversation.id)
+    const knowledge = store.createNote('', conversation.id, Date.now(), folderOrNull(store, folderId))
     conversations.updateMeta(conversation.id, {
       knowledgeHostId: knowledge.id,
       sessionKind: 'knowledge',
@@ -37,11 +38,19 @@ export function registerKnowledgeIpc(
     const next = conversations.get(conversation.id) ?? conversation
     return { host: knowledge, conversation: conversationToMeta(next) }
   })
-  ipcMain.handle(IPC.knowledgeImportDocument, async (_event, sourcePath: string) => {
+  ipcMain.handle(
+    IPC.knowledgeImportDocument,
+    async (_event, sourcePath: string, folderId?: string | null) => {
     const path = String(sourcePath ?? '').trim()
     if (!path) return null
     const conversation = host.createDefinitionConversation()
-    const knowledge = store.importDocument(path, conversation.id, retrieval)
+    const knowledge = store.importDocument(
+      path,
+      conversation.id,
+      retrieval,
+      Date.now(),
+      folderOrNull(store, folderId)
+    )
     conversations.updateMeta(conversation.id, {
       knowledgeHostId: knowledge.id,
       sessionKind: 'knowledge',
@@ -86,4 +95,36 @@ export function registerKnowledgeIpc(
     if (knowledge) broadcast()
     return knowledge
   })
+  ipcMain.handle(IPC.knowledgeListFolders, async () => store.listFolders())
+  ipcMain.handle(IPC.knowledgeCreateFolder, async (_event, name: string) => {
+    const folder = store.createFolder(String(name ?? ''))
+    broadcast()
+    return folder
+  })
+  ipcMain.handle(IPC.knowledgeRenameFolder, async (_event, id: string, name: string) => {
+    const folder = store.renameFolder(String(id ?? ''), String(name ?? ''))
+    if (folder) broadcast()
+    return folder
+  })
+  ipcMain.handle(IPC.knowledgeRemoveFolder, async (_event, id: string) => {
+    const ok = store.removeFolder(String(id ?? ''))
+    if (ok) broadcast()
+    return ok
+  })
+  ipcMain.handle(IPC.knowledgeMove, async (_event, ids: string[], folderId: string | null) => {
+    const requested = typeof folderId === 'string' ? folderId.trim() : ''
+    if (requested && requested !== KNOWLEDGE_ALL_NOTES_ID && !store.getFolder(requested)) return false
+    const moved = store.moveToFolder(
+      Array.isArray(ids) ? ids.map(String) : [],
+      requested && requested !== KNOWLEDGE_ALL_NOTES_ID ? requested : null
+    )
+    if (moved && moved.length) broadcast()
+    return moved != null
+  })
+}
+
+function folderOrNull(store: KnowledgeStore, folderId: string | null | undefined): string | null {
+  const requested = typeof folderId === 'string' ? folderId.trim() : ''
+  if (!requested || requested === KNOWLEDGE_ALL_NOTES_ID) return null
+  return store.getFolder(requested) ? requested : null
 }

@@ -1,4 +1,5 @@
-import type { ChatMessage, PreviewRef, QuoteDraft } from '../../shared/types.ts'
+import type { AppColumnFocus } from '../../shared/appColumnFocus.ts'
+import type { ChatMessage, PreviewRef } from '../../shared/types.ts'
 
 /** Clear changeSetId on older messages when a new turn begins. Returns whether any were dirty. */
 export function stripChangeSetIds(messages: Array<{ changeSetId?: string }>): boolean {
@@ -33,12 +34,11 @@ export function userTurnMessage(opts: {
   parentId: string | null
   text: string
   createdAt?: number
-  quote?: QuoteDraft | null
   contextBlocks?: PreviewRef[] | null
   attachments?: string[] | null
   contextFile?: string | null
+  appColumnFocus?: AppColumnFocus | null
 }): ChatMessage {
-  const quote = opts.quote
   const contextBlocks = opts.contextBlocks
   const attachments = opts.attachments
   return {
@@ -48,16 +48,10 @@ export function userTurnMessage(opts: {
     content: opts.text,
     blocks: [{ kind: 'text', text: opts.text }],
     createdAt: opts.createdAt ?? Date.now(),
-    ...(quote
-      ? {
-          quoteMessageId: quote.messageId,
-          quoteSummary: quote.summary,
-          quoteRole: quote.role
-        }
-      : {}),
     ...(contextBlocks && contextBlocks.length ? { contextBlocks } : {}),
     ...(attachments && attachments.length ? { attachments: [...attachments] } : {}),
-    ...(opts.contextFile ? { contextFile: opts.contextFile } : {})
+    ...(opts.contextFile ? { contextFile: opts.contextFile } : {}),
+    ...(opts.appColumnFocus ? { appColumnFocus: opts.appColumnFocus } : {})
   }
 }
 

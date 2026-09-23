@@ -1,4 +1,5 @@
-import { ChevronDown, ChevronRight, File as FileIcon, Folder } from 'lucide-react'
+import { ChevronDown, ChevronRight, Folder } from 'lucide-react'
+import { FileKindMark } from '../FileTypeIcon'
 import type { FileEntry, FileViewMode } from '@shared/types'
 import { useT, tt } from '../../i18n/useT'
 import { filterFileEntries } from '../../lib/remoteFolderPick'
@@ -250,7 +251,7 @@ function PickTreeRow({
         {entry.isDirectory ? (
           <Folder size={16} strokeWidth={1.75} aria-hidden />
         ) : (
-          <FileIcon size={16} strokeWidth={1.75} aria-hidden />
+          <FileKindMark path={entry.path} />
         )}
         <span className="tree-name">{entry.name}</span>
       </div>
@@ -360,7 +361,7 @@ function PickColumnBrowser({
                     {entry.isDirectory ? (
                       <Folder size={16} strokeWidth={1.75} aria-hidden />
                     ) : (
-                      <FileIcon size={16} strokeWidth={1.75} aria-hidden />
+                      <FileKindMark path={entry.path} />
                     )}
                     <span className="tree-name">{entry.name}</span>
                     {entry.isDirectory && (

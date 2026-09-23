@@ -19,6 +19,8 @@ export type VavDiscoverInfo = {
   version: string
   wsPath: typeof VAV_WEB_SOCKET_PATH
   loopback: boolean
+  /** True when a pairing secret exists. The secret itself is never returned over HTTP. */
+  hasSecret?: boolean
   secret?: string
   /** Control-plane TCP port (`hello.role=phone`). Older daemons omit this. */
   port?: number
@@ -93,6 +95,7 @@ export function buildDiscoverPayload(
   if (typeof opts.port === 'number' && Number.isInteger(opts.port) && opts.port > 0) {
     payload.port = opts.port
   }
+  payload.hasSecret = Boolean(opts.secret())
   if (loopback) {
     const secret = opts.secret()
     if (secret) payload.secret = secret

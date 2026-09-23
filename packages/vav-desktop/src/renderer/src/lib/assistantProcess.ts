@@ -60,7 +60,9 @@ export function isVisibleAssistantBlock(block: MessageBlock): boolean {
  * first text is the answer and leading reasoning is the process — otherwise
  * the last think sits next to the result every turn. Reasoning after or
  * between answer texts is peeled back onto the process in stream order.
- * No concluding text → ungrouped.
+ * No concluding text → ungrouped (live still needs the in-flight tail
+ * visible). Sealed turns use {@link splitSealedAssistantProcess} so a Stop
+ * keeps that trail in the thinking well instead of laying it out flat.
  */
 export function splitAssistantProcess(blocks: MessageBlock[]): {
   process: IndexedBlock[]
@@ -109,6 +111,24 @@ export function splitAssistantProcess(blocks: MessageBlock[]): {
   }
 
   return { process: prepareProcessSteps(process), conclusion }
+}
+
+/**
+ * Sealed-turn split. Same cut as {@link splitAssistantProcess}, except an
+ * incomplete trail (Stop mid-think, or a turn that ended on a tool) stays
+ * in the thinking well instead of flattening into the transcript.
+ */
+export function splitSealedAssistantProcess(blocks: MessageBlock[]): {
+  process: IndexedBlock[]
+  conclusion: IndexedBlock[]
+} {
+  const split = splitAssistantProcess(blocks)
+  if (split.process.length > 0) return split
+  const hasTrail = split.conclusion.some(
+    (item) => item.block.kind === 'reasoning' || item.block.kind === 'toolCall'
+  )
+  if (!hasTrail) return split
+  return { process: prepareProcessSteps(split.conclusion), conclusion: [] }
 }
 
 /**

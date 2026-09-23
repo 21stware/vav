@@ -8,7 +8,6 @@ import {
   type WheelEvent as ReactWheelEvent
 } from 'react'
 import type { ChatMessage, LeafCompaction } from '@shared/types'
-import { quoteSummaryFromContent } from '@shared/quote'
 import { compactionBoundaryIndex, compactionForLeaf } from '@shared/compaction'
 import { ROOT_LEAF, branchPoints } from '@shared/thread'
 import { getProjection } from '../state/StreamProjection'
@@ -121,8 +120,6 @@ export function Transcript({
   const apiKeyPresent = useSessionStore((s) => s.settings.apiKeyPresent)
   const apiEndpoint = useSessionStore((s) => s.settings.apiEndpoint)
   const accountGroups = useAccountGroups()
-  const setQuote = useSessionStore((s) => s.setQuote)
-  const focusComposer = useSessionStore((s) => s.focusComposer)
   const openSettings = useSessionStore((s) => s.openSettings)
   const regenerate = useSessionStore((s) => s.regenerate)
   const scrollToMessage = useSessionStore((s) => s.scrollToMessage)
@@ -442,7 +439,7 @@ export function Transcript({
   }, [search.open, search.index, search.tick, search.matchIds])
 
   /**
-   * Quote strip / bubble citation / rewind rail: jump + 1.5s yellow flash.
+   * Bubble citation / rewind rail: jump + 1.5s yellow flash.
    * The jump is instant on purpose — smooth scrolling a long log lags behind the
    * click and makes scrubbing the rail feel like dragging the whole transcript.
    */
@@ -481,27 +478,6 @@ export function Transcript({
       } else void selectBranch(next)
     },
     [archived, branches, selectBranch, selectPendingBranch]
-  )
-
-  const onQuote = useCallback(
-    (message: ChatMessage) => {
-      if (!activeId || message.role === 'system') return
-      const body =
-        message.content.trim() ||
-        message.blocks
-          .filter((b): b is Extract<ChatMessage['blocks'][number], { kind: 'text' }> => b.kind === 'text')
-          .map((b) => b.text)
-          .join('\n')
-      const summary = quoteSummaryFromContent(body)
-      if (!summary) return
-      setQuote(activeId, {
-        messageId: message.id,
-        summary,
-        role: message.role === 'user' ? 'user' : 'assistant'
-      })
-      focusComposer()
-    },
-    [activeId, setQuote, focusComposer]
   )
 
   const isEmpty = messages.length === 0 && !turnRunning
@@ -640,7 +616,6 @@ export function Transcript({
           onStepBranch={onStepBranch}
           onRegenerate={archived ? undefined : regenerate}
           onEdit={archived ? undefined : editUserMessage}
-          onQuote={archived ? undefined : onQuote}
           onFork={archived ? undefined : fork}
           onContinueInNewSession={archived ? undefined : continueInNewSession}
           onDelete={archived ? undefined : requestDeleteMessage}

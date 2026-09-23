@@ -168,13 +168,6 @@ export class VavPackService {
               externalizeBlock(block, conversation.id, message.id, externalizeString)
             )
           }
-          if (message.quoteSummary) {
-            next.quoteSummary = externalizeString(message.quoteSummary, {
-              conversationId: conversation.id,
-              messageId: message.id,
-              field: 'quoteSummary'
-            })
-          }
           if (message.contextBlocks?.length) {
             next.contextBlocks = message.contextBlocks.map((ref) => ({
               ...ref,
@@ -394,7 +387,6 @@ export class VavPackService {
             content: expand(message.content),
             blocks: message.blocks.map((b) => expandBlock(b, expand))
           }
-          if (message.quoteSummary) next.quoteSummary = expand(message.quoteSummary)
           if (message.contextBlocks?.length) {
             next.contextBlocks = message.contextBlocks.map((ref) => ({
               ...ref,

@@ -2,6 +2,8 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import {
   AGENT_MIN_WIDTH,
+  APPLICATIONS_WIDTH_MIN,
+  BODY_SPLIT_GAP,
   EMPTY_STATE_HIDE_NAME_AT,
   EMPTY_STATE_STACK_MIN,
   EMPTY_STATE_STAGE_MIN,
@@ -9,6 +11,7 @@ import {
   MAIN_WINDOW_MIN_HEIGHT,
   MAIN_WINDOW_MIN_WIDTH,
   PREVIEW_MIN_WIDTH,
+  SIDEBAR_RAIL_WIDTH,
   SIDEBAR_WIDTH_DEFAULT,
   SIDEBAR_WIDTH_MIN,
   WINDOW_MIN_WIDTH_FLOOR,
@@ -31,17 +34,53 @@ describe('windowMinWidth', () => {
     assert.ok(WINDOW_MIN_WIDTH_FLOOR >= AGENT_MIN_WIDTH)
   })
 
-  it('constructor min includes the default sidebar so the frame cannot shrink past it', () => {
+  it('constructor min includes the default sidebar and app column', () => {
     assert.equal(
       MAIN_WINDOW_MIN_WIDTH,
       windowMinWidth({
         sidebarVisible: true,
         sidebarWidth: SIDEBAR_WIDTH_DEFAULT,
         agentVisible: true,
-        previewVisible: false
+        previewVisible: true
       })
     )
+    assert.equal(
+      MAIN_WINDOW_MIN_WIDTH,
+      SIDEBAR_WIDTH_DEFAULT + AGENT_MIN_WIDTH + APPLICATIONS_WIDTH_MIN
+    )
     assert.ok(MAIN_WINDOW_MIN_WIDTH > WINDOW_MIN_WIDTH_FLOOR)
+  })
+
+  it('counts the icon rail when the list is collapsed', () => {
+    const hidden = windowMinWidth({
+      sidebarVisible: false,
+      agentVisible: true,
+      previewVisible: false
+    })
+    const rail = windowMinWidth({
+      sidebarVisible: true,
+      sidebarRail: true,
+      agentVisible: true,
+      previewVisible: false
+    })
+    assert.equal(rail - hidden, SIDEBAR_RAIL_WIDTH)
+  })
+
+  it('companion session still counts the historic split gap', () => {
+    const hidden = windowMinWidth({
+      sidebarVisible: false,
+      agentVisible: true,
+      previewVisible: false,
+      shell: 'session'
+    })
+    const rail = windowMinWidth({
+      sidebarVisible: true,
+      sidebarRail: true,
+      agentVisible: true,
+      previewVisible: false,
+      shell: 'session'
+    })
+    assert.equal(rail - hidden, SIDEBAR_RAIL_WIDTH + BODY_SPLIT_GAP)
   })
 
   it('adds the visible sidebar at its current width, not below the sidebar min', () => {
@@ -75,7 +114,7 @@ describe('windowMinWidth', () => {
     )
   })
 
-  it('adds the preview floor when the right drawer is open', () => {
+  it('adds the app-column floor when the right drawer is open', () => {
     const closed = windowMinWidth({
       sidebarVisible: true,
       sidebarWidth: SIDEBAR_WIDTH_DEFAULT,
@@ -88,7 +127,7 @@ describe('windowMinWidth', () => {
       agentVisible: true,
       previewVisible: true
     })
-    assert.equal(open - closed, PREVIEW_MIN_WIDTH + 1)
+    assert.equal(open - closed, APPLICATIONS_WIDTH_MIN)
   })
 
   it('uses the file-session agent floor when that column is the side panel', () => {
@@ -133,7 +172,7 @@ describe('windowMinWidth', () => {
         agentVisible: true,
         previewVisible: true
       }),
-      400 - PREVIEW_MIN_WIDTH
+      400 - APPLICATIONS_WIDTH_MIN
     )
   })
 

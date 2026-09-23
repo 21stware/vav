@@ -181,24 +181,68 @@ function fileBaseName(path: string): string {
   return parts[parts.length - 1] ?? trimmed
 }
 
+/** Matches `db.untitled` in both locales — empty connections keep this, not `localhost`. */
+export const UNTITLED_DB_CONNECTION = 'Untitled-db-connection'
+
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1'])
+const DB_PLACEHOLDER_TITLES = new Set([
+  UNTITLED_DB_CONNECTION,
+  'Database',
+  '数据库连接',
+  'A-new-db-connection',
+  ...Object.values(DB_DRIVER_DEFAULTS).map((item) => item.label)
+])
+
+function isLoopbackHost(host: string): boolean {
+  return LOOPBACK_HOSTS.has(host.trim().toLowerCase())
+}
+
+/** Host / driver leftovers and the Untitled draft — not a name the user chose. */
+export function isPlaceholderDbTitle(title: string): boolean {
+  const value = title.trim()
+  if (!value) return true
+  if (isLoopbackHost(value)) return true
+  return DB_PLACEHOLDER_TITLES.has(value)
+}
+
 export function dbConnectionTitle(
   row: Pick<DbConnection, 'title' | 'database' | 'host' | 'driver' | 'user'>
 ): string {
   const title = row.title.trim()
-  if (title) return title
+  if (title && !isPlaceholderDbTitle(title)) return title
   const kind = dbDriverFormKind(row.driver)
   if (kind === 'file') {
-    return fileBaseName(row.database) || DB_DRIVER_DEFAULTS[row.driver].label
+    return fileBaseName(row.database)
   }
   if (row.driver === 'bigquery') {
     if (row.user.trim() && row.database.trim()) return `${row.user.trim()}@${row.database.trim()}`
     if (row.database.trim()) return row.database.trim()
-    return DB_DRIVER_DEFAULTS.bigquery.label
+    return ''
   }
   if (row.database.trim() && row.host.trim()) return `${row.database.trim()}@${row.host.trim()}`
   if (row.database.trim()) return row.database.trim()
-  if (row.host.trim()) return row.host.trim()
-  return DB_DRIVER_DEFAULTS[row.driver].label
+  if (row.host.trim() && !isLoopbackHost(row.host)) return row.host.trim()
+  return ''
+}
+
+/** Session title used in lists / chrome: real identity, else Untitled. */
+export function dbSessionDisplayTitle(
+  row: Pick<DbConnection, 'title' | 'database' | 'host' | 'driver' | 'user'>,
+  untitled = UNTITLED_DB_CONNECTION
+): string {
+  return dbConnectionTitle(row) || untitled
+}
+
+/** True when the session title should follow connection fields (not a user name). */
+export function isReplaceableDbTitle(
+  title: string,
+  row: Pick<DbConnection, 'database' | 'host' | 'driver' | 'user'>,
+  previousAuto = ''
+): boolean {
+  const value = title.trim()
+  if (!value || isPlaceholderDbTitle(value)) return true
+  const auto = dbConnectionTitle({ ...row, title: '' })
+  return value === auto || (previousAuto !== '' && value === previousAuto)
 }
 
 export function dbConnectionSubtitle(

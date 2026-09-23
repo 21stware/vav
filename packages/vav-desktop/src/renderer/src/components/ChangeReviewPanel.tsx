@@ -7,6 +7,7 @@ import {
   Settings,
   X
 } from 'lucide-react'
+import { brandDisplayName } from '@shared/brandIdentity'
 import type { ChangeEntry, ChangeType } from '@shared/changeSet'
 import { useSessionStore } from '../state/sessionStore'
 import { useT } from '../i18n/useT'
@@ -135,7 +136,7 @@ export function ChangeReviewPanel(): React.JSX.Element | null {
           title={t('review.back')}
           onClick={closeChangeReview}
         />
-        <span className="about-logo review-logo" role="img" aria-label="VAV">
+        <span className="about-logo review-logo" role="img" aria-label={brandDisplayName()}>
           <img className="logo-light" src={wordmark} alt="" />
           <img className="logo-dark" src={wordmarkDark} alt="" />
         </span>

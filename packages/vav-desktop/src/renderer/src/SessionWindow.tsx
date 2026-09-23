@@ -42,7 +42,7 @@ function markSession(label: string): void {
  * Same transcript, tools and composer as the main window with the sidebar and
  * its chrome taken away — this window exists to hold a single session, so it
  * has nothing to navigate between. Surface switch sits left in the title bar;
- * history / search / Reveal in List sit on the trailing edge.
+ * new session / search / Reveal in List sit on the trailing edge.
  *
  * Warm shells load with `warm=1` and no conversationId, then receive
  * `onSessionNavigate` to claim a session without reloading the BrowserWindow.
@@ -253,6 +253,7 @@ export default function SessionWindow({
             conversationId={conversationId}
             agentBinaryName={agentBinaryName}
             showSearch={isVavMode}
+            showNewSession
             trail={
               <button
                 type="button"

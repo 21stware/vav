@@ -16,6 +16,12 @@ import { DocZoomControls, DOC_ZOOM_STEP } from './DocZoomControls'
 import { useDocZoom } from './useDocZoom'
 import { useDocumentPageIndex } from './useDocumentPageIndex'
 import { writeDocZoom } from '../../lib/selectionChrome'
+import {
+  pdfLinkRectCss,
+  pdfLinkTarget,
+  resolvePdfDestPage,
+  type PdfLinkAnnot
+} from '../../lib/pdfLinks'
 
 type PdfJsModule = typeof import('pdfjs-dist')
 type PdfDocument = Awaited<ReturnType<PdfJsModule['getDocument']>['promise']>
@@ -126,6 +132,7 @@ export function PdfNativeView({
   selectingRef.current = selecting
   const selectedIdsRef = useRef(selectedIds)
   selectedIdsRef.current = selectedIds
+  const goToPageRef = useRef<(page: number) => void>(() => undefined)
 
   /** Current zoom, read by the imperative render loop below. */
   const scaleRef = useRef(1)
@@ -156,6 +163,7 @@ export function PdfNativeView({
     totalOverride: pageTotal > 0 ? pageTotal : null,
     pageNumberFromEl: (el) => Number(el.dataset.pageNumber) || 1
   })
+  goToPageRef.current = pageIndex.goTo
 
   useEffect(() => {
     let cancelled = false
@@ -225,6 +233,108 @@ export function PdfNativeView({
       }
     }
 
+    const jumpToPdfPage = (page: number): void => {
+      if (!page || cancelled) return
+      ensurePageFrame(page)
+      requestAnimationFrame(() => goToPageRef.current(page))
+    }
+
+    const followPdfLink = (annot: PdfLinkAnnot, fromPage: number): void => {
+      const target = pdfLinkTarget(annot)
+      if (!target || !doc) return
+      if (target.kind === 'uri') {
+        window.open(target.url, '_blank', 'noopener,noreferrer')
+        return
+      }
+      if (target.kind === 'named') {
+        const total = doc.numPages
+        const page =
+          target.action === 'FirstPage'
+            ? 1
+            : target.action === 'LastPage'
+              ? total
+              : target.action === 'NextPage'
+                ? Math.min(total, fromPage + 1)
+                : Math.max(1, fromPage - 1)
+        jumpToPdfPage(page)
+        return
+      }
+      void resolvePdfDestPage(target.dest, doc).then((page) => {
+        if (page) jumpToPdfPage(page)
+      })
+    }
+
+    const mountPdfLinkLayer = (
+      slot: PageSlot,
+      page: PdfPage,
+      viewport: {
+        convertToViewportRectangle?: (rect: number[]) => number[]
+        convertToViewportPoint?: (x: number, y: number) => number[]
+      }
+    ): void => {
+      let layer = slot.pageEl.querySelector<HTMLElement>('.pdf-annotation-layer')
+      if (!layer) {
+        layer = document.createElement('div')
+        layer.className = 'pdf-annotation-layer'
+        slot.pageEl.appendChild(layer)
+      }
+      layer.innerHTML = ''
+      void page
+        .getAnnotations({ intent: 'display' })
+        .then((annots) => {
+          if (cancelled || !layer) return
+          for (const raw of annots as PdfLinkAnnot[]) {
+            const target = pdfLinkTarget(raw)
+            if (!target) continue
+            const box = pdfLinkRectCss(raw.rect, viewport)
+            if (!box) continue
+            const a = document.createElement('a')
+            a.className = 'pdf-link-annotation'
+            a.dataset.allowNav = 'true'
+            a.href = target.kind === 'uri' ? target.url : `#page-${slot.pageNum}`
+            a.rel = 'noopener noreferrer'
+            if (target.kind === 'uri') {
+              a.target = '_blank'
+              a.title = target.url
+            }
+            a.style.left = `${box.left}px`
+            a.style.top = `${box.top}px`
+            a.style.width = `${box.width}px`
+            a.style.height = `${box.height}px`
+            a.addEventListener('mousedown', (event) => {
+              event.stopPropagation()
+            })
+            a.addEventListener('click', (event) => {
+              event.preventDefault()
+              event.stopPropagation()
+              followPdfLink(raw, slot.pageNum)
+            })
+            layer.appendChild(a)
+          }
+        })
+        .catch(() => {
+          // Annotation layer is best-effort — canvas stays readable.
+        })
+    }
+
+    const ensurePageFrame = (n: number): void => {
+      if (!doc || cancelled) return
+      const total = doc.numPages
+      const target = Math.min(Math.max(1, n), total)
+      const proto = slots[0]
+      const nw = proto?.naturalW || naturalPageW || 612 * PDF_TO_CSS_UNITS
+      const nh = proto?.naturalH || (nw * 792) / 612
+      while (slots.length < target) {
+        const nextN = slots.length + 1
+        const slot = makeSlot(nextN, nw, nh)
+        track.appendChild(slot.frame)
+        slots.push(slot)
+        io?.observe(slot.frame)
+      }
+      const slot = slots.find((s) => s.pageNum === target)
+      if (slot && !slot.painted) void paintSlot(slot, false)
+    }
+
     const cancelSlotRender = (slot: PageSlot): void => {
       if (slot.renderTask) {
         try {
@@ -286,6 +396,7 @@ export function PdfNativeView({
       slot.canvas.style.height = `${viewport.height}px`
 
       slot.textLayer.innerHTML = ''
+      mountPdfLinkLayer(slot, page, viewport)
 
       const transform = dpr !== 1 ? ([dpr, 0, 0, dpr, 0, 0] as number[]) : undefined
       const task = page.render({
@@ -470,10 +581,13 @@ export function PdfNativeView({
       let next = eagerEnd + 1
       const appendChunk = (): void => {
         if (cancelled || next > total) return
+        while (next <= total && slots.some((s) => s.pageNum === next)) next += 1
+        if (next > total) return
         const frag = document.createDocumentFragment()
         const batch: PageSlot[] = []
         const end = Math.min(total, next + PLACEHOLDER_CHUNK - 1)
         for (let n = next; n <= end; n++) {
+          if (slots.some((s) => s.pageNum === n)) continue
           const slot = makeSlot(n, naturalW, naturalH)
           frag.appendChild(slot.frame)
           batch.push(slot)
@@ -711,9 +825,11 @@ export function PdfNativeView({
     const onLeave = (): void => clearHover()
 
     const onDown = (event: MouseEvent): void => {
-      if (!selectingRef.current || event.button !== 0) return
       const target = event.target as HTMLElement | null
       if (!target || !host.contains(target)) return
+      // Annotation links jump (or open) — never steal them as a block pick.
+      if (target.closest('.pdf-link-annotation')) return
+      if (!selectingRef.current || event.button !== 0) return
 
       const span = target.closest('.textLayer span') as HTMLElement | null
       const pageEl = target.closest('.pdf-page') as HTMLElement | null

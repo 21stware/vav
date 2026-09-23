@@ -22,12 +22,21 @@ export function sessionKindOf(row: {
   return 'workspace'
 }
 
+/** Fired schedule run — an agent conversation, not the schedule editor. */
+export function isTimerRun(row: {
+  sessionKind?: SessionKind | null
+  timerRunId?: string | null
+}): boolean {
+  return row.sessionKind === 'timer' && !!row.timerRunId
+}
+
 /** List-column session rows. App objects are not sessions. */
 export function isWorkspaceSession(row: {
   fileId?: string | null
   sessionKind?: SessionKind | null
+  timerRunId?: string | null
 }): boolean {
-  return sessionKindOf(row) === 'workspace'
+  return sessionKindOf(row) === 'workspace' || isTimerRun(row)
 }
 
 /** Alias of isWorkspaceSession — the list is only agent conversations. */
@@ -37,6 +46,7 @@ export const isListSession = isWorkspaceSession
 export function isAppObjectSession(row: {
   fileId?: string | null
   sessionKind?: SessionKind | null
+  timerRunId?: string | null
 }): boolean {
   return !isWorkspaceSession(row)
 }

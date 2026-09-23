@@ -3,21 +3,22 @@ import { execFile } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { promisify } from 'node:util'
+import {
+  FILE_ASSOCIATION_FORMATS,
+  formatIdForExtension,
+  type FileAssociationFormat
+} from '../../shared/fileAssociationFormats.ts'
+
+export {
+  FILE_ASSOCIATION_FORMATS,
+  formatIdForExtension,
+  formatIdForPath,
+  type FileAssociationFormat
+} from '../../shared/fileAssociationFormats.ts'
 
 const execFileAsync = promisify(execFile)
 const IS_MAC = process.platform === 'darwin'
 const IS_WIN = process.platform === 'win32'
-
-export interface FileAssociationFormat {
-  id: string
-  /** Display name */
-  label: string
-  extensions: string[]
-  /** Primary UTI used for Launch Services (macOS) */
-  uti: string
-  /** P0 = fully supported; P1 = listed but secondary */
-  tier: 'p0' | 'p1'
-}
 
 export interface FileAssociationStatus {
   id: string
@@ -31,66 +32,6 @@ export interface FileAssociationStatus {
   defaultBundleId: string | null
   isVav: boolean
 }
-
-/** Formats from settings-file-associations.rpml. */
-export const FILE_ASSOCIATION_FORMATS: FileAssociationFormat[] = [
-  { id: 'markdown', label: 'Markdown', extensions: ['.md', '.markdown', '.mdx'], uti: 'net.daringfireball.markdown', tier: 'p0' },
-  { id: 'html', label: 'HTML', extensions: ['.html', '.htm', '.xhtml'], uti: 'public.html', tier: 'p0' },
-  { id: 'plaintext', label: 'Plain Text', extensions: ['.txt', '.text'], uti: 'public.plain-text', tier: 'p0' },
-  { id: 'json', label: 'JSON', extensions: ['.json'], uti: 'public.json', tier: 'p0' },
-  { id: 'yaml', label: 'YAML', extensions: ['.yaml', '.yml'], uti: 'public.yaml', tier: 'p0' },
-  { id: 'csv', label: 'CSV', extensions: ['.csv', '.tsv'], uti: 'public.comma-separated-values-text', tier: 'p0' },
-  { id: 'notebook', label: 'Jupyter Notebook', extensions: ['.ipynb'], uti: 'org.jupyter.ipynb', tier: 'p0' },
-  { id: 'swift', label: 'Swift Source', extensions: ['.swift'], uti: 'public.swift-source', tier: 'p0' },
-  { id: 'python', label: 'Python Source', extensions: ['.py'], uti: 'public.python-script', tier: 'p0' },
-  {
-    id: 'javascript',
-    label: 'TypeScript / JavaScript',
-    extensions: ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs'],
-    uti: 'com.netscape.javascript-source',
-    tier: 'p0'
-  },
-  { id: 'pdf', label: 'PDF', extensions: ['.pdf'], uti: 'com.adobe.pdf', tier: 'p1' },
-  {
-    id: 'docx',
-    label: 'Word Document',
-    extensions: ['.docx'],
-    uti: 'org.openxmlformats.wordprocessingml.document',
-    tier: 'p1'
-  },
-  {
-    id: 'xlsx',
-    label: 'Excel Spreadsheet',
-    extensions: ['.xlsx'],
-    uti: 'org.openxmlformats.spreadsheetml.sheet',
-    tier: 'p1'
-  },
-  {
-    id: 'pptx',
-    label: 'PowerPoint Presentation',
-    extensions: ['.pptx'],
-    uti: 'org.openxmlformats.presentationml.presentation',
-    tier: 'p1'
-  },
-  {
-    id: 'heic',
-    label: 'HEIC Image',
-    extensions: ['.heic', '.heif'],
-    uti: 'public.heic',
-    tier: 'p1'
-  },
-  {
-    id: 'zip',
-    label: 'ZIP Archive',
-    extensions: ['.zip'],
-    uti: 'com.pkware.zip-archive',
-    /**
-     * Viewer for structure preview (not a full Archive Utility replacement).
-     * Password / extract-to-disk remain out of scope until explicit product work.
-     */
-    tier: 'p1'
-  }
-]
 
 const VAV_BUNDLE_ID = 'com.vav.app'
 /** Registered display name / productName used by electron-builder + LaunchAdvancedAssociationUI. */
@@ -186,8 +127,8 @@ export class FileAssociationService {
   }
 
   async statusForExtension(ext: string): Promise<FileAssociationStatus | null> {
-    const normalized = ext.startsWith('.') ? ext.toLowerCase() : `.${ext.toLowerCase()}`
-    const format = FILE_ASSOCIATION_FORMATS.find((f) => f.extensions.includes(normalized))
+    const id = formatIdForExtension(ext)
+    const format = id ? FILE_ASSOCIATION_FORMATS.find((f) => f.id === id) : undefined
     if (!format) return null
     return this.statusFor(format)
   }
@@ -434,12 +375,4 @@ try {
       return {}
     }
   }
-}
-
-export function formatIdForPath(path: string): string | null {
-  const name = path.split(/[\\/]/).pop()?.toLowerCase() ?? ''
-  const dot = name.lastIndexOf('.')
-  if (dot < 0) return null
-  const ext = name.slice(dot)
-  return FILE_ASSOCIATION_FORMATS.find((f) => f.extensions.includes(ext))?.id ?? null
 }

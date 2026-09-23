@@ -114,7 +114,7 @@ export function createShellTools(host: ToolHost) {
       }
       const expect = String(params.expect ?? '').trim()
       if (!expect) return failure('缺少 expect 参数')
-      const timeoutMs = Number(params.timeoutMs ?? 60_000)
+      const timeoutMs = Math.min(Math.max(0, Number(params.timeoutMs ?? 60_000) || 0), 10 * 60_000)
       const result = await shell.waitFor(expect, timeoutMs, signal)
       const seconds = (result.elapsedMs / 1000).toFixed(1)
       if (result.cancelled) {

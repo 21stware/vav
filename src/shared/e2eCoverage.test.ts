@@ -172,7 +172,12 @@ const BEHAVIOR = {
       'td[data-block-id]',
       'peekContext',
       'createDataFromFile',
-      'app-chrome',
+      'createKnowledgeNote',
+      'knowledge-object-row',
+      'data-object-row',
+      'openInApp',
+      'insertAgentPrompt',
+      'app-mode-tabs',
       'launchWorkbench'
     ]
   },
@@ -622,15 +627,23 @@ describe('e2e feature coverage', () => {
     assert.match(review, /seedReview/)
     const session = readFileSync(join(root, 'e2e/specs/session.spec.ts'), 'utf8')
     assert.match(session, /launchWorkbench/)
+    assert.match(session, /home-page/)
+    assert.match(session, /sidebar-services/)
+    assert.match(session, /sidebar-history/)
+    assert.match(session, /app-mode-tabs/)
     assert.match(session, /settings-nav-connect/)
     assert.match(session, /file-source-select/)
-    assert.match(session, /back-to-file-list/)
+    assert.match(session, /app-back/)
     const appColumn = readFileSync(join(root, 'e2e/specs/app-column-context.spec.ts'), 'utf8')
     assert.match(appColumn, /launchWorkbench/)
     assert.match(appColumn, /comment-card/)
+    assert.match(appColumn, /data-testid="app-context"/)
     assert.match(appColumn, /data-file-workspace/)
     assert.match(appColumn, /E2E_SESSION_ID/)
     assert.match(appColumn, /peekContext/)
+    assert.match(appColumn, /appColumnFocus/)
+    assert.match(appColumn, /openInApp/)
+    assert.match(appColumn, /insertAgentPrompt/)
     const boot = readFileSync(join(root, 'e2e/specs/boot.spec.ts'), 'utf8')
     assert.match(boot, /launchWorkbench/)
     const sidebarMenu = readFileSync(join(root, 'e2e/specs/sidebar-menu.spec.ts'), 'utf8')

@@ -1,4 +1,10 @@
 import { ARTIFACT_MARKER } from '@shared/conversationArtifacts'
+import {
+  formatAppColumnCapabilitiesForPrompt,
+  formatAppColumnFocusForPrompt,
+  type AppColumnFocus
+} from '@shared/appColumnFocus'
+import { formatSystemIdentity } from '@shared/brandIdentity'
 
 const OS_NAMES: Record<string, string> = {
   darwin: 'macOS',
@@ -42,7 +48,10 @@ export type SystemPromptOptions = {
     title: string
     kind: 'document' | 'note'
     path: string | null
+    folder?: string | null
   } | null
+  /** Right-hand app column — what the user is looking at right now. */
+  appColumnFocus?: AppColumnFocus | null
 }
 
 const DB_SCHEMA_PROMPT_BUDGET = 12_000
@@ -89,6 +98,29 @@ export function osDisplayName(platform: string): string {
   return OS_NAMES[platform] ?? platform
 }
 
+/**
+ * Standing destination order. Notes were landing as workspace markdown because
+ * the prompt treated every write as a file and listed notes as artifacts.
+ */
+export function formatOutputDestinationForPrompt(): string {
+  return [
+    '## Where output goes',
+    'The working directory is for code and files the user named. User-facing results go to the app first. Use the first place below that can hold the result.',
+    '',
+    '1. App services — the right-hand app column. These are products, separate from the workspace folder.',
+    '- Note (笔记 / Knowledge): the user asked to write, save, or remember something as a note, 笔记, or Note. Create it with `note_write` (`title`, `markdown`). Rewrite the open note, or one you name, with `note_edit` (`host_id` optional when a note is open, `markdown` = the full note). A note is an app object: do not `fs_write` a `.md`, do not drop it in the working directory, and do not mark it as an artifact.',
+    '- Analysis (分析 / Data): a dataset or live database they want to analyze. Create it with `analysis_write` (`path` for CSV/TSV/SQLite/Parquet, or `connection_url` for postgres/mysql/clickhouse/…; optional `content` for CSV/TSV text). Update the open dataset, or one you name with `url`, using `analysis_edit`. Then query with `sql_query`. Do not `fs_write` a dataset into the working directory. Written conclusions they asked to keep are a Note.',
+    '- Scheduled (日程): a task that should run later or on a cadence. Create it with `schedule_write` (`title`, `prompt`, `schedule`). Update the open task, or one you name with `url`, using `schedule_edit`. Do not write the task as a file.',
+    '- Storage (存储): a file they want kept in the app Storage catalog. Add it with `storage_write` (`path`, `content`). Replace one with `storage_edit`. A source edit of a workspace file stays on `fs_write`.',
+    '',
+    '2. Artifacts — a file they asked to keep as a document in the workspace (report, brief, HTML page, slides, PDF, Office). Write it under the working directory and mark it with `<!-- vav-artifact -->` near the top and/or `artifact: true` on `fs_write`. Notes, analysis objects, scheduled tasks, and Storage catalog files are not artifacts.',
+    '',
+    '3. Files — source, config, and other edits in the working directory, or a path they explicitly named. Ordinary code edits are files: do not mark them as artifacts and do not turn them into notes.',
+    '',
+    'Step down this list only when the higher place cannot hold the result, or they named a workspace file path, asked to save as a file, or asked for it in the workspace. "Write a note" / "记成笔记" is `note_write`. "分析" / "做成数据集" is `analysis_write`. "日程" / "定时" is `schedule_write`. "存到存储" is `storage_write`. A skill does not change this: file-shaped skill outputs (slides, Office, HTML, scripts) may use the working directory; a note, analysis object, schedule, or Storage file still goes to the app.'
+  ].join('\n')
+}
+
 export function buildSystemPrompt(
   workingDirectory: string,
   shell: string,
@@ -98,12 +130,18 @@ export function buildSystemPrompt(
   const openKind = options?.openFileKind?.trim() || null
   const platform = options?.platform ?? process.platform
   const lines = [
-    `You are VAV, a local coding agent running on the user's ${osDisplayName(platform)} machine.`,
+    formatSystemIdentity(osDisplayName(platform)),
     `The working directory for this conversation is: ${workingDirectory}`,
     // Without this the model reaches for POSIX idioms in a PowerShell session.
     `The user's shell is ${shell}; every \`terminal\` command must be valid ${shell} syntax.`,
+    '',
+    formatOutputDestinationForPrompt(),
     ''
   ]
+  if (options?.appColumnFocus) {
+    lines.push(formatAppColumnFocusForPrompt(options.appColumnFocus), '')
+  }
+  lines.push(formatAppColumnCapabilitiesForPrompt(options?.appColumnFocus), '')
   if (openFile) {
     lines.push(`The user is viewing this file in the preview: ${openFile}`)
     if (openKind === 'image') {
@@ -195,10 +233,10 @@ export function buildSystemPrompt(
   if (options?.knowledgeHost) {
     const host = options.knowledgeHost
     lines.push(
-      `This session is attached to a Knowledge host: ${host.title} (${host.kind}, id ${host.id}).`,
+      `This session is attached to a Knowledge host: ${host.title} (${host.kind}${host.folder ? `, folder ${host.folder}` : ''}, id ${host.id}).`,
       host.path ? `Vault path: ${host.path}` : 'The host has no stored file yet.',
       host.kind === 'note'
-        ? 'Read or rewrite the note with `knowledge_fetch` / `knowledge_write` (pass host_id). The user can also edit it in the Knowledge editor — your write replaces the whole markdown.'
+        ? 'Read it with `knowledge_fetch` (pass host_id). Rewrite it with `note_edit` (pass host_id). Create another note with `note_write`. The user can also edit it in the Knowledge editor — `note_edit` replaces the whole markdown.'
         : 'This document was ingested and chunked. Prefer `knowledge_search` / `knowledge_fetch` (or `doc_search` / `doc_fetch` on the vault path) over guessing.',
       'Task sessions may `@mention` this host; when they do, search it instead of inventing contents.',
       ''
@@ -223,10 +261,16 @@ export function buildSystemPrompt(
     options?.fileReadOnly
       ? '- `fs_read` / `fs_list` for reads. `switch_mode` (`mode: "edit"`) to unlock writes; `fs_write` is blocked until Edit.'
       : '- `fs_read` / `fs_write` / `fs_list` operate on the local filesystem.',
-    `- Artifacts are **only** deliberate user-facing documents (reports, briefs, HTML pages, slides notes). Ordinary source edits are not artifacts. Mark a deliverable with \`${ARTIFACT_MARKER}\` near the top of the file, and/or \`artifact: true\` on \`fs_write\`.`,
+    `- Artifacts are workspace files the user asked to keep as documents (reports, briefs, HTML pages, slides). They come after an app service. Notes, analysis objects, and scheduled tasks are not artifacts. Ordinary source edits are not artifacts. Mark a file artifact with \`${ARTIFACT_MARKER}\` near the top, and/or \`artifact: true\` on \`fs_write\`.`,
     '- `doc_search` / `doc_fetch` — local retrieval over PDF, Word, Excel, PowerPoint, CSV/TSV, and text. Prefer these over terminal/python for office/PDF **reading** (PDF = extractable text layer only; no OCR). Do not install python-docx/pdf tools when doc_search can read the file. Not for images/audio/video.',
     '- `sql_query` — analytical SQL. On a live DB session, queries that connection (PostgreSQL / MySQL / ClickHouse / BigQuery / DuckDB; omit path). Otherwise DuckDB over a SQLite, CSV, TSV, or Parquet file (not `.xlsx`). Use for aggregation, GROUP BY, JOIN, window functions, filtering. Prefer this over paging the preview when you need to compute.',
-    '- `knowledge_search` / `knowledge_fetch` / `knowledge_write` — the Knowledge library. Search hosts (documents + notes), fetch chunks or a whole note, and rewrite notes. Use these when the user mentions a knowledge host or this is a Knowledge session.',
+    '- `note_write` / `note_edit` — app Notes (笔记). `note_write` creates one. `note_edit` replaces an existing one (`host_id`, or the note open in the app column). `fs_write` cannot write a note.',
+    '- `analysis_write` / `analysis_edit` — Analysis (分析 / Data). `analysis_write` creates a dataset or live database. `analysis_edit` updates one (`url`, or the dataset open in the app column). Then `sql_query`. `fs_write` cannot write an analysis object.',
+    '- `schedule_write` / `schedule_edit` — Scheduled tasks (日程). `schedule_write` creates one (`title`, `prompt`, `schedule`). `schedule_edit` updates one. Not a file.',
+    '- `storage_write` / `storage_edit` — Storage catalog files (存储). `storage_write` adds a file (`path`, `content`). `storage_edit` replaces one. Workspace source edits stay on `fs_write`.',
+    '- `knowledge_search` / `knowledge_fetch` — search the Knowledge library and fetch a note or chunks. `knowledge_write` is a compatibility alias of `note_write` / `note_edit`.',
+    '- `knowledge_library` — Notes folders and the notes inside them. `op: list` reads the tree (All Notes is the undeletable root, id `all`). `op: read` returns note markdown in a folder. `create_folder` / `rename_folder` / `delete_folder` manage folders (delete unfiles notes; it does not delete them). `move` files notes (`folder_id`, or `all` to unfile). `merge` appends notes into `into` and removes the sources. `note_write` accepts `folder_id`.',
+    '- `app` — list, get, search, or delete Storage / Data / Knowledge / Scheduled items. Address them with `vav://app/storage|data|knowledge|scheduled?id=…&path=…` URLs. Create and edit with `note_*`, `analysis_*`, `schedule_*`, and `storage_*`, not with `fs_write`. Include those URLs in replies so the user can open the item in the app column.',
     '- `web_search` / `web_fetch` — public web from this machine (Brave if key configured, else optional SearXNG, else DuckDuckGo HTML). Search first, then fetch promising URLs. HTML/PDF/text/JSON supported; private/localhost URLs are blocked. Prefer these over `terminal` curl/wget for reading pages.',
     '- `load_skill` — load a domain skill (SKILL.md + optional scripts/references) before specialized work. Catalog metadata is below; full instructions load on demand.',
     '- `connector` — GitHub / Cloudflare / Supabase / Vercel. `op=list|probe|act`. Deploy is a connector action, not a skill. GitHub is read-only.',
@@ -250,10 +294,10 @@ export function buildSystemPrompt(
     '',
     '## Agent Skills (progressive disclosure)',
     'Call `load_skill` with the matching id **before** substantial work in that domain. Do not invent skill APIs — follow the loaded SKILL.md.',
-    'Skill path rules: `SKILL_DIR` is read-only package content (scripts/references). All intermediate files (slides/*.js, compile.js, tmp unpack dirs, previews) and final outputs must live under the conversation working directory (`WORKDIR` from load_skill / this prompt). Never write into `resources/agent-skills` or SKILL_DIR.',
+    'Skill path rules: `SKILL_DIR` is read-only package content (scripts/references). File intermediates (slides/*.js, compile.js, tmp unpack dirs, previews) and file deliverables (slides, Office, HTML, PDF) go under the conversation working directory (`WORKDIR` from load_skill / this prompt). Never write into `resources/agent-skills` or SKILL_DIR. A Note, Analysis object, schedule, or Storage file still uses `note_*` / `analysis_*` / `schedule_*` / `storage_*` — do not satisfy those by writing into WORKDIR.',
     'Load companion files with `path` (e.g. `references/…`).',
     'When to load (examples):',
-    '- Markdown / long-form docs / specs → `doc-coauthoring`, `internal-comms`, `theme-factory`',
+    '- A markdown file they asked to save in the workspace (spec, doc) → `doc-coauthoring`, `internal-comms`, `theme-factory`. A note they asked to keep is a Knowledge note, not this path.',
     '- Word / Excel / PowerPoint **create or edit** → `officecli` first (bundled binary on PATH; do not install it). Fall back to `docx` / `xlsx` / `pptx` only if officecli cannot complete the task. Catalog MUST text on fallbacks does not override this order.',
     '- Tabular **analysis** on `.csv` / `.tsv` / `.parquet` / SQLite → `sql_query` (not `.xlsx`). For `.xlsx` reading/analysis use `doc_search` / `officecli`, or `xlsx` if needed.',
     '- PDF create / form fill / reformat (including polished reports) → `pdf` (not `officecli`).',

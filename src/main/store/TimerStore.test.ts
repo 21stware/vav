@@ -64,6 +64,35 @@ describe('TimerStore', () => {
     assert.equal(sourced?.sourceWorkdir, '/proj/app')
   })
 
+  it('persists provider and model for the next fire', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'vav-timers-'))
+    const a = new TimerStore(dir)
+    a.load()
+    const job = a.createJob({
+      title: 'Cursor run',
+      prompt: 'Check',
+      schedule: { kind: 'interval', everyMs: 60_000 },
+      model: 'grok-4.3',
+      cliHost: 'cursor',
+      thinkingLevel: 'low',
+      fast: true,
+      accountId: 'acc-9'
+    })
+    assert.equal(job.model, 'grok-4.3')
+    assert.equal(job.cliHost, 'cursor')
+    const b = new TimerStore(dir)
+    b.load()
+    const loaded = b.getJob(job.id)
+    assert.equal(loaded?.model, 'grok-4.3')
+    assert.equal(loaded?.cliHost, 'cursor')
+    assert.equal(loaded?.thinkingLevel, 'low')
+    assert.equal(loaded?.fast, true)
+    assert.equal(loaded?.accountId, 'acc-9')
+    const updated = b.updateJob(job.id, { model: 'grok-4.6', cliHost: 'cursor', fast: false })
+    assert.equal(updated?.model, 'grok-4.6')
+    assert.equal(updated?.fast, false)
+  })
+
   it('marks due jobs and finishes a run', () => {
     const timers = store()
     const now = 1_000_000

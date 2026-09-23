@@ -62,8 +62,12 @@ async function listenHub(
       sent.push(`configure:${message.conversationId}:${message.approvalMode ?? ''}`)
       return 'ok'
     },
-    sendMessage: (id, text) => {
-      sent.push(`${id}:${text}`)
+    sendMessage: (id, text, _attachments, context) => {
+      sent.push(
+        context?.appColumnFocus
+          ? `${id}:${text}:${context.appColumnFocus.kind}`
+          : `${id}:${text}`
+      )
       const thread = threads.get(id)
       if (thread) {
         thread.messages = [
@@ -71,6 +75,10 @@ async function listenHub(
           { id: `u-${thread.messages.length}`, role: 'user', text, at: Date.now() }
         ]
       }
+      return 'ok'
+    },
+    setAppColumnFocus: (id, focus) => {
+      sent.push(`focus:${id}:${focus?.kind ?? 'clear'}`)
       return 'ok'
     },
     createSession: (conversationId) => {
@@ -212,6 +220,56 @@ describe('RemoteControlHub', () => {
       )
       await new Promise((resolve) => setTimeout(resolve, 40))
       assert.ok(sent.includes('configure:c1:bypass'))
+      phone.destroy()
+    } finally {
+      close()
+    }
+  })
+
+  it('forwards app column focus on send', async () => {
+    const sent: string[] = []
+    const { port, close } = await listenHub(sent)
+    try {
+      const phone = createConnection({ host: '127.0.0.1', port })
+      await new Promise<void>((resolve, reject) => {
+        phone.once('connect', resolve)
+        phone.once('error', reject)
+      })
+      phone.write(encodeLine({ type: 'hello', proto: 1, auth: SECRET, device: 'web' }))
+      await readUntil(phone, (s) => s.welcomed)
+      phone.write(
+        encodeLine({
+          type: 'send',
+          conversationId: 'c1',
+          text: 'from app',
+          appColumnFocus: {
+            kind: 'knowledge',
+            level: 'item',
+            title: 'Note',
+            path: '/tmp/n.md',
+            objectId: 'n1',
+            url: 'vav://app/knowledge?id=n1'
+          }
+        })
+      )
+      await readUntil(phone, (s) => s.threads.c1?.some((m) => m.text === 'from app') === true)
+      assert.ok(sent.includes('c1:from app:knowledge'))
+      phone.write(
+        encodeLine({
+          type: 'focus',
+          conversationId: 'c1',
+          appColumnFocus: {
+            kind: 'data',
+            level: 'item',
+            title: 'sakila',
+            path: '/tmp/sakila.db',
+            objectId: 'db1',
+            url: 'vav://app/data?id=db1'
+          }
+        })
+      )
+      await new Promise((resolve) => setTimeout(resolve, 40))
+      assert.ok(sent.includes('focus:c1:data'))
       phone.destroy()
     } finally {
       close()

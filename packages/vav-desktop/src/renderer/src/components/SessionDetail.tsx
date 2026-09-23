@@ -17,6 +17,12 @@ import { findNeighborPane, focusedCliPaneId, measureCliPaneRects } from '../lib/
 import { focusAgentPane, resolveUiFocusScope } from '../lib/uiFocus'
 import { splitCliAndFocusPicker } from '../lib/sessionSplit'
 import { useSessionStore } from '../state/sessionStore'
+import {
+  appColumnFilePath,
+  appColumnFocusFromContext,
+  commentCardsForAppItem,
+  resolveAppColumnContext
+} from '../lib/appColumnContext'
 import { resolveComposerContextFile } from '../state/sessionQueue'
 import { CLI_SURFACE_KEY, useWorkspaceStore } from '../state/workspaceStore'
 import { SessionHistoryPopover } from './SessionHistoryPopover'
@@ -47,7 +53,7 @@ import { useT } from '../i18n/useT'
 import { workspaceChromeLabel } from '../lib/format'
 import { matchingKeyBindingId, prettyAccelerator, resolveKeyBindings } from '@shared/keyBindings'
 import { PLATFORM } from '../lib/platform'
-import { useSidebarFloatMode } from '../lib/sidebarLayout'
+import { useShowShellLeading } from '../lib/sidebarLayout'
 import { isCompanionSessionShell } from '../lib/windowKind'
 
 /**
@@ -164,11 +170,21 @@ export function SessionDetail({
    */
   const buildLaunchContext = useCallback((): string | null => {
     const store = useSessionStore.getState()
-    const focused = resolveComposerContextFile(store.contextFiles, activeId)
-    const cards = store.commentCards[activeId] ?? []
+    const appContext = resolveAppColumnContext(store)
+    const object = appContext?.objectId
+      ? store.conversations.find((row) => row.id === appContext.objectId)
+      : undefined
+    const focused =
+      appColumnFilePath(appContext, object) ||
+      resolveComposerContextFile(store.contextFiles, activeId)
+    const cards =
+      appContext?.level === 'selected'
+        ? commentCardsForAppItem(store.commentCards[activeId] ?? [], appContext.path)
+        : []
     return buildWorkspaceFocusContext({
       focusedPath: focused,
       cards,
+      appFocus: appColumnFocusFromContext(appContext, object),
       style: 'ambient'
     })
   }, [activeId])
@@ -578,11 +594,8 @@ export function SessionDetail({
 
   // Main / workspace: when the list is not a docked left column, park toggle +
   // new-session ahead of the agent select (no separate window titlebar).
-  const sidebarVisible = useSessionStore((s) => s.sidebarVisible)
-  const sidebarFloating = useSidebarFloatMode()
-  const showShellLeading =
-    (variant === 'main' || variant === 'workspace') &&
-    !(sidebarVisible && !sidebarFloating)
+  const shellLeading = useShowShellLeading()
+  const showShellLeading = (variant === 'main' || variant === 'workspace') && shellLeading
 
   // File-preview: session chrome only in vav (CLI keeps a separate session bar).
   // Workspace: always fold sessions into this row (vav + CLI).
@@ -599,7 +612,11 @@ export function SessionDetail({
         showSearch={isVavMode || swarmMulti}
         showShellLeading={showShellLeading}
         fileSessionChrome={chromeSession}
-        onClose={undefined}
+        onClose={
+          variant === 'main' && !isCompanionSessionShell()
+            ? () => useSessionStore.getState().setAgentVisible(false)
+            : undefined
+        }
       />
     ) : null
 
@@ -812,6 +829,8 @@ export function AgentModeChrome({
   fileSessionChrome = null,
   /** Isolated window: Reveal in List, pinned with history / search. */
   trail = null,
+  /** Isolated window: new session in this window (⌘N). */
+  showNewSession = false,
   onClose
 }: {
   conversationId: string
@@ -820,6 +839,7 @@ export function AgentModeChrome({
   showShellLeading?: boolean
   fileSessionChrome?: FileSessionChromeProps | null
   trail?: ReactNode
+  showNewSession?: boolean
   /** Unused: split actions moved to the empty-area context menu. */
   hideSplit?: boolean
   onClose?: () => void
@@ -855,7 +875,12 @@ export function AgentModeChrome({
 
   const showFileSessionChrome = !!(fs && isChat && fs.sessions.length > 0)
   const trailing = fs?.trail ?? trail
-  const showTrailing = showFileSessionChrome || (showSearch && isChat) || !!trailing || !!onClose
+  const showTrailing =
+    showFileSessionChrome ||
+    (showSearch && isChat) ||
+    showNewSession ||
+    !!trailing ||
+    !!onClose
 
   return (
     <div
@@ -904,6 +929,18 @@ export function AgentModeChrome({
                   onClick={fs!.onNewSession}
                 />
               </div>
+            ) : null}
+
+            {showNewSession ? (
+              <Button
+                icon={<Plus size={14} />}
+                variant="ghost"
+                testId="session-window-new-session"
+                title={t('app.newSessionTitle', {
+                  shortcut: prettyAccelerator(bindings.newSession, PLATFORM)
+                })}
+                onClick={() => useSessionStore.getState().beginNewSession()}
+              />
             ) : null}
 
             {showSearch && isChat ? (

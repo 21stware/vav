@@ -87,14 +87,14 @@ export interface SearchState {
 /** Sidebar list: sessions, archive, or scheduled jobs. */
 export type SidebarListMode = 'main' | 'archive' | 'timers' | 'fileSessions' | 'databases' | 'knowledge'
 
-/** Right-hand app column (storage / data / knowledge / scheduled / devices). */
-export type ApplicationsMode = 'scheduled' | 'storage' | 'data' | 'knowledge' | 'devices'
+/** Right-hand app column (notes / analysis / schedule / storage / devices). */
+export type ApplicationsMode = 'knowledge' | 'data' | 'scheduled' | 'storage' | 'devices'
 
 export const APPLICATIONS_MODES = [
+  'knowledge',
+  'data',
   'scheduled',
   'storage',
-  'data',
-  'knowledge',
   'devices'
 ] as const
 

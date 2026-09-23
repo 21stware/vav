@@ -99,7 +99,10 @@ const api: VavApi = {
       ipcRenderer.invoke(IPC.settingsAnalysis, options),
     keepAwakeStatus: () => ipcRenderer.invoke(IPC.settingsKeepAwakeStatus),
     keepAwakeGrant: () => ipcRenderer.invoke(IPC.settingsKeepAwakeGrant),
-    keepAwakeRevoke: () => ipcRenderer.invoke(IPC.settingsKeepAwakeRevoke)
+    keepAwakeRevoke: () => ipcRenderer.invoke(IPC.settingsKeepAwakeRevoke),
+    appPaths: () => ipcRenderer.invoke(IPC.settingsAppPaths),
+    setAppDataDir: (path) => ipcRenderer.invoke(IPC.settingsSetAppDataDir, path),
+    setTempDir: (path) => ipcRenderer.invoke(IPC.settingsSetTempDir, path)
   },
 
   logs: {
@@ -148,6 +151,10 @@ const api: VavApi = {
       ipcRenderer.invoke(IPC.convSetFocusedFile, id, path),
     setFocusedDbTable: (id: string, table: string | null) =>
       ipcRenderer.invoke(IPC.convSetFocusedDbTable, id, table),
+    setAppColumnFocus: (
+      id: string,
+      focus: import('@shared/appColumnFocus').AppColumnFocus | null
+    ) => ipcRenderer.invoke(IPC.convSetAppColumnFocus, id, focus),
     accountQuota: (id: string, host?: import('@shared/types').CliHostKind | null) =>
       ipcRenderer.invoke(IPC.convAccountQuota, id, host),
     setWorkingDirectory: (id: string, path: string, machineId?: string | null) =>
@@ -210,18 +217,18 @@ const api: VavApi = {
       id: string,
       text: string,
       attachments: string[],
-      quote?: import('@shared/types').QuoteDraft | null,
       contextBlocks?: import('@shared/types').PreviewRef[] | null,
-      contextFile?: string | null
+      contextFile?: string | null,
+      appColumnFocus?: import('@shared/appColumnFocus').AppColumnFocus | null
     ) =>
       ipcRenderer.invoke(
         IPC.agentSend,
         id,
         text,
         attachments,
-        quote ?? null,
         contextBlocks ?? null,
-        contextFile ?? null
+        contextFile ?? null,
+        appColumnFocus ?? null
       ),
     appendNotice: (id: string, text: string) =>
       ipcRenderer.invoke(IPC.agentAppendNotice, id, text),
@@ -438,14 +445,24 @@ const api: VavApi = {
     get: (id) => ipcRenderer.invoke(IPC.knowledgeGet, id),
     getForConversation: (conversationId) =>
       ipcRenderer.invoke(IPC.knowledgeGetForConversation, conversationId),
-    createNote: () => ipcRenderer.invoke(IPC.knowledgeCreateNote),
-    importDocument: (path) => ipcRenderer.invoke(IPC.knowledgeImportDocument, path),
+    createNote: (folderId) => ipcRenderer.invoke(IPC.knowledgeCreateNote, folderId ?? null),
+    importDocument: (path, folderId) =>
+      ipcRenderer.invoke(IPC.knowledgeImportDocument, path, folderId ?? null),
+    listFolders: () => ipcRenderer.invoke(IPC.knowledgeListFolders),
+    createFolder: (name) => ipcRenderer.invoke(IPC.knowledgeCreateFolder, name),
+    renameFolder: (id, name) => ipcRenderer.invoke(IPC.knowledgeRenameFolder, id, name),
+    removeFolder: (id) => ipcRenderer.invoke(IPC.knowledgeRemoveFolder, id),
+    move: (ids, folderId) => ipcRenderer.invoke(IPC.knowledgeMove, ids, folderId),
     readNote: (id) => ipcRenderer.invoke(IPC.knowledgeReadNote, id),
     writeNote: (id, markdown) => ipcRenderer.invoke(IPC.knowledgeWriteNote, id, markdown),
     rename: (id, title) => ipcRenderer.invoke(IPC.knowledgeRename, id, title),
     remove: (id) => ipcRenderer.invoke(IPC.knowledgeRemove, id),
     refresh: (id) => ipcRenderer.invoke(IPC.knowledgeRefresh, id),
     onChanged: (handler) => subscribe(IPC.knowledgeChanged, handler)
+  },
+
+  apps: {
+    onApply: (handler) => subscribe(IPC.appHostApply, handler)
   },
 
   fileSessions: {
@@ -558,6 +575,9 @@ const api: VavApi = {
     closeDetachedSession: (conversationId: string) =>
       ipcRenderer.invoke(IPC.windowCloseDetached, conversationId),
     newDetachedSession: () => ipcRenderer.invoke(IPC.windowNewDetached),
+    newSessionHere: () => ipcRenderer.invoke(IPC.windowNewSessionHere),
+    navigateSession: (conversationId) =>
+      ipcRenderer.invoke(IPC.windowNavigateSession, conversationId),
     listDetachedSessions: () => ipcRenderer.invoke(IPC.windowListDetached),
     onDetachedChanged: (handler) =>
       subscribe<string[]>(IPC.windowDetachedChanged, handler),

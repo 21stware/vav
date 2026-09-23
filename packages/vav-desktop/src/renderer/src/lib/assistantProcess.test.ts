@@ -8,7 +8,8 @@ import {
   previewProcessText,
   processThoughtMs,
   splitAssistantProcess,
-  splitLiveAssistantProcess
+  splitLiveAssistantProcess,
+  splitSealedAssistantProcess
 } from './assistantProcess.ts'
 
 function text(source: string): MessageBlock {
@@ -216,6 +217,43 @@ describe('splitAssistantProcess', () => {
     assert.equal(
       hasToolResult({ ...search, output: '1. Example\nhttps://example.com' }),
       true
+    )
+  })
+})
+
+describe('splitSealedAssistantProcess', () => {
+  it('keeps a think-only stop inside the thinking well', () => {
+    const split = splitSealedAssistantProcess([think('still thinking')])
+    assert.equal(split.process.length, 1)
+    assert.equal(split.process[0]?.block.kind, 'reasoning')
+    assert.equal(split.conclusion.length, 0)
+  })
+
+  it('keeps a tool-ended stop inside the thinking well', () => {
+    const split = splitSealedAssistantProcess([text('Looking.'), tool('a')])
+    assert.deepEqual(
+      split.process.map((item) => item.block.kind),
+      ['text', 'toolCall']
+    )
+    assert.equal(split.conclusion.length, 0)
+  })
+
+  it('leaves a text-only reply as the answer', () => {
+    const split = splitSealedAssistantProcess([text('Just the answer.')])
+    assert.equal(split.process.length, 0)
+    assert.equal(split.conclusion.length, 1)
+    assert.equal(split.conclusion[0]?.block.kind, 'text')
+  })
+
+  it('does not move a finished answer into the well', () => {
+    const split = splitSealedAssistantProcess([think('hmm'), text('Here is the answer.')])
+    assert.deepEqual(
+      split.process.map((item) => item.block.kind),
+      ['reasoning']
+    )
+    assert.deepEqual(
+      split.conclusion.map((item) => item.block.kind),
+      ['text']
     )
   })
 })

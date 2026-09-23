@@ -15,6 +15,7 @@ import {
   sessionShowsThinking,
   thinkingLevelsForSession
 } from './thinkingLevel.ts'
+import { brandDisplayName } from './brandIdentity.ts'
 import type { ApprovalMode, ThinkingLevel } from './types.ts'
 import type { RemoteControlsEvent } from './remoteControl.ts'
 
@@ -33,7 +34,7 @@ const APPROVAL_OPTIONS: { id: ApprovalMode; label: string }[] = [
 ]
 
 export function agentLabel(id: string): string {
-  if (!id || id === 'vav') return 'VAV'
+  if (!id || id === 'vav') return brandDisplayName()
   return isStructuredCliHost(id) ? displayNameForCliHost(id) : id
 }
 

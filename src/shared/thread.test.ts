@@ -1,7 +1,15 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import type { ChatMessage } from './types.ts'
-import { leafAfterPrune, pruneSubtree, subtreeIds, forkActiveLeaf, regenerateActiveLeaf, ROOT_LEAF } from './thread.ts'
+import {
+  leafAfterPrune,
+  preferredActiveLeaf,
+  pruneSubtree,
+  subtreeIds,
+  forkActiveLeaf,
+  regenerateActiveLeaf,
+  ROOT_LEAF
+} from './thread.ts'
 
 function msg(
   id: string,
@@ -17,6 +25,24 @@ function msg(
     createdAt: 1
   }
 }
+
+describe('preferredActiveLeaf', () => {
+  it('advances from the user turn onto the assistant reply', () => {
+    const messages = [msg('u1', null), msg('a1', 'u1', 'assistant')]
+    assert.equal(preferredActiveLeaf(messages, 'u1', 'a1'), 'a1')
+  })
+
+  it('keeps a live reply when a snapshot still points at the prompt', () => {
+    const messages = [msg('u1', null), msg('a1', 'u1', 'assistant')]
+    assert.equal(preferredActiveLeaf(messages, 'a1', 'u1'), 'a1')
+  })
+
+  it('follows the newer sibling when the host regenerated', () => {
+    const older = { ...msg('a1', 'u1', 'assistant'), createdAt: 1 }
+    const newer = { ...msg('a2', 'u1', 'assistant'), createdAt: 2 }
+    assert.equal(preferredActiveLeaf([msg('u1', null), older, newer], 'a1', 'a2'), 'a2')
+  })
+})
 
 describe('subtreeIds / pruneSubtree', () => {
   it('collects the node and every descendant', () => {

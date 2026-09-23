@@ -1,3 +1,8 @@
+import { fileURLToPath } from 'node:url'
+
+/** Packaged renderer HTML entries loaded from `out/renderer/`. */
+const RENDERER_FILE_ENTRY = /\/out\/renderer\/(?:index|screenshot|faaaaast)\.html$/i
+
 /** The app's own entry (dev server or packaged file://), not a chat hyperlink. */
 export function isRendererUrl(
   url: string,
@@ -9,5 +14,11 @@ export function isRendererUrl(
   ) {
     return true
   }
-  return url.startsWith('file:')
+  if (!url.startsWith('file:')) return false
+  try {
+    const path = fileURLToPath(url.split('#')[0]!.split('?')[0]!)
+    return RENDERER_FILE_ENTRY.test(path.replace(/\\/g, '/'))
+  } catch {
+    return false
+  }
 }

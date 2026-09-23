@@ -70,6 +70,8 @@ export type FileSessionsIpcHost = {
   remoteOnly?: () => boolean
   /** Keep Electron conversation rows so file IO routes to that host. */
   rememberRemoteSessions?: (rows: RemoteFileSessionSeed[]) => void
+  /** App column can open files anywhere; grant so inspect/read is not workspace-bound. */
+  grantPath?: (path: string) => void
 }
 
 function asRemoteState(value: unknown): {
@@ -142,6 +144,7 @@ export function registerFileSessionsIpc(
 
   ipcMain.handle(IPC.fileSessionsOpen, async (_event, path: string) => {
     if (!isFileSessionEligible(path)) return null
+    host.grantPath?.(path)
     const client = remote()
     if (client) return rememberOpened(path, await client.request('fileSessions.open', { path }))
     if (remoteOnly()) return null
@@ -153,6 +156,7 @@ export function registerFileSessionsIpc(
 
   ipcMain.handle(IPC.fileSessionsCreate, async (_event, path: string) => {
     if (!isFileSessionEligible(path)) return null
+    host.grantPath?.(path)
     const client = remote()
     if (client) return rememberOpened(path, await client.request('fileSessions.create', { path }))
     if (remoteOnly()) return null

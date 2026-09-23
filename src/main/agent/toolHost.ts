@@ -49,6 +49,10 @@ export interface ToolHost {
   dbConnectionId?: () => string | null
   knowledge?: KnowledgeToolHost
   knowledgeChanged?: () => void
+  /** Bound Knowledge host when the app column has a note / document open. */
+  defaultKnowledgeHostId?: () => string | null
+  /** App-column catalog (storage / data / knowledge / scheduled). */
+  appResources?: import('./toolsApp').AppResourceHost
   webSearch?: WebSearchService
   webFetch?: WebFetchService
   skills?: SkillService

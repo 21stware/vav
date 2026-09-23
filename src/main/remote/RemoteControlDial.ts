@@ -9,6 +9,7 @@ import {
   parseServerMessage,
   type RemoteClientMessage,
   type RemoteConfigure,
+  type RemoteSendContext,
   type RemoteServerMessage
 } from '../../shared/remoteControl.ts'
 import {
@@ -97,8 +98,21 @@ export class RemoteControlDial {
     return welcomed
   }
 
-  send(conversationId: string, text: string): void {
-    this.write({ type: 'send', conversationId, text })
+  send(conversationId: string, text: string, context?: RemoteSendContext): void {
+    this.write({
+      type: 'send',
+      conversationId,
+      text,
+      ...(context?.appColumnFocus ? { appColumnFocus: context.appColumnFocus } : {}),
+      ...(context?.contextBlocks?.length ? { contextBlocks: context.contextBlocks } : {})
+    })
+  }
+
+  setAppColumnFocus(
+    conversationId: string,
+    appColumnFocus: RemoteSendContext['appColumnFocus']
+  ): void {
+    this.write({ type: 'focus', conversationId, appColumnFocus: appColumnFocus ?? null })
   }
 
   configure(

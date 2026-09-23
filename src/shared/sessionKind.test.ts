@@ -6,6 +6,7 @@ import {
   isKnowledgeSession,
   isListSession,
   isTimerDefinition,
+  isTimerRun,
   isWorkspaceSession,
   sessionKindOf
 } from './sessionKind.ts'
@@ -33,18 +34,30 @@ describe('isTimerDefinition', () => {
   })
 })
 
+describe('isTimerRun', () => {
+  it('is a timer conversation that already fired', () => {
+    assert.equal(isTimerRun({ sessionKind: 'timer', timerRunId: 'r1' }), true)
+    assert.equal(isTimerRun({ sessionKind: 'timer' }), false)
+    assert.equal(isTimerRun({ sessionKind: 'workspace', timerRunId: 'r1' }), false)
+  })
+})
+
 describe('isWorkspaceSession', () => {
-  it('excludes file and timer rows', () => {
+  it('excludes file and timer definitions, but keeps fired runs in the list', () => {
     assert.equal(isWorkspaceSession({}), true)
     assert.equal(isWorkspaceSession({ fileId: 'a' }), false)
     assert.equal(isWorkspaceSession({ sessionKind: 'timer' }), false)
+    assert.equal(isWorkspaceSession({ sessionKind: 'timer', timerRunId: 'r1' }), true)
     assert.equal(isWorkspaceSession({ sessionKind: 'db' }), false)
     assert.equal(isWorkspaceSession({ sessionKind: 'knowledge' }), false)
     assert.equal(isWorkspaceSession({ sessionKind: 'workspace', fileId: null }), true)
     assert.equal(isListSession({}), true)
+    assert.equal(isListSession({ sessionKind: 'timer', timerRunId: 'r1' }), true)
     assert.equal(isAppObjectSession({ sessionKind: 'db' }), true)
     assert.equal(isAppObjectSession({ fileId: 'a' }), true)
     assert.equal(isAppObjectSession({ sessionKind: 'file' }), true)
+    assert.equal(isAppObjectSession({ sessionKind: 'timer' }), true)
+    assert.equal(isAppObjectSession({ sessionKind: 'timer', timerRunId: 'r1' }), false)
     assert.equal(isAppObjectSession({}), false)
   })
 })

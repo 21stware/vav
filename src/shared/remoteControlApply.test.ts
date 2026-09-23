@@ -105,6 +105,22 @@ describe('turnEventsFromRemoteThread', () => {
     if (end?.type !== 'end') return
     assert.equal(end.message.content, 'e2e stub reply')
   })
+
+  it('seals again when a checkpointed assistant grew after the renderer last saw it', () => {
+    const grown = turnEventsFromRemoteThread(
+      'c1',
+      [
+        { id: 'u1', role: 'user', text: 'next', at: 3 },
+        { id: 'a1', role: 'assistant', text: 'e2e stub reply, finished', at: 4 }
+      ],
+      [user('u1', 'next'), { ...user('a1', 'e2e stub'), role: 'assistant', parentId: 'u1' }]
+    )
+    const end = grown.events.find((event) => event.type === 'end')
+    assert.equal(end?.type, 'end')
+    if (end?.type !== 'end') return
+    assert.equal(end.message.content, 'e2e stub reply, finished')
+    assert.equal(end.message.id, 'a1')
+  })
 })
 
 describe('turnEventsFromRemoteTurn', () => {

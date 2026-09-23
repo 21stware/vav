@@ -1,6 +1,11 @@
 import type { IpcMain } from 'electron'
 import { IPC } from '@shared/ipc'
-import { dbConnectionTitle, type DbConnectionInput } from '@shared/dbConnection'
+import {
+  UNTITLED_DB_CONNECTION,
+  dbConnectionTitle,
+  isReplaceableDbTitle,
+  type DbConnectionInput
+} from '@shared/dbConnection'
 import { dataFileFormat, dataFileTitle, isDataFilePath } from '@shared/dataFile'
 import { isDefaultSessionTitle } from '@shared/i18n'
 import { conversationToMeta } from '../store/conversationMeta'
@@ -13,6 +18,7 @@ import type { Conversation } from '@shared/types'
 export type DbIpcHost = {
   createDefinitionConversation: () => Conversation
   publishConversations: () => void
+  grantPath?: (path: string) => void
 }
 
 export function registerDbIpc(
@@ -43,6 +49,7 @@ export function registerDbIpc(
   ipcMain.handle(IPC.dbCreateFromFile, async (_event, sourcePath: string) => {
     const path = String(sourcePath ?? '').trim()
     if (!path || !isDataFilePath(path)) return null
+    host.grantPath?.(path)
     const conversation = host.createDefinitionConversation()
     const title = dataFileTitle(path)
     conversations.updateMeta(conversation.id, {
@@ -62,6 +69,7 @@ export function registerDbIpc(
   ipcMain.handle(IPC.dbFileSchema, async (_event, sourcePath: string) => {
     const path = String(sourcePath ?? '').trim()
     if (!path || !duckdb) return { error: 'DuckDB is unavailable' }
+    host.grantPath?.(path)
     const inspected = await duckdb.schema(path)
     if ('error' in inspected) return inspected
     return { tables: inspected.tables }
@@ -73,6 +81,7 @@ export function registerDbIpc(
       if (!path || !duckdb) {
         return { columns: [], rows: [], total: 0, offset: 0, limit: 0, error: 'DuckDB is unavailable' }
       }
+      host.grantPath?.(path)
       const result = await duckdb.query(path, String(sql ?? ''))
       return {
         columns: result.columns,
@@ -107,7 +116,7 @@ export function registerDbIpc(
     const existing = store.getForConversation(id)
     if (existing) return existing
     const conversation = conversations.get(id)
-    if (!conversation) return null
+    if (!conversation || conversation.dataFilePath) return null
     const connection = store.create({
       title: '',
       conversationId: id
@@ -123,10 +132,25 @@ export function registerDbIpc(
   ipcMain.handle(
     IPC.dbUpdate,
     async (_event, id: string, patch: DbConnectionInput) => {
+      const before = store.get(id)
+      const previousAuto = before ? dbConnectionTitle({ ...before, title: '' }) : ''
       const connection = store.update(id, patch)
-      if (connection?.conversationId && typeof patch.title === 'string' && patch.title.trim()) {
-        conversations.updateMeta(connection.conversationId, { title: patch.title.trim() })
-        host.publishConversations()
+      if (connection?.conversationId) {
+        const conversation = conversations.get(connection.conversationId)
+        const named = typeof patch.title === 'string' ? patch.title.trim() : ''
+        const auto = dbConnectionTitle({ ...connection, title: '' })
+        const nextTitle = named || auto || UNTITLED_DB_CONNECTION
+        if (
+          conversation &&
+          (named ||
+            isDefaultSessionTitle(conversation.title) ||
+            isReplaceableDbTitle(conversation.title, connection, previousAuto))
+        ) {
+          if (conversation.title !== nextTitle) {
+            conversations.updateMeta(connection.conversationId, { title: nextTitle })
+            host.publishConversations()
+          }
+        }
       }
       if (connection) broadcast()
       return connection
@@ -152,8 +176,11 @@ export function registerDbIpc(
     const connection = store.get(id) ?? null
     if (connection?.conversationId) {
       const conversation = conversations.get(connection.conversationId)
-      const display = dbConnectionTitle(connection)
-      if (conversation && (isDefaultSessionTitle(conversation.title) || !conversation.title.trim())) {
+      const display = dbConnectionTitle({ ...connection, title: '' }) || UNTITLED_DB_CONNECTION
+      if (
+        conversation &&
+        (isDefaultSessionTitle(conversation.title) || isReplaceableDbTitle(conversation.title, connection))
+      ) {
         conversations.updateMeta(connection.conversationId, { title: display })
         host.publishConversations()
       }

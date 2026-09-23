@@ -25,6 +25,7 @@ import {
   uniqueRecentFileRows,
   sidebarListModeOfConversation,
   conversationFitsListMode,
+  historyMenuConversations,
   nextConversationForListMode,
   shouldReconcileSidebarSelection
 } from './sidebarList.ts'
@@ -270,6 +271,10 @@ describe('sidebar category visibility', () => {
 describe('sidebar list mode', () => {
   it('maps file / timer / archived / task rows onto categories', () => {
     assert.equal(sidebarListModeOfConversation(conv({ id: 't', sessionKind: 'timer' })), 'timers')
+    assert.equal(
+      sidebarListModeOfConversation(conv({ id: 'run', sessionKind: 'timer', timerRunId: 'r1' })),
+      'main'
+    )
     assert.equal(sidebarListModeOfConversation(conv({ id: 'db', sessionKind: 'db' })), 'databases')
     assert.equal(
       sidebarListModeOfConversation(conv({ id: 'k', sessionKind: 'knowledge' })),
@@ -286,9 +291,25 @@ describe('sidebar list mode', () => {
       'fileSessions'
     )
     assert.ok(conversationFitsListMode(conv({ id: 'w' }), 'main'))
+    assert.ok(
+      conversationFitsListMode(conv({ id: 'run', sessionKind: 'timer', timerRunId: 'r1' }), 'main')
+    )
     assert.equal(conversationFitsListMode(conv({ id: 'f', fileId: 'ino-1' }), 'main'), false)
     assert.equal(conversationFitsListMode(conv({ id: 'db', sessionKind: 'db' }), 'main'), false)
     assert.equal(conversationFitsListMode(conv({ id: 'a', archived: true }), 'main'), false)
+  })
+
+  it('lists main chats newest-first for the History menu', () => {
+    const rows = [
+      conv({ id: 'old', title: 'Older', updatedAt: 1 }),
+      conv({ id: 'new', title: 'Newer', updatedAt: 8 }),
+      conv({ id: 'file', fileId: 'ino', updatedAt: 9 }),
+      conv({ id: 'arch', archived: true, archivedAt: 20, updatedAt: 10 })
+    ]
+    assert.deepEqual(
+      historyMenuConversations(rows, 'local').map((row) => row.id),
+      ['new', 'old']
+    )
   })
 
   it('keeps a matching selection and otherwise picks the newest row on this machine', () => {
@@ -303,11 +324,12 @@ describe('sidebar list mode', () => {
       conv({ id: 'know', sessionKind: 'knowledge', updatedAt: 6 })
     ]
     assert.equal(nextConversationForListMode(rows, 'main', 'live', 'local'), 'live')
-    assert.equal(nextConversationForListMode(rows, 'main', 'arch', 'local'), 'live')
+    assert.equal(nextConversationForListMode(rows, 'main', 'run', 'local'), 'run')
+    assert.equal(nextConversationForListMode(rows, 'main', 'arch', 'local'), 'run')
     assert.equal(nextConversationForListMode(rows, 'archive', 'live', 'local'), 'arch')
     assert.equal(nextConversationForListMode(rows, 'fileSessions', 'live', 'local'), 'file')
     assert.equal(nextConversationForListMode(rows, 'timers', 'live', 'local'), 'job')
-    assert.equal(nextConversationForListMode(rows, 'timers', 'run', 'local'), 'run')
+    assert.equal(nextConversationForListMode(rows, 'timers', 'run', 'local'), 'job')
     assert.equal(nextConversationForListMode(rows, 'timers', null, 'local'), 'job')
     assert.equal(
       nextConversationForListMode(

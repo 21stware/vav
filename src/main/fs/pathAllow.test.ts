@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
-import { describe, it } from 'node:test'
+import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { describe, it } from 'node:test'
 import { isPathAllowed, isPathInside } from './pathAllow.ts'
 
 describe('isPathInside', () => {
@@ -25,6 +27,25 @@ describe('isPathInside', () => {
     assert.equal(isPathInside('/tmp/proj', ''), false)
     assert.equal(isPathInside('/tmp/proj', '/tmp/proj/\0x'), false)
   })
+
+  it('rejects a symlink that escapes the root', (t) => {
+    if (process.platform === 'win32') {
+      t.skip('symlink escape coverage is POSIX')
+      return
+    }
+    const root = mkdtempSync(join(tmpdir(), 'vav-path-'))
+    const outside = mkdtempSync(join(tmpdir(), 'vav-path-out-'))
+    try {
+      writeFileSync(join(outside, 'secret'), 'x')
+      symlinkSync(outside, join(root, 'link'))
+      assert.equal(isPathInside(root, join(root, 'link', 'secret')), false)
+      writeFileSync(join(root, 'inside.txt'), 'ok')
+      assert.equal(isPathInside(root, join(root, 'inside.txt')), true)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+      rmSync(outside, { recursive: true, force: true })
+    }
+  })
 })
 
 describe('isPathAllowed', () => {
@@ -38,5 +59,11 @@ describe('isPathAllowed', () => {
     assert.equal(isPathAllowed(join('/etc', 'passwd'), [root, extra], [granted]), false)
     assert.equal(isPathAllowed(join('/Users', 'ada', 'Downloads'), [root, extra], [granted]), false)
     assert.equal(isPathAllowed(join('/'), [root, extra], [granted]), false)
+  })
+
+  it('denies paths when no roots are watched and the path is not granted', () => {
+    assert.equal(isPathAllowed(join('/tmp', 'secret'), [], []), false)
+    const granted = join('/tmp', 'opened.txt')
+    assert.equal(isPathAllowed(granted, [], [granted]), true)
   })
 })

@@ -90,6 +90,7 @@ export function ToolsPanel({
   const hosts = useSessionStore((s) => s.hosts)
   const recentDirs = useSessionStore((s) => s.settings.recentWorkspaceDirectories)
   const workspaceMenuNonce = useSessionStore((s) => s.workspaceMenuNonce)
+  const agentVisible = useSessionStore((s) => s.agentVisible)
 
   const toggleToolsPanel = useSessionStore((s) => s.toggleToolsPanel)
   const setToolsCollapsed = useSessionStore((s) => s.setToolsCollapsed)
@@ -325,16 +326,23 @@ export function ToolsPanel({
     if (panelHeight > max) setPanelHeight(max)
   }, [panelHeight, setPanelHeight, snapHeight])
 
-  useEffect(() => {
-    const onEnd = (): void => {
-      const columnH = panelRef.current?.closest('main')?.clientHeight ?? 0
+  useLayoutEffect(() => {
+    const column = panelRef.current?.closest('main')
+    if (!column) return
+    const clamp = (): void => {
+      const columnH = column.clientHeight
       if (columnH < PANEL_MIN_HEIGHT) return
-      const max = snapHeight()
+      const max = Math.min(
+        PANEL_MAX_HEIGHT,
+        Math.max(PANEL_MIN_HEIGHT, Math.round(columnH * PANEL_SNAP_RATIO))
+      )
       if (useSessionStore.getState().panelHeight > max) setPanelHeight(max)
     }
-    window.addEventListener('vav:resize-end', onEnd)
-    return () => window.removeEventListener('vav:resize-end', onEnd)
-  }, [setPanelHeight, snapHeight])
+    clamp()
+    const observer = new ResizeObserver(clamp)
+    observer.observe(column)
+    return () => observer.disconnect()
+  }, [activeId, setPanelHeight])
 
   const workspaceSwitchItems = useCallback((): MenuItem[] => {
     return workspaceSwitchMenuItems({
@@ -369,10 +377,11 @@ export function ToolsPanel({
 
   // ⌘⇧O and the app menu bump a nonce; open the same native menu as the capsule action.
   useEffect(() => {
+    if (!agentVisible) return
     if (!consumeWorkspaceMenuNonce(workspaceMenuNonce)) return
     if (!allowWorkdirSwitch) return
     openWorkspaceMenu(pathChipRef.current)
-  }, [workspaceMenuNonce, openWorkspaceMenu, allowWorkdirSwitch])
+  }, [agentVisible, workspaceMenuNonce, openWorkspaceMenu, allowWorkdirSwitch])
 
   const createConversationInCurrentWorkspace = useSessionStore(
     (s) => s.createConversationInCurrentWorkspace

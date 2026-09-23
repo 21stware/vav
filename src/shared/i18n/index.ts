@@ -1,3 +1,4 @@
+import { applyProductName, brandI18nOverlay } from '../brandIdentity.ts'
 import { en, zhCN, type AppLocale, type LocalePreference, type MessageKey } from './messages.ts'
 
 export type { AppLocale, LocalePreference, MessageKey }
@@ -18,7 +19,8 @@ export function resolveLocale(preference: LocalePreference, systemLocale: string
 export type TParams = Record<string, string | number>
 
 export function t(locale: AppLocale, key: MessageKey, params?: TParams): string {
-  const template = catalogs[locale][key] ?? catalogs.en[key] ?? key
+  const overlay = brandI18nOverlay(locale, key)
+  const template = applyProductName(overlay ?? catalogs[locale][key] ?? catalogs.en[key] ?? key)
   if (!params) return template
   return template.replace(/\{(\w+)\}/g, (_, name: string) =>
     params[name] === undefined || params[name] === null ? `{${name}}` : String(params[name])

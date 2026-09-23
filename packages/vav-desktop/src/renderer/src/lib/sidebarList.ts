@@ -1,6 +1,6 @@
 import { PRESET_MODELS, type ConversationMeta, type SidebarGroupingMode } from '@shared/types.ts'
 import type { MessageKey, TParams } from '@shared/i18n/index.ts'
-import { isTimerDefinition, sessionKindOf } from '@shared/sessionKind.ts'
+import { isTimerDefinition, isTimerRun, sessionKindOf } from '@shared/sessionKind.ts'
 import { isDraftDbTitle, isDraftScheduledTitle } from './draftEditorTitle.ts'
 import { conversationOnMachine } from '@shared/workspaceHost.ts'
 import type { SidebarListMode } from '../state/sessionTypes.ts'
@@ -223,12 +223,13 @@ export function uniqueRecentFileRows<T extends { path: string }>(rows: readonly 
   return out
 }
 
-type ListModeRow = Pick<ConversationMeta, 'archived' | 'fileId' | 'sessionKind'>
+type ListModeRow = Pick<ConversationMeta, 'archived' | 'fileId' | 'sessionKind' | 'timerRunId'>
 
 /** Which sidebar category a row belongs to (file / timer / db win over archived). */
 export function sidebarListModeOfConversation(row: ListModeRow): SidebarListMode {
   const kind = sessionKindOf(row)
   if (kind === 'file') return 'fileSessions'
+  if (isTimerRun(row)) return row.archived ? 'archive' : 'main'
   if (kind === 'timer') return 'timers'
   if (kind === 'db') return 'databases'
   if (kind === 'knowledge') return 'knowledge'
@@ -237,9 +238,20 @@ export function sidebarListModeOfConversation(row: ListModeRow): SidebarListMode
 }
 
 export function conversationFitsListMode(row: ListModeRow, mode: SidebarListMode): boolean {
-  if (mode === 'main') return sessionKindOf(row) === 'workspace' && !row.archived
-  if (mode === 'archive') return sessionKindOf(row) === 'workspace' && !!row.archived
+  if (mode === 'main') return sidebarListModeOfConversation(row) === 'main'
+  if (mode === 'archive') return sidebarListModeOfConversation(row) === 'archive'
   return sidebarListModeOfConversation(row) === mode
+}
+
+/** Main-list chats for the collapsed History native menu (newest first). */
+export function historyMenuConversations(
+  conversations: readonly ConversationMeta[],
+  windowMachineId: string | null | undefined
+): ConversationMeta[] {
+  return conversations
+    .filter((row) => conversationOnMachine(row, windowMachineId) && conversationFitsListMode(row, 'main'))
+    .slice()
+    .sort((a, b) => b.updatedAt - a.updatedAt)
 }
 
 /**

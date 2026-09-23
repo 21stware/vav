@@ -461,6 +461,8 @@ export function createRemoteHostProcess(client: DaemonClient): HostProcess {
       let streamId: string | null = null
       let boundPid: number | undefined
       let killed = false
+      let exitCode: number | null = null
+      let signalCode: NodeJS.Signals | null = null
       let stdinEnded = false
       const stdinQueue: Buffer[] = []
       const flushStdin = (buf: Buffer): void => {
@@ -486,6 +488,12 @@ export function createRemoteHostProcess(client: DaemonClient): HostProcess {
         },
         get killed() {
           return killed
+        },
+        get exitCode() {
+          return exitCode
+        },
+        get signalCode() {
+          return signalCode
         },
         stdin,
         stdout,
@@ -537,8 +545,11 @@ export function createRemoteHostProcess(client: DaemonClient): HostProcess {
             if (event === 'stdout' && payload.base64) stdout.push(Buffer.from(payload.base64, 'base64'))
             else if (event === 'stderr' && payload.base64) stderr.push(Buffer.from(payload.base64, 'base64'))
             else if (event === 'error') emitter.emit('error', new Error(payload.message ?? 'process error'))
-            else if (event === 'exit') emitter.emit('exit', payload.code ?? null, payload.signal ?? null)
-            else if (event === 'close') {
+            else if (event === 'exit') {
+              exitCode = payload.code ?? null
+              signalCode = (payload.signal as NodeJS.Signals | null) ?? null
+              emitter.emit('exit', exitCode, signalCode)
+            } else if (event === 'close') {
               stdout.push(null)
               stderr.push(null)
               emitter.emit('close', payload.code ?? null, payload.signal ?? null)
@@ -547,6 +558,8 @@ export function createRemoteHostProcess(client: DaemonClient): HostProcess {
           })
         })
         .catch((err) => {
+          exitCode = 1
+          signalCode = null
           emitter.emit('error', err instanceof Error ? err : new Error(String(err)))
           emitter.emit('exit', 1, null)
           emitter.emit('close', 1, null)

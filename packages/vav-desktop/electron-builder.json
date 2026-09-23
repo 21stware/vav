@@ -12,7 +12,7 @@
   ],
   "extraResources": [
     {
-      "from": "finish_alert.mp3",
+      "from": "resources/finish_alert.mp3",
       "to": "finish_alert.mp3"
     },
     {
@@ -26,6 +26,70 @@
     {
       "from": "build/icon-mark.png",
       "to": "icon-mark.png"
+    },
+    {
+      "from": "build/file-icons/markdown.icns",
+      "to": "markdown.icns"
+    },
+    {
+      "from": "build/file-icons/html.icns",
+      "to": "html.icns"
+    },
+    {
+      "from": "build/file-icons/plaintext.icns",
+      "to": "plaintext.icns"
+    },
+    {
+      "from": "build/file-icons/json.icns",
+      "to": "json.icns"
+    },
+    {
+      "from": "build/file-icons/yaml.icns",
+      "to": "yaml.icns"
+    },
+    {
+      "from": "build/file-icons/csv.icns",
+      "to": "csv.icns"
+    },
+    {
+      "from": "build/file-icons/notebook.icns",
+      "to": "notebook.icns"
+    },
+    {
+      "from": "build/file-icons/swift.icns",
+      "to": "swift.icns"
+    },
+    {
+      "from": "build/file-icons/python.icns",
+      "to": "python.icns"
+    },
+    {
+      "from": "build/file-icons/javascript.icns",
+      "to": "javascript.icns"
+    },
+    {
+      "from": "build/file-icons/pdf.icns",
+      "to": "pdf.icns"
+    },
+    {
+      "from": "build/file-icons/docx.icns",
+      "to": "docx.icns"
+    },
+    {
+      "from": "build/file-icons/xlsx.icns",
+      "to": "xlsx.icns"
+    },
+    {
+      "from": "build/file-icons/pptx.icns",
+      "to": "pptx.icns"
+    },
+    {
+      "from": "build/file-icons/heic.icns",
+      "to": "heic.icns"
+    },
+    {
+      "from": "build/file-icons/zip.icns",
+      "to": "zip.icns"
     },
     {
       "from": "resources/agent-skills",
@@ -131,50 +195,129 @@
           "CFBundleTypeName": "Markdown",
           "CFBundleTypeRole": "Viewer",
           "LSHandlerRank": "Alternate",
-          "CFBundleTypeExtensions": [
-            "md",
-            "markdown",
-            "mdx"
-          ],
-          "LSItemContentTypes": [
-            "net.daringfireball.markdown",
-            "public.plain-text"
-          ]
+          "CFBundleTypeIconFile": "markdown.icns",
+          "CFBundleTypeExtensions": ["md", "markdown", "mdx"],
+          "LSItemContentTypes": ["net.daringfireball.markdown"]
+        },
+        {
+          "CFBundleTypeName": "HTML",
+          "CFBundleTypeRole": "Viewer",
+          "LSHandlerRank": "Alternate",
+          "CFBundleTypeIconFile": "html.icns",
+          "CFBundleTypeExtensions": ["html", "htm", "xhtml"],
+          "LSItemContentTypes": ["public.html"]
+        },
+        {
+          "CFBundleTypeName": "Plain Text",
+          "CFBundleTypeRole": "Viewer",
+          "LSHandlerRank": "Alternate",
+          "CFBundleTypeIconFile": "plaintext.icns",
+          "CFBundleTypeExtensions": ["txt", "text"],
+          "LSItemContentTypes": ["public.plain-text"]
+        },
+        {
+          "CFBundleTypeName": "JSON",
+          "CFBundleTypeRole": "Viewer",
+          "LSHandlerRank": "Alternate",
+          "CFBundleTypeIconFile": "json.icns",
+          "CFBundleTypeExtensions": ["json"],
+          "LSItemContentTypes": ["public.json"]
+        },
+        {
+          "CFBundleTypeName": "YAML",
+          "CFBundleTypeRole": "Viewer",
+          "LSHandlerRank": "Alternate",
+          "CFBundleTypeIconFile": "yaml.icns",
+          "CFBundleTypeExtensions": ["yaml", "yml"],
+          "LSItemContentTypes": ["public.yaml"]
         },
         {
           "CFBundleTypeName": "CSV",
           "CFBundleTypeRole": "Viewer",
           "LSHandlerRank": "Alternate",
-          "CFBundleTypeExtensions": [
-            "csv",
-            "tsv"
-          ],
-          "LSItemContentTypes": [
-            "public.comma-separated-values-text"
-          ]
+          "CFBundleTypeIconFile": "csv.icns",
+          "CFBundleTypeExtensions": ["csv", "tsv"],
+          "LSItemContentTypes": ["public.comma-separated-values-text"]
         },
         {
-          "CFBundleTypeName": "Source Code",
+          "CFBundleTypeName": "Jupyter Notebook",
           "CFBundleTypeRole": "Viewer",
           "LSHandlerRank": "Alternate",
-          "CFBundleTypeExtensions": [
-            "txt",
-            "json",
-            "yaml",
-            "yml",
-            "ipynb",
-            "swift",
-            "py",
-            "ts",
-            "tsx",
-            "js",
-            "jsx"
-          ],
-          "LSItemContentTypes": [
-            "public.source-code",
-            "public.json",
-            "public.plain-text"
-          ]
+          "CFBundleTypeIconFile": "notebook.icns",
+          "CFBundleTypeExtensions": ["ipynb"],
+          "LSItemContentTypes": ["org.jupyter.ipynb"]
+        },
+        {
+          "CFBundleTypeName": "Swift Source",
+          "CFBundleTypeRole": "Viewer",
+          "LSHandlerRank": "Alternate",
+          "CFBundleTypeIconFile": "swift.icns",
+          "CFBundleTypeExtensions": ["swift"],
+          "LSItemContentTypes": ["public.swift-source"]
+        },
+        {
+          "CFBundleTypeName": "Python Source",
+          "CFBundleTypeRole": "Viewer",
+          "LSHandlerRank": "Alternate",
+          "CFBundleTypeIconFile": "python.icns",
+          "CFBundleTypeExtensions": ["py"],
+          "LSItemContentTypes": ["public.python-script"]
+        },
+        {
+          "CFBundleTypeName": "TypeScript / JavaScript",
+          "CFBundleTypeRole": "Viewer",
+          "LSHandlerRank": "Alternate",
+          "CFBundleTypeIconFile": "javascript.icns",
+          "CFBundleTypeExtensions": ["ts", "tsx", "js", "jsx", "mjs", "cjs"],
+          "LSItemContentTypes": ["com.netscape.javascript-source"]
+        },
+        {
+          "CFBundleTypeName": "PDF",
+          "CFBundleTypeRole": "Viewer",
+          "LSHandlerRank": "Alternate",
+          "CFBundleTypeIconFile": "pdf.icns",
+          "CFBundleTypeExtensions": ["pdf"],
+          "LSItemContentTypes": ["com.adobe.pdf"]
+        },
+        {
+          "CFBundleTypeName": "Word Document",
+          "CFBundleTypeRole": "Viewer",
+          "LSHandlerRank": "Alternate",
+          "CFBundleTypeIconFile": "docx.icns",
+          "CFBundleTypeExtensions": ["docx"],
+          "LSItemContentTypes": ["org.openxmlformats.wordprocessingml.document"]
+        },
+        {
+          "CFBundleTypeName": "Excel Spreadsheet",
+          "CFBundleTypeRole": "Viewer",
+          "LSHandlerRank": "Alternate",
+          "CFBundleTypeIconFile": "xlsx.icns",
+          "CFBundleTypeExtensions": ["xlsx"],
+          "LSItemContentTypes": ["org.openxmlformats.spreadsheetml.sheet"]
+        },
+        {
+          "CFBundleTypeName": "PowerPoint Presentation",
+          "CFBundleTypeRole": "Viewer",
+          "LSHandlerRank": "Alternate",
+          "CFBundleTypeIconFile": "pptx.icns",
+          "CFBundleTypeExtensions": ["pptx"],
+          "LSItemContentTypes": ["org.openxmlformats.presentationml.presentation"]
+        },
+        {
+          "CFBundleTypeName": "HEIC Image",
+          "CFBundleTypeRole": "Viewer",
+          "LSHandlerRank": "Alternate",
+          "CFBundleTypeIconFile": "heic.icns",
+          "CFBundleTypeExtensions": ["heic", "heif"],
+          "LSItemContentTypes": ["public.heic"]
+        },
+        {
+          "CFBundleTypeName": "ZIP Archive",
+          "CFBundleTypeRole": "Viewer",
+          "LSHandlerRank": "Alternate",
+          "CFBundleTypeIconFile": "zip.icns",
+          "CFBundleTypeExtensions": ["zip"],
+          "LSItemContentTypes": ["com.pkware.zip-archive"]
         },
         {
           "CFBundleTypeName": "Files",
@@ -191,93 +334,132 @@
   },
   "fileAssociations": [
     {
-      "ext": [
-        "md",
-        "markdown",
-        "mdx"
-      ],
+      "ext": ["md", "markdown", "mdx"],
       "name": "Markdown",
       "description": "Markdown Document",
       "role": "Viewer",
-      "rank": "Alternate"
+      "rank": "Alternate",
+      "icon": "file-icons/markdown"
     },
     {
-      "ext": [
-        "html",
-        "htm",
-        "xhtml"
-      ],
+      "ext": ["html", "htm", "xhtml"],
       "name": "HTML",
       "description": "HTML Document",
       "role": "Viewer",
-      "rank": "Alternate"
+      "rank": "Alternate",
+      "icon": "file-icons/html"
     },
     {
-      "ext": [
-        "csv",
-        "tsv"
-      ],
+      "ext": ["txt", "text"],
+      "name": "Plain Text",
+      "description": "Plain Text",
+      "role": "Viewer",
+      "rank": "Alternate",
+      "icon": "file-icons/plaintext"
+    },
+    {
+      "ext": "json",
+      "name": "JSON",
+      "description": "JSON",
+      "role": "Viewer",
+      "rank": "Alternate",
+      "icon": "file-icons/json"
+    },
+    {
+      "ext": ["yaml", "yml"],
+      "name": "YAML",
+      "description": "YAML",
+      "role": "Viewer",
+      "rank": "Alternate",
+      "icon": "file-icons/yaml"
+    },
+    {
+      "ext": ["csv", "tsv"],
       "name": "CSV",
       "description": "Comma-Separated Values",
       "role": "Viewer",
-      "rank": "Alternate"
+      "rank": "Alternate",
+      "icon": "file-icons/csv"
     },
     {
-      "ext": [
-        "txt",
-        "text",
-        "json",
-        "yaml",
-        "yml",
-        "ipynb",
-        "swift",
-        "py",
-        "ts",
-        "tsx",
-        "js",
-        "jsx",
-        "mjs",
-        "cjs"
-      ],
-      "name": "Source",
-      "description": "Source / Text",
+      "ext": "ipynb",
+      "name": "Jupyter Notebook",
+      "description": "Jupyter Notebook",
       "role": "Viewer",
-      "rank": "Alternate"
+      "rank": "Alternate",
+      "icon": "file-icons/notebook"
+    },
+    {
+      "ext": "swift",
+      "name": "Swift Source",
+      "description": "Swift Source",
+      "role": "Viewer",
+      "rank": "Alternate",
+      "icon": "file-icons/swift"
+    },
+    {
+      "ext": "py",
+      "name": "Python Source",
+      "description": "Python Source",
+      "role": "Viewer",
+      "rank": "Alternate",
+      "icon": "file-icons/python"
+    },
+    {
+      "ext": ["ts", "tsx", "js", "jsx", "mjs", "cjs"],
+      "name": "TypeScript / JavaScript",
+      "description": "TypeScript / JavaScript",
+      "role": "Viewer",
+      "rank": "Alternate",
+      "icon": "file-icons/javascript"
     },
     {
       "ext": "pdf",
       "name": "PDF",
       "description": "PDF Document",
       "role": "Viewer",
-      "rank": "Alternate"
+      "rank": "Alternate",
+      "icon": "file-icons/pdf"
     },
     {
-      "ext": [
-        "docx",
-        "xlsx",
-        "pptx"
-      ],
-      "name": "Office Open XML",
-      "description": "Office Open XML Document",
+      "ext": "docx",
+      "name": "Word Document",
+      "description": "Word Document",
       "role": "Viewer",
-      "rank": "Alternate"
+      "rank": "Alternate",
+      "icon": "file-icons/docx"
     },
     {
-      "ext": [
-        "heic",
-        "heif"
-      ],
+      "ext": "xlsx",
+      "name": "Excel Spreadsheet",
+      "description": "Excel Spreadsheet",
+      "role": "Viewer",
+      "rank": "Alternate",
+      "icon": "file-icons/xlsx"
+    },
+    {
+      "ext": "pptx",
+      "name": "PowerPoint Presentation",
+      "description": "PowerPoint Presentation",
+      "role": "Viewer",
+      "rank": "Alternate",
+      "icon": "file-icons/pptx"
+    },
+    {
+      "ext": ["heic", "heif"],
       "name": "HEIC Image",
       "description": "HEIC Image",
       "role": "Viewer",
-      "rank": "Alternate"
+      "rank": "Alternate",
+      "icon": "file-icons/heic"
     },
     {
       "ext": "zip",
       "name": "ZIP Archive",
       "description": "ZIP Archive",
       "role": "Viewer",
-      "rank": "Alternate"
+      "rank": "Alternate",
+      "icon": "file-icons/zip"
     }
   ],
   "dmg": {

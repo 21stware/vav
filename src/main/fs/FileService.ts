@@ -147,15 +147,14 @@ export class FileService {
   }
 
   /**
-   * When a workspace is watched, IPC may only touch that tree, app-managed
-   * temp dirs, and paths granted by a native open/save dialog.
-   * Before any workspace is watched, allow (open-file / tests).
+   * IPC may only touch watched workspace trees, app-managed temp dirs, and
+   * paths granted by a native open/save dialog or the app column. Unwatched
+   * paths are denied — open-file / drag / argv must `grantPath` first.
    */
   isAllowedPath(path: string): boolean {
     if (!path || path.includes('\0')) return false
     const roots = [...this.roots.values(), ...this.extraRoots]
-    if (isPathAllowed(path, roots, this.grantedPaths)) return true
-    return this.roots.size === 0
+    return isPathAllowed(path, roots, this.grantedPaths)
   }
 
   private accessError(path: string): string | null {

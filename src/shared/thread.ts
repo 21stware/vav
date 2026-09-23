@@ -93,6 +93,49 @@ export function threadPath(messages: ChatMessage[], leafId: string | null): Chat
   return path.reverse()
 }
 
+type LeafNode = { id: string; parentId?: string | null; createdAt?: number }
+
+function isStrictAncestor(byId: Map<string, LeafNode>, ancestorId: string, nodeId: string): boolean {
+  const seen = new Set<string>()
+  let cursor = byId.get(nodeId)?.parentId ?? null
+  while (cursor && !seen.has(cursor)) {
+    if (cursor === ancestorId) return true
+    seen.add(cursor)
+    cursor = byId.get(cursor)?.parentId ?? null
+  }
+  return false
+}
+
+/**
+ * Which leaf the transcript should follow when a snapshot races the live tree.
+ *
+ * A user message is still in the tree after its reply arrives. Keeping that
+ * ancestor hides the reply: {@link threadPath} walks parents only. Advance
+ * when the incoming leaf is further down the same branch, and keep the live
+ * leaf when it is already further along than the snapshot.
+ */
+export function preferredActiveLeaf(
+  messages: LeafNode[],
+  existingLeaf: string | null | undefined,
+  incomingLeaf: string | null | undefined
+): string | null {
+  const byId = new Map(messages.map((message) => [message.id, message]))
+  const known = (id: string | null | undefined): id is string =>
+    !!id && id !== ROOT_LEAF && byId.has(id)
+  const existingOk = known(existingLeaf)
+  const incomingOk = known(incomingLeaf)
+  if (existingOk && incomingOk && existingLeaf !== incomingLeaf) {
+    if (isStrictAncestor(byId, existingLeaf, incomingLeaf)) return incomingLeaf
+    if (isStrictAncestor(byId, incomingLeaf, existingLeaf)) return existingLeaf
+    const existingAt = byId.get(existingLeaf)?.createdAt ?? 0
+    const incomingAt = byId.get(incomingLeaf)?.createdAt ?? 0
+    return incomingAt >= existingAt ? incomingLeaf : existingLeaf
+  }
+  if (incomingLeaf) return incomingLeaf
+  if (existingOk) return existingLeaf
+  return existingLeaf ?? incomingLeaf ?? null
+}
+
 /**
  * One place in the transcript where the thread could go more than one way.
  *

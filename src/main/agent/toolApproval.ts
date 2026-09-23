@@ -4,6 +4,8 @@ import {
   isReadonlyTerminalCommand
 } from './fileEditLock.ts'
 import { HIGH_RISK_TOOLS, INTERACTIVE_TOOLS, READONLY_TOOLS } from './toolSets.ts'
+import { appOpFromArgs, isAppMutatingOp } from './toolsApp.ts'
+import { isKnowledgeLibraryMutatingOp } from './toolsKnowledge.ts'
 
 export function terminalCommandFromArgs(name: string, args: unknown): string {
   if (name !== 'terminal' || !args || typeof args !== 'object' || !('command' in args)) return ''
@@ -14,6 +16,9 @@ export function connectorOpFromArgs(name: string, args: unknown): string {
   if (name !== 'connector' || !args || typeof args !== 'object' || !('op' in args)) return ''
   return String((args as { op: unknown }).op ?? '').trim().toLowerCase()
 }
+
+export { appOpFromArgs, isAppMutatingOp }
+export { knowledgeLibraryOpFromArgs, isKnowledgeLibraryMutatingOp } from './toolsKnowledge.ts'
 
 export function shouldSkipToolGate(name: ToolName): boolean {
   return (
@@ -49,6 +54,20 @@ export function readonlyApprovalBlock(
         'Read-only session: connector deploy needs Edit (call switch_mode with mode "edit" first).'
     }
   }
+  if (name === 'knowledge_library' && isKnowledgeLibraryMutatingOp(command)) {
+    return {
+      block: true,
+      reason:
+        'Read-only session: organizing notes needs Edit (call switch_mode with mode "edit" first).'
+    }
+  }
+  if (name === 'app' && isAppMutatingOp(command)) {
+    return {
+      block: true,
+      reason:
+        'Read-only session: app write/create/delete needs Edit (call switch_mode with mode "edit" first).'
+    }
+  }
   return null
 }
 
@@ -66,6 +85,8 @@ export function shouldPauseForApproval(opts: {
   if (shouldAutoAcceptChangeSet(opts.mode)) return false
   if (opts.mode === 'auto') {
     if (opts.name === 'connector') return opts.command === 'act'
+    if (opts.name === 'app') return isAppMutatingOp(opts.command)
+    if (opts.name === 'knowledge_library') return isKnowledgeLibraryMutatingOp(opts.command)
     const highRisk =
       (HIGH_RISK_TOOLS.has(opts.name) || opts.name.startsWith('mcp_')) &&
       !(opts.name === 'terminal' && isReadonlyTerminalCommand(opts.command))

@@ -24,6 +24,7 @@ import { createInteractiveTools } from './toolsInteractive'
 import { createConnectorTools } from './toolsConnector'
 import { createComputerTools } from './toolsComputer'
 import { createKnowledgeTools } from './toolsKnowledge'
+import { createAppTools } from './toolsApp'
 
 export { normalizeAskQuestions, normalizePlanSteps } from '@shared/askPlan'
 export { summarizeToolInput } from './toolSummarize'
@@ -41,7 +42,10 @@ export function createTools(host: ToolHost): AgentTool[] {
   const [terminal, wait, readBashSession] = createShellTools(host)
   const [fsRead, fsWrite, fsList] = createFsTools(host)
   const [docSearch, docFetch, sqlQuery] = createDocTools(host)
-  const [knowledgeSearch, knowledgeFetch, knowledgeWrite] = createKnowledgeTools(host)
+  const [knowledgeSearch, knowledgeFetch, knowledgeWrite, noteWrite, noteEdit, knowledgeLibrary] =
+    createKnowledgeTools(host)
+  const [app, analysisWrite, analysisEdit, scheduleWrite, scheduleEdit, storageWrite, storageEdit] =
+    createAppTools(host)
   const [webSearch, webFetch] = createWebTools(host)
   const { request, askUserQuestion, requestForSecret, loadSkill, plan, switchMode } =
     createInteractiveTools(host)
@@ -57,9 +61,19 @@ export function createTools(host: ToolHost): AgentTool[] {
     docSearch,
     docFetch,
     sqlQuery,
+    noteWrite,
+    noteEdit,
+    analysisWrite,
+    analysisEdit,
+    scheduleWrite,
+    scheduleEdit,
+    storageWrite,
+    storageEdit,
     knowledgeSearch,
     knowledgeFetch,
     knowledgeWrite,
+    knowledgeLibrary,
+    app,
     webSearch,
     webFetch,
     loadSkill,

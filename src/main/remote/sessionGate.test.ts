@@ -185,6 +185,7 @@ describe('buildRemoteHostEvent', () => {
     assert.equal(event.defaults.agent, 'vav')
     assert.deepEqual(event.recentDirs, [{ path: '/repo', label: 'repo' }])
     assert.ok(event.capabilities)
+    assert.equal(event.capabilities.appFocus, true)
     assert.equal(event.hasKey, undefined)
   })
 

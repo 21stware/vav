@@ -2,12 +2,12 @@ import { randomUUID } from 'node:crypto'
 import { homedir } from 'node:os'
 import type {
   ChatMessage,
+  AppColumnFocus,
   CliHostKind,
   MessageBlock,
   PreviewRef,
   ProviderResumeCursor,
   QuotaWindow,
-  QuoteDraft,
   ThinkingLevel,
   ToolCallBlock,
   TurnEvent,
@@ -153,6 +153,8 @@ import {
 import { createCliHistoryReplayGate, createCliHistoryReplayGateFromBlocks, type CliHistoryReplayGate } from './cliHistoryReplay'
 import { inputJson, mapToolName, summarizeCliTool } from './drivers/toolMap'
 import { parentPathOfWrite } from '../fs/fileHostPath'
+import { knowledgeNoteDraft } from '@shared/knowledgeNoteDraft'
+import { resolveAgentAppBindings } from '@shared/appColumnFocus'
 import { FileDraftCoalescer, writeToolDraft } from '@shared/writeToolDraft'
 import {
   expireOpenTools,
@@ -274,6 +276,17 @@ export interface CliAgentHostDeps {
   publish?: () => void
   /** Sandbox copy → user-visible path (for streaming drafts). */
   logicalPath?: (path: string) => string
+  /** So a Write onto a note file can stream into the open Knowledge editor. */
+  knowledge?: {
+    list(): Array<{
+      id: string
+      kind: string
+      title: string
+      storedPath: string | null
+      conversationId: string | null
+    }>
+    get(id: string): { conversationId: string | null } | undefined
+  }
   quota?: {
     get(host: CliHostKind): QuotaWindow[]
     identity?(host: CliHostKind): string | null
@@ -303,6 +316,7 @@ export class CliAgentHost {
   private turns = new Map<string, HostTurn>()
   private starting = new Map<string, Promise<HostRuntime>>()
   private fileDrafts = new FileDraftCoalescer()
+  private noteDrafts = new FileDraftCoalescer()
   /**
    * Bumped on cancel / cwd change / dispose so an in-flight spawn is discarded
    * instead of attaching to a turn that already sealed.
@@ -355,14 +369,17 @@ export class CliAgentHost {
     conversationId: string,
     userText: string,
     attachments: string[],
-    quote?: QuoteDraft | null,
     contextBlocks?: PreviewRef[] | null,
-    contextFile?: string | null
+    contextFile?: string | null,
+    appColumnFocus?: AppColumnFocus | null
   ): Promise<void> {
     if (this.turns.has(conversationId)) return
     const conversation = this.deps.conversations.get(conversationId)
     if (!conversation || !isStructuredCliHost(conversation.cliHost)) return
 
+    if (appColumnFocus) {
+      this.deps.conversations.updateMeta(conversationId, { appColumnFocus })
+    }
     const openFile = contextFile?.trim() || conversation.focusedFilePath || null
     const leaf = this.deps.conversations.activeLeaf(conversationId)
     const parentId = leaf === ROOT_LEAF ? null : leaf
@@ -370,20 +387,20 @@ export class CliAgentHost {
       conversationId,
       userText,
       parentId,
-      quote,
       contextBlocks,
       attachments,
-      openFile
+      openFile,
+      appColumnFocus
     )
 
     const prompt = composeCliPrompt(
       userText,
-      quote,
       contextBlocks,
       attachments,
       openFile,
       conversation.fileReadOnly === true,
-      isAcpHost(conversation.cliHost)
+      isAcpHost(conversation.cliHost),
+      appColumnFocus
     )
     await this.startTurn(conversationId, userMessage.id, userMessage.parentId, prompt, {
       attachments
@@ -415,18 +432,12 @@ export class CliAgentHost {
       user.contextFile?.trim() || conversation!.focusedFilePath || null
     const prompt = composeCliPrompt(
       user.content,
-      user.quoteSummary
-        ? {
-            messageId: user.quoteMessageId ?? user.id,
-            summary: user.quoteSummary,
-            role: user.quoteRole ?? 'user'
-          }
-        : null,
       user.contextBlocks,
       user.attachments,
       openFile,
       conversation!.fileReadOnly === true,
-      isAcpHost(conversation!.cliHost)
+      isAcpHost(conversation!.cliHost),
+      user.appColumnFocus
     )
     // Same session still holds the turn we are replacing — prompting again
     // would be a follow-up. Drop it and hand off history that stops before
@@ -449,31 +460,19 @@ export class CliAgentHost {
       conversationId,
       text,
       target.parentId,
-      target.quoteSummary
-        ? {
-            messageId: target.quoteMessageId ?? target.id,
-            summary: target.quoteSummary,
-            role: target.quoteRole ?? 'user'
-          }
-        : null,
       target.contextBlocks,
       target.attachments,
-      openFile
+      openFile,
+      target.appColumnFocus
     )
     const prompt = composeCliPrompt(
       text,
-      userMessage.quoteSummary
-        ? {
-            messageId: userMessage.quoteMessageId ?? userMessage.id,
-            summary: userMessage.quoteSummary,
-            role: userMessage.quoteRole ?? 'user'
-          }
-        : null,
       userMessage.contextBlocks,
       userMessage.attachments,
       openFile,
       conversation.fileReadOnly === true,
-      isAcpHost(conversation.cliHost)
+      isAcpHost(conversation.cliHost),
+      userMessage.appColumnFocus
     )
     this.dropNativeSessionForRetry(conversationId)
     await this.startTurn(conversationId, userMessage.id, userMessage.parentId, prompt, {
@@ -1456,6 +1455,14 @@ export class CliAgentHost {
     if (event.status === 'started' || event.status === 'updated') {
       this.emitFileDraft(conversationId, event.name, event.input)
     }
+    if (event.status === 'started' || event.status === 'updated' || event.status === 'completed') {
+      this.emitKnowledgeDraft(
+        conversationId,
+        event.name,
+        event.input,
+        event.status === 'completed'
+      )
+    }
     if (this.parkInteractiveTool(conversationId, turn, event, next, index)) return
     this.setPhase(conversationId, turn, 'working')
   }
@@ -1544,6 +1551,14 @@ export class CliAgentHost {
     if (event.status === 'started' || event.status === 'updated') {
       this.emitFileDraft(conversationId, event.name, event.input)
     }
+    if (event.status === 'started' || event.status === 'updated' || event.status === 'completed') {
+      this.emitKnowledgeDraft(
+        conversationId,
+        event.name,
+        event.input,
+        event.status === 'completed'
+      )
+    }
     this.setPhase(conversationId, turn, 'working')
   }
 
@@ -1597,6 +1612,34 @@ export class CliAgentHost {
     const payload = this.fileDrafts.next(logical, draft.content)
     if (!payload) return
     this.deps.emit({ type: 'file-draft', conversationId, ...payload })
+  }
+
+  private emitKnowledgeDraft(
+    conversationId: string,
+    toolName: string,
+    input: unknown,
+    force = false
+  ): void {
+    const knowledge = this.deps.knowledge
+    const live = this.deps.conversations.get(conversationId)
+    const draft = knowledgeNoteDraft(toolName, input, {
+      focusedHostId: live
+        ? resolveAgentAppBindings(live, (id) => this.deps.conversations.get(id)).knowledgeHostId
+        : null
+    })
+    if (!draft) return
+    const payload = this.noteDrafts.next(draft.hostId, draft.markdown, Date.now(), force)
+    if (!payload) return
+    const host = knowledge?.get(draft.hostId)
+    this.deps.emit({
+      type: 'knowledge-draft',
+      conversationId,
+      hostId: draft.hostId,
+      noteConversationId: host?.conversationId ?? null,
+      title: draft.title,
+      ...(payload.content !== undefined ? { content: payload.content } : {}),
+      ...(payload.append !== undefined ? { append: payload.append, baseLen: payload.baseLen } : {})
+    })
   }
 
   /** Park ask / plan-doc tool cards until the user answers (any host). */
@@ -1893,7 +1936,7 @@ export class CliAgentHost {
       this.deps.conversations.appendMessage(conversationId, message)
     }
     this.applyEstimatedContextFill(conversationId, turn)
-    this.deps.conversations.flush()
+    await this.deps.conversations.flushAsync()
 
     const tokensUsed = this.deps.conversations.get(conversationId)?.tokensUsed ?? 0
 
@@ -2303,19 +2346,19 @@ export class CliAgentHost {
     conversationId: string,
     text: string,
     parentId: string | null,
-    quote?: QuoteDraft | null,
     contextBlocks?: PreviewRef[] | null,
     attachments?: string[],
-    contextFile?: string | null
+    contextFile?: string | null,
+    appColumnFocus?: AppColumnFocus | null
   ): ChatMessage {
     const message = userTurnMessage({
       id: randomUUID(),
       parentId,
       text,
-      quote,
       contextBlocks,
       attachments,
-      contextFile
+      contextFile,
+      appColumnFocus
     })
     this.deps.conversations.appendMessage(conversationId, message)
     this.deps.conversations.flush()

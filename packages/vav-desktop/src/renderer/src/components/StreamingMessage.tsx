@@ -14,6 +14,7 @@ import { ReasoningBlock } from './ReasoningBlock'
 import { StreamStatus } from './StreamStatus'
 import { ProcessText } from './ProcessText'
 import { ThinkingProcess } from './ThinkingProcess'
+import { ThinkingViewport } from './ThinkingViewport'
 import { ToolCard } from './ToolCard'
 
 function streamAsMessage(block: StreamBlock): MessageBlock {
@@ -89,17 +90,21 @@ export function StreamingMessage({ conversationId }: { conversationId: string })
             <ThinkingProcess
               steps={process.length}
               durationMs={processThoughtMs(process)}
-              collapseOnMount
+              follow
             >
               {process.map(renderFolded)}
             </ThinkingProcess>
             {tail.map(renderLive)}
           </>
-        ) : (
-          snapshot.blocks.map((_, index) =>
-            renderLive({ block: streamAsMessage(snapshot.blocks[index]!), index })
-          )
-        )}
+        ) : snapshot.blocks.length > 0 ? (
+          <ThinkingViewport follow>
+            <div className="thinking-process-body">
+              {snapshot.blocks.map((_, index) =>
+                renderFolded({ block: streamAsMessage(snapshot.blocks[index]!), index })
+              )}
+            </div>
+          </ThinkingViewport>
+        ) : null}
 
         {awaiting && <div className="muted tiny">{t('transcript.awaitingContinue')}</div>}
         {live && (

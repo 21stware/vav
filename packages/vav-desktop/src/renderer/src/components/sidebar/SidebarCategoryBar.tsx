@@ -1,13 +1,13 @@
 import {
   Archive,
-  BookOpen,
+  ChartLine,
   Clock,
-  Database,
   HardDrive,
   MessageSquare,
   Settings2,
   type LucideIcon
 } from 'lucide-react'
+import { NotebookDot } from '../../lib/appNavIcons'
 import {
   isSidebarCategoryVisible,
   parseSidebarVisibleCategories,
@@ -23,7 +23,7 @@ import { menuAnchor, showMenu, type MenuItem } from '../../lib/nativeMenu'
 
 const CATEGORIES: {
   mode: SidebarListMode
-  icon: LucideIcon
+  icon: LucideIcon | typeof NotebookDot
   testId: string
   labelKey: MessageKey
 }[] = [
@@ -47,13 +47,13 @@ const CATEGORIES: {
   },
   {
     mode: 'databases',
-    icon: Database,
+    icon: ChartLine,
     testId: 'sidebar-category-db',
     labelKey: 'sidebar.category.data'
   },
   {
     mode: 'knowledge',
-    icon: BookOpen,
+    icon: NotebookDot,
     testId: 'sidebar-category-knowledge',
     labelKey: 'sidebar.category.knowledge'
   },

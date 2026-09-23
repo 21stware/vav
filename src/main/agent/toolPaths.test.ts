@@ -27,6 +27,29 @@ describe('resolveInWorkdir / resolveDocPath', () => {
     assert.equal(resolveDocPath({ workdir: '/w', selectionAnchor: host.selectionAnchor }, ''), '/w/sel.md')
     assert.equal(resolveDocPath({ workdir: '/w' }, ''), null)
   })
+
+  it('resolves vav://app URLs to the enclosed path', () => {
+    assert.equal(
+      resolveInWorkdir('/w', 'vav://app/storage?path=/tmp/hello.md'),
+      '/tmp/hello.md'
+    )
+    assert.equal(
+      resolveDocPath({ workdir: '/w' }, 'vav://app/knowledge?path=/notes/a.md'),
+      '/notes/a.md'
+    )
+    assert.equal(
+      resolveDocPath(
+        {
+          workdir: '/w',
+          appResources: {
+            resolve: (raw) => (raw.includes('note-1') ? { path: '/vault/n.md' } : null)
+          }
+        },
+        'vav://app/knowledge?id=note-1'
+      ),
+      '/vault/n.md'
+    )
+  })
 })
 
 describe('buildSelectionAnchor / fsReadErrorHint / textWindowPrefix', () => {

@@ -10,6 +10,7 @@ export function SidebarServiceBar({
   variant = 'instance',
   label,
   testId = 'sidebar-connect',
+  highlight = true,
   onOpen
 }: {
   /** Session-management actions folded into the active service's menu. */
@@ -17,6 +18,8 @@ export function SidebarServiceBar({
   variant?: 'instance' | 'nav'
   label?: string
   testId?: string
+  /** When false, the trigger never looks selected (sidebar machine switcher). */
+  highlight?: boolean
   onOpen?: () => void
 } = {}): React.JSX.Element | null {
   const t = useT()
@@ -28,6 +31,7 @@ export function SidebarServiceBar({
   const incomingControllers = useSessionStore((s) => s.incomingControllers)
   const remoteControlStatus = useSessionStore((s) => s.remoteControlStatus)
   const appMode = useSessionStore((s) => s.applicationsMode)
+  const appVisible = useSessionStore((s) => s.applicationsVisible)
   const incoming =
     incomingControllers.some((row) => row.online) || (remoteControlStatus?.clients.length ?? 0) > 0
 
@@ -106,7 +110,9 @@ export function SidebarServiceBar({
         className={variant === 'nav' ? 'sidebar-nav-item' : 'sidebar-instance-trigger'}
         data-testid={testId}
         data-app={variant === 'nav' ? 'devices' : undefined}
-        data-active={variant === 'nav' && appMode === 'devices' ? 'true' : 'false'}
+        data-active={
+          highlight && variant === 'nav' && appVisible && appMode === 'devices' ? 'true' : 'false'
+        }
         data-machine-id={current.id}
         title={variant === 'nav' ? `${navLabel} · ${title}` : title}
         aria-label={variant === 'nav' ? navLabel : t('sidebar.switchService')}

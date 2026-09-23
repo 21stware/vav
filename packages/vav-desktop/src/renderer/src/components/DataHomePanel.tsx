@@ -1,18 +1,18 @@
 import { Database, FileSpreadsheet } from 'lucide-react'
 import { useT } from '../i18n/useT'
-import { useSidebarFloatMode } from '../lib/sidebarLayout'
+import { useShowShellLeading } from '../lib/sidebarLayout'
 import { isDataFilePath } from '@shared/dataFile'
 import { useSessionStore } from '../state/sessionStore'
 import { ShellLeadingControls } from './ShellLeadingControls'
-import { Button, EmptyState } from './ui'
+import { AppEmptyState } from './AppEmptyState'
+import { Button } from './ui'
 
 export function DataHomePanel({ embedded = false }: { embedded?: boolean } = {}): React.JSX.Element {
   const t = useT()
-  const sidebarVisible = useSessionStore((s) => s.sidebarVisible)
   const createDbConversation = useSessionStore((s) => s.createDbConversation)
   const createDataFromFile = useSessionStore((s) => s.createDataFromFile)
-  const sidebarFloating = useSidebarFloatMode()
-  const showShellLeading = !embedded && !(sidebarVisible && !sidebarFloating)
+  const shellLeading = useShowShellLeading()
+  const showShellLeading = !embedded && shellLeading
 
   const addFile = async (): Promise<void> => {
     const picked = await window.vav.files?.pickAttachments()
@@ -43,26 +43,24 @@ export function DataHomePanel({ embedded = false }: { embedded?: boolean } = {})
           <span className="spacer" />
         </div>
       </header>
-      <EmptyState title={t('data.emptyTitle')} description={t('data.emptyDesc')}>
-        <div className="data-home-actions">
-          <Button
-            icon={<Database size={14} />}
-            variant="secondary"
-            testId="empty-create-db"
-            title={t('db.new')}
-            label={t('db.new')}
-            onClick={() => void createDbConversation()}
-          />
-          <Button
-            icon={<FileSpreadsheet size={14} />}
-            variant="secondary"
-            testId="empty-add-data-file"
-            title={t('data.addFile')}
-            label={t('data.addFile')}
-            onClick={() => void addFile()}
-          />
-        </div>
-      </EmptyState>
+      <AppEmptyState title={t('data.emptyTitle')} description={t('data.emptyDesc')} kind="data">
+        <Button
+          icon={<Database size={14} />}
+          variant="secondary"
+          testId="empty-create-db"
+          title={t('db.new')}
+          label={t('db.new')}
+          onClick={() => void createDbConversation()}
+        />
+        <Button
+          icon={<FileSpreadsheet size={14} />}
+          variant="secondary"
+          testId="empty-add-data-file"
+          title={t('data.addFile')}
+          label={t('data.addFile')}
+          onClick={() => void addFile()}
+        />
+      </AppEmptyState>
     </main>
   )
 }

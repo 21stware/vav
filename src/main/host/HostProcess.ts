@@ -21,6 +21,9 @@ export type HostSpawnOptions = {
 export interface HostChild {
   readonly pid?: number
   readonly killed: boolean
+  /** Null while the process is still running. Absent on some remote stubs. */
+  readonly exitCode?: number | null
+  readonly signalCode?: NodeJS.Signals | null
   readonly stdin: NodeJS.WritableStream | null
   readonly stdout: NodeJS.ReadableStream | null
   readonly stderr: NodeJS.ReadableStream | null

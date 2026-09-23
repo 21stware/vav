@@ -20,6 +20,7 @@ import tintedLight from '../assets/icon/tinted-light.png'
 import tintedLight2x from '../assets/icon/tinted-light@2x.png'
 import tintedDark from '../assets/icon/tinted-dark.png'
 import tintedDark2x from '../assets/icon/tinted-dark@2x.png'
+import { brandDisplayName } from '@shared/brandIdentity'
 import { useSessionStore } from '../state/sessionStore'
 import type { ColorTint } from '@shared/types'
 
@@ -52,7 +53,7 @@ export function BrandAppIcon({
   size = 96,
   appearance = 'auto',
   className,
-  label = 'VAV'
+  label = brandDisplayName()
 }: {
   size?: number
   /** Force an Icon Composer layer, or auto from color tint. */

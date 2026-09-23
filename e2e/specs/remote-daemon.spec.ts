@@ -943,19 +943,19 @@ test('File category on a paired host lists that machine, not This Mac', async ()
     )
     await page.locator('[data-testid="applications-tab-storage"]').click()
     await expect(page.locator('[data-testid="file-recents"]')).toBeVisible()
-    await expect(page.locator('[data-testid="file-source-select"] option[value="thisMac"]')).toHaveText(
-      'E2E Daemon'
-    )
+    await expect(page.locator('[data-testid="storage-source-thisMac"]')).toHaveText('E2E Daemon')
     await page.locator('[data-testid="file-source-select"]').selectOption('thisMac')
     await expect(page.locator('[data-testid="file-mac-browser"]')).toBeVisible()
     const remoteHome = await page.evaluate(
       (machineId) => window.vav.hosts.home(machineId),
       paired.host.id
     )
-    await expect(page.locator('[data-testid="file-mac-path"]')).toHaveValue(remoteHome)
     expect(remoteHome).not.toBe(workspace)
-    await page.locator('[data-testid="file-mac-path"]').fill(daemon.workspace)
-    await page.locator('[data-testid="file-mac-path"]').press('Enter')
+    await page.evaluate((path) => {
+      const api = window.__vavE2e
+      if (!api) throw new Error('e2e store bridge missing')
+      api.browseStorage(path)
+    }, daemon.workspace)
     await expect(page.locator('[data-testid="remote-folder-entry-remote-only.md"]')).toBeVisible()
     await expect(page.locator('[data-testid="remote-folder-entry-hello.md"]')).toHaveCount(0)
     await page.locator('[data-testid="remote-folder-entry-remote-only.md"]').dblclick()

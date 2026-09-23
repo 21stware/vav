@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { buildSystemPrompt, formatDbSchemaForPrompt, osDisplayName } from './systemPrompt.ts'
+import {
+  buildSystemPrompt,
+  formatDbSchemaForPrompt,
+  formatOutputDestinationForPrompt,
+  osDisplayName
+} from './systemPrompt.ts'
 
 describe('osDisplayName', () => {
   it('maps known platforms', () => {
@@ -14,10 +19,30 @@ describe('osDisplayName', () => {
 describe('buildSystemPrompt', () => {
   it('names the injected platform and shell', () => {
     const prompt = buildSystemPrompt('/tmp/proj', 'zsh', { platform: 'darwin' })
+    assert.match(prompt, /You are VAV, a local coding agent running on the user's macOS machine/)
     assert.match(prompt, /macOS machine/)
     assert.match(prompt, /working directory for this conversation is: \/tmp\/proj/)
     assert.match(prompt, /user's shell is zsh/)
     assert.match(prompt, /<!-- vav-artifact -->/)
+    assert.match(prompt, /## Where output goes/)
+    assert.match(prompt, /记成笔记/)
+    const dest = formatOutputDestinationForPrompt()
+    const appAt = dest.indexOf('1. App services')
+    const artifactAt = dest.indexOf('2. Artifacts')
+    const fileAt = dest.indexOf('3. Files')
+    assert.ok(appAt >= 0 && artifactAt > appAt && fileAt > artifactAt)
+    assert.match(dest, /do not `fs_write` a `\.md`/)
+    assert.match(dest, /note_write/)
+    assert.match(dest, /note_edit/)
+    assert.match(prompt, /`note_write` \/ `note_edit`/)
+    assert.match(prompt, /`analysis_write` \/ `analysis_edit`/)
+    assert.match(prompt, /`schedule_write` \/ `schedule_edit`/)
+    assert.match(prompt, /`storage_write` \/ `storage_edit`/)
+    assert.match(prompt, /`app` — list, get, search, or delete Storage/)
+    assert.match(prompt, /vav:\/\/app/)
+    assert.match(prompt, /## App column/)
+    assert.match(prompt, /op: create/)
+    assert.match(prompt, /Scheduled/)
     assert.doesNotMatch(prompt, /READ-ONLY SESSION/)
   })
 
@@ -103,6 +128,57 @@ describe('buildSystemPrompt', () => {
     assert.match(on, /computer_list/)
     assert.match(on, /background/)
     assert.match(on, /computer-use/)
+  })
+
+  it('names the open app column so "this dataset" is grounded', () => {
+    const prompt = buildSystemPrompt('/empty', 'zsh', {
+      platform: 'darwin',
+      appColumnFocus: {
+        kind: 'data',
+        level: 'item',
+        title: 'sakila.db · actor',
+        path: '/tmp/sakila.db',
+        objectId: 'db1',
+        url: 'vav://app/data?id=db1&path=%2Ftmp%2Fsakila.db',
+        table: 'actor'
+      },
+      dbSession: true,
+      dataFilePath: '/tmp/sakila.db',
+      dbTable: 'actor'
+    })
+    assert.match(prompt, /Current app column: Data/)
+    assert.match(prompt, /`actor`/)
+    assert.match(prompt, /当前这个数据集/)
+    assert.match(prompt, /Do not search the working directory/)
+    assert.match(prompt, /You are on the Data page/)
+    assert.match(prompt, /op: create/)
+    assert.match(prompt, /Do not list catalogs/)
+  })
+
+  it('names the open knowledge note and host so "this note" is grounded', () => {
+    const prompt = buildSystemPrompt('/empty', 'zsh', {
+      platform: 'darwin',
+      appColumnFocus: {
+        kind: 'knowledge',
+        level: 'item',
+        title: 'Meeting notes',
+        path: '/tmp/notes/kh1.md',
+        objectId: 'n1',
+        url: 'vav://app/knowledge?id=kh1&path=%2Ftmp%2Fnotes%2Fkh1.md'
+      },
+      knowledgeHost: {
+        id: 'kh1',
+        title: 'Meeting notes',
+        kind: 'note',
+        path: '/tmp/notes/kh1.md'
+      }
+    })
+    assert.match(prompt, /Current app column: Knowledge/)
+    assert.match(prompt, /这篇笔记/)
+    assert.match(prompt, /Knowledge host id: kh1/)
+    assert.match(prompt, /You are on the Knowledge page/)
+    assert.match(prompt, /Do not `app list`/)
+    assert.match(prompt, /attached to a Knowledge host: Meeting notes/)
   })
 
   it('lists session secret names without values', () => {

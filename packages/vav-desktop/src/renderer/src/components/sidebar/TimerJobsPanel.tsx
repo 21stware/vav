@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ChevronDown, ChevronRight, Pin, Star } from 'lucide-react'
+import {
+  APP_FOLDER_ALL_ID,
+  appFolderDragType,
+  coerceAppLibraries,
+  readAppFolderDrag
+} from '@shared/appFolders'
+import { CalendarClock, ChevronDown, ChevronRight, Pin, Plus, Star } from 'lucide-react'
 import type { ConversationMeta } from '@shared/types'
 import type { TimerJob, TimerRun } from '@shared/timer'
 import { useSessionStore } from '../../state/sessionStore'
@@ -14,11 +20,34 @@ import {
   timerTreeBrackets
 } from '../../lib/timerSessions'
 import { flattenSessionTitle, adjacentRunClass } from '../../lib/sidebarList'
-import { relativeTime, middleTruncate } from '../../lib/format'
+import { appObjectContextTargets, applyAppObjectList } from '../../lib/appObjectList'
+import { absoluteTime, relativeTime, middleTruncate } from '../../lib/format'
+import { countWritingUnits } from '../../lib/writingStats'
 import { showMenu, type MenuItem } from '../../lib/nativeMenu'
+import { appObjectPointerHandlers, menuPoint } from '../../lib/appObjectRow'
 import { lucideMenuIcon } from '../../lib/menuIcons'
 import { useT } from '../../i18n/useT'
-import { EmptyState } from '../ui'
+import {
+  AppObjectListToolbar,
+  useAppObjectList,
+  useAppObjectListKeys,
+  useAppObjectListSelection
+} from '../AppObjectListToolbar'
+import { AppFolderRail } from '../AppFolderRail'
+import {
+  appFolderCounts,
+  assignCreatedAppObject,
+  createAppFolder,
+  filedAppFolderId,
+  moveAppFolderObjects,
+  removeAppFolder,
+  renameAppFolder,
+  setAppFolderSelectedId,
+  useAppFolderSelectedId
+} from '../../lib/appFolderLibrary'
+import { AppEmptyState } from '../AppEmptyState'
+import { Button, EmptyState } from '../ui'
+import { formatFactCount, ObjectListLine } from '../ObjectFacts'
 import { RenameField } from './RenameField'
 import { ConvBracket, type SwarmBracketKind } from './ConvBracket'
 
@@ -49,10 +78,16 @@ export function TimerJobsPanel({
   const activeId = useSessionStore((s) => s.activeId)
   const selectedIds = useSessionStore((s) => s.selectedIds)
   const sidebarQuery = useSessionStore((s) => s.sidebarQuery)
-  const query = embedded ? '' : sidebarQuery
+  const list = useAppObjectList()
+  const listRef = useRef<HTMLDivElement>(null)
+  const query = embedded ? list.query : sidebarQuery
   const createScheduledConversation = useSessionStore((s) => s.createScheduledConversation)
   const setSidebarQuery = useSessionStore((s) => s.setSidebarQuery)
   const favoriteIds = useSessionStore((s) => s.settings.favoriteConversationIds)
+  const library = coerceAppLibraries(useSessionStore((s) => s.settings.appLibraries)).scheduled
+  const selectedFolder = useAppFolderSelectedId('scheduled')
+  const filedFolder = filedAppFolderId(selectedFolder)
+  const [renamingFolderId, setRenamingFolderId] = useState<string | null>(null)
   const renamingId = useSessionStore((s) => s.renamingId)
   const favoriteSet = useMemo(() => new Set(favoriteIds ?? []), [favoriteIds])
   const [jobs, setJobs] = useState<TimerJob[]>([])
@@ -96,36 +131,107 @@ export function TimerJobsPanel({
     })
   }, [refresh])
 
-  const searching = query.trim().length > 0
-  const visibleJobs = useMemo(
-    () =>
-      sortTimerJobs(
-        jobs.filter((job) => {
+  const searching = query.trim().length > 0 || (embedded && list.filter !== 'all')
+  const visibleJobs = useMemo(() => {
+    const pool = jobs.filter((job) => {
+      const definition = job.conversationId
+        ? conversations.find((row) => row.id === job.conversationId)
+        : undefined
+      if (definition?.archived) return false
+      if (!job.conversationId) return true
+      if (conversations.some((row) => row.id === job.conversationId)) return true
+      return !isDroppedConversationId(job.conversationId)
+    })
+    if (!embedded) {
+      return sortTimerJobs(
+        pool.filter((job) => {
+          if (!query.trim()) return true
           const definition = job.conversationId
             ? conversations.find((row) => row.id === job.conversationId)
             : undefined
-          if (definition?.archived) return false
-          if (searching) {
-            const title = (definition?.title || job.title).toLowerCase()
-            if (!title.includes(query.trim().toLowerCase())) return false
-          }
-          if (!job.conversationId) return true
-          if (conversations.some((row) => row.id === job.conversationId)) return true
-          return !isDroppedConversationId(job.conversationId)
+          return (definition?.title || job.title).toLowerCase().includes(query.trim().toLowerCase())
         })
-      ),
-    [jobs, conversations, query, searching]
-  )
+      )
+    }
+    return applyAppObjectList(pool, {
+      query,
+      sort: list.sort,
+      fields: (job) => {
+        const definition = job.conversationId
+          ? conversations.find((row) => row.id === job.conversationId)
+          : undefined
+        return [definition?.title, job.title]
+      },
+      meta: (job) => ({
+        title:
+          conversations.find((row) => row.id === job.conversationId)?.title || job.title,
+        updatedAt: job.updatedAt,
+        createdAt: job.createdAt
+      }),
+      include: (job) => {
+        if (filedFolder) {
+          if (!job.conversationId || library.assignments[job.conversationId] !== filedFolder) {
+            return false
+          }
+        }
+        if (list.filter === 'enabled') return job.enabled
+        if (list.filter === 'disabled') return !job.enabled
+        if (list.filter === 'favorite') {
+          return !!job.conversationId && favoriteSet.has(job.conversationId)
+        }
+        return true
+      }
+    })
+  }, [
+    conversations,
+    embedded,
+    favoriteSet,
+    filedFolder,
+    jobs,
+    library.assignments,
+    list.filter,
+    list.sort,
+    query
+  ])
 
   const orderedIds = useMemo(
     () => timerListConversationIds(visibleJobs, conversations),
     [visibleJobs, conversations]
   )
+  const appSelection = useAppObjectListSelection(orderedIds)
+  const onMoveApp = useCallback(
+    (id: string, range: boolean) => appSelection.select(id, { shiftKey: range }),
+    [appSelection]
+  )
+  useAppObjectListKeys({
+    listRef,
+    orderedIds,
+    focusedId: embedded ? appSelection.focusedId : null,
+    selectedIds: embedded ? appSelection.selectedIds : [],
+    onMove: onMoveApp,
+    onDelete: embedded ? requestDelete : undefined,
+    onSelectAll: embedded ? appSelection.selectAll : undefined
+  })
 
   // Runs whose schedule was deleted (or lives in a store we no longer read) have
   // no parent row — group them instead of letting them float as top-level rows.
   // Matched against every known job id, not just the visible ones, so a run under
   // an archived / filtered task is not misread as orphaned.
+  const folderCounts = useMemo(() => {
+    const ids = jobs
+      .map((job) => job.conversationId)
+      .filter((id): id is string => !!id)
+    return appFolderCounts(library.assignments, ids)
+  }, [jobs, library.assignments])
+  const inFolderCount = filedFolder ? (folderCounts[filedFolder] ?? 0) : jobs.length
+
+  useEffect(() => {
+    if (!embedded || selectedFolder === APP_FOLDER_ALL_ID) return
+    if (!library.folders.some((folder) => folder.id === selectedFolder)) {
+      setAppFolderSelectedId('scheduled', APP_FOLDER_ALL_ID)
+    }
+  }, [embedded, library.folders, selectedFolder])
+
   const orphans = useMemo(
     () => orphanTimerSessions(conversations, jobs.map((job) => job.id)),
     [conversations, jobs]
@@ -333,35 +439,288 @@ export function TimerJobsPanel({
     )
   }
 
+  if (embedded) {
+    return (
+      <div ref={listRef} className="timer-jobs applications-home knowledge-library" data-testid="timer-jobs">
+        <AppFolderRail
+          folders={library.folders}
+          allCount={jobs.length}
+          counts={folderCounts}
+          selectedId={selectedFolder}
+          renamingId={renamingFolderId}
+          allLabelKey="app.folder.allScheduled"
+          dragType={appFolderDragType('scheduled')}
+          testIdPrefix="scheduled"
+          onSelect={setAppFolderSelectedId.bind(null, 'scheduled')}
+          onBeginRename={setRenamingFolderId}
+          onCreate={() => {
+            const folder = createAppFolder('scheduled', t('app.folder.untitled'))
+            setAppFolderSelectedId('scheduled', folder.id)
+            setRenamingFolderId(folder.id)
+          }}
+          onRename={(id, name) => {
+            setRenamingFolderId(null)
+            renameAppFolder('scheduled', id, name)
+          }}
+          onDelete={(id) => removeAppFolder('scheduled', id)}
+          onDropObjects={(folderId, objectIds) =>
+            moveAppFolderObjects('scheduled', objectIds, folderId)
+          }
+          readDragIds={(transfer) => readAppFolderDrag(transfer, 'scheduled')}
+        />
+        <div className="knowledge-library-main">
+        {inFolderCount > 0 ? (
+          <AppObjectListToolbar
+            query={list.query}
+            onQueryChange={list.setQuery}
+            filter={list.filter}
+            filters={[
+              { id: 'all', labelKey: 'app.list.filter.all' },
+              { id: 'enabled', labelKey: 'app.list.filter.enabled' },
+              { id: 'disabled', labelKey: 'app.list.filter.disabled' },
+              { id: 'favorite', labelKey: 'sidebar.filter.favorite' }
+            ]}
+            onFilterChange={list.setFilter}
+            sort={list.sort}
+            onSortChange={list.setSort}
+            askKind="Scheduled"
+            testIdPrefix="timer-list"
+          />
+        ) : null}
+        <div className="applications-object-body">
+        {visibleJobs.length === 0 && searching ? (
+          <EmptyState title={t('app.list.noMatchTitle')} description={t('app.list.noMatchDesc')}>
+            <button
+              className="btn secondary"
+              title={t('sidebar.clearFilter')}
+              onClick={() => {
+                list.setQuery('')
+                list.setFilter('all')
+              }}
+            >
+              {t('sidebar.clearFilter')}
+            </button>
+          </EmptyState>
+        ) : null}
+        {visibleJobs.length === 0 && !searching ? (
+          <AppEmptyState
+            kind="scheduled"
+            title={filedFolder ? t('app.folder.emptyTitle') : t('sidebar.timersEmptyTitle')}
+            description={filedFolder ? t('app.folder.emptyDesc') : t('sidebar.timersEmptyDesc')}
+          >
+            <Button
+              variant="secondary"
+              icon={<Plus size={14} strokeWidth={2} aria-hidden />}
+              title={t('timer.new')}
+              label={t('timer.new')}
+              onClick={() => {
+                void createScheduledConversation().then((id) => {
+                  assignCreatedAppObject('scheduled', id)
+                  onOpenDetail?.()
+                })
+              }}
+            />
+          </AppEmptyState>
+        ) : null}
+        {visibleJobs.length > 0 ? (
+          <ul className="applications-object-rows">
+            {visibleJobs.map((job) => {
+              const definition = job.conversationId
+                ? conversations.find((row) => row.id === job.conversationId)
+                : undefined
+              const title = flattenSessionTitle(definition?.title || job.title)
+              const selected = job.conversationId === appSelection.focusedId
+              const sub = [
+                timerScheduleLabel(job.schedule, weekday),
+                job.enabled ? t('timer.enabled') : null
+              ]
+                .filter(Boolean)
+                .join(' · ')
+              return (
+                <li
+                  key={job.id}
+                  className={
+                    job.conversationId
+                      ? appSelection.selectionMods(job.conversationId) || undefined
+                      : undefined
+                  }
+                  data-testid={`timer-job-${job.id}`}
+                >
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    draggable={!!job.conversationId && renamingId !== job.conversationId}
+                    className={
+                      job.conversationId
+                        ? appSelection.rowClass(job.conversationId)
+                        : 'applications-object-row'
+                    }
+                    data-testid="timer-job-row"
+                    data-conversation-id={job.conversationId ?? undefined}
+                    onDragStart={(event) => {
+                      if (!job.conversationId) return
+                      const picked = appSelection.selectedIds.includes(job.conversationId)
+                        ? appSelection.selectedIds
+                        : [job.conversationId]
+                      event.dataTransfer.setData(
+                        appFolderDragType('scheduled'),
+                        JSON.stringify(picked)
+                      )
+                      event.dataTransfer.effectAllowed = 'move'
+                      event.currentTarget.classList.add('is-dragging')
+                    }}
+                    onDragEnd={(event) => event.currentTarget.classList.remove('is-dragging')}
+                    data-active={selected ? 'true' : 'false'}
+                    data-selected={
+                      job.conversationId && appSelection.selectedIds.includes(job.conversationId)
+                        ? 'true'
+                        : 'false'
+                    }
+                    title={title}
+                    {...appObjectPointerHandlers({
+                      onSelect: (event) => {
+                        if (job.conversationId) appSelection.select(job.conversationId, event)
+                      },
+                      onOpen: () => void openJob(job),
+                      onMenu: (event) => {
+                        if (definition) {
+                          const { ids, collapse } = appObjectContextTargets(
+                            definition.id,
+                            appSelection.selectedIds
+                          )
+                          if (collapse) appSelection.select(definition.id)
+                          const targets = conversations.filter((row) => ids.includes(row.id))
+                          void showMenu(sessionMenu(targets), menuPoint(event))
+                          return
+                        }
+                        void showMenu(
+                          [
+                            {
+                              label: t('sidebar.menu.delete'),
+                              icon: lucideMenuIcon('trash-2'),
+                              destructive: true,
+                              onSelect: () => void removeJob(job)
+                            }
+                          ],
+                          menuPoint(event)
+                        )
+                      }
+                    })}
+                  >
+                    <span className="applications-object-row-icon" aria-hidden>
+                      <CalendarClock strokeWidth={1.8} />
+                    </span>
+                    <span className="applications-object-row-copy">
+                      {definition && renamingId === definition.id ? (
+                        <RenameField
+                          initial={definition.title}
+                          onCommit={(next) => void renameConversation(definition.id, next)}
+                          onCancel={() => beginRename(null)}
+                        />
+                      ) : (
+                        <span className="applications-object-row-title">{title}</span>
+                      )}
+                      <ObjectListLine
+                        title={[
+                          job.createdAt > 0
+                            ? `${t('object.fact.created')} ${absoluteTime(job.createdAt)}`
+                            : null,
+                          job.updatedAt > 0
+                            ? `${t('object.fact.updated')} ${absoluteTime(job.updatedAt)}`
+                            : null
+                        ]
+                          .filter(Boolean)
+                          .join('\n')}
+                        parts={[
+                          {
+                            label: t('object.fact.created'),
+                            value: job.createdAt > 0 ? relativeTime(job.createdAt) : null
+                          },
+                          {
+                            label: t('object.fact.updated'),
+                            value: job.updatedAt > 0 ? relativeTime(job.updatedAt) : null
+                          },
+                          {
+                            label: t('object.fact.words'),
+                            value: formatFactCount(countWritingUnits(job.prompt))
+                          },
+                          job.nextRunAt
+                            ? {
+                                label: t('object.fact.next'),
+                                value: timerRunTimeLabel(job.nextRunAt)
+                              }
+                            : { label: t('object.fact.next'), value: null }
+                        ]}
+                      />
+                    </span>
+                    <span className="applications-object-row-tag">{sub}</span>
+                  </div>
+                </li>
+              )
+            })}
+          </ul>
+        ) : null}
+        </div>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="timer-jobs" data-testid="timer-jobs">
+      {embedded && jobs.length > 0 ? (
+        <AppObjectListToolbar
+          query={list.query}
+          onQueryChange={list.setQuery}
+          filter={list.filter}
+          filters={[
+            { id: 'all', labelKey: 'app.list.filter.all' },
+            { id: 'enabled', labelKey: 'app.list.filter.enabled' },
+            { id: 'disabled', labelKey: 'app.list.filter.disabled' },
+            { id: 'favorite', labelKey: 'sidebar.filter.favorite' }
+          ]}
+          onFilterChange={list.setFilter}
+          sort={list.sort}
+          onSortChange={list.setSort}
+          askKind="Scheduled"
+          testIdPrefix="timer-list"
+        />
+      ) : null}
       {visibleJobs.length === 0 && searching ? (
-        <EmptyState title={t('sidebar.noMatchTitle')} description={t('sidebar.noMatchDesc')}>
+        <EmptyState title={t('app.list.noMatchTitle')} description={t('app.list.noMatchDesc')}>
           <button
             className="btn secondary"
             title={t('sidebar.clearFilter')}
-            onClick={() => setSidebarQuery('')}
+            onClick={() => {
+              if (embedded) {
+                list.setQuery('')
+                list.setFilter('all')
+                return
+              }
+              setSidebarQuery('')
+            }}
           >
             {t('sidebar.clearFilter')}
           </button>
         </EmptyState>
       ) : null}
       {visibleJobs.length === 0 && !searching ? (
-        <EmptyState
+        <AppEmptyState
+          kind="scheduled"
           title={t('sidebar.timersEmptyTitle')}
           description={t('sidebar.timersEmptyDesc')}
         >
           {embedded ? null : (
-            <button
-              className="btn secondary"
-              data-testid="sidebar-create-scheduled"
+            <Button
+              variant="secondary"
+              testId="sidebar-create-scheduled"
+              icon={<Plus size={14} strokeWidth={2} aria-hidden />}
               title={t('timer.new')}
+              label={t('timer.new')}
               onClick={() => void createScheduledConversation()}
-            >
-              {t('timer.new')}
-            </button>
+            />
           )}
-        </EmptyState>
+        </AppEmptyState>
       ) : null}
       {visibleJobs.map((job) => {
         const definition = job.conversationId

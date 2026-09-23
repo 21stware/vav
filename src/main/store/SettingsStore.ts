@@ -37,6 +37,7 @@ import { clampKeepAwakeBatteryFloor } from '@shared/sleepBlocker'
 import { clampUiZoom } from '@shared/uiZoom'
 import { resolveAutoUpdatePolicy } from '@shared/updatePolicy'
 import { clampLogRetentionDays } from '@shared/appLog'
+import { coerceAppLibraries } from '@shared/appFolders'
 import { createDebouncedWriter } from './debounceWrite'
 import { electronUserData } from './electronUserData.ts'
 
@@ -489,6 +490,7 @@ export class SettingsStore {
         )
       )
     ]
+    s.appLibraries = coerceAppLibraries(s.appLibraries)
     if (s.fileViewMode !== 'tree' && s.fileViewMode !== 'column') {
       s.fileViewMode = 'tree'
     }

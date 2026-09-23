@@ -1,18 +1,29 @@
 import { isAbsolute, resolve as resolvePath } from 'node:path'
+import { isAppResourceUrl, parseAppResourceUrl } from '../../shared/appResourceUrl.ts'
 
 export type DocPathHost = {
   workdir: string
   defaultDocPath?: () => string | null
   selectionAnchor?: () => Array<{ id: string; filePath: string; text?: string }>
+  appResources?: { resolve(raw: string): { path?: string | null } | null }
 }
 
 export function resolveInWorkdir(workdir: string, path: string): string {
+  const appPath = parseAppResourceUrl(path)?.path
+  if (appPath) return appPath
   return isAbsolute(path) ? path : resolvePath(workdir, path)
 }
 
 export function resolveDocPath(host: DocPathHost, raw: unknown): string | null {
   const explicit = typeof raw === 'string' ? raw.trim() : ''
-  if (explicit) return resolveInWorkdir(host.workdir, explicit)
+  if (explicit) {
+    if (isAppResourceUrl(explicit)) {
+      const fromUrl = parseAppResourceUrl(explicit)?.path
+      if (fromUrl) return fromUrl
+      return host.appResources?.resolve(explicit)?.path ?? null
+    }
+    return resolveInWorkdir(host.workdir, explicit)
+  }
   const fromDefault = host.defaultDocPath?.()?.trim()
   if (fromDefault) return fromDefault
   const refs = host.selectionAnchor?.() ?? []

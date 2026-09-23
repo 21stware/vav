@@ -16,6 +16,7 @@ import {
   buildDiscoverPayload,
   isLoopbackAddress
 } from '../../shared/vavDiscover.ts'
+import { isTrustedBridgeHost, isTrustedBridgeOrigin } from './bridgeTrust.ts'
 import { WEB_UI_HTML, phoneUiMime, readPhoneUiFile } from './webUi.ts'
 
 const WS_GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
@@ -196,8 +197,20 @@ export function startVavWebBridge(
   opts: VavWebBridgeOpts
 ): Promise<{ close: () => void; port: number; server: Server }> {
   return new Promise((resolve, reject) => {
-    const server = createServer((req, res) => handleHttp(req, res, opts))
+    let server!: Server
+    const boundPort = (): number => {
+      const address = server.address()
+      return typeof address === 'object' && address ? address.port : opts.port
+    }
+    server = createServer((req, res) => handleHttp(req, res, opts, boundPort()))
     server.on('upgrade', (req, socket) => {
+      const port = boundPort()
+      const host = headerValue(req.headers.host)
+      const origin = headerValue(req.headers.origin)
+      if (!isTrustedBridgeHost(host, port, opts.listen) || !isTrustedBridgeOrigin(origin, port)) {
+        socket.destroy()
+        return
+      }
       if ((req.url ?? '/').split('?')[0] !== VAV_WEB_SOCKET_PATH) {
         socket.destroy()
         return
@@ -223,6 +236,11 @@ export function startVavWebBridge(
   })
 }
 
+function headerValue(value: string | string[] | undefined): string | undefined {
+  if (Array.isArray(value)) return value[0]
+  return value
+}
+
 function requestIsLoopback(req: IncomingMessage, listen: string): boolean {
   if (isLoopbackAddress(listen)) return true
   return isLoopbackAddress(req.socket.remoteAddress)
@@ -233,7 +251,22 @@ function json(res: ServerResponse, status: number, body: unknown): void {
   res.end(JSON.stringify(body))
 }
 
-function handleHttp(req: IncomingMessage, res: ServerResponse, opts: VavWebBridgeOpts): void {
+function handleHttp(
+  req: IncomingMessage,
+  res: ServerResponse,
+  opts: VavWebBridgeOpts,
+  port: number
+): void {
+  const host = headerValue(req.headers.host)
+  const origin = headerValue(req.headers.origin)
+  if (!isTrustedBridgeHost(host, port, opts.listen)) {
+    json(res, 421, { error: 'misdirected' })
+    return
+  }
+  if (!isTrustedBridgeOrigin(origin, port)) {
+    json(res, 403, { error: 'forbidden' })
+    return
+  }
   const path = (req.url ?? '/').split('?')[0]
   if (path === '/' || path === '/index.html') {
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })

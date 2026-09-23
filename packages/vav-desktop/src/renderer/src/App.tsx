@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import { useSessionStore } from './state/sessionStore'
 import {
   installAgentModelCatalogBridge,
@@ -18,6 +18,7 @@ import { SessionDetail } from './components/SessionDetail'
 import { PipView } from './components/PipView'
 import { useTerminalAppearance } from './lib/useTerminalAppearance'
 import { ApplicationsPanel } from './components/ApplicationsPanel'
+import { WorkbenchHome } from './components/WorkbenchHome'
 import { AppToast } from './components/AppToast'
 import { RemoteFolderPicker } from './components/RemoteFolderPicker'
 import { UpdateCorner } from './components/UpdateCorner'
@@ -28,7 +29,7 @@ import { useAppearance } from './lib/appearance'
 import { useMenuCommands } from './lib/menuCommands'
 import { installDefaultContextMenu } from './lib/nativeMenu'
 import { installInstallRunBridge } from './state/installRunStore'
-import { useSidebarFloatMode } from './lib/sidebarLayout'
+import { chromeLeadMode, useShowShellLeading, useSidebarFloatMode } from './lib/sidebarLayout'
 import { startCapturedPointerDrag } from './lib/capturedPointerDrag'
 import { useWindowMinSize } from './lib/useWindowMinSize'
 import {
@@ -39,6 +40,7 @@ import {
 } from './lib/sidebarWidth'
 import {
   APPLICATIONS_WIDTH_DEFAULT,
+  applicationsWidthBudget,
   clampApplicationsWidth,
   loadApplicationsWidth,
   persistApplicationsWidth
@@ -47,6 +49,7 @@ import { useT } from './i18n/useT'
 import { useAttentionSeen } from './lib/useAttentionSeen'
 import { installSwarmHistoryBridge } from './lib/swarmHistoryBridge'
 import { installE2eBridge } from './lib/e2eBridge'
+import { useAppHostApply } from './lib/apps/useAppHostApply'
 type LaunchPhase = 'checking' | 'keychain' | 'booting' | 'ready' | 'no-preload'
 
 /** First paint: stay blank until secrets.status() — don't flash the welcome tour. */
@@ -65,6 +68,7 @@ export default function App(): React.JSX.Element {
   const [phase, setPhase] = useState<LaunchPhase>(initialLaunchPhase)
   /** Returning mac users who fail silent unlock only see the authorize step. */
   const [keychainAuthorizeOnly, setKeychainAuthorizeOnly] = useState(false)
+  useAppHostApply()
 
   useEffect(() => {
     let cancelled = false
@@ -190,9 +194,12 @@ export default function App(): React.JSX.Element {
   const floating = useSidebarFloatMode()
   const sidebarVisible = useSessionStore((s) => s.sidebarVisible)
   const pictureInPicture = useSessionStore((s) => s.pictureInPicture)
-  // Docked sidebar owns traffic-light chrome. Collapsed: session parks toggle
-  // on the agent row; workspace parks it on the preview file header.
-  const panelFlushTop = sidebarVisible && !floating
+  // Expanded docked list owns traffic-light chrome. Collapsed capsule and
+  // narrow-window float leave the session header flush to the window top —
+  // those chrome rows indent so they are not painted under the lights.
+  const panelFlushTop = !floating && sidebarVisible
+  const sidebarRail = !floating && !sidebarVisible
+  const lead = chromeLeadMode({ floating, sidebarVisible })
 
   if (phase === 'no-preload') {
     return (
@@ -235,19 +242,25 @@ export default function App(): React.JSX.Element {
   // Change review is inline in the transcript (not a full-screen takeover).
   return (
     <div
-      className={`app-shell${panelFlushTop ? ' panel-flush-top' : ' panel-shell-chrome'}`}
+      className={`app-shell${panelFlushTop ? ' panel-flush-top' : ' panel-shell-chrome'}${sidebarRail ? ' is-sidebar-rail' : ''}`}
       data-testid="app-shell"
+      data-chrome-lead={lead}
     >
       <div className="body-split" data-shell="list-agent-app">
         <SidebarSlot
           floating={floating}
-          chrome={panelFlushTop ? <Titlebar variant="sidebar" /> : null}
+          chrome={
+            panelFlushTop ? (
+              <Titlebar variant="sidebar" showToggle={sidebarVisible} />
+            ) : null
+          }
         />
         <AgentSlot />
         <ApplicationsSlot />
+        <HomeSlot />
       </div>
-      {/* When the sidebar is open it hosts the chip; otherwise pin bottom-left. */}
-      {!sidebarVisible ? <UpdateCorner /> : null}
+      {/* Expanded list hosts the chip; floating + hidden pins bottom-left. */}
+      {floating && !sidebarVisible ? <UpdateCorner /> : null}
       <AppToast />
       <RemoteFolderPicker />
     </div>
@@ -263,9 +276,7 @@ function CategoryEmpty({
   description: string
   children?: ReactNode
 }): React.JSX.Element {
-  const sidebarVisible = useSessionStore((s) => s.sidebarVisible)
-  const floating = useSidebarFloatMode()
-  const showShellLeading = !(sidebarVisible && !floating)
+  const showShellLeading = useShowShellLeading()
   return (
     <main className="detail category-empty" data-testid="session-detail">
       <header
@@ -308,17 +319,26 @@ function AgentSlot(): React.JSX.Element {
 }
 
 function Titlebar({
-  variant = 'window'
+  variant = 'window',
+  showToggle = true
 }: {
   /** `sidebar` — chrome row inside the docked list column (panel flush to top). */
   variant?: 'window' | 'sidebar'
+  showToggle?: boolean
 }): React.JSX.Element {
   return (
-    <header className={`titlebar${variant === 'sidebar' ? ' sidebar-chrome' : ''}`}>
-      <ShellLeadingControls />
+    <header className={`titlebar${variant === 'sidebar' ? ' sidebar-chrome' : ''} titlebar-drag`}>
+      {showToggle ? <ShellLeadingControls /> : null}
       <span className="spacer" />
     </header>
   )
+}
+
+function HomeSlot(): React.JSX.Element | null {
+  const agentVisible = useSessionStore((s) => s.agentVisible)
+  const applicationsVisible = useSessionStore((s) => s.applicationsVisible)
+  if (agentVisible || applicationsVisible) return null
+  return <WorkbenchHome />
 }
 
 function ApplicationsSlot(): React.JSX.Element | null {
@@ -327,9 +347,17 @@ function ApplicationsSlot(): React.JSX.Element | null {
   const [applicationsWidth, setApplicationsWidth] = useState(loadApplicationsWidth)
   const columnRef = useRef<HTMLDivElement>(null)
 
+  const liveAppBudget = (): number => {
+    const split = columnRef.current?.closest('.body-split')
+    const agent = split?.querySelector<HTMLElement>('.agent-column:not([hidden])')
+    if (!split || !agent) return Number.POSITIVE_INFINITY
+    const sidebar = split.querySelector<HTMLElement>('.sidebar-column')
+    return applicationsWidthBudget(split.clientWidth - (sidebar?.offsetWidth ?? 0))
+  }
+
   const startApplicationsResize = (event: ReactPointerEvent<HTMLElement>): void => {
     const startX = event.clientX
-    const startWidth = applicationsWidth
+    const startWidth = columnRef.current?.offsetWidth ?? applicationsWidth
     let latest = startWidth
     let raf = 0
     let pendingX = startX
@@ -341,14 +369,16 @@ function ApplicationsSlot(): React.JSX.Element | null {
         if (raf) return
         raf = requestAnimationFrame(() => {
           raf = 0
-          latest = clampApplicationsWidth(startWidth - (pendingX - startX))
-          if (columnRef.current) columnRef.current.style.width = `${latest}px`
+          latest = clampApplicationsWidth(startWidth - (pendingX - startX), liveAppBudget())
+          columnRef.current?.style.setProperty('--applications-width', `${latest}px`)
         })
       },
       onUp: () => {
         if (raf) cancelAnimationFrame(raf)
-        setApplicationsWidth(latest)
-        persistApplicationsWidth(latest)
+        const next = clampApplicationsWidth(latest, liveAppBudget())
+        columnRef.current?.style.setProperty('--applications-width', `${next}px`)
+        setApplicationsWidth(next)
+        persistApplicationsWidth(next)
         window.dispatchEvent(new Event('vav:resize-end'))
       }
     })
@@ -366,7 +396,7 @@ function ApplicationsSlot(): React.JSX.Element | null {
       ref={columnRef}
       data-testid="app-column"
       data-applications-column=""
-      style={{ width: applicationsWidth }}
+      style={{ '--applications-width': `${applicationsWidth}px` } as CSSProperties}
       hidden={!visible}
     >
       <div
@@ -482,23 +512,31 @@ function SidebarSlot({
     // whole session list on every toggle.
     return (
       <div
-        className="sidebar-column list-column"
+        className={`sidebar-column list-column${visible ? '' : ' is-rail'}`}
         ref={columnRef}
         data-testid="list-column"
-        style={{ width: sidebarWidth }}
-        hidden={!visible}
+        data-collapsed={visible ? undefined : 'true'}
+        style={visible ? { width: sidebarWidth } : undefined}
       >
-        {chrome}
-        <Sidebar />
-        <div
-          className="sidebar-col-resizer"
-          role="separator"
-          aria-orientation="vertical"
-          aria-label={t('sidebar.resize')}
-          title={t('sidebar.resize')}
-          onPointerDown={startSidebarResize}
-          onDoubleClick={resetSidebarWidth}
-        />
+        {visible ? (
+          <>
+            {chrome}
+            <Sidebar />
+            <div
+              className="sidebar-col-resizer"
+              role="separator"
+              aria-orientation="vertical"
+              aria-label={t('sidebar.resize')}
+              title={t('sidebar.resize')}
+              onPointerDown={startSidebarResize}
+              onDoubleClick={resetSidebarWidth}
+            />
+          </>
+        ) : (
+          <div className="sidebar-rail-pill">
+            <Sidebar />
+          </div>
+        )}
       </div>
     )
   }
@@ -528,6 +566,9 @@ function SidebarSlot({
         aria-modal="true"
         aria-label={t('shortcut.toggleSidebar')}
       >
+        <header className="sidebar-float-chrome">
+          <ShellLeadingControls />
+        </header>
         <Sidebar floating onNavigate={close} />
       </div>
     </div>

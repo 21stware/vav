@@ -4,7 +4,8 @@ import {
   existsSync,
   mkdirSync,
   renameSync,
-  unlinkSync
+  unlinkSync,
+  readdirSync
 } from 'node:fs'
 import {
   writeFile as writeFileAsync,
@@ -12,7 +13,7 @@ import {
   unlink as unlinkAsync,
   mkdir as mkdirAsync
 } from 'node:fs/promises'
-import { join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type {
   ApprovalMode,
@@ -47,7 +48,14 @@ import {
   mergeQuotaWindows
 } from '@shared/tokenUsage'
 import { contextWindowFor } from '../agent/modelMeta'
-import { deepestLeaf, leafAfterPrune, newestLeafId, pruneSubtree, threadPath } from '@shared/thread'
+import {
+  deepestLeaf,
+  leafAfterPrune,
+  newestLeafId,
+  preferredActiveLeaf,
+  pruneSubtree,
+  threadPath
+} from '@shared/thread'
 import { defaultSessionTitle, isDefaultSessionTitle, t } from '@shared/i18n'
 import type { CliPaneBinding } from '@shared/cliPaneBinding'
 import { currentLocale } from '../i18n'
@@ -73,7 +81,7 @@ type ConversationIndex = { version: number; ids: string[] }
  *
  * Writes are debounced, dirty-tracked (only changed shards + index), and atomic
  * (tmp + rename). Callers persist at tool boundaries and turn end, never per token.
- * Quit / turn-end use sync {@link flush}; the debounce path uses async I/O.
+ * Quit uses sync {@link flush}; turn-end and the debounce path use {@link flushAsync}.
  *
  * When the workbench is a shell over spawned vav-server, {@link setShouldPersist}
  * skips local rows so `userData/conversations` is not a second copy of
@@ -104,6 +112,15 @@ export class ConversationStore {
   private flushAgain = false
   /** Bumped by sync {@link flush} so an in-flight async write abandons mid-flight. */
   private writeEpoch = 0
+  /** Per-file write generation so a stale async rename cannot clobber a newer write. */
+  private fileWriteSeq = new Map<string, number>()
+  /**
+   * Shard ids that failed to parse. Kept in the index (and as `.corrupt-*`
+   * siblings) so a later persist does not drop them.
+   */
+  private corruptIds = new Set<string>()
+  /** Test-only barrier between async tmp write and rename. */
+  writeRenameHold: Promise<void> | null = null
   /**
    * Whether {@link load} has run. An empty in-memory list means two entirely
    * different things before and after that call — "not read yet" and "the user
@@ -147,6 +164,7 @@ export class ConversationStore {
   }
 
   load(defaults: { model: string; mintWorkdir: () => string }): Conversation[] {
+    this.corruptIds.clear()
     try {
       mkdirSync(this.dir, { recursive: true })
       if (existsSync(this.indexPath)) {
@@ -209,6 +227,7 @@ export class ConversationStore {
       }
       if (conversation.focusedFilePath === undefined) conversation.focusedFilePath = null
       if (conversation.focusedDbTable === undefined) conversation.focusedDbTable = null
+      if (conversation.appColumnFocus === undefined) conversation.appColumnFocus = null
       if (conversation.accountId === undefined) conversation.accountId = null
       if (conversation.swarmParentId === undefined) conversation.swarmParentId = null
       conversation.swarmLayout = sanitizeSwarmLayout(conversation.swarmLayout)
@@ -380,6 +399,7 @@ export class ConversationStore {
       cliPaneBindings: {},
       focusedFilePath: null,
       focusedDbTable: null,
+      appColumnFocus: null,
       resultUnseen: false,
       accountId: options?.accountId ?? null,
       swarmParentId: options?.swarmParentId ?? null,
@@ -457,6 +477,7 @@ export class ConversationStore {
     imported.cliPaneBindings = {}
     if (imported.focusedFilePath === undefined) imported.focusedFilePath = null
     if (imported.focusedDbTable === undefined) imported.focusedDbTable = null
+    if (imported.appColumnFocus === undefined) imported.appColumnFocus = null
     imported.resultUnseen = false
     imported.swarmParentId = null
     imported.swarmLayout = sanitizeSwarmLayout(imported.swarmLayout)
@@ -622,6 +643,7 @@ export class ConversationStore {
       cliPaneBindings: {},
       focusedFilePath: cloned.focusedFilePath ?? null,
       focusedDbTable: cloned.focusedDbTable ?? null,
+      appColumnFocus: cloned.appColumnFocus ?? null,
       resultUnseen: false,
       accountId: cloned.accountId ?? null,
       swarmParentId: cloned.swarmParentId ?? null,
@@ -639,9 +661,11 @@ export class ConversationStore {
       const existing = this.conversations[existingIndex]!
       adopted.messages = mergeAdoptedHostMessages(adopted.messages, existing.messages)
       if (existing.updatedAt > adopted.updatedAt) adopted.updatedAt = existing.updatedAt
-      const leafStillThere =
-        existing.activeLeafId && adopted.messages.some((message) => message.id === existing.activeLeafId)
-      if (leafStillThere) adopted.activeLeafId = existing.activeLeafId
+      adopted.activeLeafId = preferredActiveLeaf(
+        adopted.messages,
+        existing.activeLeafId,
+        adopted.activeLeafId
+      )
       if (isSparseRemoteConversation(cloned)) {
         adopted.model = existing.model
         adopted.cliHost = existing.cliHost
@@ -1180,15 +1204,34 @@ export class ConversationStore {
     for (const id of ids) {
       if (typeof id !== 'string' || !id) continue
       const file = this.shardPath(id)
-      if (!existsSync(file)) continue
+      if (!existsSync(file)) {
+        if (this.hasCorruptSibling(file)) this.corruptIds.add(id)
+        continue
+      }
       try {
         const conversation = JSON.parse(readFileSync(file, 'utf8')) as Conversation
         if (conversation?.id) loaded.push(conversation)
       } catch (err) {
-        console.error(`[conversations] skip corrupt shard ${id}`, err)
+        const dest = `${file}.corrupt-${Date.now()}`
+        try {
+          renameSync(file, dest)
+        } catch (renameErr) {
+          console.error(`[conversations] rename corrupt shard ${id} failed`, renameErr)
+        }
+        this.corruptIds.add(id)
+        console.error(`[conversations] corrupt shard ${id}, renamed to ${dest}`, err)
       }
     }
     return loaded
+  }
+
+  private hasCorruptSibling(file: string): boolean {
+    try {
+      const prefix = `${basename(file)}.corrupt-`
+      return readdirSync(dirname(file)).some((name) => name.startsWith(prefix))
+    } catch {
+      return false
+    }
   }
 
   /**
@@ -1251,10 +1294,14 @@ export class ConversationStore {
   }
 
   /**
-   * Debounced path: async fs writes for dirty shards + index only.
+   * Debounced / turn-end path: async fs writes for dirty shards + index only.
    * Queues a follow-up pass if mutations land while a write is in flight.
    */
-  private async flushAsync(): Promise<void> {
+  async flushAsync(): Promise<void> {
+    if (this.flushTimer) {
+      clearTimeout(this.flushTimer)
+      this.flushTimer = null
+    }
     if (!this.loaded) return
     if (this.flushInFlight) {
       this.flushAgain = true
@@ -1274,8 +1321,8 @@ export class ConversationStore {
   }
 
   /**
-   * Quit / turn-end path: cancel debounce and synchronously persist dirty
-   * shards + index so data is on disk before the process exits.
+   * Quit path: cancel debounce and synchronously persist dirty shards + index
+   * so data is on disk before the process exits.
    */
   flush(): void {
     if (this.flushTimer) {
@@ -1314,9 +1361,11 @@ export class ConversationStore {
       }
       payloads.push({ id, body: JSON.stringify(conversation) })
     }
+    const liveIds = this.conversations.filter((c) => this.allowsPersist(c)).map((c) => c.id)
+    const heldCorrupt = [...this.corruptIds].filter((id) => !liveIds.includes(id))
     const indexBody = JSON.stringify({
       version: INDEX_VERSION,
-      ids: this.conversations.filter((c) => this.allowsPersist(c)).map((c) => c.id)
+      ids: [...liveIds, ...heldCorrupt]
     } satisfies ConversationIndex)
 
     return { dirtyIds, deletedIds: [...dropFromDisk], gens, payloads, indexBody }
@@ -1382,15 +1431,40 @@ export class ConversationStore {
     this.writeJsonRawSync(file, JSON.stringify(value))
   }
 
+  private nextFileWriteSeq(file: string): number {
+    const seq = (this.fileWriteSeq.get(file) ?? 0) + 1
+    this.fileWriteSeq.set(file, seq)
+    return seq
+  }
+
+  private tmpPath(file: string, seq: number): string {
+    return `${file}.${process.pid}.${seq}.tmp`
+  }
+
+  private isLatestWrite(file: string, seq: number): boolean {
+    return this.fileWriteSeq.get(file) === seq
+  }
+
   private writeJsonRawSync(file: string, body: string): void {
-    const tmp = `${file}.tmp`
+    const seq = this.nextFileWriteSeq(file)
+    const tmp = this.tmpPath(file, seq)
     writeFileSync(tmp, body, 'utf8')
+    if (!this.isLatestWrite(file, seq)) {
+      this.unlinkQuietSync(tmp)
+      return
+    }
     renameSync(tmp, file)
   }
 
   private async writeJsonRawAsync(file: string, body: string): Promise<void> {
-    const tmp = `${file}.tmp`
+    const seq = this.nextFileWriteSeq(file)
+    const tmp = this.tmpPath(file, seq)
     await writeFileAsync(tmp, body, 'utf8')
+    if (this.writeRenameHold) await this.writeRenameHold
+    if (!this.isLatestWrite(file, seq)) {
+      await this.unlinkQuietAsync(tmp)
+      return
+    }
     await renameAsync(tmp, file)
   }
 

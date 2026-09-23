@@ -13,7 +13,14 @@ import {
   formatFocusedFileContextBrief,
   launchCarriesContext
 } from '@shared/agentContextInject'
+import type { AppColumnFocus } from '@shared/appColumnFocus'
 import type { PreviewRef } from '@shared/types'
+import {
+  appColumnFilePath,
+  appColumnFocusFromContext,
+  commentCardsForAppItem,
+  resolveAppColumnContext
+} from './appColumnContext'
 import { useSessionStore } from '../state/sessionStore'
 import { resolveComposerContextFile } from '../state/sessionQueue'
 import { useWorkspaceStore } from '../state/workspaceStore'
@@ -23,11 +30,21 @@ export type CliHandoffReason = 'created' | 'restored' | 'focus-change' | 'block-
 function readFocus(conversationId: string): {
   path: string | null
   cards: { ref: PreviewRef; comment: string }[]
+  appFocus: AppColumnFocus | null
 } {
   const store = useSessionStore.getState()
-  const path = resolveComposerContextFile(store.contextFiles, conversationId)
-  const cards = store.commentCards[conversationId] ?? []
-  return { path, cards }
+  const appContext = resolveAppColumnContext(store)
+  const object = appContext?.objectId
+    ? store.conversations.find((row) => row.id === appContext.objectId)
+    : undefined
+  const path =
+    appColumnFilePath(appContext, object) ||
+    resolveComposerContextFile(store.contextFiles, conversationId)
+  const cards =
+    appContext?.level === 'selected'
+      ? commentCardsForAppItem(store.commentCards[conversationId] ?? [], appContext.path)
+      : []
+  return { path, cards, appFocus: appColumnFocusFromContext(appContext, object) }
 }
 
 function takeDraft(conversationId: string): string {
@@ -59,7 +76,7 @@ export function handoffFocusToCli(
   }
 
   const strategy = contextLaunchStrategyForAgent(agentId)
-  const { path, cards } = readFocus(conversationId)
+  const { path, cards, appFocus } = readFocus(conversationId)
   const draft = takeDraft(conversationId)
 
   // Fresh Claude spawn already has ambient system context — only hand off draft.
@@ -71,6 +88,7 @@ export function handoffFocusToCli(
     : buildWorkspaceFocusContext({
         focusedPath: path,
         cards,
+        appFocus,
         style: 'prompt'
       })
 

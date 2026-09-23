@@ -1,11 +1,9 @@
 import { useEffect, useState } from 'react'
-import { Columns3, House, List } from 'lucide-react'
+import { Columns3, List } from 'lucide-react'
 import type { FileEntry, FileViewMode } from '@shared/types'
-import { normalizeMachineId, recentsForMachine } from '@shared/workspaceHost'
+import { normalizeMachineId } from '@shared/workspaceHost'
 import { useSessionStore } from '../../state/sessionStore'
 import { useT } from '../../i18n/useT'
-import { basename, dirname } from '../../lib/path'
-import { canGoParent } from '../../lib/remoteFolderPick'
 import { openFileSessionFromPath } from '../../lib/openFileSession'
 import { Button } from '../ui'
 import { FilePickBrowser, type FilePickDirs } from './FilePickBrowser'
@@ -57,12 +55,11 @@ export function MachineFilesBrowser({
     (s) => s.hosts.find((host) => normalizeMachineId(host.id) === machineId)?.home ?? ''
   )
   const resolvedHome = root || hostHome
-  const recentDirs = useSessionStore((s) => s.settings.recentWorkspaceDirectories)
   const fileViewMode = useSessionStore((s) => s.settings.fileViewMode ?? 'tree')
-  const recents = recentsForMachine(recentDirs, machineId)
 
+  const browsePath = useSessionStore((s) => s.storageBrowsePath)
+  const browseNonce = useSessionStore((s) => s.storageBrowseNonce)
   const [path, setPath] = useState(lastPathByMachine.get(pathKey) ?? resolvedHome)
-  const [home, setHome] = useState(resolvedHome)
   const [dirs, setDirs] = useState<FilePickDirs>({})
   const [loadingDirs, setLoadingDirs] = useState<string[]>([])
   const [dirErrors, setDirErrors] = useState<Record<string, string>>({})
@@ -76,7 +73,6 @@ export function MachineFilesBrowser({
     let alive = true
     const applyHome = (next: string): void => {
       if (!alive || !next) return
-      setHome(next)
       if (lastPathByMachine.get(pathKey)) return
       setPath(next)
       setSelected(null)
@@ -125,6 +121,14 @@ export function MachineFilesBrowser({
   useEffect(() => {
     if (path) lastPathByMachine.set(pathKey, path)
   }, [path, pathKey])
+
+  useEffect(() => {
+    if (!browsePath) return
+    lastPathByMachine.set(pathKey, browsePath)
+    enterDir(browsePath)
+    // browseNonce retriggers the same folder.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [browsePath, browseNonce, pathKey])
 
   const columnsKey = columnPath.join('\0')
   useEffect(() => {
@@ -199,21 +203,6 @@ export function MachineFilesBrowser({
     <div className="remote-folder-picker file-mac-browser" data-testid="file-mac-browser">
       <div className="remote-folder-toolbar">
         <Button
-          icon={<House size={14} />}
-          size="sm"
-          title={t('hosts.pickHome')}
-          testId="file-mac-home"
-          disabled={!home || path === home}
-          onClick={() => enterDir(home)}
-        />
-        <Button
-          label={t('hosts.pickParent')}
-          size="sm"
-          testId="file-mac-parent"
-          disabled={!canGoParent(path)}
-          onClick={() => enterDir(dirname(path))}
-        />
-        <Button
           icon={viewMode === 'tree' ? <List size={14} /> : <Columns3 size={14} />}
           size="sm"
           title={viewMode === 'tree' ? t('files.viewList') : t('files.viewColumn')}
@@ -229,44 +218,6 @@ export function MachineFilesBrowser({
           onChange={(event) => setFilter(event.target.value)}
         />
       </div>
-      <div className="remote-folder-path">
-        <input
-          className="text-field"
-          value={path}
-          onChange={(event) => {
-            setPath(event.target.value)
-            setSelected(null)
-            setExpanded([])
-            setColumnPath([])
-          }}
-          spellCheck={false}
-          data-testid="file-mac-path"
-          onKeyDown={(event) => {
-            if (event.key === 'Enter') {
-              event.preventDefault()
-              const next = event.currentTarget.value.trim()
-              if (next) enterDir(next)
-            }
-          }}
-        />
-      </div>
-      {recents.length > 0 && (
-        <div className="remote-folder-recents" data-testid="file-mac-recents">
-          <div className="form-hint">{t('hosts.pickRecents')}</div>
-          <div className="remote-folder-recent-chips">
-            {recents.slice(0, 5).map((ref) => (
-              <button
-                key={`${ref.machineId}:${ref.path}`}
-                type="button"
-                className="remote-folder-chip"
-                onClick={() => enterDir(ref.path)}
-              >
-                {basename(ref.path)}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
       {!path ? (
         <div className="muted tiny" style={{ padding: 8 }}>
           {t('common.loading')}
@@ -284,7 +235,7 @@ export function MachineFilesBrowser({
           filter={filter}
           onSelect={setSelected}
           onToggleExpand={toggleExpand}
-          onEnterDir={enterDir}
+          onEnterDir={toggleExpand}
           onColumnPath={setColumnPath}
           onOpenFile={(filePath) => {
             void openFileSessionFromPath(filePath).then((opened) => {

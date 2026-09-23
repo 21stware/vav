@@ -7,7 +7,8 @@ import {
   formatTimerSchedule,
   formatTimerStamp,
   nextTimerRunAt,
-  parseCronExpr
+  parseCronExpr,
+  parseTimerScheduleInput
 } from './timer.ts'
 
 describe('parseCronExpr', () => {
@@ -49,6 +50,22 @@ describe('coerceTimerWorkdirPolicy', () => {
     assert.equal(coerceTimerWorkdirPolicy('sticky'), 'sticky')
     assert.equal(coerceTimerWorkdirPolicy('source'), 'source')
     assert.equal(coerceTimerWorkdirPolicy('other'), 'mint')
+  })
+})
+
+describe('parseTimerScheduleInput', () => {
+  it('accepts cron, every-N, ISO, and JSON', () => {
+    assert.deepEqual(parseTimerScheduleInput('0 9 * * 1-5'), { kind: 'cron', expr: '0 9 * * 1-5' })
+    assert.deepEqual(parseTimerScheduleInput('every 1h'), { kind: 'interval', everyMs: 3_600_000 })
+    assert.deepEqual(parseTimerScheduleInput('every 30m'), { kind: 'interval', everyMs: 1_800_000 })
+    const at = Date.parse('2026-09-23T01:00:00Z')
+    assert.deepEqual(parseTimerScheduleInput('2026-09-23T01:00:00Z'), { kind: 'once', at })
+    assert.deepEqual(parseTimerScheduleInput('{"kind":"cron","expr":"0 * * * *"}'), {
+      kind: 'cron',
+      expr: '0 * * * *'
+    })
+    assert.equal(parseTimerScheduleInput('nope'), null)
+    assert.equal(parseTimerScheduleInput('every 10s'), null)
   })
 })
 

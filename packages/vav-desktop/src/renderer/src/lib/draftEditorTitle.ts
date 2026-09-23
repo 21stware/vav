@@ -1,5 +1,8 @@
+import { isPlaceholderDbTitle } from '@shared/dbConnection'
+
 const TIMER_LEGACY_UNTITLED = ['Scheduled task', '定时任务', 'A-new-scheduled-task'] as const
 const DB_LEGACY_UNTITLED = ['Database', '数据库连接', 'A-new-db-connection'] as const
+const NOTE_LEGACY_UNTITLED = ['Untitled note', 'Untitled-knowledge'] as const
 
 export function isDraftEditorTitle(
   value: string,
@@ -15,8 +18,12 @@ export function isDraftScheduledTitle(value: string, untitled: string): boolean 
   return isDraftEditorTitle(value, untitled, TIMER_LEGACY_UNTITLED)
 }
 
+export function isDraftNoteTitle(value: string, untitled: string): boolean {
+  return isDraftEditorTitle(value, untitled, NOTE_LEGACY_UNTITLED)
+}
+
 export function isDraftDbTitle(value: string, untitled: string): boolean {
-  return isDraftEditorTitle(value, untitled, DB_LEGACY_UNTITLED)
+  return isDraftEditorTitle(value, untitled, DB_LEGACY_UNTITLED) || isPlaceholderDbTitle(value)
 }
 
 /** Shown in the editor when the stored title is still a draft. */

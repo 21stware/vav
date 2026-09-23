@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { request as httpRequest } from 'node:http'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -8,6 +9,21 @@ import { createVavControlPlane } from '../host/VavControlPlane.ts'
 import { startVavWebBridge } from './VavWebBridge.ts'
 
 const SECRET = '0123456789abcdef01234567'
+
+function rawGet(
+  port: number,
+  path: string,
+  headers: Record<string, string>
+): Promise<{ status: number }> {
+  return new Promise((resolve, reject) => {
+    const req = httpRequest({ host: '127.0.0.1', port, path, headers }, (res) => {
+      res.resume()
+      res.on('end', () => resolve({ status: res.statusCode ?? 0 }))
+    })
+    req.on('error', reject)
+    req.end()
+  })
+}
 
 describe('VavWebBridge discover', () => {
   it('hands a loopback client the pairing secret and identity', async () => {
@@ -38,6 +54,7 @@ describe('VavWebBridge discover', () => {
         version: string
         wsPath: string
         loopback: boolean
+        hasSecret?: boolean
         secret?: string
       }
       assert.equal(info.app, 'vav-server')
@@ -46,6 +63,7 @@ describe('VavWebBridge discover', () => {
       assert.equal(info.version, '1.19.0')
       assert.equal(info.wsPath, '/vav')
       assert.equal(info.loopback, true)
+      assert.equal(info.hasSecret, true)
       assert.equal(info.secret, SECRET)
 
       const health = await fetch(`http://127.0.0.1:${web.port}/health`)
@@ -73,6 +91,11 @@ describe('VavWebBridge discover', () => {
       assert.equal(pair.proto, 1)
       assert.equal(pair.hasSecret, true)
       assert.equal(pair.secret, SECRET)
+
+      const rebound = await rawGet(web.port, '/discover', { Host: 'evil.com' })
+      assert.equal(rebound.status, 421)
+      const evilOrigin = await rawGet(web.port, '/discover', { Origin: 'https://evil.com' })
+      assert.equal(evilOrigin.status, 403)
 
       const uiAlias = await fetch(`http://127.0.0.1:${web.port}/ui/phone.css`)
       assert.equal(uiAlias.ok, true)

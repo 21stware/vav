@@ -22,6 +22,7 @@
     "skipLibCheck": true,
     "isolatedModules": true,
     "noEmit": true,
+    "tsBuildInfoFile": "node_modules/.cache/tsc/web.tsbuildinfo",
     "baseUrl": ".",
     "paths": {
       "@shared/*": ["src/shared/*"],

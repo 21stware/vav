@@ -1,14 +1,11 @@
 /**
- * Open a local path from chat / agent log into the session side preview.
- * Falls back to a standalone preview window when there is no active session
- * or this renderer has no preview column (companion / Quick Chat).
+ * Open a local path from chat / agent log into the app column.
+ * Overlays (clips / generated visuals) still use a standalone preview window.
  */
 import { isClipPath } from '@shared/clipPath'
 import { looksLikeVisualOverlay } from '@shared/previewOverlay'
 import { useSessionStore } from '../state/sessionStore'
-import { useWorkspaceStore } from '../state/workspaceStore'
 import { resolveMentionedPath } from './filePathLinks'
-import { shouldOpenStandaloneFilePreview } from './workspacePreviewFit'
 
 export function resolveSessionFilePath(raw: string): string {
   const state = useSessionStore.getState()
@@ -18,57 +15,29 @@ export function resolveSessionFilePath(raw: string): string {
 
 /**
  * Conversation-opened path: visuals and temp clips are an overlay preview,
- * not the session file drawer / File Session.
+ * everything else opens in the app column.
  */
 export function openConversationFile(rawPath: string): void {
-  const resolved = resolveSessionFilePath(rawPath)
-  if (!resolved.trim()) return
-  if (looksLikeVisualOverlay(resolved) || isClipPath(resolved)) {
-    void window.vav.window.openFilePreview(resolved, {
-      origin: 'session',
-      surface: looksLikeVisualOverlay(resolved) ? 'app' : 'file'
-    })
-    return
-  }
-  openFileInSessionPreview(rawPath)
+  void import('./openInApp').then(({ openInApp }) => openInApp(rawPath))
 }
 
-/** Open path in the right-hand session file drawer (default for files-tree peek). */
+/** Open path in the app-column storage view (folders browse, files open). */
 export function openFileInSessionPreview(rawPath: string): void {
-  const resolved = resolveSessionFilePath(rawPath)
-  if (!resolved.trim()) return
-  if (isClipPath(resolved) && looksLikeVisualOverlay(resolved)) {
-    void window.vav.window.openFilePreview(resolved, { origin: 'session', surface: 'app' })
-    return
-  }
-  const state = useSessionStore.getState()
-  const id = state.activeId
-  if (
-    shouldOpenStandaloneFilePreview({
-      conversationId: id,
-      filePreviewHost: state.filePreviewHost
-    })
-  ) {
-    void window.vav.window.openFilePreview(resolved, {
-      origin: 'session',
-      conversationId: id || undefined
-    })
-    return
-  }
-  if (!id) return
-  useWorkspaceStore.getState().selectPath(id, resolved)
-  state.setSessionPreview({ kind: 'file' })
-  state.setFilePreviewOpen(true)
+  void import('./openInApp').then(({ openInApp }) => openInApp(rawPath))
 }
 
 /** Standalone native preview window — not the in-session file drawer. */
 export function openAttachmentPreview(path: string, conversationId?: string | null): void {
   if (!path.trim()) return
-  void window.vav.window.openFilePreview(path, {
-    origin: 'session',
-    conversationId: conversationId || undefined,
-    surface: looksLikeVisualOverlay(path) ? 'app' : 'file'
-  })
+  if (looksLikeVisualOverlay(path) || isClipPath(path)) {
+    void window.vav.window.openFilePreview(path, {
+      origin: 'session',
+      conversationId: conversationId || undefined,
+      surface: looksLikeVisualOverlay(path) ? 'app' : 'file'
+    })
+    return
+  }
+  void import('./openInApp').then(({ openInApp }) => openInApp(path))
 }
 
 export function revealSessionFileInFinder(rawPath: string): void {

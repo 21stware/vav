@@ -65,8 +65,10 @@ import {
   type ChatMessage,
   type CliHostKind,
   type Conversation,
+  type PreviewRef,
   type TurnEvent
 } from '@shared/types'
+import type { AppColumnFocus } from '../../shared/appColumnFocus.ts'
 import { remoteBrowseRoots, remoteIsTemporary, remoteParentPath, remotePathAllowed } from '@shared/remoteWorkspace.ts'
 import { listRemoteChildEntries, listRemoteRootEntries } from '../remote/dirBrowse.ts'
 import { getModelCatalogSnapshot, listHostModels, seedModelCatalog } from '../agent/listHostModels.ts'
@@ -88,6 +90,8 @@ import {
   createTimerCatalog
 } from '../daemon/shellCatalogs.ts'
 import { FileSessionStore } from '../store/FileSessionStore.ts'
+import { KnowledgeStore } from '../store/KnowledgeStore.ts'
+import { DocumentRetrievalService } from '../retrieval/DocumentRetrievalService.ts'
 import { conversationToMeta } from '../store/conversationMeta.ts'
 import type { WorkspaceHost } from './WorkspaceHost.ts'
 import { locateTempWorkspaceToDir } from '../fs/locateTempWorkspace.ts'
@@ -97,12 +101,14 @@ import { createConnectorRegistry } from '../connectors/registry.ts'
 import { createSettingsCatalog, vavAccountKeyPresent } from '../daemon/settingsCatalog.ts'
 import { TimerStore } from '../store/TimerStore.ts'
 import { TimerScheduler } from '../timer/TimerScheduler.ts'
+import { timerJobAgentFromConversation } from '../../shared/timer.ts'
 import { HostRegistry } from './WorkspaceHost.ts'
 import type {
   RemoteConfigure,
   RemoteControlsEvent,
   RemoteDirsEvent,
   RemoteHostEvent,
+  RemoteSendContext,
   RemoteSendImage,
   RemoteSession
 } from '@shared/remoteControl.ts'
@@ -124,6 +130,7 @@ export type VavControlPlane = {
   settings: SettingsStore
   secrets: NodeSecretStore
   files: FileService
+  knowledge: KnowledgeStore
   catalog: DaemonWorkspaceCatalog
   logs: DaemonLogCatalog
   plugins: DaemonPluginCatalog
@@ -165,6 +172,8 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
   })
   const conversations = new ConversationStore(opts.stateDir)
   const fileSessions = new FileSessionStore(opts.stateDir)
+  const knowledge = new KnowledgeStore(opts.stateDir)
+  const retrieval = new DocumentRetrievalService()
   const logStore = new LogStore({
     dir: join(opts.stateDir, 'logs'),
     durableDays: () => settings.get().logRetentionDays
@@ -175,6 +184,11 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
   const files = new FileService(() => {
     /* watch coalescing is desktop UI; tools still write through FileService */
   }, opts.host.fs)
+
+  const watchWorkdir = (conversationId: string, workdir: string | null | undefined): void => {
+    const root = workdir?.trim()
+    if (root) files.watchRoot(conversationId, root)
+  }
 
   const remoteSessionStatus = new Map<string, 'running' | 'done'>()
   const pendingSends = new RemoteSendQueue()
@@ -231,6 +245,7 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
     const bundledRoot = skillService.root()
     if (bundledRoot) files.grantRoot(bundledRoot)
     for (const path of pluginAccessPaths('vav', home)) files.grantRoot(path)
+    files.grantRoot(knowledge.rootDir)
   }
 
   const sessionSecrets = new SessionSecretStore({
@@ -250,6 +265,45 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
     plugins: pluginService,
     connectors: connectorRegistry,
     fileSessions,
+    knowledge,
+    retrieval,
+    timers: timerStore,
+    grantAppPath: (path) => files.grantPath(path),
+    createAppConversation: (kind) => {
+      const snap = settings.get()
+      const workdir = mintTempWorkdir(tmp)
+      const defaultHost = resolveDefaultChatHost(snap.defaultAgentId)
+      const hostDefault = defaultModelForChatHost(defaultHost, snap)
+      const model = resolveModelForChatHost(defaultHost, hostDefault ?? snap.defaultModel, {
+        customModels: snap.customModels,
+        vavDefaultModel: snap.defaultModel,
+        hostDefaultModel: hostDefault,
+        vendorId: defaultHost == null ? vendorIdFromEndpoint(snap.apiEndpoint) : null
+      })
+      const title =
+        kind === 'timer'
+          ? t('timer.untitled')
+          : kind === 'db'
+            ? t('db.untitled')
+            : t('knowledge.untitled')
+      const conversation = conversations.create(
+        workdir,
+        model || snap.defaultModel || VAV_DEFAULT_MODEL_ID,
+        {
+          sessionKind: kind,
+          title,
+          approvalMode: snap.defaultApprovalMode ?? 'auto',
+          thinkingLevel: parseThinkingLevel(snap.defaultThinkingLevel),
+          cliHost: defaultHost,
+          machineId: LOCAL_MACHINE_ID
+        }
+      )
+      watchWorkdir(conversation.id, workdir)
+      hub.schedulePushSessions()
+      return { id: conversation.id, title: conversation.title }
+    },
+    onAppObjectsChanged: () => hub.schedulePushSessions(),
+    onAppHostApply: (event) => hub.pushAppApply(event),
     emit: handleAgentEvent,
     computer: createCuaComputerHost()
   })
@@ -261,9 +315,9 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
       id: string,
       text: string,
       attachments: string[],
-      a: null,
-      b: null,
-      c: null
+      contextBlocks: PreviewRef[] | null,
+      contextFile: string | null,
+      appColumnFocus: AppColumnFocus | null
     ): Promise<void>
     cancel(id: string): void
     answer(id: string, toolCallId: string, answer: string): boolean
@@ -301,6 +355,7 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
             changeSets,
             files,
             hosts,
+            knowledge,
             emit: handleAgentEvent,
             publish: () => hub.schedulePushSessions()
           })
@@ -323,7 +378,8 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
       void agent.run(id, text, [], null, null, null)
     },
     isRunning: (id) => agent.isRunning(id),
-    reload: () => timerStore.load()
+    reload: () => timerStore.load(),
+    watchWorkdir
   })
 
   function listSessions(): RemoteSession[] {
@@ -375,7 +431,7 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
       machineId: LOCAL_MACHINE_ID,
       ...(requested ? { id: requested } : {})
     })
-    files.watchRoot(conversation.id, workdir)
+    watchWorkdir(conversation.id, workdir)
     hub.schedulePushSessions()
     logger.user(LOG_EVENT.userSessionCreate, 'New session', {
       conversationId: conversation.id,
@@ -546,7 +602,14 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
     return agent.isRunning(conversationId)
   }
 
-  function startTurn(conversationId: string, text: string, attachments: string[]): void {
+  function startTurn(
+    conversationId: string,
+    text: string,
+    attachments: string[],
+    context?: RemoteSendContext
+  ): void {
+    const contextBlocks = context?.contextBlocks ?? null
+    const appColumnFocus = context?.appColumnFocus ?? null
     if (isStructuredCliHost(conversations.get(conversationId)?.cliHost)) {
       void loadCli().then((host) => {
         if (!host) {
@@ -568,16 +631,19 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
           })
           return
         }
-        void host.run(conversationId, text, attachments, null, null, null)
+        void host.run(conversationId, text, attachments, contextBlocks, null, appColumnFocus)
       })
       return
     }
-    void agent.run(conversationId, text, attachments, null, null, null)
+    void agent.run(conversationId, text, attachments, contextBlocks, null, appColumnFocus)
   }
 
   function flushSends(): void {
     for (const next of pendingSends.takeReady(busy)) {
-      startTurn(next.conversationId, next.text, next.attachments)
+      startTurn(next.conversationId, next.text, next.attachments, {
+        appColumnFocus: next.appColumnFocus,
+        contextBlocks: next.contextBlocks
+      })
     }
   }
 
@@ -611,19 +677,39 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
     return paths
   }
 
-  function sendMessage(conversationId: string, text: string, attachments: string[] = []) {
+  function sendMessage(
+    conversationId: string,
+    text: string,
+    attachments: string[] = [],
+    context?: RemoteSendContext
+  ) {
     const conversation = conversations.get(conversationId)
     const disposition = remoteSendDisposition(conversation, conversation ? busy(conversationId) : false)
     if (disposition === 'not-found' || disposition === 'archived') return disposition
+    if (context?.appColumnFocus) {
+      conversations.updateMeta(conversationId, { appColumnFocus: context.appColumnFocus })
+    }
     if (disposition === 'enqueue') {
-      pendingSends.enqueue(conversationId, text, attachments)
+      pendingSends.enqueue(conversationId, text, attachments, context)
       return 'ok' as const
     }
     logger.user(LOG_EVENT.userSend, 'Send', {
       conversationId,
-      data: { chars: text.length, attachments: attachments.length }
+      data: {
+        chars: text.length,
+        attachments: attachments.length,
+        contextBlocks: context?.contextBlocks?.length ?? 0
+      }
     })
-    startTurn(conversationId, text, attachments)
+    startTurn(conversationId, text, attachments, context)
+    return 'ok' as const
+  }
+
+  function setAppColumnFocus(conversationId: string, focus: AppColumnFocus | null) {
+    const conversation = conversations.get(conversationId)
+    if (!conversation) return 'not-found' as const
+    if (conversation.archived) return 'archived' as const
+    conversations.updateMeta(conversationId, { appColumnFocus: focus })
     return 'ok' as const
   }
 
@@ -749,7 +835,7 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
     if (cli?.owns(conversationId) && previous !== next) {
       cli.setWorkingDirectory(conversationId, next, previous)
     }
-    files.watchRoot(conversationId, next)
+    watchWorkdir(conversationId, next)
     if (next) settings.rememberWorkspaceDirectory(next, tmp)
     const controls = listControls(conversationId)
     if (controls) hub.pushControls(controls)
@@ -944,6 +1030,7 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
     listHost,
     configure,
     sendMessage,
+    setAppColumnFocus,
     materializeImages,
     createSession,
     cancel,
@@ -1008,11 +1095,20 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
     createScheduled: () => {
       const snap = settings.get()
       const workdir = mintTempWorkdir(tmp)
-      const conversation = conversations.create(workdir, snap.defaultModel || VAV_DEFAULT_MODEL_ID, {
+      const defaultHost = resolveDefaultChatHost(snap.defaultAgentId)
+      const hostDefault = defaultModelForChatHost(defaultHost, snap)
+      const model = resolveModelForChatHost(defaultHost, hostDefault ?? snap.defaultModel, {
+        customModels: snap.customModels,
+        vavDefaultModel: snap.defaultModel,
+        hostDefaultModel: hostDefault,
+        vendorId: defaultHost == null ? vendorIdFromEndpoint(snap.apiEndpoint) : null
+      })
+      const conversation = conversations.create(workdir, model || snap.defaultModel || VAV_DEFAULT_MODEL_ID, {
         sessionKind: 'timer',
         title: t('timer.untitled'),
         approvalMode: snap.defaultApprovalMode ?? 'auto',
         thinkingLevel: parseThinkingLevel(snap.defaultThinkingLevel),
+        cliHost: defaultHost,
         machineId: LOCAL_MACHINE_ID
       })
       const job = timerStore.createJob({
@@ -1022,9 +1118,11 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
         enabled: false,
         conversationId: conversation.id,
         workdirPolicy: 'mint',
-        sourceWorkdir: null
+        sourceWorkdir: null,
+        ...timerJobAgentFromConversation(conversation)
       })
       conversations.updateMeta(conversation.id, { timerJobId: job.id, sessionKind: 'timer' })
+      watchWorkdir(conversation.id, workdir)
       hub.schedulePushSessions()
       return { job, conversation: conversationToMeta(conversations.get(conversation.id) ?? conversation) }
     }
@@ -1106,6 +1204,7 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
     settings,
     secrets,
     files,
+    knowledge,
     catalog,
     logs,
     plugins,
@@ -1127,7 +1226,9 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
         mintWorkdir: () => mintTempWorkdir(tmp)
       })
       fileSessions.bind(conversations)
+      knowledge.load()
       timerStore.load()
+      for (const row of conversations.all()) watchWorkdir(row.id, row.workingDirectory)
       timerScheduler?.start()
       logStore.load()
       setAppLogger(logger)

@@ -188,9 +188,14 @@ export function turnEventsFromRemoteThread(
   }
 
   const last = [...thread].reverse().find((row) => row.role !== 'system')
-  if (last?.role === 'assistant' && !existingIds.has(last.id)) {
+  if (last?.role === 'assistant') {
     const assistant = merged.messages.find((message) => message.id === last.id)
-    if (assistant) {
+    const prev = existing.find((message) => message.id === last.id)
+    // A checkpoint may already have stored this id on the desktop while the
+    // renderer only had the live projection. Seal again when the body grew,
+    // and stay quiet when a stale completed path is identical — that must
+    // not stop a turn that is still streaming.
+    if (assistant && assistantBodyChanged(prev, assistant)) {
       events.push(endEvent(conversationId, assistant, last.cancelled === true, last.error))
     }
   }
@@ -316,6 +321,15 @@ function liveBlockEvents(conversationId: string, index: number, block: RemoteThr
     return [{ type: 'tool', conversationId, index, block: mapped }]
   }
   return []
+}
+
+function assistantBodyChanged(prev: ChatMessage | undefined, next: ChatMessage): boolean {
+  if (!prev) return true
+  if (prev.content !== next.content) return true
+  if ((prev.blocks?.length ?? 0) !== (next.blocks?.length ?? 0)) return true
+  if (!!prev.cancelled !== !!next.cancelled) return true
+  if ((prev.errorText ?? '') !== (next.errorText ?? '')) return true
+  return false
 }
 
 function endEvent(

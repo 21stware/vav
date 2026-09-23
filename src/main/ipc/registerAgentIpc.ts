@@ -1,7 +1,7 @@
 import type { IpcMain } from 'electron'
 import { IPC } from '@shared/ipc'
 import { LOG_EVENT } from '@shared/appLog'
-import type { PreviewRef, QuoteDraft, SecretAnswerPayload } from '@shared/types'
+import type { AppColumnFocus, PreviewRef, SecretAnswerPayload } from '@shared/types'
 import { logUserAnswer, logUserCancel, logUserSend, appLog } from '../log/appLogger'
 
 export type AgentIpcRuntimes = {
@@ -10,17 +10,17 @@ export type AgentIpcRuntimes = {
     id: string,
     text: string,
     attachments: string[],
-    quote: QuoteDraft | null,
     contextBlocks: PreviewRef[] | null,
-    contextFile: string | null
+    contextFile: string | null,
+    appColumnFocus?: AppColumnFocus | null
   ) => void
   runBuiltin: (
     id: string,
     text: string,
     attachments: string[],
-    quote: QuoteDraft | null,
     contextBlocks: PreviewRef[] | null,
-    contextFile: string | null
+    contextFile: string | null,
+    appColumnFocus?: AppColumnFocus | null
   ) => void
   appendNotice: (id: string, text: string) => void
   cancelCli: (id: string) => void
@@ -44,9 +44,9 @@ export type AgentIpcRuntimes = {
     id: string,
     text: string,
     attachments: string[],
-    quote: QuoteDraft | null,
     contextBlocks: PreviewRef[] | null,
-    contextFile: string | null
+    contextFile: string | null,
+    appColumnFocus?: AppColumnFocus | null
   ) => boolean
   tryRemoteCancel?: (id: string) => boolean
   tryRemoteAnswer?: (id: string, toolCallId: string, answer: string) => Promise<boolean>
@@ -83,24 +83,23 @@ export function registerAgentIpc(
       id: string,
       text: string,
       attachments: string[],
-      quote?: QuoteDraft | null,
       contextBlocks?: PreviewRef[] | null,
-      contextFile?: string | null
+      contextFile?: string | null,
+      appColumnFocus?: AppColumnFocus | null
     ) => {
       if (store.get(id)?.archived) return
       logUserSend(id, {
         chars: typeof text === 'string' ? text.length : 0,
         attachments: attachments?.length ?? 0,
-        quoted: !!quote,
         contextBlocks: contextBlocks?.length ?? 0
       })
       const args = [
         id,
         text,
         attachments ?? [],
-        quote ?? null,
         contextBlocks ?? null,
-        contextFile ?? null
+        contextFile ?? null,
+        appColumnFocus ?? null
       ] as const
       if (runtimes.tryRemoteSend?.(...args)) return
       if (runtimes.ownsCli(id)) void runtimes.runCli(...args)

@@ -1,6 +1,11 @@
 import type { PreviewRef } from './types'
 import { formatPreviewLineRange, hasKnownLineRange } from './previewContext.ts'
 import { previewKind } from './previewKind.ts'
+import {
+  formatAppColumnFocusBrief,
+  formatAppColumnFocusForPrompt,
+  type AppColumnFocus
+} from './appColumnFocus.ts'
 
 /**
  * How vav feeds workspace focus / block context into a CLI agent host.
@@ -212,10 +217,18 @@ export function buildWorkspaceFocusContext(options: {
   focusedPath?: string | null
   focusedKind?: string | null
   cards?: { ref: PreviewRef; comment: string }[]
+  appFocus?: AppColumnFocus | null
   style?: 'ambient' | 'prompt'
 }): string | null {
   const style = options.style ?? 'ambient'
   const parts: string[] = []
+  if (options.appFocus) {
+    parts.push(
+      style === 'prompt'
+        ? formatAppColumnFocusBrief(options.appFocus)
+        : formatAppColumnFocusForPrompt(options.appFocus)
+    )
+  }
   const path = options.focusedPath?.trim() || null
   if (path) {
     parts.push(

@@ -23,6 +23,8 @@ export type WindowIpcActions = {
   isPictureInPicture: () => boolean
   closeDetached: (id: string) => void
   newDetached: () => void
+  newSessionHere: (window: BrowserWindow) => void
+  navigateSession: (window: BrowserWindow, conversationId: string) => void
   listDetached: () => string[]
   openFilePreview: (
     path: string,
@@ -84,6 +86,14 @@ export function registerWindowIpc(ipcMain: IpcMain, actions: WindowIpcActions): 
     actions.closeDetached(String(id || ''))
   })
   ipcMain.handle(IPC.windowNewDetached, () => actions.newDetached())
+  ipcMain.handle(IPC.windowNewSessionHere, (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    if (win && !win.isDestroyed()) actions.newSessionHere(win)
+  })
+  ipcMain.handle(IPC.windowNavigateSession, (event, id: string) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    if (win && !win.isDestroyed()) actions.navigateSession(win, String(id || ''))
+  })
   ipcMain.handle(IPC.windowListDetached, () => actions.listDetached())
   ipcMain.handle(
     IPC.windowOpenFilePreview,

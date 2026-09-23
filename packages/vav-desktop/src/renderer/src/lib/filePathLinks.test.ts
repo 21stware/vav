@@ -34,5 +34,6 @@ describe('file mention chips', () => {
     assert.equal(fileMentionDisplayName('C:\\shots\\a.JPG'), 'a.JPG')
     assert.equal(isFileMentionImage('/a/b.JPG'), true)
     assert.equal(isFileMentionImage('/a/b.ts'), false)
+    assert.equal(fileMentionDisplayName('vav://app/storage?path=/tmp/hello.md'), 'hello.md')
   })
 })

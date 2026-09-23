@@ -1,15 +1,18 @@
-import type { PreviewRef, QuoteDraft } from '../../shared/types.ts'
+import { formatAppColumnSendContext, type AppColumnFocus } from '../../shared/appColumnFocus.ts'
+import type { PreviewRef } from '../../shared/types.ts'
 
 export function composeCliPrompt(
   text: string,
-  quote?: QuoteDraft | null,
   contextBlocks?: PreviewRef[] | null,
   attachments?: string[],
   contextFile?: string | null,
   fileReadOnly = false,
-  omitAttachmentPaths = false
+  omitAttachmentPaths = false,
+  appFocus?: AppColumnFocus | null
 ): string {
   const parts: string[] = []
+  const app = formatAppColumnSendContext(appFocus)
+  if (app) parts.push(app)
   if (contextFile) {
     parts.push(
       fileReadOnly ? `[Open file — read only]\n${contextFile}` : `[Open file]\n${contextFile}`
@@ -26,9 +29,6 @@ export function composeCliPrompt(
   }
   if (attachments?.length && !omitAttachmentPaths) {
     parts.push(`[Attachments]\n${attachments.map((a) => `- ${a}`).join('\n')}`)
-  }
-  if (quote?.summary) {
-    parts.push(`[Quoted ${quote.role} message]\n${quote.summary}`)
   }
   parts.push(text)
   return parts.join('\n\n')

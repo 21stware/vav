@@ -51,6 +51,22 @@ export function summarizeToolInput(
     case 'fs_read':
     case 'fs_write':
       return truncateToolSummary(String(input.path ?? ''), 120)
+    case 'note_write':
+    case 'note_edit':
+    case 'knowledge_write':
+      return truncateToolSummary(String(input.title ?? input.host_id ?? 'note'), 120)
+    case 'analysis_write':
+    case 'analysis_edit':
+      return truncateToolSummary(
+        String(input.title ?? input.path ?? input.connection_url ?? input.url ?? 'analysis'),
+        120
+      )
+    case 'schedule_write':
+    case 'schedule_edit':
+      return truncateToolSummary(String(input.title ?? input.prompt ?? input.url ?? 'schedule'), 120)
+    case 'storage_write':
+    case 'storage_edit':
+      return truncateToolSummary(String(input.path ?? input.url ?? input.title ?? 'storage'), 120)
     case 'fs_list':
       return truncateToolSummary(String(input.path ?? '.'), 120)
     case 'doc_search': {
@@ -68,6 +84,19 @@ export function summarizeToolInput(
         `${String(input.path ?? '')} ${String(input.sql ?? '').replace(/\s+/g, ' ')}`.trim(),
         120
       )
+    case 'knowledge_library': {
+      const op = String(input.op ?? 'list')
+      const name = input.name ? ` ${String(input.name)}` : ''
+      const folder = input.folder_id ? ` ${String(input.folder_id)}` : ''
+      return truncateToolSummary(`${op}${name}${folder}`.trim(), 120)
+    }
+    case 'app': {
+      const op = String(input.op ?? 'list')
+      const url = input.url ? ` ${String(input.url)}` : ''
+      const kind = input.kind ? ` ${String(input.kind)}` : ''
+      const q = input.query ? ` ${String(input.query)}` : ''
+      return truncateToolSummary(`${op}${kind}${url}${q}`.trim(), 120)
+    }
     case 'web_search': {
       const site = input.site ? ` site:${String(input.site)}` : ''
       return truncateToolSummary(`${String(input.query ?? '')}${site}`.trim(), 120)

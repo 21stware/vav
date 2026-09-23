@@ -49,9 +49,11 @@ import {
   type FileEntry,
   type LeafCompaction,
   type FileSortKey,
+  type PreviewRef,
   type TurnEvent,
   type TurnStatus
 } from '@shared/types'
+import type { AppColumnFocus } from '@shared/appColumnFocus'
 import { LOCAL_MACHINE_ID, type WorkspaceHostInfo } from '@shared/workspaceHost'
 import { parseMachinePairing, type IncomingController } from '@shared/daemonProtocol'
 import {
@@ -419,6 +421,7 @@ export function installPhoneVav(transport: PhoneTransport): PhoneVavHandle {
   type DirResult = { ok: true; event: RemoteDirsEvent } | { ok: false; error: string }
   const dirWaiters = new Map<string, Array<(result: DirResult) => void>>()
   const hostHandlers = new Set<(hosts: WorkspaceHostInfo[]) => void>()
+  const appApplyHandlers = new Set<(event: import('@shared/appHost').AppHostEvent) => void>()
   const remoteStatusHandlers = new Set<(status: RemoteControlStatus) => void>()
   const incomingHandlers = new Set<(rows: IncomingController[]) => void>()
   const createdWaiters: Array<(session: RemoteSession) => void> = []
@@ -603,6 +606,11 @@ export function installPhoneVav(transport: PhoneTransport): PhoneVavHandle {
       emitCatalog()
       const hosts = hostInfoFromRemote(host)
       for (const handler of hostHandlers) handler(hosts)
+      return
+    }
+    if (msg.type === 'app-apply' && msg.event) {
+      const event = msg.event as import('@shared/appHost').AppHostEvent
+      for (const handler of appApplyHandlers) handler(event)
       return
     }
     if (msg.type === 'sessions') {
@@ -1199,7 +1207,10 @@ export function installPhoneVav(transport: PhoneTransport): PhoneVavHandle {
       analysis: async () => ({}),
       keepAwakeStatus: async () => ({}),
       keepAwakeGrant: async () => ({}),
-      keepAwakeRevoke: async () => ({})
+      keepAwakeRevoke: async () => ({}),
+      appPaths: async () => null,
+      setAppDataDir: async () => null,
+      setTempDir: async () => null
     },
     logs: {
       query: async (query) => {
@@ -1438,6 +1449,10 @@ export function installPhoneVav(transport: PhoneTransport): PhoneVavHandle {
       },
       setFocusedFile: async () => conversationsOf(),
       setFocusedDbTable: async () => conversationsOf(),
+      setAppColumnFocus: async (id: string, focus: AppColumnFocus | null) => {
+        send({ type: 'focus', conversationId: id, appColumnFocus: focus })
+        return conversationsOf()
+      },
       setWorkingDirectory: async (id: string, path: string) => {
         send({ type: 'workspace', conversationId: id, path })
         return conversationsOf()
@@ -1669,7 +1684,14 @@ export function installPhoneVav(transport: PhoneTransport): PhoneVavHandle {
       onActivity: () => () => undefined
     },
     agent: {
-      send: async (conversationId: string, text: string) => {
+      send: async (
+        conversationId: string,
+        text: string,
+        _attachments?: string[],
+        contextBlocks?: PreviewRef[] | null,
+        _contextFile?: string | null,
+        appColumnFocus?: AppColumnFocus | null
+      ) => {
         let id = (conversationId || '').trim()
         if (!id) {
           const created = await api.conversations.create()
@@ -1687,7 +1709,13 @@ export function installPhoneVav(transport: PhoneTransport): PhoneVavHandle {
         }
         const composed = composeSendText(text, transport.pageState())
         emitTurns([userTurnEvent(id, composed)])
-        send({ type: 'send', conversationId: id, text: composed })
+        send({
+          type: 'send',
+          conversationId: id,
+          text: composed,
+          ...(appColumnFocus ? { appColumnFocus } : {}),
+          ...(contextBlocks?.length ? { contextBlocks } : {})
+        })
       },
       appendNotice: async () => undefined,
       cancel: async (conversationId: string) => {
@@ -1811,6 +1839,8 @@ export function installPhoneVav(transport: PhoneTransport): PhoneVavHandle {
       setPictureInPicture: async () => undefined,
       closeDetachedSession: async () => undefined,
       newDetachedSession: async () => undefined,
+      newSessionHere: async () => undefined,
+      navigateSession: async () => undefined,
       listDetachedSessions: async () => [],
       popupMenu: (items: NativeMenuItem[], position?: { x: number; y: number }) =>
         showDomMenu(items, position),
@@ -2372,6 +2402,14 @@ export function installPhoneVav(transport: PhoneTransport): PhoneVavHandle {
         error: 'unavailable'
       }),
       onChanged: () => () => undefined
+    },
+    apps: {
+      onApply: (handler) => {
+        appApplyHandlers.add(handler)
+        return () => {
+          appApplyHandlers.delete(handler)
+        }
+      }
     },
     knowledge: {
       list: async () => [],

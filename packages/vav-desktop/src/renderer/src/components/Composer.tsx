@@ -11,7 +11,6 @@ import {
 import {
   ArrowUp,
   ChevronDown,
-  CornerUpLeft,
   MapPin,
   MessageSquare,
   Plus,
@@ -39,6 +38,8 @@ import { imageInputLimits, modelAcceptsImageInput } from '@shared/agentImageInpu
 import { vendorIdFromEndpoint } from '@shared/llmVendors'
 import { useAccountGroups, vavAccountsOf } from '../lib/accountGroups'
 import { useT } from '../i18n/useT'
+import { AppContextBar } from './AppContextBar'
+import { selectAppColumnContext } from '../lib/appColumnContext'
 import { attachScreenshot } from '../lib/composerAttach'
 import { ensureComputerPermissions } from '../lib/computerPermissions'
 import { COMPOSER_MIN_ROWS, composerWheelStaysOnField } from '../lib/composerTextarea'
@@ -49,6 +50,8 @@ import { Button } from './ui'
 import { AgentModelPicker } from './AgentModelPicker'
 import { ComposerAttachments } from './ComposerAttachments'
 import { SessionRunPicker } from './SessionRunPicker'
+import { ComposerWorkspacePicker } from './ComposerWorkspacePicker'
+import { PENDING_COMPOSER_ID } from '../lib/pendingComposer'
 import { filterComputerApps, type ComputerApp } from '@shared/computerUse'
 import { MentionBox, type MentionBoxHandle, type MentionItem } from './mentionBox/MentionBox'
 import type { MentionOptions } from './mentionBox/mentionModel'
@@ -88,92 +91,54 @@ const NO_REFS: import('@shared/types').PreviewRef[] = []
 const NO_CARDS: { ref: import('@shared/types').PreviewRef; comment: string }[] = []
 
 /**
- * Quote strip, message queue, and comment cards.
+ * Message queue and comment cards.
  *
  * Lives at the bottom of the Agent log column (not inside the dock) so
  * appear/disappear only resizes the transcript — composer box + tools tray
  * keep a stable height.
  *
- * Vertical order: queue → quote → comment cards → (composer in dock).
+ * Vertical order: queue → app context → comment cards → (composer in dock).
  */
 export function ComposerContext({
   conversationId: pinnedConversationId
 }: {
   conversationId?: string | null
 } = {}): React.JSX.Element | null {
-  const t = useT()
   const storeActiveId = useSessionStore((s) => s.activeId)
   const conversationId = (pinnedConversationId?.trim() || storeActiveId) || ''
   const commentCards = useSessionStore((s) => s.commentCards[conversationId] ?? NO_CARDS)
   const messageQueue = useSessionStore((s) => s.messageQueues[conversationId] ?? NO_QUEUE)
-  const quote = useSessionStore((s) => s.quotes[conversationId] ?? null)
-  const clearQuote = useSessionStore((s) => s.clearQuote)
-  const scrollToMessage = useSessionStore((s) => s.scrollToMessage)
+  const appContext = useSessionStore(selectAppColumnContext)
+  const showAppContext = !!appContext
+  const showCommentCards = appContext?.level === 'selected' && commentCards.length > 0
 
-  const hasCommentCards = commentCards.length > 0
+  const hasCommentCards = showCommentCards
   const hasQueue = messageQueue.length > 0
-  const quoteSource =
-    quote?.role === 'user' ? t('composer.quoteFromUser') : t('composer.quoteFromAgent')
-
-  useEffect(() => {
-    if (!quote || !conversationId) return
-    const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') {
-        event.preventDefault()
-        clearQuote(conversationId)
-      }
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [quote, conversationId, clearQuote])
 
   if (!conversationId) return null
-  if (!quote && !hasCommentCards && !hasQueue) return null
+  if (!hasCommentCards && !hasQueue && !showAppContext) return null
 
   return (
     <div
-      className={`composer-context${hasCommentCards ? ' has-comment-cards' : ''}${hasQueue ? ' has-message-queue' : ''}`}
+      className={`composer-context${showAppContext ? ' has-app-context' : ''}${hasCommentCards ? ' has-comment-cards' : ''}${hasQueue ? ' has-message-queue' : ''}`}
       data-has-context="true"
       onMouseDown={retainComposerFocus}
     >
       {hasQueue && <MessageQueueBar conversationId={conversationId} items={messageQueue} />}
-      {quote && (
-        <div className="quote-strip" data-testid="composer-quote">
-          <button
-            type="button"
-            className="quote-strip-body"
-            title={`${quote.summary}\n${t('composer.quoteJump')}`}
-            onClick={() => scrollToMessage(quote.messageId)}
-          >
-            <CornerUpLeft size={14} />
-            <span className="quote-strip-text">
-              <span className="quote-strip-summary">{quote.summary}</span>
-              <span className="quote-strip-source">{quoteSource}</span>
-            </span>
-          </button>
-          <button
-            type="button"
-            className="btn icon-only sm"
-            title={t('composer.clearQuote')}
-            onClick={() => clearQuote(conversationId)}
-          >
-            <X size={12} />
-          </button>
-        </div>
-      )}
-      <CommentCardsBar conversationId={conversationId} />
+      {showAppContext && appContext ? <AppContextBar context={appContext} /> : null}
+      {showCommentCards ? <CommentCardsBar conversationId={conversationId} /> : null}
     </div>
   )
 }
 
-export type ComposerVariant = 'chat' | 'schedule'
+export type ComposerVariant = 'chat' | 'schedule' | 'home'
 
 /**
  * Single shared composer for main session, workspace agent column, and
  * file-preview drawer. Pass {@link conversationId} when the surface owns a
  * session that may lag behind (or differ from) store.activeId for a frame.
  *
- * Quote / comments / queue live in {@link ComposerContext} (Agent log column)
+ * Comments / queue live in {@link ComposerContext} (Agent log column)
  * so the dock height stays independent of those strips.
  *
  * `schedule` reuses the same prompt card without send / screenshot — the
@@ -194,10 +159,14 @@ export function Composer({
 } = {}): React.JSX.Element {
   const t = useT()
   const isSchedule = variant === 'schedule'
+  const isHome = variant === 'home'
   const storeActiveId = useSessionStore((s) => s.activeId)
   const conversationId = isSchedule
     ? (pinnedConversationId?.trim() ?? '')
-    : (pinnedConversationId?.trim() || storeActiveId) || ''
+    : isHome
+      ? PENDING_COMPOSER_ID
+      : (pinnedConversationId?.trim() || storeActiveId) || PENDING_COMPOSER_ID
+  const showWorkspace = isHome
   const conversation = useSessionStore((s) =>
     s.conversations.find((c) => c.id === conversationId)
   )
@@ -208,9 +177,12 @@ export function Composer({
   const previewRefs = useSessionStore((s) => s.previewRefs[conversationId] ?? NO_REFS)
   const commentCards = useSessionStore((s) => s.commentCards[conversationId] ?? NO_CARDS)
   const contextFile = useSessionStore((s) => s.contextFiles[conversationId] ?? null)
+  const appContext = useSessionStore(selectAppColumnContext)
+  const leftoverContext =
+    contextFile && contextFile !== appContext?.path ? contextFile : null
   const composerFiles = useMemo(
-    () => mergeComposerFilePaths(contextFile, attachments),
-    [contextFile, attachments]
+    () => mergeComposerFilePaths(leftoverContext, attachments),
+    [leftoverContext, attachments]
   )
   const isRunning = useSessionStore((s) => !!s.turns[conversationId]?.isRunning)
   const awaiting = useSessionStore((s) => !!s.turns[conversationId]?.awaitingToolCallId)
@@ -355,6 +327,8 @@ export function Composer({
   useEffect(() => {
     if (focusTick === 0) return
     if (focusId && focusId !== conversationId) return
+    const el = mentionRef.current?.textarea
+    if (el?.closest('[hidden]')) return
     mentionRef.current?.focus()
   }, [focusTick, focusId, conversationId])
 
@@ -363,7 +337,10 @@ export function Composer({
       if (attachBusy) return
       setAttachBusy(true)
       try {
-        await attachScreenshot(hideWindow === undefined ? undefined : { hideWindow })
+        await attachScreenshot({
+          conversationId,
+          ...(hideWindow === undefined ? {} : { hideWindow })
+        })
       } finally {
         setAttachBusy(false)
       }
@@ -604,7 +581,7 @@ export function Composer({
     })()
   }
 
-  const hasCommentCards = commentCards.length > 0
+  const hasCommentCards = appContext?.level === 'selected' && commentCards.length > 0
 
   const handlePaste = async (event: ClipboardEvent<HTMLTextAreaElement>): Promise<void> => {
     const { filePaths, pathSizes, memoryImages, text } = collectClipboardImages(event.clipboardData)
@@ -676,8 +653,9 @@ export function Composer({
 
   return (
     <div
-      className={`composer${hasCommentCards ? ' has-comment-cards' : ''}${isSchedule ? ' is-schedule' : ''}`}
+      className={`composer${hasCommentCards ? ' has-comment-cards' : ''}${isSchedule ? ' is-schedule' : ''}${isHome ? ' is-home' : ''}`}
       data-testid="composer"
+      data-variant={variant}
       onMouseDown={retainComposerFocus}
     >
       {/* Context chips / comments live in ComposerContext (Agent log column). */}
@@ -730,7 +708,7 @@ export function Composer({
             conversationId={conversationId}
             imageInputSupported={imageInputSupported}
             onRemove={(path) => {
-              if (path === contextFile) void dismissContextFile(conversationId)
+              if (path === leftoverContext) void dismissContextFile(conversationId)
               setAttachments(
                 conversationId,
                 attachments.filter((p) => p !== path)
@@ -820,6 +798,7 @@ export function Composer({
             >
               <Plus size={12} strokeWidth={2} />
             </button>
+            {showWorkspace ? <ComposerWorkspacePicker /> : null}
             {isSchedule ? null : (
               <span className="composer-shot-group">
                 <button
@@ -871,10 +850,12 @@ export function Composer({
           <span className="spacer" />
 
           <span className="composer-meta">
-            {conversationId ? (
+            {isSchedule ? null : conversation ? (
               <SessionRunPicker conversationId={conversationId}>
                 <AgentModelPicker conversationId={conversationId} usage={tokenUsage} />
               </SessionRunPicker>
+            ) : conversationId ? (
+              <AgentModelPicker conversationId={conversationId} usage={tokenUsage} />
             ) : null}
           </span>
 

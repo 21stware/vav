@@ -6,9 +6,30 @@ import {
   formatBlockPickLabel,
   formatPreviewContext,
   formatPreviewLineRange,
-  hasKnownLineRange
+  hasKnownLineRange,
+  parsePreviewRefs
 } from './previewContext.ts'
 import type { PreviewRef } from './types.ts'
+
+describe('parsePreviewRefs', () => {
+  it('keeps valid refs and skips broken ones', () => {
+    const refs = parsePreviewRefs([
+      {
+        id: '/tmp/a.md::p1',
+        filePath: '/tmp/a.md',
+        label: 'paragraph',
+        startLine: 1,
+        endLine: 2,
+        text: 'hello',
+        badge: 'MD'
+      },
+      { id: 'bad' }
+    ])
+    assert.equal(refs?.length, 1)
+    assert.equal(refs?.[0]?.badge, 'MD')
+    assert.equal(parsePreviewRefs([]), undefined)
+  })
+})
 
 describe('preview line range', () => {
   it('treats 0 as unknown so office/media picks do not invent line 1', () => {
@@ -146,5 +167,20 @@ describe('composeContextUserText', () => {
     )
     assert.match(out, /Selected context[\s\S]*Attachments:[\s\S]*rewrite this/)
     assert.match(out, /line 2/)
+  })
+
+  it('prefixes the selected VAV note before the user text', () => {
+    const out = composeContextUserText('调研金价，写到 Note 里', null, null, {
+      kind: 'knowledge',
+      level: 'item',
+      title: 'Meeting notes',
+      path: '/tmp/notes/kh1.md',
+      objectId: 'n1',
+      url: 'vav://app/knowledge?id=kh1'
+    })
+    assert.match(out, /## VAV app context/)
+    assert.match(out, /Meeting notes/)
+    assert.match(out, /MacVise/)
+    assert.match(out, /调研金价/)
   })
 })

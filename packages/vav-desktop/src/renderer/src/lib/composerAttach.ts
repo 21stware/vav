@@ -1,24 +1,32 @@
 import { tt } from '../i18n/useT'
 import { handoffFileFocusToCli } from './cliFocusHandoff'
+import { isPendingComposerId, PENDING_COMPOSER_ID } from './pendingComposer'
 import { useSessionStore } from '../state/sessionStore'
 
-async function ensureActiveConversation(): Promise<string | null> {
+async function ensureComposerTarget(conversationId?: string | null): Promise<string | null> {
+  const pinned = conversationId?.trim() || ''
+  if (isPendingComposerId(pinned)) return PENDING_COMPOSER_ID
   const store = useSessionStore.getState()
+  if (pinned && store.conversations.some((c) => c.id === pinned)) return pinned
   const current = store.activeId
   if (current && store.conversations.some((c) => c.id === current)) return current
+  if (pinned || !current) return PENDING_COMPOSER_ID
   const created = await store.createConversation({ openIn: 'here' })
   if (typeof created === 'string' && created) return created
-  return useSessionStore.getState().activeId || null
+  return useSessionStore.getState().activeId || PENDING_COMPOSER_ID
 }
 
 /**
  * Drag-select the screen, annotate, then pin the PNG.
  * `hideWindow` overrides the default (`screenshotKeepWindowFront`).
  */
-export async function attachScreenshot(opts?: { hideWindow?: boolean }): Promise<void> {
+export async function attachScreenshot(opts?: {
+  hideWindow?: boolean
+  conversationId?: string | null
+}): Promise<void> {
   document.documentElement.classList.add('is-screenshotting')
   try {
-    const id = await ensureActiveConversation()
+    const id = await ensureComposerTarget(opts?.conversationId)
     if (!id) return
     const hideWindow =
       opts?.hideWindow ??
@@ -49,8 +57,8 @@ export async function attachScreenshot(opts?: { hideWindow?: boolean }): Promise
   }
 }
 
-export async function attachPickedFiles(): Promise<void> {
-  const id = await ensureActiveConversation()
+export async function attachPickedFiles(conversationId?: string | null): Promise<void> {
+  const id = await ensureComposerTarget(conversationId)
   if (!id) return
   const result = await window.vav.files.pickAttachments()
   if (!result.ok || result.paths.length === 0) return
@@ -60,7 +68,11 @@ export async function attachPickedFiles(): Promise<void> {
 /** Files panel / preview: pin paths on the composer like a paperclip or drop. */
 export function addFilesToComposer(paths: string[], conversationId?: string | null): void {
   const store = useSessionStore.getState()
-  const id = conversationId?.trim() || store.activeId
+  const pinned = conversationId?.trim() || ''
+  const id =
+    (isPendingComposerId(pinned) ? PENDING_COMPOSER_ID : pinned) ||
+    store.activeId ||
+    PENDING_COMPOSER_ID
   if (!id) return
   const files = [...new Set(paths.map((path) => path.trim()).filter(Boolean))]
   if (files.length === 0) return

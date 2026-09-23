@@ -168,4 +168,111 @@ describe('registerDbIpc', () => {
     )
     assert.equal(store.get(created.id)?.lastStatus, 'failed')
   })
+
+  it('does not mint a server connection for a local data file session', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'vav-db-ipc-'))
+    const store = new DbConnectionStore(dir, memoryVault())
+    const conversations = new Map<string, Conversation>()
+    conversations.set('file-1', {
+      id: 'file-1',
+      title: 'sales.csv',
+      dataFilePath: '/tmp/sales.csv'
+    } as Conversation)
+    const handlers = new Map<string, (...args: unknown[]) => unknown>()
+    registerDbIpc(
+      {
+        handle: (channel: string, fn: (...args: unknown[]) => unknown) => {
+          handlers.set(channel, fn)
+        }
+      } as never,
+      store,
+      { evict: () => undefined, test: async () => ({ ok: true }) } as never,
+      {
+        get: (id: string) => conversations.get(id),
+        updateMeta: () => undefined
+      } as never,
+      () => undefined,
+      {
+        createDefinitionConversation: () => {
+          throw new Error('should not mint a conversation')
+        },
+        publishConversations: () => undefined
+      }
+    )
+    const ensured = await handlers.get(IPC.dbEnsureForConversation)?.({}, 'file-1')
+    assert.equal(ensured, null)
+    assert.equal(store.getForConversation('file-1'), undefined)
+  })
+
+  it('renames the session when a localhost draft switches to a file', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'vav-db-ipc-'))
+    const store = new DbConnectionStore(dir, memoryVault())
+    const conversations = new Map<string, Conversation>()
+    conversations.set('c3', { id: 'c3', title: 'localhost' } as Conversation)
+    const connection = store.create({ conversationId: 'c3', host: 'localhost' })
+    const handlers = new Map<string, (...args: unknown[]) => unknown>()
+    registerDbIpc(
+      {
+        handle: (channel: string, fn: (...args: unknown[]) => unknown) => {
+          handlers.set(channel, fn)
+        }
+      } as never,
+      store,
+      { evict: () => undefined, test: async () => ({ ok: true }) } as never,
+      {
+        get: (id: string) => conversations.get(id),
+        updateMeta: (id: string, patch: { title?: string }) => {
+          const row = conversations.get(id)
+          if (row && patch.title) row.title = patch.title
+        }
+      } as never,
+      () => undefined,
+      {
+        createDefinitionConversation: () => {
+          throw new Error('should not mint a conversation')
+        },
+        publishConversations: () => undefined
+      }
+    )
+    await handlers.get(IPC.dbUpdate)?.({}, connection.id, {
+      driver: 'duckdb',
+      host: '',
+      database: '/tmp/sales.duckdb'
+    })
+    assert.equal(conversations.get('c3')?.title, 'sales.duckdb')
+  })
+
+  it('resets a localhost leftover to Untitled when the connection has no identity', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'vav-db-ipc-'))
+    const store = new DbConnectionStore(dir, memoryVault())
+    const conversations = new Map<string, Conversation>()
+    conversations.set('c4', { id: 'c4', title: 'localhost' } as Conversation)
+    const connection = store.create({ conversationId: 'c4', host: 'localhost' })
+    const handlers = new Map<string, (...args: unknown[]) => unknown>()
+    registerDbIpc(
+      {
+        handle: (channel: string, fn: (...args: unknown[]) => unknown) => {
+          handlers.set(channel, fn)
+        }
+      } as never,
+      store,
+      { evict: () => undefined, test: async () => ({ ok: true }) } as never,
+      {
+        get: (id: string) => conversations.get(id),
+        updateMeta: (id: string, patch: { title?: string }) => {
+          const row = conversations.get(id)
+          if (row && patch.title) row.title = patch.title
+        }
+      } as never,
+      () => undefined,
+      {
+        createDefinitionConversation: () => {
+          throw new Error('should not mint a conversation')
+        },
+        publishConversations: () => undefined
+      }
+    )
+    await handlers.get(IPC.dbUpdate)?.({}, connection.id, { host: 'localhost' })
+    assert.equal(conversations.get('c4')?.title, 'Untitled-db-connection')
+  })
 })

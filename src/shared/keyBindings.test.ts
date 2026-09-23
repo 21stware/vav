@@ -45,6 +45,31 @@ describe('faaaaast binding', () => {
   })
 })
 
+describe('new session bindings', () => {
+  it('defaults Cmd+N in this window and Cmd+Shift+N for an isolated window', () => {
+    const bindings = resolveKeyBindings({})
+    assert.equal(bindings.newSession, 'CmdOrCtrl+N')
+    assert.equal(bindings.newSessionWindow, 'CmdOrCtrl+Shift+N')
+    const chord = {
+      type: 'keyDown' as const,
+      key: 'n',
+      code: 'KeyN',
+      control: false,
+      alt: false,
+      meta: true
+    }
+    assert.equal(matchesAccelerator({ ...chord, shift: false }, bindings.newSession, 'darwin'), true)
+    assert.equal(
+      matchesAccelerator({ ...chord, shift: false }, bindings.newSessionWindow, 'darwin'),
+      false
+    )
+    assert.equal(
+      matchesAccelerator({ ...chord, shift: true }, bindings.newSessionWindow, 'darwin'),
+      true
+    )
+  })
+})
+
 describe('swarm pane bindings', () => {
   it('defaults split and spatial focus chords', () => {
     const bindings = resolveKeyBindings({})

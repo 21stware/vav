@@ -10,6 +10,7 @@ import { spawn } from 'node:child_process'
 import { existsSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { vavHome } from '../plugins/pluginPaths.ts'
 import { loadOrCreateIdentity, loadOrCreateSecret } from './identity.ts'
 import {
   clearListenState,
@@ -23,7 +24,7 @@ export const DEFAULT_PROFILE = 'default'
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 
 export function serversRoot(home = homedir()): string {
-  return join(home, '.vav', 'servers')
+  return join(vavHome(home), 'servers')
 }
 
 export function profileDir(name: string, home = homedir()): string {

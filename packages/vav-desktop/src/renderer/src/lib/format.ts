@@ -19,6 +19,16 @@ export function relativeTime(timestamp: number): string {
   return new Date(timestamp).toLocaleDateString(getResolvedLocale())
 }
 
+/** Full clock for a fact tooltip. Relative labels stay in the strip. */
+export function absoluteTime(timestamp: number): string {
+  if (!Number.isFinite(timestamp)) return ''
+  try {
+    return new Date(timestamp).toLocaleString(getResolvedLocale())
+  } catch {
+    return new Date(timestamp).toISOString()
+  }
+}
+
 /** Temp / unrooted shells — not a project path; labeled "Default workspace". */
 export function isTemporaryWorkspace(path: string | null, tmp: string): boolean {
   if (!path) return true
@@ -68,9 +78,11 @@ export function truncatePathLabel(path: string, limit = 26): string {
 }
 
 export function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes < 0) return '0B'
   if (bytes < 1024) return `${bytes}B`
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)}KB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)}MB`
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)}MB`
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)}GB`
 }
 
 export function formatTokens(value: number): string {

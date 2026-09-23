@@ -34,6 +34,7 @@ import {
 } from '../../lib/agentInstallStatus'
 import { refreshAnalysis, useAnalysisCache } from '../../lib/analysisCache'
 import { AgentBrandMark } from '../AgentBrandMark'
+import { countFact, ObjectFacts, timeFact } from '../ObjectFacts'
 import { Button } from '../ui'
 
 const QUOTA_LABEL: Record<QuotaWindowKind, MessageKey> = {
@@ -128,6 +129,18 @@ export function AnalysisSettings(): React.JSX.Element {
     () => filterAnalysisTurns(usage?.turns ?? [], analysisSinceMs(range, now)),
     [usage?.turns, range, now]
   )
+  const usageSpan = useMemo(() => {
+    if (scopedTurns.length === 0) return null
+    let created = scopedTurns[0]!.timestamp
+    let updated = created
+    let tokens = 0
+    for (const turn of scopedTurns) {
+      if (turn.timestamp < created) created = turn.timestamp
+      if (turn.timestamp > updated) updated = turn.timestamp
+      tokens += turn.inputTokens + turn.outputTokens + turn.cacheReadTokens + turn.cacheWriteTokens
+    }
+    return { created, updated, tokens }
+  }, [scopedTurns])
   const slices = useMemo(() => slicesFromTurns(scopedTurns), [scopedTurns])
   const accountNames = useMemo(() => {
     const names = new Map<string, string>()
@@ -155,35 +168,40 @@ export function AnalysisSettings(): React.JSX.Element {
     <div className="analysis-stack" data-testid="settings-analysis">
       <section className="analysis-section">
         <div className="analysis-section-head">
+          <div className="analysis-card-head">
+            <h2 className="analysis-title">{t('analysis.usageTitle')}</h2>
+            <div className="analysis-range" role="tablist" aria-label={t('analysis.usageTitle')}>
+              {(['7d', '30d', 'all'] as const).map((id) => (
+                <button
+                  key={id}
+                  type="button"
+                  role="tab"
+                  aria-selected={range === id}
+                  className={`analysis-range-btn${range === id ? ' is-on' : ''}`}
+                  onClick={() => setRange(id)}
+                >
+                  {t(
+                    id === '7d'
+                      ? 'analysis.range7d'
+                      : id === '30d'
+                        ? 'analysis.range30d'
+                        : 'analysis.rangeAll'
+                  )}
+                </button>
+              ))}
+            </div>
+          </div>
+          <ObjectFacts
+            variant="inline"
+            items={[
+              timeFact('created', t('object.fact.created'), usageSpan?.created),
+              timeFact('updated', t('object.fact.updated'), usageSpan?.updated),
+              countFact('tokens', t('object.fact.tokens'), usageSpan?.tokens),
+              timeFact('rates', t('object.fact.rates'), snapshot?.pricesUpdatedAt)
+            ]}
+          />
           <p className="analysis-lede">{t('analysis.usageHint')}</p>
           <p className="analysis-lede">{t('analysis.pricesHint')}</p>
-          {snapshot?.pricesUpdatedAt ? (
-            <p className="analysis-lede">
-              {t('analysis.pricesUpdated', {
-                clock: formatExpiry(snapshot.pricesUpdatedAt, now, locale)
-              })}
-            </p>
-          ) : null}
-          <div className="analysis-range" role="tablist" aria-label={t('analysis.usageTitle')}>
-            {(['7d', '30d', 'all'] as const).map((id) => (
-              <button
-                key={id}
-                type="button"
-                role="tab"
-                aria-selected={range === id}
-                className={`analysis-range-btn${range === id ? ' is-on' : ''}`}
-                onClick={() => setRange(id)}
-              >
-                {t(
-                  id === '7d'
-                    ? 'analysis.range7d'
-                    : id === '30d'
-                      ? 'analysis.range30d'
-                      : 'analysis.rangeAll'
-                )}
-              </button>
-            ))}
-          </div>
         </div>
         {usage && usage.total.sessions > 0 ? (
           <>

@@ -172,6 +172,39 @@ describe('applySessionTurnEvent recovery chrome', () => {
     assert.equal(ctx.get().errorBanner, null)
   })
 
+  it('keeps the live reply when the control plane sends an empty done frame', () => {
+    const ctx = apply({ type: 'start', conversationId: ID })
+    getProjection(ID).appendReasoning(0, '查一下金价')
+    getProjection(ID).getSnapshot()
+    apply(
+      {
+        type: 'end',
+        conversationId: ID,
+        message: assistant({ id: `remote-end-${ID}`, parentId: null, content: '', blocks: [] }),
+        tokensUsed: 0
+      },
+      ctx
+    )
+    assert.equal(getProjection(ID).getSnapshot().active, true)
+    assert.equal(ctx.get().messages[ID], undefined)
+    assert.equal(ctx.get().activeLeaf[ID], undefined)
+    apply(
+      {
+        type: 'end',
+        conversationId: ID,
+        message: assistant({
+          content: '金价这周在涨。',
+          blocks: [{ kind: 'text', text: '金价这周在涨。' }]
+        }),
+        tokensUsed: 3
+      },
+      ctx
+    )
+    assert.equal(getProjection(ID).getSnapshot().active, false)
+    assert.equal(ctx.get().messages[ID]?.at(-1)?.content, '金价这周在涨。')
+    assert.equal(ctx.get().activeLeaf[ID], 'asst-1')
+  })
+
   it('end does not persist an empty cancelled leaf', () => {
     const ctx = apply({ type: 'start', conversationId: ID })
     apply(

@@ -1,8 +1,8 @@
 import { existsSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { TIMER_BRIEF_FILE, TIMER_OUTPUT_FILE, type TimerJob } from '@shared/timer'
-import { textOf } from '../agent/agentMessage'
 import { threadPath } from '@shared/thread'
+import type { ChatMessage, ToolCallBlock } from '@shared/types'
 import type { ConversationStore } from '../store/ConversationStore'
 import type { TimerStore } from '../store/TimerStore'
 import { resolveTimerWorkdir } from './mintTimerWorkdir'
@@ -10,7 +10,7 @@ import { resolveTimerWorkdir } from './mintTimerWorkdir'
 export type TimerSchedulerDeps = {
   store: TimerStore
   conversations: ConversationStore
-  tmp: string
+  tmp: string | (() => string)
   defaultModel: () => string
   runTurn: (conversationId: string, text: string) => void
   isRunning: (conversationId: string) => boolean
@@ -22,19 +22,49 @@ export type TimerSchedulerDeps = {
   shouldDefer?: () => boolean | Promise<boolean>
   /** Push the new run conversation to the desktop sidebar. */
   publish?: () => void
+  /** Register the minted run workdir so fs_write / storage_write pass path allow. */
+  watchWorkdir?: (conversationId: string, workdir: string) => void
 }
 
-function lastAssistantText(store: ConversationStore, conversationId: string): string {
-  const conversation = store.get(conversationId)
-  if (!conversation) return ''
-  const path = threadPath(conversation.messages, conversation.activeLeafId)
-  for (let i = path.length - 1; i >= 0; i--) {
-    const message = path[i]!
+const APP_OUTPUT_TOOLS = new Set([
+  'note_write',
+  'note_edit',
+  'knowledge_write',
+  'knowledge_library',
+  'analysis_write',
+  'analysis_edit',
+  'schedule_write',
+  'schedule_edit',
+  'storage_write',
+  'storage_edit',
+  'app'
+])
+
+/** Last durable result of a scheduled run: an app URL, or a file the task actually wrote. */
+export function timerRunDestination(messages: readonly ChatMessage[], leafId: string | null): string | null {
+  let found: string | null = null
+  for (const message of threadPath(messages, leafId)) {
     if (message.role !== 'assistant') continue
-    const text = (message.content || textOf(message.blocks) || '').trim()
-    if (text) return text
+    for (const block of message.blocks) {
+      if (block.kind !== 'toolCall' || block.status !== 'completed') continue
+      const dest = destinationOf(block)
+      if (dest) found = dest
+    }
   }
-  return ''
+  return found
+}
+
+function destinationOf(block: ToolCallBlock): string | null {
+  const url = block.output.match(/vav:\/\/app\/\S+/)?.[0]
+  if (url && APP_OUTPUT_TOOLS.has(block.tool)) return url
+  if (block.tool !== 'fs_write') return null
+  try {
+    const input = JSON.parse(block.input) as { path?: unknown }
+    const path = typeof input.path === 'string' ? input.path.trim() : ''
+    return path || null
+  } catch {
+    return null
+  }
 }
 
 export function timerTurnPrompt(job: TimerJob): string {
@@ -46,7 +76,14 @@ export function timerTurnPrompt(job: TimerJob): string {
     job.prompt.trim(),
     '',
     'This is a scheduled task. Do not ask the user questions. Do not wait for approval.',
-    `When finished, write a Markdown report to ${TIMER_OUTPUT_FILE} in the working directory (title, what you did, result, any URLs).`,
+    'Save the result where this task asks:',
+    '- A note, 笔记, or write-up to keep → `note_write` (new) or `note_edit` (an existing note). Do not `fs_write` a markdown file for it.',
+    '- An analysis dataset or live database → `analysis_write` or `analysis_edit`, then `sql_query`.',
+    '- A scheduled task → `schedule_write` or `schedule_edit`.',
+    '- A file for the Storage catalog → `storage_write` or `storage_edit`.',
+    '- A workspace path the task names, or a report / slides / HTML / PDF / Office file → write that file. Mark a deliberate document as an artifact.',
+    '- If the task names no destination, save the result as a Note with `note_write`.',
+    `Do not create ${TIMER_OUTPUT_FILE} unless the task names that file.`,
     connectors
   ].join('\n')
 }
@@ -90,18 +127,26 @@ export class TimerScheduler {
 
   fire(job: TimerJob, now = this.deps.now?.() ?? Date.now()): { conversationId: string; runId: string } | null {
     if (!job.prompt.trim()) return null
-    const workdir = resolveTimerWorkdir(job, this.deps.tmp, now)
+    const tmp = typeof this.deps.tmp === 'function' ? this.deps.tmp() : this.deps.tmp
+    const workdir = resolveTimerWorkdir(job, tmp, now)
     writeFileSync(
       join(workdir, TIMER_BRIEF_FILE),
       `# ${job.title}\n\n${job.prompt.trim()}\n`,
       'utf8'
     )
-    const conversation = this.deps.conversations.create(workdir, this.deps.defaultModel(), {
+    const source = job.conversationId ? this.deps.conversations.get(job.conversationId) : undefined
+    const pinned = Boolean(job.model?.trim())
+    const model = job.model?.trim() || source?.model?.trim() || this.deps.defaultModel()
+    const conversation = this.deps.conversations.create(workdir, model, {
       title: job.title,
       sessionKind: 'timer',
       timerJobId: job.id,
       timerRunAt: now,
-      approvalMode: 'bypass'
+      approvalMode: 'bypass',
+      thinkingLevel: (pinned ? job.thinkingLevel : null) ?? source?.thinkingLevel,
+      fast: pinned ? job.fast === true : source?.fast === true,
+      cliHost: pinned ? job.cliHost : (source?.cliHost ?? null),
+      accountId: pinned ? job.accountId : (source?.accountId ?? null)
     })
     const run = this.deps.store.beginRun({
       jobId: job.id,
@@ -111,6 +156,7 @@ export class TimerScheduler {
     })
     if (!run) return null
     this.deps.conversations.updateMeta(conversation.id, { timerRunId: run.id })
+    this.deps.watchWorkdir?.(conversation.id, workdir)
     this.inflight.set(job.id, conversation.id)
     this.deps.runTurn(conversation.id, timerTurnPrompt(job))
     this.deps.publish?.()
@@ -123,15 +169,9 @@ export class TimerScheduler {
     if (!conversation || conversation.sessionKind !== 'timer' || !conversation.timerRunId) return
     const run = this.deps.store.getRun(conversation.timerRunId)
     if (!run || run.status !== 'running') return
-    const outputPath = join(run.workdir, TIMER_OUTPUT_FILE)
-    if (!existsSync(outputPath)) {
-      const body = lastAssistantText(this.deps.conversations, conversationId)
-      writeFileSync(
-        outputPath,
-        `# ${conversation.title}\n\n${body || '_No assistant output._'}\n`,
-        'utf8'
-      )
-    }
+    const written = timerRunDestination(conversation.messages, conversation.activeLeafId)
+    const outputFile = join(run.workdir, TIMER_OUTPUT_FILE)
+    const outputPath = written ?? (existsSync(outputFile) ? outputFile : null)
     this.deps.store.finishRun(run.id, {
       status: failed ? 'failed' : 'done',
       outputPath,

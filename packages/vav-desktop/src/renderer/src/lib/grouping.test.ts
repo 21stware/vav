@@ -44,6 +44,13 @@ describe('stableDatabaseTitle', () => {
       stableDatabaseTitle({ ...row, title: 'Analytics' }, 'Untitled-db-connection'),
       'Analytics'
     )
+    assert.equal(
+      stableDatabaseTitle(
+        { title: 'localhost', database: '', host: 'localhost', driver: 'postgres', user: '' },
+        'Untitled-db-connection'
+      ),
+      'Untitled-db-connection'
+    )
   })
 })
 
@@ -78,22 +85,31 @@ describe('listedSidebarGroups', () => {
     assert.deepEqual(ids, ['idle', 'run'])
   })
 
-  it('keeps only workspace conversations in the session list', () => {
+  it('keeps workspace chats and fired schedule runs in the session list', () => {
     const rows = [
       conv({ id: 'live', title: 'Chat' }),
       conv({ id: 'arch', title: 'Old chat', archived: true, archivedAt: 3 }),
       conv({ id: 'timer', title: 'Run', sessionKind: 'timer', timerJobId: 'j', timerRunId: 'r' }),
-      conv({ id: 'arch-timer', title: 'Old', sessionKind: 'timer', archived: true, archivedAt: 2 }),
+      conv({ id: 'def', title: 'Nightly', sessionKind: 'timer' }),
+      conv({
+        id: 'arch-timer',
+        title: 'Old',
+        sessionKind: 'timer',
+        timerJobId: 'j',
+        timerRunId: 'old',
+        archived: true,
+        archivedAt: 2
+      }),
       conv({ id: 'db', title: 'Prod', sessionKind: 'db' }),
       conv({ id: 'note', title: 'Notes', sessionKind: 'knowledge' }),
       conv({ id: 'file', title: 'Doc', fileId: 'ino' })
     ]
     const main = listedSidebarGroups(rows, opts).flatMap((g) => g.conversations.map((c) => c.id))
-    assert.deepEqual(main, ['live'])
+    assert.deepEqual(new Set(main), new Set(['live', 'timer']))
     const archived = listedSidebarGroups(rows, { ...opts, archiveView: true }).flatMap((g) =>
       g.conversations.map((c) => c.id)
     )
-    assert.deepEqual(archived, ['arch'])
+    assert.deepEqual(new Set(archived), new Set(['arch', 'arch-timer']))
     const databases = listedSidebarGroups(rows, { ...opts, databasesView: true })
     assert.deepEqual(
       databases.map((g) => ({ key: g.key, kind: g.kind, ids: g.conversations.map((c) => c.id) })),
@@ -205,6 +221,7 @@ describe('listedSidebarGroups', () => {
       }
     ])
     assert.equal(merged[0]?.id, 'db-new')
+    assert.equal(merged[0]?.title, 'Untitled-db-connection')
     const groups = listedSidebarGroups(merged, { ...opts, databasesView: true })
     assert.deepEqual(
       groups.map((g) => g.conversations.map((c) => c.id)),

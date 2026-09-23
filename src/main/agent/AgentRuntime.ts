@@ -5,11 +5,11 @@ import { runAgentLoopContinue } from '@earendil-works/pi-agent-core'
 import type { Message } from '@earendil-works/pi-ai'
 import {
   type ChatMessage,
+  type AppColumnFocus,
   type AppSettings,
   type Conversation,
   type MessageBlock,
   type PreviewRef,
-  type QuoteDraft,
   type ToolCallBlock,
   type ToolCallStatus,
   type SecretAnswerPayload,
@@ -66,7 +66,9 @@ import {
   shouldPauseForApproval,
   shouldSkipToolGate,
   terminalCommandFromArgs,
-  connectorOpFromArgs
+  connectorOpFromArgs,
+  appOpFromArgs,
+  knowledgeLibraryOpFromArgs
 } from './toolApproval'
 import {
   blockFromContent,
@@ -78,6 +80,7 @@ import {
   createTools,
   type ToolDetails
 } from './tools'
+import { createAppResourceHost } from './appResourceHost'
 import { parseToolInput } from '@shared/askPlan'
 import {
   formatSecretToolResult,
@@ -87,6 +90,7 @@ import {
   parseSecretAnswer
 } from '@shared/sessionSecrets'
 import { SessionSecretStore } from '../store/SessionSecretStore.ts'
+import { resolveAgentAppBindings } from '@shared/appColumnFocus'
 import { buildSystemPrompt } from './systemPrompt'
 import { summarizeToolInput } from './toolSummarize'
 import { McpToolBridge } from '../plugins/mcpClient.ts'
@@ -103,6 +107,7 @@ import {
   startE2eStubApprove as runE2eStubApprove,
   startE2eStubStream as runE2eStubStream
 } from './agentE2eStub'
+import { knowledgeNoteDraft } from '@shared/knowledgeNoteDraft'
 import { FileDraftCoalescer, writeToolDraft } from '@shared/writeToolDraft'
 import type { ConversationStore } from '../store/ConversationStore'
 import { kindFromFilePath } from '../store/fileSessionKind'
@@ -217,6 +222,14 @@ export interface AgentRuntimeDeps {
   fileSessions?: FileSessionStore
   knowledge?: import('../store/KnowledgeStore').KnowledgeStore
   onKnowledgeChanged?: () => void
+  timers?: import('../store/TimerStore').TimerStore
+  dbConnections?: import('../store/DbConnectionStore').DbConnectionStore
+  createAppConversation?: (
+    kind: 'db' | 'knowledge' | 'timer'
+  ) => { id: string; title: string }
+  grantAppPath?: (path: string) => void
+  onAppObjectsChanged?: (kind: 'storage' | 'data' | 'knowledge' | 'scheduled') => void
+  onAppHostApply?: (event: import('../../shared/appHost.ts').AppHostEvent) => void
   /** Sync preview chrome when the agent flips Read/Edit via switch_mode. */
   onFileReadOnlyChange?: (conversationId: string, readOnly: boolean) => void
   /** Current / session-pinned VAV account. Falls back to the legacy API key. */
@@ -252,6 +265,7 @@ export class AgentRuntime {
   /** Stop arrived before {@link startTurn} registered the turn (phone tap). */
   private pendingCancels = new Set<string>()
   private fileDrafts = new FileDraftCoalescer()
+  private noteDrafts = new FileDraftCoalescer()
   /** Playwright ask-card waiters — not a full TurnState. */
   private e2eAskWaiters = new Map<string, (text: string) => void>()
 
@@ -298,14 +312,17 @@ export class AgentRuntime {
     conversationId: string,
     userText: string,
     attachments: string[],
-    quote?: QuoteDraft | null,
     contextBlocks?: PreviewRef[] | null,
-    contextFile?: string | null
+    contextFile?: string | null,
+    appColumnFocus?: AppColumnFocus | null
   ): Promise<void> {
     if (this.turns.has(conversationId)) return
-    // Bubble body stays user-typed only. Quote, preview context, attachments and
+    // Bubble body stays user-typed only. Preview context, attachments and
     // the file chip are stored as fields and reconstituted in buildHistory /
     // rendered as chips in the transcript (same shapes as the composer).
+    if (appColumnFocus) {
+      this.deps.conversations.updateMeta(conversationId, { appColumnFocus })
+    }
     const leaf = this.deps.conversations.activeLeaf(conversationId)
     const parentId = leaf === ROOT_LEAF ? null : leaf
     await this.startTurn(
@@ -314,10 +331,10 @@ export class AgentRuntime {
         conversationId,
         userText,
         parentId,
-        quote,
         contextBlocks,
         attachments,
-        contextFile
+        contextFile,
+        appColumnFocus
       )
     )
   }
@@ -554,19 +571,19 @@ export class AgentRuntime {
     conversationId: string,
     text: string,
     parentId: string | null,
-    quote?: QuoteDraft | null,
     contextBlocks?: PreviewRef[] | null,
     attachments?: string[] | null,
-    contextFile?: string | null
+    contextFile?: string | null,
+    appColumnFocus?: AppColumnFocus | null
   ): string {
     const message = userTurnMessage({
       id: randomUUID(),
       parentId,
       text,
-      quote,
       contextBlocks,
       attachments,
-      contextFile
+      contextFile,
+      appColumnFocus
     })
     // Storing first is what lets auto-title fire before the turn starts.
     this.deps.conversations.appendMessage(conversationId, message)
@@ -669,26 +686,29 @@ export class AgentRuntime {
       return
     }
     this.deps.changeSets?.beginTurn(conversationId, this.workdirOf(conversation))
+    const app = this.appBindings({
+      ...conversation,
+      appColumnFocus: parentMessage?.appColumnFocus ?? conversation.appColumnFocus
+    })
     // Document sandbox: ensure a working copy for the focused / file-session path
     // so agent tools and officecli mutate the copy, not the user's original.
     const logicalOpenPath =
-      conversation.focusedFilePath ||
-      (conversation.fileId && this.deps.fileSessions
-        ? this.deps.fileSessions.pathForFileId(conversation.fileId)
+      app.openFilePath ||
+      (app.fileId && this.deps.fileSessions
+        ? this.deps.fileSessions.pathForFileId(app.fileId)
         : null)
     let openFilePathForPrompt: string | null =
-      conversation.focusedFilePath ||
-      conversation.dataFilePath ||
-      (conversation.knowledgeHostId
-        ? this.deps.knowledge?.get(conversation.knowledgeHostId)?.storedPath ?? null
+      app.openFilePath ||
+      (app.knowledgeHostId
+        ? this.deps.knowledge?.get(app.knowledgeHostId)?.storedPath ?? null
         : null)
     if (logicalOpenPath && this.deps.files.workingCopies) {
       try {
         const wc = await this.deps.files.workingCopies.ensure(logicalOpenPath, {
-          fileId: conversation.fileId
+          fileId: app.fileId
         })
         // Point the model at the sandbox path so officecli/shell write the copy.
-        if (conversation.focusedFilePath) openFilePathForPrompt = wc.copyPath
+        if (app.openFilePath) openFilePathForPrompt = wc.copyPath
       } catch (err) {
         console.warn('[agent] working-copy ensure failed', logicalOpenPath, err)
       }
@@ -731,11 +751,11 @@ export class AgentRuntime {
       ? toPiReasoning(parseThinkingLevel(conversation.thinkingLevel))
       : undefined
 
-    const dbId = conversation.dbConnectionId?.trim() || ''
-    const dbSession = conversation.sessionKind === 'db' || Boolean(dbId)
-    const dataFilePath = conversation.dataFilePath?.trim() || ''
-    const knowledgeHost = conversation.knowledgeHostId
-      ? this.deps.knowledge?.get(conversation.knowledgeHostId) ?? null
+    const dbId = app.dbConnectionId ?? ''
+    const dbSession = app.dbSession
+    const dataFilePath = app.dataFilePath ?? ''
+    const knowledgeHost = app.knowledgeHostId
+      ? this.deps.knowledge?.get(app.knowledgeHostId) ?? null
       : null
     const dbRow = dbSession && dbId ? this.deps.postgres?.connection(dbId) : undefined
     let dbSchema: Array<{ name: string; columns: string[]; rowCount: number }> | null = null
@@ -756,10 +776,10 @@ export class AgentRuntime {
                 // When sandboxed, this is the working-copy path (agent must edit that).
                 openFilePath: openFilePathForPrompt,
                 // Prefer the focused path (chip may differ from session fileId).
-                openFileKind: conversation.focusedFilePath
-                  ? kindFromFilePath(conversation.focusedFilePath) ??
-                    (conversation.fileId && this.deps.fileSessions
-                      ? this.deps.fileSessions.kindForFileId(conversation.fileId)
+                openFileKind: app.openFilePath
+                  ? kindFromFilePath(app.openFilePath) ??
+                    (app.fileId && this.deps.fileSessions
+                      ? this.deps.fileSessions.kindForFileId(app.fileId)
                       : null)
                   : null,
                 skillCatalog: this.deps.skills?.catalogForPrompt() ?? null,
@@ -768,14 +788,18 @@ export class AgentRuntime {
                 dataFilePath: dataFilePath || null,
                 dbDriver: dbRow ? DB_DRIVER_DEFAULTS[dbRow.driver].label : undefined,
                 dbTitle: dbRow ? dbConnectionTitle(dbRow) : null,
-                dbTable: conversation.focusedDbTable ?? null,
+                dbTable: app.dbTable,
                 dbSchema,
+                appColumnFocus: app.focus,
                 knowledgeHost: knowledgeHost
                   ? {
                       id: knowledgeHost.id,
                       title: knowledgeHost.title,
                       kind: knowledgeHost.kind,
-                      path: knowledgeHost.storedPath
+                      path: knowledgeHost.storedPath,
+                      folder: knowledgeHost.folderId
+                        ? this.deps.knowledge?.getFolder(knowledgeHost.folderId)?.name ?? null
+                        : null
                     }
                   : null,
                 computerUse: Boolean(this.deps.computer?.available())
@@ -1255,6 +1279,7 @@ export class AgentRuntime {
         if (event.type !== 'toolcall_end') {
           this.emitFileDraft(conversationId, call.name, args)
         }
+        this.emitKnowledgeDraft(conversationId, call.name, args, event.type === 'toolcall_end')
 
         // Deltas that only grow `contents` must not rewrite the card — summary
         // is stable once path/command is known, and re-stringifying megabyte
@@ -1408,9 +1433,61 @@ export class AgentRuntime {
     this.deps.emit({ type: 'file-draft', conversationId, ...payload })
   }
 
+  /**
+   * Push a partial Knowledge note into the open editor while tool args are
+   * still streaming. The final tool execution remains the durable write.
+   */
+  private emitKnowledgeDraft(
+    conversationId: string,
+    toolName: string,
+    args: Record<string, unknown>,
+    force = false
+  ): void {
+    const knowledge = this.deps.knowledge
+    const live = this.deps.conversations.get(conversationId)
+    const draft = knowledgeNoteDraft(toolName, args, {
+      focusedHostId: live ? this.appBindings(live).knowledgeHostId : null
+    })
+    if (!draft) return
+    const payload = this.noteDrafts.next(draft.hostId, draft.markdown, Date.now(), force)
+    if (!payload) return
+    const host = knowledge?.get(draft.hostId)
+    this.deps.emit({
+      type: 'knowledge-draft',
+      conversationId,
+      hostId: draft.hostId,
+      noteConversationId: host?.conversationId ?? null,
+      title: draft.title,
+      ...(payload.content !== undefined ? { content: payload.content } : {}),
+      ...(payload.append !== undefined ? { append: payload.append, baseLen: payload.baseLen } : {})
+    })
+  }
+
+  /** Keep the note's app-object title in step with the stored heading. */
+  private publishKnowledgeNoteTitles(): void {
+    const knowledge = this.deps.knowledge
+    if (knowledge) {
+      for (const host of knowledge.list()) {
+        if (host.kind !== 'note' || !host.conversationId) continue
+        const title = host.title.trim()
+        if (!title) continue
+        const conv = this.deps.conversations.get(host.conversationId)
+        if (conv && conv.title !== title) {
+          this.deps.conversations.updateMeta(host.conversationId, { title })
+        }
+      }
+    }
+    if (this.deps.onAppObjectsChanged) this.deps.onAppObjectsChanged('knowledge')
+    else this.deps.onKnowledgeChanged?.()
+  }
+
   // -------------------------------------------------------------------------
   // Tools
   // -------------------------------------------------------------------------
+
+  private appBindings(conversation: Conversation) {
+    return resolveAgentAppBindings(conversation, (id) => this.deps.conversations.get(id))
+  }
 
   private toolsFor(conversation: Conversation, turn: TurnState): AgentTool[] {
     const conversationId = conversation.id
@@ -1444,7 +1521,10 @@ export class AgentRuntime {
       retrieval: this.deps.retrieval,
       duckdb: this.deps.duckdb,
       postgres: this.deps.postgres,
-      dbConnectionId: () => this.deps.conversations.get(conversationId)?.dbConnectionId ?? null,
+      dbConnectionId: () => {
+        const live = this.deps.conversations.get(conversationId)
+        return live ? this.appBindings(live).dbConnectionId : null
+      },
       webSearch: this.deps.webSearch,
       webFetch: this.deps.webFetch,
       skills: this.deps.skills,
@@ -1454,16 +1534,39 @@ export class AgentRuntime {
       selectionAnchor: () => turn.selectionRefs,
       defaultDocPath: () => {
         const live = this.deps.conversations.get(conversationId)
-        if (live?.dataFilePath) return live.dataFilePath
-        if (live?.knowledgeHostId) {
-          const host = this.deps.knowledge?.get(live.knowledgeHostId)
+        const bound = live ? this.appBindings(live) : null
+        if (bound?.dataFilePath) return bound.dataFilePath
+        if (bound?.openFilePath) return bound.openFilePath
+        if (bound?.knowledgeHostId) {
+          const host = this.deps.knowledge?.get(bound.knowledgeHostId)
           if (host?.storedPath) return host.storedPath
         }
-        if (!conversation.fileId || !this.deps.fileSessions) return null
-        return this.deps.fileSessions.pathForFileId?.(conversation.fileId) ?? null
+        if (!bound?.fileId || !this.deps.fileSessions) return null
+        return this.deps.fileSessions.pathForFileId?.(bound.fileId) ?? null
       },
       knowledge: this.deps.knowledge,
-      knowledgeChanged: () => this.deps.onKnowledgeChanged?.(),
+      knowledgeChanged: () => this.publishKnowledgeNoteTitles(),
+      defaultKnowledgeHostId: () => {
+        const live = this.deps.conversations.get(conversationId)
+        return live ? this.appBindings(live).knowledgeHostId : null
+      },
+      appResources: createAppResourceHost({
+        conversations: this.deps.conversations,
+        fileSessions: this.deps.fileSessions,
+        knowledge: this.deps.knowledge,
+        files: this.deps.files,
+        retrieval: this.deps.retrieval,
+        conversationId,
+        timers: this.deps.timers,
+        dbConnections: this.deps.dbConnections,
+        createAppConversation: this.deps.createAppConversation,
+        grantPath: this.deps.grantAppPath,
+        onChanged: (kind) => {
+          if (kind === 'knowledge') this.deps.onKnowledgeChanged?.()
+          this.deps.onAppObjectsChanged?.(kind)
+        },
+        onApply: (event) => this.deps.onAppHostApply?.(event)
+      }),
       isFileReadOnly: () =>
         !!this.deps.conversations.get(conversationId)?.fileReadOnly,
       setFileReadOnly: (readOnly) => this.setConversationFileReadOnly(conversationId, readOnly),
@@ -1529,7 +1632,13 @@ export class AgentRuntime {
     const conversation = this.deps.conversations.get(conversationId)
     const mode = conversation?.approvalMode ?? 'auto'
     const command =
-      name === 'connector' ? connectorOpFromArgs(name, args) : terminalCommandFromArgs(name, args)
+      name === 'app'
+        ? appOpFromArgs(name, args)
+        : name === 'knowledge_library'
+          ? knowledgeLibraryOpFromArgs(name, args)
+          : name === 'connector'
+            ? connectorOpFromArgs(name, args)
+            : terminalCommandFromArgs(name, args)
 
     // File Preview Read: hard-block write tools / mutating shell before approval UI.
     // switch_mode itself is allowed through so the user can Approve → Edit.
@@ -1822,7 +1931,7 @@ export class AgentRuntime {
     if (shouldPersistAssistantTurn(message)) {
       this.deps.conversations.replaceMessage(conversationId, message)
     }
-    this.deps.conversations.flush()
+    await this.deps.conversations.flushAsync()
 
     this.deps.emit({
       type: 'end',

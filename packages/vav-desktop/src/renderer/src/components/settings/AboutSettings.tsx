@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { ChevronDown, Download, LoaderCircle, RefreshCw, RotateCw } from 'lucide-react'
+import { brandDisplayName } from '@shared/brandIdentity'
 import type { MessageKey } from '@shared/i18n'
 import {
   AUTO_UPDATE_POLICIES,
@@ -88,7 +89,7 @@ export function AboutSettings(): React.JSX.Element {
   return (
     <div className="about-stack">
       <div className="about-brand">
-        <span className="about-logo" role="img" aria-label="VAV">
+        <span className="about-logo" role="img" aria-label={brandDisplayName()}>
           <img className="logo-light" src={wordmark} alt="" />
           <img className="logo-dark" src={wordmarkDark} alt="" />
         </span>

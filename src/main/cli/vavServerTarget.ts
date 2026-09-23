@@ -16,6 +16,8 @@ import {
   type VavDiscoverInfo
 } from '../../shared/vavDiscover.ts'
 import { probeListenAlive, readListenState } from '../daemon/listenState.ts'
+import { vavHome } from '../plugins/pluginPaths.ts'
+import { readAppPathOverrides } from '../store/appPaths.ts'
 
 export type VavServerTcpTarget = {
   kind: 'tcp'
@@ -97,19 +99,25 @@ export function defaultStateDirs(env: NodeJS.ProcessEnv = process.env, home = ho
     if (trimmed && !out.includes(trimmed)) out.push(trimmed)
   }
   add(env.VAV_SERVER_STATE)
-  add(join(home, '.vav', 'servers', 'default'))
+  add(join(vavHome(home), 'servers', 'default'))
   add(join(home, '.vav-server'))
   const appData = env.HOME || home
-  if (process.platform === 'darwin') {
-    add(join(appData, 'Library', 'Application Support', 'vav', 'vav-server'))
-    add(join(appData, 'Library', 'Application Support', 'vav-dev', 'vav-server'))
-  } else if (process.platform === 'win32') {
-    const roaming = env.APPDATA || join(appData, 'AppData', 'Roaming')
-    add(join(roaming, 'vav', 'vav-server'))
-    add(join(roaming, 'vav-dev', 'vav-server'))
-  } else {
-    add(join(appData, '.config', 'vav', 'vav-server'))
-    add(join(appData, '.config', 'vav-dev', 'vav-server'))
+  const supportDirs =
+    process.platform === 'darwin'
+      ? [
+          join(appData, 'Library', 'Application Support', 'vav'),
+          join(appData, 'Library', 'Application Support', 'vav-dev')
+        ]
+      : process.platform === 'win32'
+        ? [
+            join(env.APPDATA || join(appData, 'AppData', 'Roaming'), 'vav'),
+            join(env.APPDATA || join(appData, 'AppData', 'Roaming'), 'vav-dev')
+          ]
+        : [join(appData, '.config', 'vav'), join(appData, '.config', 'vav-dev')]
+  for (const support of supportDirs) {
+    add(join(support, 'vav-server'))
+    const relocated = readAppPathOverrides(support).appDataDir?.trim()
+    if (relocated) add(join(relocated, 'vav-server'))
   }
   return out
 }

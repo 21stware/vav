@@ -4,6 +4,10 @@ import {
   clampDbPort,
   dbConnectionSubtitle,
   dbConnectionTitle,
+  dbSessionDisplayTitle,
+  isPlaceholderDbTitle,
+  isReplaceableDbTitle,
+  UNTITLED_DB_CONNECTION,
   dbUrlPlaceholder,
   defaultDbConnectionInput,
   formatDbUrl,
@@ -58,6 +62,37 @@ describe('dbConnection helpers', () => {
     assert.equal(
       dbConnectionTitle({ title: '', database: 'proj', host: '', driver: 'bigquery', user: 'sales' }),
       'sales@proj'
+    )
+    assert.equal(
+      dbConnectionTitle({ title: '', database: '', host: 'localhost', driver: 'postgres', user: '' }),
+      ''
+    )
+    assert.equal(
+      dbSessionDisplayTitle({ title: '', database: '', host: 'localhost', driver: 'postgres', user: '' }),
+      UNTITLED_DB_CONNECTION
+    )
+    assert.equal(
+      dbConnectionTitle({
+        title: 'localhost',
+        database: '/tmp/sales.duckdb',
+        host: 'localhost',
+        driver: 'duckdb',
+        user: ''
+      }),
+      'sales.duckdb'
+    )
+    assert.equal(isPlaceholderDbTitle('localhost'), true)
+    assert.equal(isPlaceholderDbTitle('PostgreSQL'), true)
+    assert.equal(isPlaceholderDbTitle(UNTITLED_DB_CONNECTION), true)
+    assert.equal(isPlaceholderDbTitle('analytics.duckdb'), false)
+    assert.equal(
+      isReplaceableDbTitle('localhost', {
+        database: '/tmp/sales.duckdb',
+        host: '',
+        driver: 'duckdb',
+        user: ''
+      }),
+      true
     )
     assert.equal(
       dbConnectionSubtitle({ driver: 'bigquery', host: 'US', database: 'proj', user: 'sales' }),

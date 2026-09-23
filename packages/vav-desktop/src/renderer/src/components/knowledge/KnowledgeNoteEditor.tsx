@@ -1,154 +1,426 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { Bold, Eye, Heading1, Heading2, Italic, List, ListOrdered } from 'lucide-react'
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react'
+import {
+  createEditor,
+  type CodeHighlighter,
+  type EditorPhase,
+  type HandyEditor
+} from '@21stware/handymd'
+import { noteMarkdownWithTitle } from '@shared/knowledge'
+import { Plugin, TextSelection } from 'prosemirror-state'
+import { applyFileDraftContent } from '../../lib/fileViewerHelpers'
+import '@21stware/handymd/style.css'
 import { useT } from '../../i18n/useT'
+import { isDraftNoteTitle } from '../../lib/draftEditorTitle'
+import { renderMermaidSvgMarkup } from '../../lib/mermaidRender'
+import { countWritingUnits } from '../../lib/writingStats'
 import { Button } from '../ui'
-import { MarkdownView } from '../MarkdownView'
+import { countFact, ObjectFacts, timeFact } from '../ObjectFacts'
 
-function wrapSelection(
-  value: string,
-  start: number,
-  end: number,
-  before: string,
-  after = before
-): { next: string; caret: number } {
-  const selected = value.slice(start, end)
-  const next = `${value.slice(0, start)}${before}${selected}${after}${value.slice(end)}`
-  return { next, caret: start + before.length + selected.length + after.length }
+/** Avoid pulling shiki; fences still get HandyMD's mono + panel chrome. */
+const highlightPlain: CodeHighlighter = (code) =>
+  code.split('\n').map((text) => [{ text }])
+
+function renderNoteDiagram(code: string): Promise<string> {
+  return renderMermaidSvgMarkup(code).then((result) => result.svg)
 }
 
-export function KnowledgeNoteEditor({
-  hostId
-}: {
-  hostId: string
-}): React.JSX.Element {
-  const t = useT()
-  const areaRef = useRef<HTMLTextAreaElement>(null)
-  const [markdown, setMarkdown] = useState('')
-  const [preview, setPreview] = useState(false)
-  const [loaded, setLoaded] = useState(false)
-  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+/**
+ * Paint an agent write into the open note. A viewer who is not typing should
+ * see the body (and its heading) change as the write streams — leaving and
+ * re-entering must not be required. Local typing still goes through conflict
+ * resolution instead of being overwritten.
+ */
+function paintAgentNote(
+  editor: HandyEditor,
+  markdown: string,
+  lastSaved: { current: string },
+  userEdited: { current: boolean }
+): void {
+  if (editor.phase === 'destroyed' || editor.phase === 'error' || editor.phase === 'loading') return
+  if (!editor.view) return
+  const localDirty = userEdited.current && editor.getMarkdown() !== lastSaved.current
+  if (localDirty && editor.phase === 'ready') {
+    editor.notifyRemote(markdown)
+    return
+  }
+  if (editor.phase === 'conflicted') editor.resolveConflict('remote')
+  if (editor.phase !== 'ready') return
+  if (markdown === editor.getMarkdown()) {
+    lastSaved.current = markdown
+    editor.autosave?.markClean()
+    return
+  }
+  editor.setMarkdown(markdown, { addToHistory: false })
+  editor.autosave?.markClean()
+  lastSaved.current = editor.getMarkdown()
+}
 
-  const persist = useCallback(
-    (value: string) => {
-      if (saveTimer.current) clearTimeout(saveTimer.current)
-      saveTimer.current = setTimeout(() => {
-        void window.vav.knowledge.writeNote(hostId, value)
-      }, 400)
+export type KnowledgeNoteEditorHandle = {
+  applyTitle: (title: string) => void
+  focusBody: () => void
+}
+
+/**
+ * The page title field edits the leading heading. Keep the caret out of that
+ * hidden line, and ArrowUp from the top of the body returns to the field.
+ */
+function noteTitlePlugin(opts: {
+  active: () => boolean
+  onTitle: () => void
+}): Plugin {
+  return new Plugin({
+    appendTransaction(trs, _old, state) {
+      if (!opts.active()) return null
+      if (trs.some((tr) => tr.getMeta('note-title-skip'))) return null
+      if (!trs.some((tr) => tr.selectionSet || tr.docChanged)) return null
+      const first = state.doc.firstChild
+      if (!first || !/^#\s+\S/.test(first.textContent) || state.doc.childCount < 2) return null
+      if (state.selection.$from.index(0) !== 0) return null
+      const next = TextSelection.near(state.doc.resolve(first.nodeSize), 1)
+      if (next.eq(state.selection)) return null
+      return state.tr.setSelection(next).setMeta('note-title-skip', true)
     },
-    [hostId]
-  )
+    props: {
+      handleKeyDown(view, event) {
+        if (!opts.active() || event.key !== 'ArrowUp') return false
+        const first = view.state.doc.firstChild
+        if (!first || !/^#\s+\S/.test(first.textContent)) return false
+        const head = view.state.selection.$head
+        if (head.index(0) > 1) return false
+        if (head.index(0) === 1 && head.parentOffset > 0) return false
+        opts.onTitle()
+        return true
+      }
+    }
+  })
+}
+
+/** Move the caret into the note body, past the stored title heading. */
+function focusNoteBody(editor: HandyEditor | null, skipTitleHeading: boolean): void {
+  const view = editor?.view
+  if (!editor || !view) return
+  if (skipTitleHeading) {
+    const first = view.state.doc.firstChild
+    if (first && /^#\s+\S/.test(first.textContent) && view.state.doc.childCount > 1) {
+      const selection = TextSelection.near(view.state.doc.resolve(1 + first.nodeSize), 1)
+      view.dispatch(view.state.tr.setSelection(selection))
+    }
+  }
+  editor.focus()
+}
+
+export const NoteTitleField = forwardRef<
+  HTMLInputElement,
+  {
+    title: string
+    variant: 'reading' | 'chrome'
+    onCommit: (title: string) => void
+    onMoveToBody?: () => void
+  }
+>(function NoteTitleField({ title, variant, onCommit, onMoveToBody }, ref): React.JSX.Element {
+  const t = useT()
+  const [draft, setDraft] = useState(title)
+  const dirty = useRef(false)
+  const untitled = t('knowledge.untitled')
 
   useEffect(() => {
-    let alive = true
-    setLoaded(false)
-    void window.vav.knowledge.readNote(hostId).then((note) => {
-      if (!alive) return
-      setMarkdown(note?.markdown ?? '')
-      setLoaded(true)
-    })
-    const off = window.vav.knowledge.onChanged(() => {
-      void window.vav.knowledge.readNote(hostId).then((note) => {
-        if (!alive || !note) return
-        setMarkdown((current) => (current === note.markdown ? current : note.markdown))
-      })
-    })
-    return () => {
-      alive = false
-      off?.()
-      if (saveTimer.current) clearTimeout(saveTimer.current)
-    }
-  }, [hostId])
+    if (dirty.current) return
+    setDraft(title)
+  }, [title])
 
-  const applyWrap = (before: string, after?: string): void => {
-    const el = areaRef.current
-    if (!el) return
-    const start = el.selectionStart
-    const end = el.selectionEnd
-    const { next, caret } = wrapSelection(markdown, start, end, before, after)
-    setMarkdown(next)
-    persist(next)
-    requestAnimationFrame(() => {
-      el.focus()
-      el.setSelectionRange(caret, caret)
-    })
+  const commit = (): void => {
+    if (!dirty.current) return
+    dirty.current = false
+    const next = draft.trim()
+    if (!next || next === title.trim()) {
+      setDraft(title)
+      return
+    }
+    onCommit(next)
   }
 
   return (
-    <div className="knowledge-note-editor" data-testid="knowledge-note-editor">
-      <div className="knowledge-note-toolbar">
-        <Button
-          icon={<Heading1 size={13} />}
-          variant="ghost"
-          size="sm"
-          title={t('knowledge.heading1')}
-          onClick={() => applyWrap('# ', '')}
-        />
-        <Button
-          icon={<Heading2 size={13} />}
-          variant="ghost"
-          size="sm"
-          title={t('knowledge.heading2')}
-          onClick={() => applyWrap('## ', '')}
-        />
-        <Button
-          icon={<Bold size={13} />}
-          variant="ghost"
-          size="sm"
-          title={t('knowledge.bold')}
-          onClick={() => applyWrap('**')}
-        />
-        <Button
-          icon={<Italic size={13} />}
-          variant="ghost"
-          size="sm"
-          title={t('knowledge.italic')}
-          onClick={() => applyWrap('_')}
-        />
-        <Button
-          icon={<List size={13} />}
-          variant="ghost"
-          size="sm"
-          title={t('knowledge.list')}
-          onClick={() => applyWrap('- ', '')}
-        />
-        <Button
-          icon={<ListOrdered size={13} />}
-          variant="ghost"
-          size="sm"
-          title={t('knowledge.orderedList')}
-          onClick={() => applyWrap('1. ', '')}
-        />
-        <span className="spacer" />
-        <Button
-          icon={<Eye size={13} />}
-          variant="ghost"
-          size="sm"
-          pressed={preview}
-          title={t('knowledge.preview')}
-          testId="knowledge-note-preview"
-          onClick={() => setPreview((value) => !value)}
+    <input
+      ref={ref}
+      className={`knowledge-note-title${variant === 'chrome' ? ' is-chrome' : ''}${
+        isDraftNoteTitle(draft, untitled) ? ' is-untitled' : ''
+      }`}
+      data-testid="knowledge-note-title"
+      value={draft}
+      placeholder={t('knowledge.noteTitle')}
+      aria-label={t('knowledge.noteTitle')}
+      autoComplete="off"
+      spellCheck={false}
+      onChange={(event) => {
+        dirty.current = true
+        setDraft(event.currentTarget.value)
+      }}
+      onFocus={(event) => {
+        if (isDraftNoteTitle(event.currentTarget.value, untitled)) event.currentTarget.select()
+      }}
+      onBlur={() => commit()}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter') {
+          event.preventDefault()
+          commit()
+          onMoveToBody?.()
+        } else if (event.key === 'Escape') {
+          event.preventDefault()
+          dirty.current = false
+          setDraft(title)
+          event.currentTarget.blur()
+        } else if (event.key === 'ArrowDown') {
+          event.preventDefault()
+          commit()
+          onMoveToBody?.()
+        }
+      }}
+    />
+  )
+})
+
+const NoteEditor = forwardRef<
+  KnowledgeNoteEditorHandle,
+  {
+    hostId: string
+    title: string
+    showTitle: boolean
+    createdAt: number
+    updatedAt: number
+  }
+>(function NoteEditor({ hostId, title, showTitle, createdAt, updatedAt }, ref): React.JSX.Element {
+  const t = useT()
+  const mountRef = useRef<HTMLDivElement>(null)
+  const editorRef = useRef<HandyEditor | null>(null)
+  const titleFieldRef = useRef<HTMLInputElement>(null)
+  const lastSavedRef = useRef('')
+  const userEditedRef = useRef(false)
+  const showTitleRef = useRef(showTitle)
+  showTitleRef.current = showTitle
+  const [phase, setPhase] = useState<EditorPhase>('loading')
+  const [words, setWords] = useState<number | null>(null)
+  const [savedAt, setSavedAt] = useState(updatedAt)
+
+  useEffect(() => {
+    setSavedAt(updatedAt)
+  }, [updatedAt])
+
+  useEffect(() => {
+    const mount = mountRef.current
+    if (!mount || !window.vav?.knowledge) return
+
+    const editor = createEditor({
+      mount,
+      load: async () => {
+        const note = await window.vav.knowledge.readNote(hostId)
+        const markdown = note?.markdown ?? ''
+        lastSavedRef.current = markdown
+        setWords(countWritingUnits(markdown))
+        if (note?.updatedAt) setSavedAt(note.updatedAt)
+        return markdown
+      },
+      save: async (markdown) => {
+        const note = await window.vav.knowledge.writeNote(hostId, markdown)
+        if (!note) throw new Error('knowledge-write-failed')
+        lastSavedRef.current = markdown
+        setSavedAt(note.updatedAt)
+      },
+      autosave: { debounceMs: 400 },
+      highlight: highlightPlain,
+      diagram: renderNoteDiagram,
+      plugins: [
+        noteTitlePlugin({
+          active: () => showTitleRef.current,
+          onTitle: () => {
+            const field = titleFieldRef.current
+            if (!field) return
+            field.focus()
+            field.scrollIntoView({ block: 'nearest' })
+            if (!field.classList.contains('is-untitled')) {
+              const end = field.value.length
+              field.setSelectionRange(end, end)
+            }
+          }
+        })
+      ],
+      onChange: (markdown) => setWords(countWritingUnits(markdown)),
+      onPhaseChange: setPhase
+    })
+    editorRef.current = editor
+    userEditedRef.current = false
+
+    const userEdited = userEditedRef
+    const painting = { current: false }
+    const pending = { current: null as string | null }
+    const onBeforeInput = (): void => {
+      if (!painting.current) userEdited.current = true
+    }
+    mount.addEventListener('beforeinput', onBeforeInput)
+
+    const paint = (markdown: string): void => {
+      if (editor.phase === 'loading' || !editor.view) {
+        pending.current = markdown
+        return
+      }
+      pending.current = null
+      painting.current = true
+      try {
+        paintAgentNote(editor, markdown, lastSavedRef, userEdited)
+      } finally {
+        painting.current = false
+      }
+      if (editor.view) setWords(countWritingUnits(editor.getMarkdown()))
+    }
+
+    const offPhase = editor.on('phase', (phase) => {
+      if (phase === 'ready' && pending.current != null) {
+        const next = pending.current
+        pending.current = null
+        paintAgentNote(editor, next, lastSavedRef, userEdited)
+        setWords(countWritingUnits(next))
+      }
+    })
+
+    const off = window.vav.knowledge.onChanged(() => {
+      void window.vav.knowledge.readNote(hostId).then((note) => {
+        if (!note || editor.phase === 'destroyed') return
+        paint(note.markdown)
+        setSavedAt(note.updatedAt)
+      })
+    })
+
+    const offAgent = window.vav.agent?.onEvent((event) => {
+      if (event.type !== 'knowledge-draft' || event.hostId !== hostId) return
+      const next = applyFileDraftContent(editor.getMarkdown() || '', event)
+      if (next == null) return
+      paint(next)
+    })
+
+    return () => {
+      mount.removeEventListener('beforeinput', onBeforeInput)
+      offPhase()
+      off?.()
+      offAgent?.()
+      editorRef.current = null
+      void editor.destroy()
+    }
+  }, [hostId])
+
+  const applyTitle = useCallback((next: string): void => {
+    const trimmed = next.trim()
+    if (!trimmed) return
+    const editor = editorRef.current
+    if (editor && editor.phase === 'ready' && editor.view) {
+      const markdown = noteMarkdownWithTitle(editor.getMarkdown(), trimmed)
+      if (markdown === editor.getMarkdown()) return
+      userEditedRef.current = true
+      editor.setMarkdown(markdown)
+      void editor.flush()
+      return
+    }
+    void window.vav?.knowledge?.rename(hostId, trimmed)
+  }, [hostId])
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      applyTitle,
+      focusBody: () => focusNoteBody(editorRef.current, showTitleRef.current)
+    }),
+    [applyTitle]
+  )
+
+  return (
+    <div
+      className={`knowledge-note-editor${showTitle ? ' has-masthead' : ''}`}
+      data-testid="knowledge-note-editor"
+      data-phase={phase}
+    >
+      {phase === 'error' ? (
+        <div className="knowledge-note-banner" role="alert">
+          <span>{t('knowledge.noteLoadFailed')}</span>
+          <span className="spacer" />
+          <Button
+            size="sm"
+            label={t('knowledge.noteRetry')}
+            testId="knowledge-note-retry"
+            onClick={() => editorRef.current?.retry()}
+          />
+        </div>
+      ) : null}
+      {phase === 'conflicted' ? (
+        <div className="knowledge-note-banner" role="alert">
+          <span>{t('knowledge.noteConflict')}</span>
+          <span className="spacer" />
+          <Button
+            size="sm"
+            label={t('knowledge.noteKeepLocal')}
+            testId="knowledge-note-keep-local"
+            onClick={() => editorRef.current?.resolveConflict('local')}
+          />
+          <Button
+            size="sm"
+            label={t('knowledge.noteUseRemote')}
+            testId="knowledge-note-use-remote"
+            onClick={() => {
+              const remote = editorRef.current?.remoteConflict
+              if (remote != null) lastSavedRef.current = remote
+              editorRef.current?.resolveConflict('remote')
+            }}
+          />
+        </div>
+      ) : null}
+      <div className="knowledge-note-scroll">
+        {showTitle ? (
+          <div className="object-masthead is-reading">
+            <NoteTitleField
+              ref={titleFieldRef}
+              title={title}
+              variant="reading"
+              onCommit={applyTitle}
+              onMoveToBody={() => focusNoteBody(editorRef.current, true)}
+            />
+          </div>
+        ) : null}
+        <div
+          ref={mountRef}
+          className="knowledge-note-handymd"
+          data-testid="knowledge-note-input"
         />
       </div>
-      {preview ? (
-        <div className="knowledge-note-preview">
-          <MarkdownView source={markdown} />
-        </div>
-      ) : (
-        <textarea
-          ref={areaRef}
-          className="knowledge-note-textarea"
-          data-testid="knowledge-note-input"
-          spellCheck={false}
-          value={markdown}
-          disabled={!loaded}
-          placeholder={t('knowledge.notePlaceholder')}
-          onChange={(event) => {
-            const next = event.target.value
-            setMarkdown(next)
-            persist(next)
-          }}
-        />
-      )}
+      <ObjectFacts
+        items={[
+          timeFact('created', t('object.fact.created'), createdAt),
+          timeFact('updated', t('object.fact.updated'), savedAt),
+          countFact('words', t('object.fact.words'), words)
+        ]}
+      />
     </div>
   )
-}
+})
+
+export const KnowledgeNoteEditor = forwardRef<
+  KnowledgeNoteEditorHandle,
+  {
+    hostId: string
+    title: string
+    showTitle?: boolean
+    createdAt: number
+    updatedAt: number
+  }
+>(function KnowledgeNoteEditor(
+  { hostId, title, showTitle = false, createdAt, updatedAt },
+  ref
+): React.JSX.Element {
+  return (
+    <NoteEditor
+      key={hostId}
+      ref={ref}
+      hostId={hostId}
+      title={title}
+      showTitle={showTitle}
+      createdAt={createdAt}
+      updatedAt={updatedAt}
+    />
+  )
+})

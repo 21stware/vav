@@ -229,7 +229,7 @@ export function claimDetachedSessionPatch<C extends { id: string }, M, T>(
   }
 }
 
-/** Companion windows stay bound to one session — spawn a new window instead of replacing. */
+/** Companion windows stay bound to one session — spawn a new window unless `openIn` is `here`. */
 export function shouldSpawnDetachedConversation(
   openIn: string | undefined,
   companionBound: boolean

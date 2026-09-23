@@ -1,8 +1,10 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import type { AppPathSnapshot } from '@shared/appPaths'
 import type { ShellKind } from '@shared/types'
 import { shellsFor } from '@shared/platform'
 import { useSessionStore } from '../../state/sessionStore'
 import { useT } from '../../i18n/useT'
+import { formatBytes } from '../../lib/format'
 import { Button, Segmented, Toggle } from '../ui'
 import { PLATFORM } from '../../lib/platform'
 
@@ -14,10 +16,52 @@ export function WorkspaceSettings(): React.JSX.Element {
   const t = useT()
   const settings = useSessionStore((s) => s.settings)
   const updateSettings = useSessionStore((s) => s.updateSettings)
+  const showDialog = useSessionStore((s) => s.showDialog)
   const [braveDraft, setBraveDraft] = useState('')
   const [braveSaving, setBraveSaving] = useState(false)
   const [tinyfishDraft, setTinyfishDraft] = useState('')
   const [tinyfishSaving, setTinyfishSaving] = useState(false)
+  const [paths, setPaths] = useState<AppPathSnapshot | null>(null)
+  const [appDataDraft, setAppDataDraft] = useState('')
+  const [tempDraft, setTempDraft] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+    void window.vav.settings.appPaths().then((snap) => {
+      if (cancelled || !snap) return
+      setPaths(snap)
+      setAppDataDraft(snap.effectiveAppDataDir)
+      setTempDraft(snap.effectiveTempDir)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const applyPaths = (snap: AppPathSnapshot | null): void => {
+    if (!snap) return
+    setPaths(snap)
+    setAppDataDraft(snap.effectiveAppDataDir)
+    setTempDraft(snap.effectiveTempDir)
+  }
+
+  const setAppData = async (path: string | null): Promise<void> => {
+    const snap = await window.vav.settings.setAppDataDir(path)
+    applyPaths(snap)
+    if (snap?.restartRequired) {
+      showDialog({
+        title: t('dialog.restartRequired'),
+        body: t('workspace.appDataRestartBody'),
+        confirmLabel: t('dialog.restartNow'),
+        cancelLabel: t('dialog.restartLater'),
+        onConfirm: () => void window.vav.window.relaunch()
+      })
+    }
+  }
+
+  const setTemp = async (path: string | null): Promise<void> => {
+    applyPaths(await window.vav.settings.setTempDir(path))
+  }
 
   const provider = (settings.webSearchProvider ?? 'auto') as WebSearchProvider
   const providerOptions: { value: WebSearchProvider; label: string }[] = [
@@ -48,8 +92,95 @@ export function WorkspaceSettings(): React.JSX.Element {
     }
   }
 
+  const appDataIsDefault = Boolean(
+    paths && paths.effectiveAppDataDir === paths.defaultAppDataDir && !paths.restartRequired
+  )
+  const tempIsDefault = Boolean(paths && !paths.tempIsCustom)
+
   return (
     <div className="form">
+      {paths ? (
+        <>
+          <div className="form-row">
+            <label>{t('workspace.appData')}</label>
+            <div className="control">
+              <input
+                className="text-field"
+                data-testid="settings-app-data"
+                placeholder={t('workspace.appDataPlaceholder')}
+                value={appDataDraft}
+                onChange={(event) => setAppDataDraft(event.target.value)}
+                onBlur={() => {
+                  const next = appDataDraft.trim()
+                  if (!next || next === paths.effectiveAppDataDir) return
+                  void setAppData(next)
+                }}
+              />
+              <Button
+                label={t('workspace.pick')}
+                variant="secondary"
+                size="sm"
+                onClick={async () => {
+                  const path = await window.vav.settings.pickDirectory()
+                  if (path) void setAppData(path)
+                }}
+              />
+              {!appDataIsDefault && (
+                <Button
+                  label={t('workspace.restoreDefault')}
+                  size="sm"
+                  onClick={() => void setAppData(null)}
+                />
+              )}
+            </div>
+          </div>
+          <div className="form-hint">{t('workspace.appDataHint')}</div>
+          <div className="form-hint" data-testid="settings-app-data-size">
+            {t('workspace.appDataSize', { size: formatBytes(paths.appDataBytes) })}
+          </div>
+
+          <div className="form-row">
+            <label>{t('workspace.tempDir')}</label>
+            <div className="control">
+              <input
+                className="text-field"
+                data-testid="settings-temp-dir"
+                placeholder={t('workspace.tempDirPlaceholder')}
+                value={tempDraft}
+                onChange={(event) => setTempDraft(event.target.value)}
+                onBlur={() => {
+                  const next = tempDraft.trim()
+                  if (!next || next === paths.effectiveTempDir) return
+                  void setTemp(next)
+                }}
+              />
+              <Button
+                label={t('workspace.pick')}
+                variant="secondary"
+                size="sm"
+                onClick={async () => {
+                  const path = await window.vav.settings.pickDirectory()
+                  if (path) void setTemp(path)
+                }}
+              />
+              {!tempIsDefault && (
+                <Button
+                  label={t('workspace.restoreDefault')}
+                  size="sm"
+                  onClick={() => void setTemp(null)}
+                />
+              )}
+            </div>
+          </div>
+          <div className="form-hint">
+            {paths.tempIsCustom ? t('workspace.tempDirCustomHint') : t('workspace.tempDirHint')}
+          </div>
+          <div className="form-hint" data-testid="settings-temp-dir-size">
+            {t('workspace.tempDirSize', { size: formatBytes(paths.tempBytes) })}
+          </div>
+        </>
+      ) : null}
+
       <div className="form-row">
         <label>{t('workspace.defaultDir')}</label>
         <div className="control">

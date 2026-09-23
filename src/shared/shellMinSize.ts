@@ -11,13 +11,19 @@
 export const SIDEBAR_WIDTH_MIN = 190
 export const SIDEBAR_WIDTH_MAX = 420
 export const SIDEBAR_WIDTH_DEFAULT = 232
+/** Collapsed sidebar capsule + insets — in-flow column, not an overlay. */
+export const SIDEBAR_RAIL_WIDTH = 64
 
 /** Conversation / agent column — never shrink below this when visible. */
-export const AGENT_MIN_WIDTH = 360
+export const AGENT_MIN_WIDTH = 400
 /** File-bound session: agent is a side panel, not the landing column. */
 export const FILE_SESSION_AGENT_MIN_WIDTH = 280
 /** Right preview / file canvas. */
 export const PREVIEW_MIN_WIDTH = 320
+/** `.applications-column` padding (`8px` × 2) — border-box around the card. */
+export const APPLICATIONS_COLUMN_PAD_X = 16
+/** App column border-box floor: preview min plus the floating-card pad. */
+export const APPLICATIONS_WIDTH_MIN = PREVIEW_MIN_WIDTH + APPLICATIONS_COLUMN_PAD_X
 
 /** `.body-split` horizontal padding (`0 8px 8px`). */
 export const BODY_SPLIT_PAD_X = 16
@@ -94,7 +100,9 @@ export type WindowShellKind = 'main' | 'session'
 export type ShellMinWidthInput = {
   /** Sidebar is showing — counts even if CSS would overlay it. */
   sidebarVisible: boolean
-  /** Current sidebar width; clamped to the sidebar min. */
+  /** Icon rail instead of the full list column. */
+  sidebarRail?: boolean
+  /** Current sidebar width; clamped to the sidebar min (or rail width). */
   sidebarWidth?: number
   agentVisible: boolean
   agentMinWidth?: number
@@ -106,10 +114,15 @@ export type ShellMinWidthInput = {
   previewVisible: boolean
   /**
    * Live width of a fixed preview drawer. The flex file canvas omits this
-   * and uses `PREVIEW_MIN_WIDTH` only.
+   * and uses the preview floor only.
    */
   previewWidth?: number
-  /** Main shell includes `.body-split` pad + gap. Companion session does not. */
+  /** Override the preview/app floor (main shell defaults to the app column). */
+  previewMinWidth?: number
+  /**
+   * Main shell is edge-to-edge (`.app-shell .body-split` pad/gap are 0).
+   * Companion session still counts the historic split chrome.
+   */
   shell?: WindowShellKind
 }
 
@@ -126,14 +139,18 @@ function columnSpan(min: number, current?: number): number {
 export function windowMinWidth(input: ShellMinWidthInput): number {
   const shell = input.shell ?? 'main'
   const agentMin = input.agentMinWidth ?? AGENT_MIN_WIDTH
+  const edgeToEdge = shell === 'main'
   let width = 0
-  if (shell === 'main') width += BODY_SPLIT_PAD_X
   if (input.sidebarVisible) {
-    width += columnSpan(SIDEBAR_WIDTH_MIN, input.sidebarWidth) + BODY_SPLIT_GAP
+    const sidebarMin = input.sidebarRail ? SIDEBAR_RAIL_WIDTH : SIDEBAR_WIDTH_MIN
+    width +=
+      columnSpan(sidebarMin, input.sidebarWidth ?? (input.sidebarRail ? SIDEBAR_RAIL_WIDTH : undefined)) +
+      (edgeToEdge ? 0 : BODY_SPLIT_GAP)
   }
   if (input.agentVisible) width += columnSpan(agentMin, input.agentWidth)
   if (input.previewVisible) {
-    width += columnSpan(PREVIEW_MIN_WIDTH, input.previewWidth) + COLUMN_RULE
+    const previewMin = input.previewMinWidth ?? (edgeToEdge ? APPLICATIONS_WIDTH_MIN : PREVIEW_MIN_WIDTH)
+    width += columnSpan(previewMin, input.previewWidth) + (edgeToEdge ? 0 : COLUMN_RULE)
   }
   return Math.max(width, agentMin)
 }
@@ -164,12 +181,12 @@ export const WINDOW_MIN_WIDTH_FLOOR = windowMinWidth({
   shell: 'main'
 })
 
-/** First-paint / constructor: default sidebar + agent. */
+/** First-paint / constructor: default sidebar + agent + app column. */
 export const MAIN_WINDOW_MIN_WIDTH = windowMinWidth({
   sidebarVisible: true,
   sidebarWidth: SIDEBAR_WIDTH_DEFAULT,
   agentVisible: true,
-  previewVisible: false,
+  previewVisible: true,
   shell: 'main'
 })
 

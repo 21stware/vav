@@ -1,0 +1,31 @@
+{
+  "name": "@21stware/handymd",
+  "version": "0.1.0",
+  "description": "Bear-style source-fidelity Markdown editor SDK. Vendored from https://github.com/21stware/handymd (19009c2301e0779b6141cffe4e185708e4c0e66e).",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./style.css": "./dist/style.css",
+    "./package.json": "./package.json"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "prosemirror-commands": "^1.7.1",
+    "prosemirror-history": "^1.4.1",
+    "prosemirror-keymap": "^1.2.3",
+    "prosemirror-model": "^1.25.3",
+    "prosemirror-state": "^1.4.3",
+    "prosemirror-transform": "^1.10.4",
+    "prosemirror-view": "^1.41.3"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/21stware/handymd.git"
+  }
+}

@@ -4,12 +4,15 @@ import { FILE_SESSION_AGENT_MIN_WIDTH } from '@shared/shellMinSize'
 import { useT } from '../i18n/useT'
 import { applyBlockPick, selectedBlockIdsForPath } from '../lib/applyBlockPick'
 import { appColumnPickConversationId, syncWorkspaceAgentFocusedPath } from '../lib/workspaceAgentContext'
-import { useSidebarFloatMode } from '../lib/sidebarLayout'
+import { useShowShellLeading } from '../lib/sidebarLayout'
 import { startCapturedPointerDrag } from '../lib/capturedPointerDrag'
 import { reportFileSessionAgentOpen } from '../lib/useWindowMinSize'
+import { formatBytes } from '../lib/format'
 import { basename } from '../lib/path'
 import { useSessionStore } from '../state/sessionStore'
+import { Database } from 'lucide-react'
 import { EmptyState } from './ui'
+import { countFact, ObjectFacts, ObjectMasthead, timeFact } from './ObjectFacts'
 import { SessionDetail } from './SessionDetail'
 import { ShellLeadingControls } from './ShellLeadingControls'
 import { SqliteView } from './SqliteView'
@@ -48,11 +51,14 @@ export function DataFileWorkspace({
   const agentWidthRef = useRef(agentWidth)
   agentWidthRef.current = agentWidth
 
-  const sidebarVisible = useSessionStore((s) => s.sidebarVisible)
-  const sidebarFloating = useSidebarFloatMode()
-  const showShellLeading = !hideAgent && !(sidebarVisible && !sidebarFloating)
+  const shellLeadingNeeded = useShowShellLeading()
+  const showShellLeading = !hideAgent && shellLeadingNeeded
   const shellLeading = showShellLeading ? <ShellLeadingControls /> : null
   const label = basename(path) || path
+  const conversation = useSessionStore((s) =>
+    s.conversations.find((row) => row.id === conversationId)
+  )
+  const [fileStamp, setFileStamp] = useState<{ size: number; mtimeMs: number | null } | null>(null)
 
   useEffect(() => {
     reportFileSessionAgentOpen(agentOpen, agentWidth)
@@ -79,6 +85,21 @@ export function DataFileWorkspace({
   useEffect(() => {
     void load()
   }, [load])
+
+  useEffect(() => {
+    let alive = true
+    setFileStamp(null)
+    void window.vav?.files
+      ?.inspect(path, conversationId)
+      .then((info) => {
+        if (!alive || !info || info.error) return
+        setFileStamp({ size: info.size, mtimeMs: info.mtimeMs ?? null })
+      })
+      .catch(() => {})
+    return () => {
+      alive = false
+    }
+  }, [conversationId, path])
 
   useEffect(() => {
     if (!schema?.tables.length) return
@@ -109,20 +130,24 @@ export function DataFileWorkspace({
     })
   }, [])
 
+  const tableCount = schema?.tables.length
+  const rowCount = schema?.tables.reduce((sum, table) => sum + table.rowCount, 0)
   const pickConversationId = appColumnPickConversationId(hideAgent, conversationId)
   const commentTick = useSessionStore((s) => s.commentCards[pickConversationId]?.length ?? 0)
   void commentTick
   const sourcePath = activeDbTable ? `${path}/${activeDbTable}` : path
   const selectedIds = selectedBlockIdsForPath(pickConversationId, sourcePath)
 
+  const applicationsVisible = useSessionStore((s) => s.applicationsVisible)
   useEffect(() => {
     if (!hideAgent) return
     syncWorkspaceAgentFocusedPath(path)
-  }, [hideAgent, path])
+  }, [hideAgent, applicationsVisible, path])
 
   return (
     <div className="workspace-view file-session-view" ref={rootRef} data-testid="data-file-workspace">
       <section className="workspace-view-preview file-session-preview">
+        {hideAgent ? <ObjectMasthead title={label} /> : (
         <header
           className={`file-viewer-header db-workspace-header titlebar-drag${shellLeading ? ' has-shell-leading' : ''}`}
         >
@@ -130,6 +155,9 @@ export function DataFileWorkspace({
             {shellLeading ? (
               <div className="file-viewer-shell-leading titlebar-no-drag">{shellLeading}</div>
             ) : null}
+            <span className="db-workspace-header-icon" aria-hidden>
+              <Database strokeWidth={1.8} />
+            </span>
             <span className="file-viewer-name" title={path}>
               {label}
               {activeDbTable ? (
@@ -138,6 +166,8 @@ export function DataFileWorkspace({
             </span>
           </div>
         </header>
+        )}
+        <div className="object-facts-stage">
         {schemaError ? (
           <EmptyState title={t('data.schemaFailed')} description={schemaError} />
         ) : schema?.tables.length ? (
@@ -179,6 +209,27 @@ export function DataFileWorkspace({
             {t('common.loading')}
           </div>
         )}
+        </div>
+        <ObjectFacts
+          items={[
+            timeFact('created', t('object.fact.created'), conversation?.createdAt),
+            timeFact(
+              'updated',
+              t('object.fact.updated'),
+              fileStamp?.mtimeMs ?? conversation?.updatedAt
+            ),
+            countFact('tables', t('object.fact.tables'), tableCount),
+            countFact('rows', t('object.fact.rows'), rowCount),
+            fileStamp
+              ? {
+                  id: 'size',
+                  label: t('object.fact.size'),
+                  value: formatBytes(fileStamp.size),
+                  title: fileStamp.size.toLocaleString()
+                }
+              : null
+          ]}
+        />
       </section>
       {hideAgent ? null : (
       <aside
@@ -188,7 +239,6 @@ export function DataFileWorkspace({
       >
         <div
           className={`workspace-view-agent-inner${agentOpen ? '' : ' is-collapsed'}`}
-          style={{ width: agentWidth }}
         >
           <div
             className="workspace-col-resizer workspace-col-resizer-start"

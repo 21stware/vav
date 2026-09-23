@@ -19,6 +19,7 @@ import {
 import type { StructuredDocument } from '@shared/structuredDoc'
 import type { ClickPickPointer } from '../../lib/clickPick'
 import { useT } from '../../i18n/useT'
+import { insertAgentPrompt } from '../../lib/insertAgentPrompt'
 import { useSessionStore } from '../../state/sessionStore'
 
 const officeRouter = createWarmComponent<React.ComponentProps<typeof OfficeNativeViewType>>(
@@ -415,20 +416,19 @@ export function FileViewerCanvas(props: FileViewerCanvasProps): React.JSX.Elemen
               }}
               onAskAgent={(prompt, target) => {
                 setSelectedIds([target.id])
+                const store = useSessionStore.getState()
                 const id =
+                  insertAgentPrompt(prompt) ??
                   agentConversationId ??
                   parentConversationId ??
-                  useSessionStore.getState().activeId
+                  store.activeId
                 if (!id) return
-                const store = useSessionStore.getState()
-                store.setDraft(id, prompt)
-                // Comment card (not legacy previewRefs Reference chips).
                 const ref = blockToRef(filePath, badge, target)
                 const existing = store.commentCards[id] ?? []
                 store.setCommentCards(id, upsertCommentCard(existing, ref))
                 store.clearPreviewRefs(id)
                 store.focusCommentCard(ref.id)
-                store.focusComposer()
+                store.focusComposer(id)
               }}
             />
           )}

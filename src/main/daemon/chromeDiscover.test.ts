@@ -77,6 +77,7 @@ describe('Chrome extension discover', () => {
       const hit = await probeDiscover(`http://127.0.0.1:${web.port}`)
       assert.ok(hit)
       assert.equal(hit.app, 'vav-server')
+      assert.equal(hit.hasSecret, true)
       assert.equal(hit.secret, SECRET)
       assert.equal(hit.wsUrl, `ws://127.0.0.1:${web.port}/vav`)
       assert.equal(await probeDiscover(`http://127.0.0.1:${decoyPort}`), null)
@@ -87,6 +88,7 @@ describe('Chrome extension discover', () => {
         hosts: ['127.0.0.1']
       })
       assert.ok(found)
+      assert.equal(found.hasSecret, true)
       assert.equal(found.secret, SECRET)
       assert.equal(found.name, 'discover-host')
 

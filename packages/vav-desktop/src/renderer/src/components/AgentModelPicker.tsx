@@ -5,6 +5,7 @@ import {
   displayNameForCliHost,
   enabledCliAgents,
   isStructuredCliHost,
+  resolveDefaultChatHost,
   type CliHostKind
 } from '@shared/types'
 import {
@@ -26,9 +27,10 @@ import {
   vendorIdFromEndpoint,
   type LlmVendorId
 } from '@shared/llmVendors'
+import { isTimerDefinition } from '@shared/sessionKind'
 import { isAgentPickerLocked } from '../lib/agentPickerLock'
 import { useAccountGroups, vavAccountsOf } from '../lib/accountGroups'
-import { catalogEntryForChatHost } from '../state/sessionModels'
+import { catalogEntryForChatHost, defaultModelSettingsPatch } from '../state/sessionModels'
 import { useSessionStore } from '../state/sessionStore'
 import { useT } from '../i18n/useT'
 import { createMenuNonceGate } from '../lib/menuNonce'
@@ -180,7 +182,14 @@ export function AgentModelPicker({
   const modelPickerMenuNonce = useSessionStore((s) => s.modelPickerMenuNonce)
   const modelPickerConversationId = useSessionStore((s) => s.modelPickerConversationId)
   const messages = useSessionStore((s) => s.messages[conversationId])
-  const locked = isAgentPickerLocked(messages)
+  // Pending home composer has no conversation and no message list — that must
+  // stay unlocked so every provider stays pickable. `undefined` only means
+  // "hydrate in progress" for a real session.
+  const locked = conversation
+    ? isTimerDefinition(conversation)
+      ? false
+      : isAgentPickerLocked(messages)
+    : false
 
   const rootRef = useRef<HTMLDivElement>(null)
   const hostRef = useRef<HTMLButtonElement>(null)
@@ -240,7 +249,8 @@ export function AgentModelPicker({
     motionRef.current = null
   }, [phase])
 
-  const cliHost = conversation?.cliHost ?? null
+  const cliHost =
+    conversation?.cliHost ?? resolveDefaultChatHost(settings.defaultAgentId)
   const customModels = settings.customModels
   const disabledModels = settings.disabledAgentModels ?? {}
   const accountGroups = useAccountGroups()
@@ -423,7 +433,18 @@ export function AgentModelPicker({
         await window.vav.accounts.setCurrent(vendor.accountId)
       }
     }
-    if (cliHost !== host || vendor?.accountId !== conversation?.accountId) {
+    if (!conversation) {
+      const defaults = defaultModelSettingsPatch(host, model, settings)
+      const defaultAgentId = host ?? vendor?.vendorId ?? null
+      const patch = { ...(defaults ?? {}), defaultAgentId }
+      useSessionStore.setState((state) => ({
+        settings: { ...state.settings, ...patch }
+      }))
+      void updateSettings(patch)
+      rememberPick(host, model, vendor?.vendorId ?? (host == null ? activeVendorId : null))
+      return
+    }
+    if (cliHost !== host || vendor?.accountId !== conversation.accountId) {
       await selectChatHost(conversationId, host, vendor?.vendorId, vendor?.accountId)
     }
     await setModel(conversationId, model)
@@ -566,9 +587,8 @@ export function AgentModelPicker({
     if (modelPickerMenuNonce === 0) return
     if (modelPickerConversationId && modelPickerConversationId !== conversationId) return
     if (!consumeModelPickerNonce(modelPickerMenuNonce)) return
-    if (!conversation) return
     openMenu(locked ? triggerRef.current : rootRef.current)
-  }, [modelPickerMenuNonce, modelPickerConversationId, conversationId, openMenu, conversation, locked])
+  }, [modelPickerMenuNonce, modelPickerConversationId, conversationId, openMenu, locked])
 
     const hasUsage = Boolean(usage && usage.used > 0)
 
@@ -604,12 +624,10 @@ export function AgentModelPicker({
               ? t('composer.agentAccount', { name: activeHost.name })
               : t('composer.agentModel')
           }
-          disabled={!conversation}
           onClick={(event) => {
             event.preventDefault()
             event.stopPropagation()
-            if (!conversation) return
-            if (locked) {
+            if (locked && conversation) {
               const el = hostRef.current ?? event.currentTarget
               const rect = el.getBoundingClientRect()
               void window.vav.window.openTokenUsage(conversationId, {
@@ -653,11 +671,9 @@ export function AgentModelPicker({
         title={`${activeHost.name} · ${modelLabel}`}
         aria-label={locked ? t('composer.model') : t('composer.agentModel')}
         aria-haspopup="menu"
-        disabled={!conversation}
         onClick={(event) => {
           event.preventDefault()
           event.stopPropagation()
-          if (!conversation) return
           openMenu(locked ? event.currentTarget : rootRef.current)
         }}
       >

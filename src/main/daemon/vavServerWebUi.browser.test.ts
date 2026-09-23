@@ -58,6 +58,7 @@ describe('vav-server web UI', () => {
       name: 'Web UI Host',
       stubTurn: true,
       noWeb: false,
+      webPort: 0,
       webListen: '127.0.0.1'
     })
     const origin = spawned.webOrigin
@@ -211,6 +212,7 @@ describe('vav-server web UI', () => {
       name: 'Web UI Review',
       stubTurn: true,
       noWeb: false,
+      webPort: 0,
       webListen: '127.0.0.1'
     })
     const origin = spawned.webOrigin

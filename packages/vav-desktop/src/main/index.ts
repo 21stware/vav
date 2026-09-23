@@ -30,9 +30,16 @@ import {
   statSync,
   writeFileSync
 } from 'node:fs'
-import { homedir, hostname, tmpdir, userInfo } from 'node:os'
+import { homedir, hostname, userInfo } from 'node:os'
 import { randomUUID } from 'node:crypto'
-import { APP_NAME, applyBranding, applyDockIcon, loadAppIcon, pinUserDataPath } from '@main/brand'
+import {
+  APP_NAME,
+  APP_USER_DATA_DIR,
+  applyBranding,
+  applyDockIcon,
+  loadAppIcon,
+  pinUserDataPath
+} from '@main/brand'
 import { isE2eRuntime } from '@main/e2eRuntime'
 import { installProcessErrorGuards } from '@main/process/stdioGuard'
 import { isRendererUrl } from '@main/window/rendererUrl'
@@ -69,6 +76,7 @@ import {
   type TurnEvent,
   type TurnStatus
 } from '@shared/types'
+import type { AppColumnFocus } from '@shared/appColumnFocus'
 import { agentBinaryCandidates } from '@shared/agentBinary'
 import {
   VAV_LOCAL_CORS_HEADERS,
@@ -116,6 +124,7 @@ import type {
   RemoteControlsEvent,
   RemoteDirsEvent,
   RemoteHostEvent,
+  RemoteSendContext,
   RemoteServerMessage,
   RemoteSession,
   RemoteThreadEvent
@@ -211,6 +220,8 @@ import { evaluateOwner } from '@main/auth/localOwnerAuth'
 import { registerFileSessionsIpc } from '@main/ipc/registerFileSessionsIpc'
 import { registerAgentsIpc } from '@main/ipc/registerAgentsIpc'
 import { registerSettingsIpc } from '@main/ipc/registerSettingsIpc'
+import { registerAppPathsIpc } from '@main/ipc/registerAppPathsIpc'
+import { readAppPathOverrides, resolveTempDir } from '@main/store/appPaths'
 import { registerConnectorIpc } from '@main/ipc/registerConnectorIpc'
 import { registerTimerIpc } from '@main/ipc/registerTimerIpc'
 import { registerDbIpc } from '@main/ipc/registerDbIpc'
@@ -218,6 +229,7 @@ import { registerKnowledgeIpc } from '@main/ipc/registerKnowledgeIpc'
 import { KnowledgeStore } from '@main/store/KnowledgeStore'
 import { createConnectorRegistry } from '@main/connectors/registry'
 import { TimerStore } from '@main/store/TimerStore'
+import { timerJobAgentFromConversation } from '@shared/timer'
 import { DbConnectionStore } from '@main/store/DbConnectionStore'
 import { createChainedDbPasswordVault } from '@main/store/dbPasswordVault'
 import { PostgresService } from '@main/fs/PostgresService'
@@ -671,7 +683,9 @@ const dbConnectionStore = new DbConnectionStore(
   })
 )
 const postgres = new PostgresService(dbConnectionStore)
-const knowledgeStore = new KnowledgeStore(app.getPath('userData'))
+const knowledgeStore = new KnowledgeStore(join(app.getPath('userData'), 'vav-server'), {
+  migrateFrom: app.getPath('userData')
+})
 const connectorRegistry = createConnectorRegistry({
   creds: () => ({
     cloudflare: {
@@ -720,9 +734,9 @@ const fileService = new FileService(
 )
 fileService.workingCopies = workingCopyService
 fileService.grantRoot(clipRoot())
-fileService.grantRoot(join(tmpdir(), 'vav-office-convert'))
-fileService.grantRoot(join(tmpdir(), 'vav-heic-preview'))
+grantVavTempRoots(currentTempDir())
 fileService.grantRoot(workingCopyService.storageRoot)
+fileService.grantRoot(knowledgeStore.rootDir)
 setGitHostFor((cwd, conversationId) => {
   const id = conversationId || conversationIdForGitCwd(cwd)
   const machineId = id ? conversationStore.get(id)?.machineId : undefined
@@ -1356,10 +1370,45 @@ function rebuildAppChrome(): void {
   }
 }
 
+/**
+ * A file write onto a Knowledge note's stored markdown does not go through
+ * `writeNote`, so the open editor and the list title stay stale until the
+ * note is reopened. Re-ingest the file so the heading and body publish now.
+ */
+function syncKnowledgeNoteFromFile(filePath: string): void {
+  const path = filePath.trim()
+  if (!path) return
+  const host = knowledgeStore
+    .list()
+    .find((row) => row.kind === 'note' && row.storedPath === path)
+  if (!host) return
+  let markdown = ''
+  try {
+    markdown = readFileSync(path, 'utf8')
+  } catch {
+    return
+  }
+  const heading = markdown.match(/^#\s+(\S.*?)\s*$/m)?.[1]?.trim() || host.title
+  const current = knowledgeStore.readNote(host.id)
+  if (current?.markdown === markdown && host.title === heading) return
+  const note = knowledgeStore.writeNote(host.id, markdown)
+  if (!note) return
+  const next = knowledgeStore.get(host.id)
+  if (next?.conversationId && next.title.trim()) {
+    const conv = conversationStore.get(next.conversationId)
+    if (conv && conv.title !== next.title) {
+      conversationStore.updateMeta(next.conversationId, { title: next.title })
+    }
+  }
+  broadcast(IPC.knowledgeChanged, null)
+  publishConversations()
+}
+
 function handleAgentEvent(event: TurnEvent): void {
   logTurnEvent(event, conversationStore.get(event.conversationId))
   fanRemoteTurn(event)
   sendToWorkspaceWindows(IPC.agentEvent, event, event.conversationId)
+  if (event.type === 'fs-changed') syncKnowledgeNoteFromFile(event.filePath)
   const conversation = conversationStore.get(event.conversationId)
   const title = conversation?.title ?? t('window.sessionFallback')
 
@@ -1562,6 +1611,13 @@ const agent = new AgentRuntime({
   plugins: pluginService,
   fileSessions: fileSessionStore,
   knowledge: knowledgeStore,
+  timers: timerStore,
+  dbConnections: dbConnectionStore,
+  createAppConversation: (kind) => {
+    const row = createAppDefinitionConversation(kind)
+    return { id: row.id, title: row.title }
+  },
+  grantAppPath: (path) => fileService.grantPath(path),
   connectors: connectorRegistry,
   computer: createCuaComputerHost(),
   emit: handleAgentEvent,
@@ -1569,19 +1625,27 @@ const agent = new AgentRuntime({
     broadcast(IPC.fileSessionReadOnlyChanged, { sessionId: conversationId, readOnly })
     publishConversations()
   },
-  onKnowledgeChanged: () => broadcast(IPC.knowledgeChanged, null)
+  onKnowledgeChanged: () => broadcast(IPC.knowledgeChanged, null),
+  onAppObjectsChanged: (kind) => {
+    publishConversations()
+    if (kind === 'knowledge') broadcast(IPC.knowledgeChanged, null)
+    if (kind === 'scheduled') broadcast(IPC.timersChanged, null)
+    if (kind === 'data') broadcast(IPC.dbChanged, null)
+  },
+  onAppHostApply: (event) => broadcast(IPC.appHostApply, event)
 })
 
 timerScheduler = new TimerScheduler({
   store: timerStore,
   conversations: conversationStore,
-  tmp: tmpdir(),
+  tmp: () => currentTempDir(),
   defaultModel: () => settingsStore.get().defaultModel || DEFAULT_SETTINGS.defaultModel,
   runTurn: (id, text) => {
     void agent.run(id, text, [], null, null, null)
   },
   isRunning: (id) => agent.isRunning(id),
   reload: () => timerStore.load(),
+  watchWorkdir: (id, workdir) => fileService.watchRoot(id, workdir),
   publish: () => publishConversations(),
   shouldDefer: async () => {
     const listen = readListenState(defaultVavServerStateDir())
@@ -1622,6 +1686,7 @@ const cliHost = new CliAgentHost({
   emit: handleAgentEvent,
   publish: () => publishConversations(),
   logicalPath: (path) => workingCopyService.logicalPath(path),
+  knowledge: knowledgeStore,
   quota: {
     get: (host) => quotaService.get(host),
     identity: (host) => liveOAuthIdentity(host),
@@ -1646,7 +1711,7 @@ function listRemoteSessions(): RemoteSession[] {
     conversationStore.all().filter((c) => conversationOnMachine(c, LOCAL_MACHINE_ID)),
     {
       fallbackTitle: t('window.sessionFallback'),
-      tmpdir: tmpdir(),
+      tmpdir: currentTempDir(),
       dirLabel: trayDirLabel,
       statusOf: (id, resultUnseen) => remoteSessionStatus.get(id) ?? (resultUnseen ? 'done' : 'idle'),
       surfaceOf: (id) => (agentFor(id) === 'cli' ? 'cli' : 'vav'),
@@ -1706,7 +1771,7 @@ function listRemoteHost(): RemoteHostEvent {
   return buildRemoteHostEvent({
     name: hostname(),
     home: homedir(),
-    tmp: tmpdir(),
+    tmp: currentTempDir(),
     platform: process.platform,
     defaultAgent: defaultHost ?? 'vav',
     defaultModel: settings.defaultModel ?? '',
@@ -1727,7 +1792,7 @@ function remoteRootsFor(conversationId: string): string[] | null {
   const settings = settingsStore.get()
   return remoteBrowseRoots({
     home: homedir(),
-    tmp: tmpdir(),
+    tmp: currentTempDir(),
     current: conversation.workingDirectory,
     recent: [
       ...(settings.pinnedWorkspaceDirectories ?? []),
@@ -1889,7 +1954,7 @@ function listRemoteControls(conversationId: string): RemoteControlsEvent | null 
     catalogueDefaultThinking: catalogueDefault,
     workingDirectory: conversation.workingDirectory,
     dirLabel: trayDirLabel(conversation.workingDirectory),
-    temporary: remoteIsTemporary(conversation.workingDirectory, tmpdir()),
+    temporary: remoteIsTemporary(conversation.workingDirectory, currentTempDir()),
     fast: conversation.fast === true
   })
 }
@@ -1985,17 +2050,27 @@ function remoteTurnBusy(conversationId: string): boolean {
     : agent.isRunning(conversationId)
 }
 
-function startRemoteTurn(conversationId: string, text: string, attachments: string[]): void {
+function startRemoteTurn(
+  conversationId: string,
+  text: string,
+  attachments: string[],
+  context?: RemoteSendContext
+): void {
+  const contextBlocks = context?.contextBlocks ?? null
+  const appColumnFocus = context?.appColumnFocus ?? null
   if (agentFor(conversationId) === 'cli') {
-    void cliHost.run(conversationId, text, attachments, null, null, null)
+    void cliHost.run(conversationId, text, attachments, contextBlocks, null, appColumnFocus)
   } else {
-    void agent.run(conversationId, text, attachments, null, null, null)
+    void agent.run(conversationId, text, attachments, contextBlocks, null, appColumnFocus)
   }
 }
 
 function flushRemoteSends(): void {
   for (const next of pendingRemoteSends.takeReady(remoteTurnBusy)) {
-    startRemoteTurn(next.conversationId, next.text, next.attachments)
+    startRemoteTurn(next.conversationId, next.text, next.attachments, {
+      appColumnFocus: next.appColumnFocus,
+      contextBlocks: next.contextBlocks
+    })
   }
 }
 
@@ -2003,7 +2078,8 @@ function flushRemoteSends(): void {
 function remoteSendMessage(
   conversationId: string,
   text: string,
-  attachments: string[] = []
+  attachments: string[] = [],
+  context?: RemoteSendContext
 ): 'ok' | 'not-found' | 'archived' {
   const conversation = conversationStore.get(conversationId)
   const disposition = remoteSendDisposition(
@@ -2011,11 +2087,25 @@ function remoteSendMessage(
     conversation ? remoteTurnBusy(conversationId) : false
   )
   if (disposition === 'not-found' || disposition === 'archived') return disposition
+  if (context?.appColumnFocus) {
+    conversationStore.updateMeta(conversationId, { appColumnFocus: context.appColumnFocus })
+  }
   if (disposition === 'enqueue') {
-    pendingRemoteSends.enqueue(conversationId, text, attachments)
+    pendingRemoteSends.enqueue(conversationId, text, attachments, context)
     return 'ok'
   }
-  startRemoteTurn(conversationId, text, attachments)
+  startRemoteTurn(conversationId, text, attachments, context)
+  return 'ok'
+}
+
+function remoteSetAppColumnFocus(
+  conversationId: string,
+  focus: AppColumnFocus | null
+): 'ok' | 'not-found' | 'archived' {
+  const conversation = conversationStore.get(conversationId)
+  if (!conversation) return 'not-found'
+  if (conversation.archived) return 'archived'
+  conversationStore.updateMeta(conversationId, { appColumnFocus: focus })
   return 'ok'
 }
 
@@ -2032,6 +2122,7 @@ const remoteControl = new RemoteControlService({
   listHost: listRemoteHost,
   configure: configureRemote,
   sendMessage: remoteSendMessage,
+  setAppColumnFocus: remoteSetAppColumnFocus,
   createSession: createRemoteSession,
   cancel: cancelRemote,
   reply: replyRemote,
@@ -2159,7 +2250,8 @@ const daemonAttach = new DaemonAttachService({
         enabled: false,
         conversationId: conversation.id,
         workdirPolicy: 'mint',
-        sourceWorkdir: null
+        sourceWorkdir: null,
+        ...timerJobAgentFromConversation(conversation)
       })
       conversationStore.updateMeta(conversation.id, { timerJobId: job.id, sessionKind: 'timer' })
       return { job, conversation: conversationToMeta(conversationStore.get(conversation.id) ?? conversation) }
@@ -2591,6 +2683,11 @@ function applyDesktopControlEvent(machineId: string, message: RemoteServerMessag
     return
   }
 
+  if (message.type === 'app-apply') {
+    broadcast(IPC.appHostApply, message.event)
+    return
+  }
+
   if (message.type === 'controls') {
     const localId = desktopControlLocalId(machineId, message.conversationId)
     const local = conversationStore.get(localId)
@@ -2819,6 +2916,10 @@ function sendMenuCommand(command: MenuCommand): void {
     target.close()
     return
   }
+  if (command === 'new-conversation' && isDetachedSessionWindow(target)) {
+    newSessionInWindow(target)
+    return
+  }
   safeSend(target.webContents, IPC.menuCommand, command)
 }
 
@@ -2934,6 +3035,30 @@ function publishConversations(): void {
   broadcast(IPC.convChanged, conversationStore.listClientMeta())
   // Sidebar title / swarm projection also drive the tray dropdown.
   refreshTraySessions()
+}
+
+function createAppDefinitionConversation(
+  kind: 'db' | 'knowledge' | 'timer'
+): Conversation {
+  const settings = settingsStore.get()
+  const workdir = resolveNewWorkdir()
+  const defaultHost = resolveDefaultChatHost(settings.defaultAgentId)
+  const title =
+    kind === 'timer'
+      ? t('timer.untitled')
+      : kind === 'db'
+        ? t('db.untitled')
+        : t('knowledge.untitled')
+  const conversation = conversationStore.create(workdir, modelForNewConversation(defaultHost), {
+    sessionKind: kind,
+    title,
+    approvalMode: settings.defaultApprovalMode ?? 'auto',
+    thinkingLevel: parseThinkingLevel(settings.defaultThinkingLevel),
+    cliHost: defaultHost,
+    accountId: accountIdForSession(workdir, defaultHost)
+  })
+  fileService.watchRoot(conversation.id, workdir)
+  return conversation
 }
 
 /** Conversation ids with a live companion window — main UI must not dual-attach PTYs. */
@@ -6087,18 +6212,31 @@ function deleteSwarmHistoryRecord(itemId: string, conversationId: string): void 
 
 /** Debounce: menu accelerator + globalShortcut can both fire when vav is focused. */
 let lastDetachedSessionAt = 0
+let lastInWindowSessionAt = 0
 
-/** ⌘⇧↵ from anywhere: a brand new conversation, straight into its own window. */
-function newDetachedSession(): void {
-  const now = Date.now()
-  if (now - lastDetachedSessionAt < 450) return
-  lastDetachedSessionAt = now
-  sessionOpenT0 = now
-  sessionOpenMark('hotkey:start')
+function isDetachedSessionWindow(window: BrowserWindow): boolean {
+  if (window.isDestroyed()) return false
+  if (detachedWindowIds.has(window)) return true
+  if (warmSessionPool.includes(window)) return true
+  try {
+    return window.webContents.getURL().includes('view=session')
+  } catch {
+    return false
+  }
+}
+
+function mintEphemeralConversation(opts?: {
+  workingDirectory?: string | null
+  inheritFromId?: string | null
+}): Conversation {
   const settings = settingsStore.get()
   const defaultHost = resolveDefaultChatHost(settings.defaultAgentId)
-  const workdir = resolveNewWorkdir()
-  const source = lastSeenConversationId ? conversationStore.get(lastSeenConversationId) : null
+  const inheritId = opts?.inheritFromId ?? lastSeenConversationId
+  const source = inheritId ? conversationStore.get(inheritId) : null
+  const workdir =
+    opts && 'workingDirectory' in opts
+      ? (opts.workingDirectory ?? resolveNewWorkdir())
+      : resolveNewWorkdir()
   const inheritModel = settings.swarmModeEnabled === true ? source?.model : undefined
   const conversation = conversationStore.create(
     workdir,
@@ -6107,13 +6245,76 @@ function newDetachedSession(): void {
       approvalMode: settings.defaultApprovalMode ?? 'auto',
       thinkingLevel: parseThinkingLevel(settings.defaultThinkingLevel),
       cliHost: defaultHost,
-      accountId: accountIdForSession(workdir, defaultHost)
+      accountId: accountIdForSession(workdir, defaultHost),
+      ...(opts?.inheritFromId && source?.machineId ? { machineId: source.machineId } : {})
     }
   )
   ephemeralConversations.add(conversation.id)
   lastSeenConversationId = conversation.id
+  return conversation
+}
+
+/** Rebind a companion to `conversationId` and navigate in place. */
+function navigateDetachedWindow(
+  window: BrowserWindow,
+  conversationId: string,
+  options?: { collapseTools?: boolean }
+): void {
+  const conversation = conversationStore.get(conversationId)
+  if (!conversation || window.isDestroyed()) return
+
+  const previousId = detachedWindowIds.get(window) ?? null
+  if (previousId && previousId !== conversationId) {
+    unbindDetachedWindow(window)
+    disposeEphemeralIfEmpty(previousId)
+  }
+  bindDetachedWindow(window, conversationId)
+  publishDetachedSessions()
+
+  sessionNavigateSeq += 1
+  safeSend(window.webContents, IPC.sessionNavigate, {
+    conversationId,
+    meta: conversationToMeta(conversation),
+    empty: conversation.messages.length === 0,
+    collapseTools: options?.collapseTools === true,
+    openSeq: sessionNavigateSeq,
+    requestedAt: Date.now()
+  })
+  syncSessionShellQuery(window, { conversationId })
+  try {
+    window.setTitle(conversation.title)
+  } catch {
+    // title is cosmetic
+  }
+}
+
+/** Isolated window ⌘N / title-bar new: mint a session and show it here. */
+function newSessionInWindow(window: BrowserWindow): void {
+  if (window.isDestroyed()) return
+  const now = Date.now()
+  if (now - lastInWindowSessionAt < 450) return
+  lastInWindowSessionAt = now
+  sessionOpenT0 = now
+  const previousId = detachedWindowIds.get(window) ?? null
+  const source = previousId ? conversationStore.get(previousId) : null
+  const conversation = mintEphemeralConversation({
+    workingDirectory: source?.workingDirectory ?? null,
+    inheritFromId: previousId
+  })
+  navigateDetachedWindow(window, conversation.id, { collapseTools: true })
+  setImmediate(() => publishConversations())
+}
+
+/** New-session-window shortcut from anywhere: a brand new conversation in its own window. */
+function newDetachedSession(): void {
+  const now = Date.now()
+  if (now - lastDetachedSessionAt < 450) return
+  lastDetachedSessionAt = now
+  sessionOpenT0 = now
+  sessionOpenMark('hotkey:start')
+  const conversation = mintEphemeralConversation()
   sessionOpenMark('hotkey:created', conversation.id)
-  // ⌘⇧↵: tools panel starts collapsed (main-chat.rpml).
+  // Tools panel starts collapsed (main-chat.rpml).
   // raiseDetachedWindow handles focus — do not app.focus alone (fullscreen steal).
   // Defer sidebar broadcast so main-window re-render does not fight the raise.
   void openDetachedWindow(conversation.id, { collapseTools: true, requestedAt: now }).then(
@@ -6496,7 +6697,7 @@ function registerGlobalHotkey(accelerator: string): boolean {
   } else {
     console.log('[hotkey] toggle hotkey cleared (empty)')
   }
-  // 2) New detached session from any app (default ⌘⇧↵ / Ctrl+Shift+Enter)
+  // 2) New detached session from any app (default ⌘⇧N / Ctrl+Shift+N)
   const newSessionAccel = currentKeyBindings().newSessionWindow
   try {
     const ok = globalShortcut.register(newSessionAccel, () => {
@@ -6633,8 +6834,28 @@ function watchSystemAccentColor(): void {
 // Working directories
 // ---------------------------------------------------------------------------
 
+function legacyUserDataDir(): string {
+  if (isE2eRuntime()) return app.getPath('userData')
+  return join(app.getPath('appData'), APP_USER_DATA_DIR)
+}
+
+function currentTempDir(): string {
+  return resolveTempDir({ overrides: readAppPathOverrides(legacyUserDataDir()) })
+}
+
+function grantVavTempRoots(tmp: string): void {
+  try {
+    fileService.grantRoot(tmp)
+    fileService.grantRoot(join(tmp, 'vav'))
+    fileService.grantRoot(join(tmp, 'vav-office-convert'))
+    fileService.grantRoot(join(tmp, 'vav-heic-preview'))
+  } catch {
+    /* FileService may not be ready in isolated tests */
+  }
+}
+
 function tmpRootFor(machineId: string | null | undefined): string {
-  if (isLocalMachine(machineId)) return tmpdir()
+  if (isLocalMachine(machineId)) return currentTempDir()
   return daemonAttach.tmpOf(normalizeMachineId(machineId))
 }
 
@@ -6655,7 +6876,7 @@ function machineIdFromContents(contents: Electron.WebContents): string {
 
 function homeTmpFor(machineId: string): { home: string; tmp: string } {
   if (isLocalMachine(machineId)) {
-    return { home: app.getPath('home'), tmp: tmpdir() }
+    return { home: app.getPath('home'), tmp: currentTempDir() }
   }
   const host = hostRegistry.get(machineId)
   return {
@@ -6836,11 +7057,12 @@ async function seedHostRecentsFromDesktop(machineId: string): Promise<void> {
 
 /** Always mint a Temporary Workspace folder (switcher “A new temp folder”). */
 function mintTempWorkdir(): string {
-  const dir = join(tmpdir(), 'vav', randomUUID().slice(0, 8), 'Workspace')
+  const root = currentTempDir()
+  const dir = join(root, 'vav', randomUUID().slice(0, 8), 'Workspace')
   try {
     mkdirSync(dir, { recursive: true })
   } catch {
-    return tmpdir()
+    return root
   }
   return dir
 }
@@ -7537,7 +7759,7 @@ function registerIpc(): void {
       apiKeyHint: secretStore.maskedHint(),
       platform: PLATFORM,
       home: home || (local ? app.getPath('home') : ''),
-      tmp: tmp || (local ? tmpdir() : ''),
+      tmp: tmp || (local ? currentTempDir() : ''),
       hosts: decorateHosts(hostRegistry.list()),
       about: {
         version: app.getVersion(),
@@ -7701,6 +7923,14 @@ return c as text`
     rememberHostAppearance: (machineId, appearance) => {
       daemonAttach.rememberAppearance(machineId, appearance)
     }
+  })
+
+  registerAppPathsIpc(ipcMain, {
+    legacyUserDataDir,
+    currentUserDataDir: () => app.getPath('userData'),
+    home: () => app.getPath('home'),
+    preferLegacyWhenEmpty: () => isDevRuntime(),
+    onTempDirChanged: (dir) => grantVavTempRoots(dir)
   })
 
   const analysisHasApiKey = (): boolean => {
@@ -8118,6 +8348,10 @@ return c as text`
       const conversation = conversationStore.get(id)
       return pullIfForwarded(conversation, (dial, hostId) => dial.setWorkspace(hostId, path))
     },
+    forwardSetAppColumnFocus: async (id, focus) => {
+      const conversation = conversationStore.get(id)
+      return pullIfForwarded(conversation, (dial, hostId) => dial.setAppColumnFocus(hostId, focus))
+    },
     forwardDeleteMessage: async (id, messageId) => {
       const conversation = conversationStore.get(id)
       if (!controlPlaneOwns(conversation)) return undefined
@@ -8187,11 +8421,11 @@ return c as text`
     conversationStore,
     {
       ownsCli: (id) => agentFor(id) === 'cli',
-      runCli: (id, text, attachments, quote, contextBlocks, contextFile) => {
-        void cliHost.run(id, text, attachments, quote, contextBlocks, contextFile)
+      runCli: (id, text, attachments, contextBlocks, contextFile) => {
+        void cliHost.run(id, text, attachments, contextBlocks, contextFile)
       },
-      runBuiltin: (id, text, attachments, quote, contextBlocks, contextFile) => {
-        void agent.run(id, text, attachments, quote, contextBlocks, contextFile)
+      runBuiltin: (id, text, attachments, contextBlocks, contextFile) => {
+        void agent.run(id, text, attachments, contextBlocks, contextFile)
       },
       appendNotice: (id, text) => agent.appendNotice(id, text),
       cancelCli: (id) => cliHost.cancel(id),
@@ -8217,9 +8451,14 @@ return c as text`
       fork: (id, messageId) => agent.fork(id, messageId),
       compact: (id, options) => agent.compact(id, options),
       clearCompaction: (id, leafId) => agent.clearCompaction(id, leafId),
-      tryRemoteSend: (id, text) => {
+      tryRemoteSend: (id, text, _attachments, contextBlocks, _contextFile, appColumnFocus) => {
         const remote = conversationStore.get(id)
         if (!remote) return false
+        const context: RemoteSendContext = {
+          ...(appColumnFocus ? { appColumnFocus } : {}),
+          ...(contextBlocks?.length ? { contextBlocks } : {})
+        }
+        const extras = Object.keys(context).length ? context : undefined
         if (isLocalMachine(remote.machineId)) {
           if (!localShellMachineId()) return false
           void (async () => {
@@ -8235,11 +8474,11 @@ return c as text`
               console.warn('[vav-server] local-shell send dropped — control plane not ready')
               return
             }
-            dial.send(hostId, text ?? '')
+            dial.send(hostId, text ?? '', extras)
           })()
           return true
         }
-        void forwardControl(remote, (dial, hostId) => dial.send(hostId, text ?? '')).then((used) => {
+        void forwardControl(remote, (dial, hostId) => dial.send(hostId, text ?? '', extras)).then((used) => {
           if (used) return
           // Do not run this computer's CLI against a remote resume cursor —
           // that path dies as a fake "network dropped" error.
@@ -8367,23 +8606,7 @@ return c as text`
     {
       remote: () => daemonAttach.localShellClient() ?? null,
       publishConversations,
-      createDefinitionConversation: () => {
-        const settings = settingsStore.get()
-        const workdir = resolveNewWorkdir()
-        const defaultHost = resolveDefaultChatHost(settings.defaultAgentId)
-        return conversationStore.create(
-          workdir,
-          modelForNewConversation(defaultHost),
-          {
-            sessionKind: 'timer',
-            title: t('timer.untitled'),
-            approvalMode: settings.defaultApprovalMode ?? 'auto',
-            thinkingLevel: parseThinkingLevel(settings.defaultThinkingLevel),
-            cliHost: defaultHost,
-            accountId: accountIdForSession(workdir, defaultHost)
-          }
-        )
-      }
+      createDefinitionConversation: () => createAppDefinitionConversation('timer')
     }
   )
   registerDbIpc(
@@ -8394,23 +8617,8 @@ return c as text`
     () => broadcast(IPC.dbChanged, null),
     {
       publishConversations,
-      createDefinitionConversation: () => {
-        const settings = settingsStore.get()
-        const workdir = resolveNewWorkdir()
-        const defaultHost = resolveDefaultChatHost(settings.defaultAgentId)
-        return conversationStore.create(
-          workdir,
-          modelForNewConversation(defaultHost),
-          {
-            sessionKind: 'db',
-            title: t('db.untitled'),
-            approvalMode: settings.defaultApprovalMode ?? 'auto',
-            thinkingLevel: parseThinkingLevel(settings.defaultThinkingLevel),
-            cliHost: defaultHost,
-            accountId: accountIdForSession(workdir, defaultHost)
-          }
-        )
-      }
+      grantPath: (path) => fileService.grantPath(path),
+      createDefinitionConversation: () => createAppDefinitionConversation('db')
     },
     duckdb
   )
@@ -8422,23 +8630,7 @@ return c as text`
     () => broadcast(IPC.knowledgeChanged, null),
     {
       publishConversations,
-      createDefinitionConversation: () => {
-        const settings = settingsStore.get()
-        const workdir = resolveNewWorkdir()
-        const defaultHost = resolveDefaultChatHost(settings.defaultAgentId)
-        return conversationStore.create(
-          workdir,
-          modelForNewConversation(defaultHost),
-          {
-            sessionKind: 'knowledge',
-            title: t('knowledge.untitled'),
-            approvalMode: settings.defaultApprovalMode ?? 'auto',
-            thinkingLevel: parseThinkingLevel(settings.defaultThinkingLevel),
-            cliHost: defaultHost,
-            accountId: accountIdForSession(workdir, defaultHost)
-          }
-        )
-      }
+      createDefinitionConversation: () => createAppDefinitionConversation('knowledge')
     }
   )
   registerPreviewShellIpc(ipcMain, {
@@ -8480,6 +8672,7 @@ return c as text`
     remote: () => activeSettingsClient(),
     remoteOnly: () => !isLocalMachine(mainShellMachineId),
     rememberRemoteSessions: rememberRemoteFileSessions,
+    grantPath: (path) => fileService.grantPath(path),
     setReadOnly: (sessionId, readOnly) => {
       conversationStore.updateMeta(sessionId, { fileReadOnly: readOnly })
       broadcast(IPC.fileSessionReadOnlyChanged, { sessionId, readOnly })
@@ -8609,6 +8802,9 @@ return c as text`
       if (win && !win.isDestroyed()) win.close()
     },
     newDetached: newDetachedSession,
+    newSessionHere: newSessionInWindow,
+    navigateSession: (window, conversationId) =>
+      navigateDetachedWindow(window, conversationId, { collapseTools: true }),
     listDetached: listDetachedConversationIds,
     openFilePreview: openFilePreviewWindow,
     openOverlay: openAppClipWindow,
@@ -9050,6 +9246,11 @@ if (singleInstance) {
     fileSessionStore.bind(conversationStore, {
       accountIdFor: (workdir) => accountIdForSession(workdir, null)
     })
+    for (const row of fileSessionStore.listAll()) fileService.grantPath(row.path)
+    for (const row of conversationStore.listClientMeta()) {
+      if (row.dataFilePath) fileService.grantPath(row.dataFilePath)
+      if (row.focusedFilePath) fileService.grantPath(row.focusedFilePath)
+    }
     applyTheme(settings.theme ?? DEFAULT_SETTINGS.theme)
     nativeTheme.on('updated', repaintChrome)
     watchSystemAccentColor()

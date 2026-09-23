@@ -58,10 +58,10 @@ export type FileDraftPayload = {
 export class FileDraftCoalescer {
   private last = new Map<string, { content: string; at: number; fullAt: number }>()
 
-  next(filePath: string, raw: string, now = Date.now()): FileDraftPayload | null {
+  next(filePath: string, raw: string, now = Date.now(), force = false): FileDraftPayload | null {
     const content = raw.length > FILE_DRAFT_MAX_CHARS ? raw.slice(0, FILE_DRAFT_MAX_CHARS) : raw
     const prev = this.last.get(filePath)
-    if (prev && now - prev.at < FILE_DRAFT_MIN_INTERVAL_MS) return null
+    if (prev && !force && now - prev.at < FILE_DRAFT_MIN_INTERVAL_MS) return null
     if (prev && prev.content === content) return null
 
     const growing = !!prev && content.startsWith(prev.content) && content.length > prev.content.length

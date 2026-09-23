@@ -5,6 +5,7 @@ import {
   dbEditorTitleValue,
   isDraftDbConnection,
   isDraftDbTitle,
+  isDraftNoteTitle,
   isDraftScheduledTitle
 } from './draftEditorTitle.ts'
 
@@ -18,12 +19,21 @@ describe('draft editor titles', () => {
     assert.equal(isDraftScheduledTitle('Nightly deploy', 'Untitled-scheduled-task'), false)
   })
 
+  it('treats empty and placeholder note titles as drafts', () => {
+    assert.equal(isDraftNoteTitle('', 'Untitled-knowledge'), true)
+    assert.equal(isDraftNoteTitle('Untitled note', 'Untitled-knowledge'), true)
+    assert.equal(isDraftNoteTitle('Untitled-knowledge', 'Untitled-knowledge'), true)
+    assert.equal(isDraftNoteTitle('Launch plan', 'Untitled-knowledge'), false)
+  })
+
   it('treats empty, current, and legacy db titles as drafts', () => {
     assert.equal(isDraftDbTitle('', 'Untitled-db-connection'), true)
     assert.equal(isDraftDbTitle('Untitled-db-connection', 'Untitled-db-connection'), true)
     assert.equal(isDraftDbTitle('A-new-db-connection', 'Untitled-db-connection'), true)
     assert.equal(isDraftDbTitle('Database', 'Untitled-db-connection'), true)
     assert.equal(isDraftDbTitle('数据库连接', 'Untitled-db-connection'), true)
+    assert.equal(isDraftDbTitle('localhost', 'Untitled-db-connection'), true)
+    assert.equal(isDraftDbTitle('PostgreSQL', 'Untitled-db-connection'), true)
     assert.equal(isDraftDbTitle('Prod replica', 'Untitled-db-connection'), false)
   })
 

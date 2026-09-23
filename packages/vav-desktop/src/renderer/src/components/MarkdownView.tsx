@@ -26,11 +26,7 @@ import {
 } from '../lib/diagramViewportZoom'
 import { revealCitation } from '../lib/mdMarks'
 import { joinPath } from '../lib/path'
-import {
-  openAttachmentPreview,
-  resolveSessionFilePath,
-  revealSessionFileInFinder
-} from '../lib/openSessionFile'
+import { revealSessionFileInFinder } from '../lib/openSessionFile'
 import { onHljsReady } from '../lib/hljsLazy'
 import { tt } from '../i18n/useT'
 import {
@@ -216,7 +212,7 @@ export const MarkdownView = memo(function MarkdownView({
       event.stopPropagation()
       const raw = fileChip.dataset.path || fileChip.textContent || ''
       if (!raw.trim()) return
-      openAttachmentPreview(resolveSessionFilePath(raw), useSessionStore.getState().activeId)
+      void import('../lib/openInApp').then(({ openInApp }) => openInApp(raw))
       return
     }
 

@@ -5,19 +5,45 @@
  * watched workspace, clips, and paths the user opened through a main-process
  * dialog.
  */
-import { isAbsolute, relative, resolve } from 'node:path'
+import { realpathSync } from 'node:fs'
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path'
 
-export function isPathInside(root: string, target: string): boolean {
-  if (!root || !target || root.includes('\0') || target.includes('\0')) return false
-  let r = resolve(root)
-  let t = resolve(target)
-  if (process.platform === 'win32') {
-    r = r.toLowerCase()
-    t = t.toLowerCase()
+function normalizePath(path: string): string {
+  let next = resolve(path)
+  if (process.platform === 'win32') next = next.toLowerCase()
+  return next
+}
+
+/** Realpath the longest existing prefix, then join any not-yet-created suffix. */
+function realpathForAllow(path: string): string {
+  const resolved = resolve(path)
+  const missing: string[] = []
+  let current = resolved
+  while (true) {
+    try {
+      const real = realpathSync(current)
+      return missing.length ? join(real, ...missing.reverse()) : real
+    } catch {
+      const parent = dirname(current)
+      if (parent === current) return resolved
+      missing.push(basename(current))
+      current = parent
+    }
   }
+}
+
+function literalInside(root: string, target: string): boolean {
+  const r = normalizePath(root)
+  const t = normalizePath(target)
   if (t === r) return true
   const rel = relative(r, t)
   return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel)
+}
+
+export function isPathInside(root: string, target: string): boolean {
+  if (!root || !target || root.includes('\0') || target.includes('\0')) return false
+  if (!literalInside(root, target)) return false
+  return literalInside(realpathForAllow(root), realpathForAllow(target))
 }
 
 /** True when `target` sits under any root, or equals / sits under a granted path. */

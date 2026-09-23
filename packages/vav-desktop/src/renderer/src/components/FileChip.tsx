@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { File, X } from 'lucide-react'
 import { localFileStreamUrl } from '@shared/localFileUrl'
 import { isFileMentionImage } from '../lib/filePathLinks'
-import { openAttachmentPreview } from '../lib/openSessionFile'
+import { openInApp } from '../lib/openInApp'
 import { basename } from '../lib/path'
 
 function isResolvablePath(path: string): boolean {
@@ -12,7 +12,6 @@ function isResolvablePath(path: string): boolean {
 /** Compact [thumb + filename + optional ×]. Full path is the tooltip; click opens a preview. */
 export function FileChip({
   path,
-  conversationId,
   className,
   onRemove,
   removeLabel
@@ -37,7 +36,7 @@ export function FileChip({
         onClick={(event) => {
           event.preventDefault()
           event.stopPropagation()
-          openAttachmentPreview(path, conversationId)
+          void openInApp(path)
         }}
       >
         {showThumb ? (

@@ -102,6 +102,7 @@ export function SessionPreviewPane({ path }: { path: string | null }): React.JSX
             parentConversationId={activeId}
             contextConversationId={contextConversationId}
             embedded
+            hideHeader
             onClose={close}
           />
         </Suspense>

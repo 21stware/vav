@@ -43,8 +43,9 @@ export function useWindowMinSize(): void {
   const width = pictureInPicture
     ? PIP_WINDOW_MIN_WIDTH
     : windowMinWidth({
-        sidebarVisible: shell === 'main' && sidebarVisible,
-        sidebarWidth,
+        sidebarVisible: shell === 'main',
+        sidebarRail: shell === 'main' && !sidebarVisible,
+        sidebarWidth: sidebarVisible ? sidebarWidth : undefined,
         agentVisible: shell === 'main' ? agentVisible : true,
         agentMinWidth: AGENT_MIN_WIDTH,
         previewVisible: shell === 'main' && applicationsVisible,

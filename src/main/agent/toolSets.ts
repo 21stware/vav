@@ -24,6 +24,14 @@ export const READONLY_TOOLS: ReadonlySet<ToolName> = new Set([
 export const HIGH_RISK_TOOLS: ReadonlySet<ToolName> = new Set([
   'fs_write',
   'knowledge_write',
+  'note_write',
+  'note_edit',
+  'analysis_write',
+  'analysis_edit',
+  'schedule_write',
+  'schedule_edit',
+  'storage_write',
+  'storage_edit',
   'terminal',
   'switch_mode',
   'computer_act'

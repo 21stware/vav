@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Check, FileText, Loader2, Plus } from 'lucide-react'
+import { Check, Loader2, Plus } from 'lucide-react'
 import type { FileAssociationStatus } from '@shared/ipc'
+import { FileTypeIcon } from '../FileTypeIcon'
 import { useSessionStore } from '../../state/sessionStore'
 import { useT } from '../../i18n/useT'
 import { PLATFORM } from '../../lib/platform'
@@ -234,7 +235,7 @@ function AssociationRow({
 }): React.JSX.Element {
   return (
     <div className="assoc-row">
-      <FileText size={16} className="assoc-row-icon" />
+      <FileTypeIcon id={row.id} size={20} />
       <div className="assoc-row-meta">
         <div className="assoc-row-label" title={row.label}>
           {row.label}

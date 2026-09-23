@@ -6,6 +6,21 @@ import { omitLiveUsage } from './sessionUsage.ts'
 import { AGENT_TAB_ID, useWorkspaceStore } from './workspaceStore.ts'
 import type { LiveUsage, TurnRuntime } from './sessionTypes.ts'
 
+/** Idle frame from the control plane: no body, synthetic id, turn succeeded. */
+function isUnsealedRemoteEnd(event: Extract<TurnEvent, { type: 'end' }>): boolean {
+  const message = event.message
+  const synthetic = message.id.startsWith('remote-end-') || message.id.startsWith('live-end-')
+  return (
+    synthetic &&
+    message.blocks.length === 0 &&
+    !message.content &&
+    !message.changeSetId &&
+    !message.errorText &&
+    !event.cancelled &&
+    !event.error
+  )
+}
+
 export const IDLE_TURN: TurnRuntime = {
   isRunning: false,
   phase: 'idle',
@@ -178,6 +193,22 @@ export function applySessionTurnEvent(
     case 'file-draft':
       break
 
+    case 'knowledge-draft': {
+      const noteId = event.noteConversationId
+      const title = event.title?.trim()
+      if (!noteId || !title) break
+      set((state) => {
+        const row = state.conversations.find((item) => item.id === noteId)
+        if (!row || row.title === title) return state
+        return {
+          conversations: state.conversations.map((item) =>
+            item.id === noteId ? { ...item, title } : item
+          )
+        }
+      })
+      break
+    }
+
     case 'cli-session':
       set((state) => ({
         conversations: state.conversations.map((c) =>
@@ -211,6 +242,13 @@ export function applySessionTurnEvent(
       break
 
     case 'end': {
+      // Control-plane idle is an empty placeholder (`remote-end-*`). Clearing
+      // the projection here drops the reply the user just watched; the thread
+      // frame that follows is what seals it onto the leaf.
+      if (isUnsealedRemoteEnd(event)) {
+        patchTurn(set, id, IDLE_TURN)
+        break
+      }
       projection.end()
       patchTurn(set, id, IDLE_TURN)
       set((state) => {
@@ -220,6 +258,7 @@ export function applySessionTurnEvent(
         )
         if (
           event.message.blocks.length === 0 &&
+          !event.message.content &&
           !event.message.changeSetId &&
           !event.message.errorText
         ) {

@@ -24,9 +24,21 @@
  * file bytes, pty, spawn, and secrets stay on the daemon protocol — the phone
  * never gets those.
  *
+ * Desktop / web `send` may also carry `appColumnFocus` and `contextBlocks` so
+ * the host turn sees the open app object. Older phones omit those fields.
+ * `focus` persists the same snapshot without starting a turn. Hosts advertise
+ * `capabilities.appFocus`. IPC (`VavApi.agent.send`) is a transport adapter
+ * over this session plane when the window is a shell.
+ *
  * This module is pure (no Node imports) so it is unit-testable and shareable
  * with the renderer settings UI.
  */
+
+import type { AppColumnFocus } from './appColumnFocus.ts'
+import { parseAppColumnFocus } from './appColumnFocus.ts'
+import { parseAppHostEvent } from './appHost.ts'
+import { parsePreviewRefs } from './previewContext.ts'
+import type { PreviewRef } from './types.ts'
 
 export const REMOTE_PROTO_VERSION = 1
 
@@ -128,12 +140,25 @@ export type RemoteSendImage = {
   data: string
 }
 
+/** Optional turn context on `send`. Older phones omit every field. */
+export type RemoteSendContext = {
+  appColumnFocus?: AppColumnFocus | null
+  contextBlocks?: PreviewRef[] | null
+}
+
 export type RemoteSend = {
   type: 'send'
   conversationId: string
   /** May be blank when `images` carries the payload. */
   text: string
   images?: RemoteSendImage[]
+} & RemoteSendContext
+
+/** Persist app-column focus without starting a turn. Desktop / web only. */
+export type RemoteFocus = {
+  type: 'focus'
+  conversationId: string
+  appColumnFocus: AppColumnFocus | null
 }
 
 export type RemoteSessionsRequest = { type: 'sessions' }
@@ -306,6 +331,7 @@ export type RemoteConfigure = {
 export type RemoteClientMessage =
   | RemoteHello
   | RemoteSend
+  | RemoteFocus
   | RemoteSessionsRequest
   | RemoteCreate
   | RemoteThreadRequest
@@ -387,6 +413,8 @@ export type RemoteCapabilities = {
   spawn: boolean
   fsRead: boolean
   keys: boolean
+  /** Host accepts `appColumnFocus` / `contextBlocks` on send, and the `focus` verb. */
+  appFocus?: boolean
 }
 
 /** Client frames iOS and Android both send. Hello omits `role`. */
@@ -429,7 +457,8 @@ export const REMOTE_PHONE_CAPABILITIES: RemoteCapabilities = {
   pty: false,
   spawn: false,
   fsRead: false,
-  keys: false
+  keys: false,
+  appFocus: true
 }
 
 export type RemoteHostEvent = {
@@ -528,6 +557,11 @@ export type RemoteReviewed = {
   set?: RemoteReviewSet | null
 }
 
+export type RemoteAppApply = {
+  type: 'app-apply'
+  event: import('./appHost.ts').AppHostEvent
+}
+
 export type RemoteServerMessage =
   | RemoteWelcome
   | RemoteHostEvent
@@ -545,6 +579,7 @@ export type RemoteServerMessage =
   | RemoteGoaled
   | RemoteLocated
   | RemoteReviewed
+  | RemoteAppApply
 
 // --- framing ---
 
@@ -634,9 +669,25 @@ export function parseClientMessage(value: unknown): RemoteClientMessage | null {
       const text = typeof raw.text === 'string' ? raw.text : ''
       const images = parseSendImages(raw.images)
       if (!images && text.trim().length === 0) return null
-      return images
-        ? { type: 'send', conversationId: raw.conversationId, text, images }
-        : { type: 'send', conversationId: raw.conversationId, text }
+      const appColumnFocus = parseAppColumnFocus(raw.appColumnFocus)
+      const contextBlocks = parsePreviewRefs(raw.contextBlocks)
+      return {
+        type: 'send',
+        conversationId: raw.conversationId,
+        text,
+        ...(images ? { images } : {}),
+        ...(appColumnFocus ? { appColumnFocus } : {}),
+        ...(contextBlocks ? { contextBlocks } : {})
+      }
+    }
+    case 'focus': {
+      if (typeof raw.conversationId !== 'string' || raw.conversationId.length === 0) return null
+      if (raw.appColumnFocus === null) {
+        return { type: 'focus', conversationId: raw.conversationId, appColumnFocus: null }
+      }
+      const appColumnFocus = parseAppColumnFocus(raw.appColumnFocus)
+      if (!appColumnFocus) return null
+      return { type: 'focus', conversationId: raw.conversationId, appColumnFocus }
     }
     case 'sessions':
       return { type: 'sessions' }
@@ -1191,6 +1242,11 @@ export function parseServerMessage(value: unknown): RemoteServerMessage | null {
         ...(typeof raw.error === 'string' ? { error: raw.error } : {}),
         set: parseRemoteReviewSet(raw.set)
       }
+    }
+    case 'app-apply': {
+      const event = parseAppHostEvent(raw.event)
+      if (!event) return null
+      return { type: 'app-apply', event }
     }
     default:
       return null

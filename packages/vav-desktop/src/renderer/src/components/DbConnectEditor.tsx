@@ -25,8 +25,6 @@ import {
   dbEditorTitleValue,
   isDraftDbTitle
 } from '../lib/draftEditorTitle'
-import { useSidebarFloatMode } from '../lib/sidebarLayout'
-import { ShellLeadingControls } from './ShellLeadingControls'
 import { Button, Toggle } from './ui'
 
 const DRIVERS: DbDriver[] = [...DB_DRIVERS]
@@ -77,9 +75,6 @@ export function DbConnectEditor({
   const selectConversation = useSessionStore((s) => s.selectConversation)
   const renameConversation = useSessionStore((s) => s.renameConversation)
   const showToast = useSessionStore((s) => s.showToast)
-  const sidebarVisible = useSessionStore((s) => s.sidebarVisible)
-  const sidebarFloating = useSidebarFloatMode()
-  const showShellLeading = !(sidebarVisible && !sidebarFloating)
 
   const seeded = initialConnection ? formFromConnection(initialConnection) : null
   const untitled = t('db.untitled')
@@ -425,7 +420,8 @@ export function DbConnectEditor({
                       driver: next,
                       port: defaultDbPort(next),
                       host: dbDriverFormKind(next) === 'server' ? host || 'localhost' : '',
-                      ssl: dbDriverUsesSsl(next) ? ssl : false
+                      ssl: dbDriverUsesSsl(next) ? ssl : false,
+                      ...(isDraftDbTitle(title, untitled) ? { title: '' } : {})
                     })
                   }}
                 >
@@ -622,18 +618,6 @@ export function DbConnectEditor({
 
   return (
     <main className="detail" data-testid="db-connect-editor">
-      <header
-        className={`terminal-host-chrome agent-mode-chrome${showShellLeading ? ' has-shell-leading' : ''}`}
-      >
-        <div className="agent-mode-chrome-row">
-          {showShellLeading ? (
-            <div className="agent-mode-shell-leading">
-              <ShellLeadingControls />
-            </div>
-          ) : null}
-          <span className="spacer" />
-        </div>
-      </header>
       {body}
     </main>
   )

@@ -1,5 +1,6 @@
+import { spawn } from 'node:child_process'
 import { homedir } from 'node:os'
-import { asHostStdioChild, localHostProcess, type HostProcess } from '../../host/HostProcess.ts'
+import { asHostStdioChild, localHostProcess, type HostChild, type HostProcess } from '../../host/HostProcess.ts'
 import { loginPath } from '../../terminal/loginPath'
 import { unwrapAgentLaunch } from '../../terminal/unwrapAgentLaunch'
 import type { StdioProcess } from './stdioJson'
@@ -7,6 +8,34 @@ import type { StdioProcess } from './stdioJson'
 export type { StdioProcess } from './stdioJson'
 export { asArray, asRecord, asString, dig, num, onJsonLines } from './stdioJson'
 export { disposeStdioProcess } from './disposeStdio.ts'
+
+/** Node sets `killed` when the signal is sent, not when the process exits. */
+export function isChildAlive(child: {
+  exitCode?: number | null
+  signalCode?: NodeJS.Signals | null
+}): boolean {
+  return child.exitCode == null && child.signalCode == null
+}
+
+export function killProcessTree(
+  child: Pick<HostChild, 'pid' | 'kill'>,
+  signal: NodeJS.Signals
+): void {
+  const pid = child.pid
+  if (pid == null || pid <= 0) {
+    child.kill(signal)
+    return
+  }
+  if (process.platform === 'win32') {
+    spawn('taskkill', ['/T', '/F', '/PID', String(pid)], { stdio: 'ignore', windowsHide: true })
+    return
+  }
+  try {
+    process.kill(-pid, signal)
+  } catch {
+    child.kill(signal)
+  }
+}
 
 export function spawnStdioProcess(
   binary: string,
@@ -33,7 +62,9 @@ export function spawnStdioProcess(
       cwd,
       env,
       argv0: unwrapped.argv0,
-      stdio: ['pipe', 'pipe', 'pipe']
+      stdio: ['pipe', 'pipe', 'pipe'],
+      detached: process.platform !== 'win32',
+      windowsHide: true
     })
   )
 
@@ -56,7 +87,8 @@ export function spawnStdioProcess(
     },
     kill(signal?: NodeJS.Signals): void {
       try {
-        if (!child.killed) child.kill(signal ?? 'SIGTERM')
+        if (!isChildAlive(child)) return
+        killProcessTree(child, signal ?? 'SIGTERM')
       } catch {
         /* ignore */
       }

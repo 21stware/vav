@@ -3,9 +3,9 @@ import { launchWorkbench } from '../launch'
 
 /**
  * Extra agent chrome that does not fit the core sealed-turn seed:
- * branches, quote chip, subtask tree, cancelled, approval, request.
+ * branches, subtask tree, cancelled, approval, request.
  */
-test('rich seed paints branch, quote, subtask, cancelled, approval, and request', async () => {
+test('rich seed paints branch, subtask, cancelled, approval, and request', async () => {
   const harness = await launchWorkbench({ seedConversation: 'rich' })
   try {
     const { page } = harness
@@ -13,9 +13,6 @@ test('rich seed paints branch, quote, subtask, cancelled, approval, and request'
     await expect(pager).toBeVisible()
     await expect(pager.locator('.variant-count')).toHaveText('2/2')
     await expect(page.locator('[data-testid="message-assistant"]').first()).toContainText(
-      'branch B conclusion'
-    )
-    await expect(page.locator('[data-testid="message-quote-ref"]')).toHaveText(
       'branch B conclusion'
     )
 

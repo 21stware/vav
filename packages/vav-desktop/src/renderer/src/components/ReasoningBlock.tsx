@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { ChevronRight } from 'lucide-react'
 import { thinkingSeconds } from '@shared/thinkingLevel'
 import { useT } from '../i18n/useT'
+import { ThinkingViewport } from './ThinkingViewport'
 
 function thoughtLabel(
   t: ReturnType<typeof useT>,
@@ -21,22 +22,27 @@ export function ReasoningBlock({
   text,
   live = false,
   durationMs,
-  flat = false
+  flat = false,
+  follow = false
 }: {
   text: string
   live?: boolean
   durationMs?: number
   flat?: boolean
+  /** Stick the well to the newest line. Live streams pass this. */
+  follow?: boolean
 }): React.JSX.Element {
   const t = useT()
   const [open, setOpen] = useState(live)
   const canToggle = text.trim().length > 0
+  const stick = follow || live
 
   useEffect(() => {
     setOpen(live)
   }, [live])
 
   if (flat) {
+    if (!text.trim()) return <div className="reasoning-flat" data-testid="reasoning" />
     return (
       <div className="reasoning-flat" data-testid="reasoning">
         <div className="reasoning-body">{text}</div>
@@ -71,7 +77,9 @@ export function ReasoningBlock({
       {canToggle ? (
         <div className="tool-detail" aria-hidden={!open}>
           <div className="tool-detail-inner">
-            <div className="reasoning-body">{text}</div>
+            <ThinkingViewport follow={stick}>
+              <div className="reasoning-body">{text}</div>
+            </ThinkingViewport>
           </div>
         </div>
       ) : null}

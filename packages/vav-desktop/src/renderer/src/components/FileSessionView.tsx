@@ -12,9 +12,12 @@ import { FILE_SESSION_AGENT_MIN_WIDTH } from '@shared/shellMinSize'
 import { useSessionStore } from '../state/sessionStore'
 import { useT } from '../i18n/useT'
 import { basename } from '../lib/path'
-import { workspaceAgentConversationIdFrom } from '../lib/workspaceAgentContext'
+import {
+  syncWorkspaceAgentFocusedPath,
+  workspaceAgentConversationIdFrom
+} from '../lib/workspaceAgentContext'
 import { useFileSessionHistory } from '../lib/useBoundSessionHistory'
-import { useSidebarFloatMode } from '../lib/sidebarLayout'
+import { useShowShellLeading } from '../lib/sidebarLayout'
 import { startCapturedPointerDrag } from '../lib/capturedPointerDrag'
 import { reportFileSessionAgentOpen } from '../lib/useWindowMinSize'
 import { Button, EmptyState } from './ui'
@@ -46,11 +49,13 @@ function loadAgentWidth(): number {
 export function FileSessionView({
   conversationId,
   fileId,
-  hideAgent = false
+  hideAgent = false,
+  onPathResolved
 }: {
   conversationId: string
   fileId: string
   hideAgent?: boolean
+  onPathResolved?: (path: string | null) => void
 }): React.JSX.Element {
   const t = useT()
   const [resolved, setResolved] = useState<{
@@ -64,12 +69,11 @@ export function FileSessionView({
   const agentWidthRef = useRef(agentWidth)
   agentWidthRef.current = agentWidth
 
-  const sidebarVisible = useSessionStore((s) => s.sidebarVisible)
   const workspaceAgentId = useSessionStore(workspaceAgentConversationIdFrom)
   const showFileList = useSessionStore((s) => s.showFileList)
   const fileHistory = useFileSessionHistory(fileId, conversationId, resolved?.path ?? null)
-  const sidebarFloating = useSidebarFloatMode()
-  const showShellLeading = !hideAgent && !(sidebarVisible && !sidebarFloating)
+  const shellLeadingNeeded = useShowShellLeading()
+  const showShellLeading = !hideAgent && shellLeadingNeeded
   const shellLeading = showShellLeading ? <ShellLeadingControls /> : null
   const backToFileList = hideAgent ? null : (
     <Button
@@ -109,6 +113,22 @@ export function FileSessionView({
       cancelled = true
     }
   }, [fileId])
+
+  useEffect(() => {
+    onPathResolved?.(resolved?.path ?? null)
+    return () => onPathResolved?.(null)
+  }, [onPathResolved, resolved?.path])
+
+  const applicationsVisible = useSessionStore((s) => s.applicationsVisible)
+  const setFocusedFile = useSessionStore((s) => s.setFocusedFile)
+  useEffect(() => {
+    if (!hideAgent || !resolved?.path) return
+    // The app-column context (title / path / sent focus) reads the file-session
+    // object's own meta. Record which document this session is showing so it
+    // advertises the file — not its enclosing folder — to the workspace agent.
+    void setFocusedFile(conversationId, resolved.path)
+    syncWorkspaceAgentFocusedPath(resolved.path)
+  }, [hideAgent, applicationsVisible, resolved?.path, conversationId, setFocusedFile])
 
   const startResize = useCallback((event: ReactPointerEvent<HTMLElement>): void => {
     const startX = event.clientX
@@ -164,7 +184,7 @@ export function FileSessionView({
       <section className="workspace-view-preview file-session-preview">
         {loading ? (
           <div className="file-session-missing">
-            {missingChrome}
+            {hideAgent ? null : missingChrome}
             <div className="file-session-missing-body muted">{t('common.loading')}</div>
           </div>
         ) : pathOk ? (
@@ -178,13 +198,13 @@ export function FileSessionView({
               embedded
               agentPanelOpen={hideAgent ? false : agentOpen}
               onToggleAgentPanel={hideAgent ? undefined : () => setAgentOpen((v) => !v)}
-              shellLeading={shellLeading}
+              shellLeading={hideAgent ? undefined : shellLeading}
               onBackToFileList={hideAgent ? null : showFileList}
             />
           </Suspense>
         ) : (
           <div className="file-session-missing">
-            {missingChrome}
+            {hideAgent ? null : missingChrome}
             <div className="file-session-missing-body">
               <EmptyState
                 title={t('sidebar.fileNotExist')}
@@ -203,7 +223,6 @@ export function FileSessionView({
       >
         <div
           className={`workspace-view-agent-inner${agentOpen ? '' : ' is-collapsed'}`}
-          style={{ width: agentWidth }}
         >
           <div
             className="workspace-col-resizer workspace-col-resizer-start"

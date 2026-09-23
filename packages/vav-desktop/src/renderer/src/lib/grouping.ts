@@ -280,7 +280,7 @@ export function stableDatabaseTitle(
   if (custom && !isDraftDbTitle(custom, untitled) && !isDefaultSessionTitle(custom)) {
     return custom
   }
-  return dbConnectionTitle({ ...row, title: '' })
+  return dbConnectionTitle({ ...row, title: '' }) || untitled
 }
 
 /** DB connections must appear even when listMeta omitted the session row. */
@@ -294,7 +294,7 @@ export function mergeConnectedDbConversations(
     if (conversations.some((conversation) => conversation.id === row.conversationId)) continue
     extra.push({
       id: row.conversationId,
-      title: dbConnectionTitle(row),
+      title: dbConnectionTitle(row) || tt('db.untitled'),
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
       workingDirectory: null,

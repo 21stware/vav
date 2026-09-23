@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict'
-import { execFileSync } from 'node:child_process'
 import { createServer } from 'node:http'
 import { existsSync } from 'node:fs'
 import { mkdtemp, rm } from 'node:fs/promises'
@@ -12,6 +11,11 @@ import { createVavControlPlane } from '../host/VavControlPlane.ts'
 import { startVavWebBridge } from './VavWebBridge.ts'
 import { spawnLocalVavServer } from './vavServerSpawn.ts'
 import { assertDesktopSessionLayout, readPhoneSessionLayout } from './phoneSessionLayout.ts'
+import {
+  VAV_DISCOVER_APP,
+  VAV_SERVER_WEB_DEFAULT_PORT,
+  VAV_SERVER_WEB_SCAN_LAST
+} from '../../shared/vavDiscover.ts'
 
 const SECRET = '0123456789abcdef01234567'
 const EXT = join(import.meta.dirname, '../../../packages/vav-chrome-extension/extension')
@@ -89,42 +93,25 @@ async function chatStubTurn(panel: Page, text: string): Promise<void> {
   assertDesktopSessionLayout(await panel.evaluate(readPhoneSessionLayout), 280)
 }
 
-/** Desktop and the extension share 4752–4762. A leftover steals /discover. */
-function pidsOnPort(port: number): number[] {
-  try {
-    if (process.platform === 'win32') {
-      const out = execFileSync(
-        'powershell.exe',
-        [
-          '-NoProfile',
-          '-Command',
-          `(Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction SilentlyContinue).OwningProcess`
-        ],
-        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }
-      )
-      return [...new Set(out.split(/\s+/).map(Number).filter((pid) => pid > 0))]
-    }
-    const out = execFileSync('lsof', ['-ti', `TCP:${port}`], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore']
-    })
-    return [...new Set(out.split(/\s+/).map(Number).filter((pid) => pid > 0))]
-  } catch {
-    return []
-  }
-}
-
-async function freeDesktopWebPorts(): Promise<void> {
-  for (let port = 4752; port <= 4762; port++) {
-    for (const pid of pidsOnPort(port)) {
-      try {
-        process.kill(pid, 'SIGTERM')
-      } catch {
-        /* already gone */
-      }
+/**
+ * The Chrome extension scans 4752–4762 for /discover. The desktop app listens
+ * there too. Never signal that process — a SIGTERM quits the running VAV.
+ * If the range is already taken, the auto-discover case cannot run.
+ */
+async function discoverRangeTaken(): Promise<boolean> {
+  for (let port = VAV_SERVER_WEB_DEFAULT_PORT; port <= VAV_SERVER_WEB_SCAN_LAST; port++) {
+    try {
+      const res = await fetch(`http://127.0.0.1:${port}/discover`, {
+        signal: AbortSignal.timeout(400)
+      })
+      if (!res.ok) continue
+      const info = (await res.json()) as { app?: string }
+      if (info.app === VAV_DISCOVER_APP) return true
+    } catch {
+      /* nothing listening */
     }
   }
-  await new Promise((resolve) => setTimeout(resolve, 250))
+  return false
 }
 
 /**
@@ -515,8 +502,14 @@ describe('vav-server Chrome extension', () => {
       return
     }
 
+    if (await discoverRangeTaken()) {
+      t.skip(
+        `vav-server already listening on ${VAV_SERVER_WEB_DEFAULT_PORT}–${VAV_SERVER_WEB_SCAN_LAST}`
+      )
+      return
+    }
+
     const profile = await mkdtemp(join(tmpdir(), 'vav-ext-autodisc-'))
-    await freeDesktopWebPorts()
     const spawned = await spawnLocalVavServer({
       name: 'Desktop Auto Discover',
       stubTurn: true,
@@ -559,12 +552,11 @@ describe('vav-server Chrome extension', () => {
     }
 
     const profile = await mkdtemp(join(tmpdir(), 'vav-ext-daemon-uri-'))
-    await freeDesktopWebPorts()
     const spawned = await spawnLocalVavServer({
       name: 'Desktop Connect URI',
       stubTurn: true,
       noWeb: false,
-      webPort: 4752,
+      webPort: 0,
       webListen: '127.0.0.1'
     })
     let context: BrowserContext | undefined

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
+import { MAIN_WINDOW_MIN_WIDTH } from '@shared/shellMinSize'
 import { hostWindowTitle, mainWindowSize, rendererPrefs } from './rendererPrefs.ts'
 
 describe('rendererPrefs', () => {
@@ -21,7 +22,10 @@ describe('mainWindowSize / hostWindowTitle', () => {
       height: 900
     })
     assert.deepEqual(mainWindowSize({ snapshotting: false, e2e: true }).width, 1100)
-    assert.deepEqual(mainWindowSize({ snapshotting: false, e2e: false }).width, 720)
+    assert.deepEqual(
+      mainWindowSize({ snapshotting: false, e2e: false }).width,
+      Math.max(MAIN_WINDOW_MIN_WIDTH, 720)
+    )
     assert.equal(hostWindowTitle('VAV', true, 'office'), 'VAV')
     assert.equal(hostWindowTitle('VAV', false, ' studio '), 'VAV — studio')
   })

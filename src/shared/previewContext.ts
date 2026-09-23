@@ -1,3 +1,4 @@
+import { formatAppColumnSendContext, type AppColumnFocus } from './appColumnFocus.ts'
 import type { PreviewBlock } from './previewBlock'
 import type { PreviewRef } from './types'
 
@@ -42,8 +43,7 @@ export function formatBlockPickLabel(block: {
 
 /**
  * Hidden context block prepended to outbound user text so the model sees the
- * previewed selection. The bubble body stays user-typed only — this is the
- * counterpart to {@link ./quote.composeQuotedUserText} for file-preview refs.
+ * previewed selection. The bubble body stays user-typed only.
  */
 /** One selected preview block → a composer comment-block reference. */
 export function blockToPreviewRef(
@@ -88,18 +88,48 @@ export function formatPreviewContext(refs: PreviewRef[] | null | undefined): str
 }
 
 /** Paperclip paths reconstituted for the model (not shown in the bubble body). */
+const PREVIEW_REF_CAP = 16
+const PREVIEW_TEXT_CAP = 16_000
+
+/** Structural parse for session-protocol payloads. Invalid items are skipped. */
+export function parsePreviewRefs(value: unknown): PreviewRef[] | undefined {
+  if (!Array.isArray(value) || value.length === 0) return undefined
+  const refs: PreviewRef[] = []
+  for (const item of value.slice(0, PREVIEW_REF_CAP)) {
+    if (typeof item !== 'object' || item === null) continue
+    const raw = item as Record<string, unknown>
+    if (typeof raw.id !== 'string' || typeof raw.filePath !== 'string') continue
+    if (typeof raw.label !== 'string' || typeof raw.text !== 'string') continue
+    if (typeof raw.startLine !== 'number' || typeof raw.endLine !== 'number') continue
+    refs.push({
+      id: raw.id.slice(0, 240),
+      filePath: raw.filePath.slice(0, 2048),
+      label: raw.label.slice(0, 200),
+      startLine: raw.startLine,
+      endLine: raw.endLine,
+      text: raw.text.slice(0, PREVIEW_TEXT_CAP),
+      ...(typeof raw.badge === 'string' ? { badge: raw.badge.slice(0, 40) } : {}),
+      ...(typeof raw.comment === 'string' ? { comment: raw.comment.slice(0, 2000) } : {})
+    })
+  }
+  return refs.length ? refs : undefined
+}
+
 export function formatAttachmentsContext(paths: string[] | null | undefined): string {
   if (!paths || paths.length === 0) return ''
   return `Attachments:\n${paths.map((p) => `- ${p}`).join('\n')}`
 }
 
-/** Text sent to the model: optional selection context + attachments + user text. */
+/** Text sent to the model: app focus + selection context + attachments + user text. */
 export function composeContextUserText(
   text: string,
   refs: PreviewRef[] | null | undefined,
-  attachments?: string[] | null
+  attachments?: string[] | null,
+  appFocus?: AppColumnFocus | null
 ): string {
   const parts: string[] = []
+  const app = formatAppColumnSendContext(appFocus)
+  if (app) parts.push(app)
   const context = formatPreviewContext(refs)
   if (context) parts.push(context)
   const files = formatAttachmentsContext(attachments)

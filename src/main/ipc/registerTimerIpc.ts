@@ -1,6 +1,10 @@
 import type { IpcMain } from 'electron'
 import { IPC } from '@shared/ipc'
-import type { TimerJobInput } from '@shared/timer'
+import {
+  conversationPatchFromTimerJob,
+  timerJobAgentFromConversation,
+  type TimerJobInput
+} from '@shared/timer'
 import { conversationToMeta } from '../store/conversationMeta'
 import type { TimerStore } from '../store/TimerStore'
 import type { TimerScheduler } from '../timer/TimerScheduler'
@@ -52,7 +56,8 @@ export function registerTimerIpc(
       enabled: false,
       conversationId: conversation.id,
       workdirPolicy: 'mint',
-      sourceWorkdir: null
+      sourceWorkdir: null,
+      ...timerJobAgentFromConversation(conversation)
     })
     conversations.updateMeta(conversation.id, { timerJobId: job.id, sessionKind: 'timer' })
     host.publishConversations()
@@ -88,6 +93,15 @@ export function registerTimerIpc(
         return job
       }
       const job = store.updateJob(id, patch)
+      if (job?.conversationId) {
+        const convPatch = conversationPatchFromTimerJob(patch)
+        if (typeof patch.title === 'string' && patch.title.trim()) {
+          Object.assign(convPatch, { title: job.title })
+        }
+        if (Object.keys(convPatch).length > 0) {
+          conversations.updateMeta(job.conversationId, convPatch)
+        }
+      }
       broadcast()
       return job
     }

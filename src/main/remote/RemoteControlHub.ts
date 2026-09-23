@@ -22,6 +22,7 @@ import {
   type RemoteHostEvent,
   type RemoteNotification,
   type RemoteNotifyKind,
+  type RemoteSendContext,
   type RemoteSendImage,
   type RemoteServerMessage,
   type RemoteSession,
@@ -46,7 +47,12 @@ export type RemoteControlHubDeps = {
   sendMessage: (
     conversationId: string,
     text: string,
-    attachments?: string[]
+    attachments?: string[],
+    context?: RemoteSendContext
+  ) => RemoteSendResult
+  setAppColumnFocus?: (
+    conversationId: string,
+    focus: import('../../shared/appColumnFocus.ts').AppColumnFocus | null
   ) => RemoteSendResult
   createSession: (conversationId?: string) => RemoteSession
   cancel: (conversationId: string) => RemoteSendResult
@@ -233,6 +239,10 @@ export class RemoteControlHub {
     this.broadcast(event)
   }
 
+  pushAppApply(event: import('../../shared/appHost.ts').AppHostEvent): void {
+    this.broadcast({ type: 'app-apply', event })
+  }
+
   beginLive(conversationId: string): void {
     this.liveSlots.set(conversationId, new Map())
     this.liveAwaiting.delete(conversationId)
@@ -285,14 +295,17 @@ export class RemoteControlHub {
 
   finishTurn(conversationId: string, phase: RemoteTurnEvent['phase'], error?: string): void {
     this.clearLive(conversationId)
+    // Seal the transcript before the idle turn. The idle frame carries no
+    // message; if it lands first, the renderer drops the live reply and the
+    // leaf stays on the user turn.
+    const thread = this.deps.listThread(conversationId)
+    if (thread) this.broadcast(thread)
     this.broadcast({
       type: 'turn',
       conversationId,
       phase,
       ...(error ? { error } : {})
     })
-    const thread = this.deps.listThread(conversationId)
-    if (thread) this.broadcast(thread)
     this.schedulePushSessions()
   }
 
@@ -748,6 +761,24 @@ export class RemoteControlHub {
         })
         return true
       }
+      case 'focus': {
+        if (!this.deps.setAppColumnFocus) {
+          this.send(client, {
+            type: 'error',
+            code: 'bad-request',
+            message: 'focus unavailable',
+            conversationId: message.conversationId
+          })
+          return true
+        }
+        this.ackMutation(
+          client,
+          message.conversationId,
+          this.deps.setAppColumnFocus(message.conversationId, message.appColumnFocus),
+          false
+        )
+        return true
+      }
       case 'send': {
         const attachments = this.deps.materializeImages?.(message.images) ?? []
         const text = message.text
@@ -760,7 +791,16 @@ export class RemoteControlHub {
           })
           return true
         }
-        const result = this.deps.sendMessage(message.conversationId, text, attachments)
+        const context: RemoteSendContext = {
+          ...(message.appColumnFocus ? { appColumnFocus: message.appColumnFocus } : {}),
+          ...(message.contextBlocks ? { contextBlocks: message.contextBlocks } : {})
+        }
+        const result = this.deps.sendMessage(
+          message.conversationId,
+          text,
+          attachments,
+          Object.keys(context).length ? context : undefined
+        )
         if (result === 'ok') {
           this.send(client, { type: 'sent', conversationId: message.conversationId })
           const thread = this.deps.listThread(message.conversationId)

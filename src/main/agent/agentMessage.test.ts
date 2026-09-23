@@ -17,13 +17,11 @@ describe('agentMessage', () => {
       parentId: null,
       text: 'hi',
       createdAt: 7,
-      quote: { messageId: 'm', summary: 'q', role: 'user' },
       attachments: ['/a.png']
     })
     assert.equal(msg.role, 'user')
     assert.equal(msg.content, 'hi')
     assert.equal(msg.createdAt, 7)
-    assert.equal(msg.quoteMessageId, 'm')
     assert.deepEqual(msg.attachments, ['/a.png'])
     assert.equal('contextFile' in msg, false)
   })

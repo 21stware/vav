@@ -16,7 +16,6 @@ import type {
   PreviewRef,
   ProviderResumeCursor,
   QuotaWindow,
-  QuoteDraft,
   ShellKind,
   ThemeMode,
   TokenSnapshot,
@@ -892,6 +891,15 @@ export interface VavApi {
     keepAwakeStatus(): Promise<KeepAwakeStatus>
     keepAwakeGrant(): Promise<KeepAwakeGrantResult>
     keepAwakeRevoke(): Promise<KeepAwakeGrantResult>
+    /**
+     * Desktop-only: where conversations / app info live, plus the temp
+     * workspace root. Chrome / web return `null`.
+     */
+    appPaths(): Promise<import('./appPaths').AppPathSnapshot | null>
+    /** Empty / null restores `~/.vav`. Takes effect after relaunch. */
+    setAppDataDir(path: string | null): Promise<import('./appPaths').AppPathSnapshot | null>
+    /** Empty / null restores the system temp directory. Takes effect now. */
+    setTempDir(path: string | null): Promise<import('./appPaths').AppPathSnapshot | null>
   }
 
   logs: {
@@ -982,6 +990,11 @@ export interface VavApi {
     setFocusedFile(id: string, path: string | null): Promise<ConversationMeta[]>
     /** Live-DB table focus — carried into agent context. */
     setFocusedDbTable(id: string, table: string | null): Promise<ConversationMeta[]>
+    /** App-column snapshot — carried into the workspace agent system prompt. */
+    setAppColumnFocus(
+      id: string,
+      focus: import('./appColumnFocus').AppColumnFocus | null
+    ): Promise<ConversationMeta[]>
     setWorkingDirectory(id: string, path: string, machineId?: string | null): Promise<ConversationMeta[]>
     pickWorkingDirectory(id: string): Promise<ConversationMeta[] | null>
     /** Mint a new Temporary Workspace folder and switch this session to it. */
@@ -1079,9 +1092,9 @@ export interface VavApi {
       conversationId: string,
       text: string,
       attachments: string[],
-      quote?: QuoteDraft | null,
       contextBlocks?: PreviewRef[] | null,
-      contextFile?: string | null
+      contextFile?: string | null,
+      appColumnFocus?: import('./appColumnFocus').AppColumnFocus | null
     ): Promise<void>
     /**
      * Append a system notice to the transcript (no agent turn). Used for UI
@@ -1500,6 +1513,11 @@ export interface VavApi {
     onChanged(handler: () => void): () => void
   }
 
+  /** App-column host events (agent created / opened an object). */
+  apps: {
+    onApply(handler: (event: import('./appHost').AppHostEvent) => void): () => void
+  }
+
   /** Knowledge hosts: ingested documents + markdown notes. */
   knowledge: {
     list(): Promise<import('./knowledge').KnowledgeHost[]>
@@ -1507,14 +1525,25 @@ export interface VavApi {
     getForConversation(
       conversationId: string
     ): Promise<import('./knowledge').KnowledgeHost | null>
-    createNote(): Promise<{
+    createNote(folderId?: string | null): Promise<{
       host: import('./knowledge').KnowledgeHost
       conversation: import('./types').ConversationMeta
     }>
-    importDocument(path: string): Promise<{
+    importDocument(
+      path: string,
+      folderId?: string | null
+    ): Promise<{
       host: import('./knowledge').KnowledgeHost
       conversation: import('./types').ConversationMeta
     } | null>
+    listFolders(): Promise<import('./knowledge').KnowledgeFolder[]>
+    createFolder(name: string): Promise<import('./knowledge').KnowledgeFolder>
+    renameFolder(
+      id: string,
+      name: string
+    ): Promise<import('./knowledge').KnowledgeFolder | null>
+    removeFolder(id: string): Promise<boolean>
+    move(ids: string[], folderId: string | null): Promise<boolean>
     readNote(id: string): Promise<import('./knowledge').KnowledgeNote | null>
     writeNote(
       id: string,
@@ -1710,8 +1739,18 @@ export interface VavApi {
      * host the live terminal again (“Take it back”).
      */
     closeDetachedSession(conversationId: string): Promise<void>
-    /** Fresh conversation in its own window — the ⌘⇧↵ path. */
+    /** Fresh conversation in its own window — the new-session-window path. */
     newDetachedSession(): Promise<void>
+    /**
+     * Isolated window: mint a session and show it here (⌘N). Previous empty
+     * ephemeral shells are dropped, same as closing the companion.
+     */
+    newSessionHere(): Promise<void>
+    /**
+     * Isolated window: rebind this companion to `conversationId` and navigate
+     * in place. Used when a renderer create asked for `openIn: 'here'`.
+     */
+    navigateSession(conversationId: string): Promise<void>
     /**
      * Conversation ids that currently have a companion (detached) window.
      * Main window uses this so it does not mount a second live agent xterm
@@ -2127,6 +2166,9 @@ export const IPC = {
   settingsValidateKey: 'vav:settings:validate-key',
   settingsFonts: 'vav:settings:fonts',
   settingsPickDirectory: 'vav:settings:pick-directory',
+  settingsAppPaths: 'vav:settings:app-paths',
+  settingsSetAppDataDir: 'vav:settings:set-app-data-dir',
+  settingsSetTempDir: 'vav:settings:set-temp-dir',
   settingsPickColor: 'vav:settings:pick-color',
   settingsPickSurfacePattern: 'vav:settings:pick-surface-pattern',
   settingsSetHotkey: 'vav:settings:set-hotkey',
@@ -2169,6 +2211,7 @@ export const IPC = {
   convSetSwarmLayout: 'vav:conv:set-swarm-layout',
   convSetFocusedFile: 'vav:conv:set-focused-file',
   convSetFocusedDbTable: 'vav:conv:set-focused-db-table',
+  convSetAppColumnFocus: 'vav:conv:set-app-column-focus',
   convSetWorkdir: 'vav:conv:set-workdir',
   convPickWorkdir: 'vav:conv:pick-workdir',
   convUseTempWorkdir: 'vav:conv:use-temp-workdir',
@@ -2357,7 +2400,13 @@ export const IPC = {
   knowledgeRename: 'vav:knowledge:rename',
   knowledgeRemove: 'vav:knowledge:remove',
   knowledgeRefresh: 'vav:knowledge:refresh',
+  knowledgeListFolders: 'vav:knowledge:list-folders',
+  knowledgeCreateFolder: 'vav:knowledge:create-folder',
+  knowledgeRenameFolder: 'vav:knowledge:rename-folder',
+  knowledgeRemoveFolder: 'vav:knowledge:remove-folder',
+  knowledgeMove: 'vav:knowledge:move',
   knowledgeChanged: 'vav:knowledge:changed',
+  appHostApply: 'vav:app-host:apply',
   hostsSpecialFolder: 'vav:hosts:special-folder',
 
   agentsResolveBinary: 'vav:agents:resolve-binary',
@@ -2401,6 +2450,8 @@ export const IPC = {
   windowSetPictureInPicture: 'vav:window:set-picture-in-picture',
   windowCloseDetached: 'vav:window:close-detached',
   windowNewDetached: 'vav:window:new-detached',
+  windowNewSessionHere: 'vav:window:new-session-here',
+  windowNavigateSession: 'vav:window:navigate-session',
   windowListDetached: 'vav:window:list-detached',
   windowDetachedChanged: 'vav:window:detached-changed',
   windowRepaint: 'vav:window:repaint',

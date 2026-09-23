@@ -1,4 +1,5 @@
-import type { PreviewRef, QuoteDraft } from '@shared/types.ts'
+import type { AppColumnFocus } from '@shared/appColumnFocus.ts'
+import type { PreviewRef } from '@shared/types.ts'
 
 /**
  * In-memory pending send while a turn is streaming (main-chat-streaming.rpml §5).
@@ -10,8 +11,8 @@ export interface QueuedMessage {
   attachments: string[]
   previewRefs: PreviewRef[]
   commentCards: { ref: PreviewRef; comment: string }[]
-  quote: QuoteDraft | null
   contextFile: string | null
+  appColumnFocus: AppColumnFocus | null
   createdAt: number
 }
 
@@ -49,27 +50,22 @@ export function isEmptyComposerSend(
   return !text.trim() && attachments.length === 0 && refs.length === 0 && cards.length === 0
 }
 
-/** Unsent composer payload — text, attachments, quotes, or preview chips. */
+/** Unsent composer payload — text, attachments, or preview chips. */
 export function hasUnsentComposerDraft(input: {
   text?: string
   attachments?: string[]
   previewRefs?: unknown[]
   commentCards?: unknown[]
-  quote?: QuoteDraft | null
   contextFile?: string | null
 }): boolean {
   const files = mergeComposerFilePaths(input.contextFile, input.attachments ?? [])
-  if (!isEmptyComposerSend(input.text ?? '', files, input.previewRefs ?? [], input.commentCards ?? [])) {
-    return true
-  }
-  return !!input.quote
+  return !isEmptyComposerSend(input.text ?? '', files, input.previewRefs ?? [], input.commentCards ?? [])
 }
 
 /** Conversation ids that currently have unsent composer content. */
 export function unsentComposerIds(state: {
   drafts: Record<string, string>
   attachments: Record<string, string[]>
-  quotes: Record<string, QuoteDraft | null>
   previewRefs: Record<string, unknown[]>
   commentCards: Record<string, unknown[]>
   contextFiles?: Record<string, string | null>
@@ -77,7 +73,6 @@ export function unsentComposerIds(state: {
   const ids = new Set([
     ...Object.keys(state.drafts),
     ...Object.keys(state.attachments),
-    ...Object.keys(state.quotes),
     ...Object.keys(state.previewRefs),
     ...Object.keys(state.commentCards),
     ...Object.keys(state.contextFiles ?? {})
@@ -90,7 +85,6 @@ export function unsentComposerIds(state: {
         attachments: state.attachments[id],
         previewRefs: state.previewRefs[id],
         commentCards: state.commentCards[id],
-        quote: state.quotes[id],
         contextFile: state.contextFiles?.[id]
       })
     ) {
@@ -174,8 +168,8 @@ export function buildQueuedMessage(input: {
   attachments: string[]
   previewRefs: PreviewRef[]
   commentCards: { ref: PreviewRef; comment: string }[]
-  quote: QuoteDraft | null
   contextFile: string | null
+  appColumnFocus?: AppColumnFocus | null
   now?: number
   id?: string
 }): QueuedMessage {
@@ -189,8 +183,8 @@ export function buildQueuedMessage(input: {
       ref: { ...c.ref },
       comment: c.comment
     })),
-    quote: input.quote ? { ...input.quote } : null,
     contextFile: input.contextFile,
+    appColumnFocus: input.appColumnFocus ?? null,
     createdAt: now
   }
 }
@@ -200,7 +194,6 @@ export function composerClearedPatch<
   T extends {
     drafts: Record<string, string>
     attachments: Record<string, string[]>
-    quotes: Record<string, QuoteDraft | null>
     previewRefs: Record<string, PreviewRef[]>
     commentCards: Record<string, { ref: PreviewRef; comment: string }[]>
     contextFiles: Record<string, string | null>
@@ -208,7 +201,6 @@ export function composerClearedPatch<
 >(state: T, activeId: string): {
   drafts: T['drafts']
   attachments: T['attachments']
-  quotes: T['quotes']
   previewRefs: T['previewRefs']
   commentCards: T['commentCards']
   contextFiles: T['contextFiles']
@@ -219,7 +211,6 @@ export function composerClearedPatch<
   return {
     drafts: { ...state.drafts, [activeId]: '' },
     attachments: { ...state.attachments, [activeId]: [] },
-    quotes: { ...state.quotes, [activeId]: null },
     previewRefs: { ...state.previewRefs, [activeId]: [] },
     commentCards: { ...state.commentCards, [activeId]: [] },
     contextFiles: { ...state.contextFiles, [activeId]: null },
@@ -235,7 +226,6 @@ export function enqueueQueuedMessagePatch<
     messageQueues: Record<string, QueuedMessage[]>
     drafts: Record<string, string>
     attachments: Record<string, string[]>
-    quotes: Record<string, QuoteDraft | null>
     previewRefs: Record<string, PreviewRef[]>
     commentCards: Record<string, { ref: PreviewRef; comment: string }[]>
     contextFiles: Record<string, string | null>
@@ -300,8 +290,8 @@ export async function dispatchQueuedPayload(
     conversationId,
     item.text,
     item.attachments,
-    item.quote,
     allRefs.length ? allRefs : null,
-    item.contextFile
+    item.contextFile,
+    item.appColumnFocus
   )
 }

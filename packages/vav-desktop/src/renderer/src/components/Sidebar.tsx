@@ -738,7 +738,12 @@ export function Sidebar({
         event.preventDefault()
         const index = visible.findIndex((c) => c.id === activeId)
         const next = visible[index + (event.key === 'ArrowDown' ? 1 : -1)]
-        if (next) void selectConversation(next.id)
+        if (next) {
+          void selectConversation(next.id, {
+            range: event.shiftKey,
+            rangeIds: visible.map((row) => row.id)
+          })
+        }
       } else if (event.key === 'Backspace' || event.key === 'Delete') {
         event.preventDefault()
         const current = conversations.find((row) => row.id === activeId)
@@ -1297,12 +1302,16 @@ export function Sidebar({
                 onClick={(event) => {
                   // detail: ignore the second half of a double-click pair
                   if (event.detail > 1) return
-                  const additive = event.metaKey
+                  const additive = event.metaKey || event.ctrlKey
                   const range = event.shiftKey
                   if (swarmEnabled && !additive && !range) {
                     void focusSwarmSession(conversation.id)
                   } else {
-                    void selectConversation(conversation.id, { additive, range })
+                    void selectConversation(conversation.id, {
+                      additive,
+                      range,
+                      rangeIds: visibleIds
+                    })
                   }
                   // Multi-select keeps the float open so the user can keep picking.
                   if (additive || range) return
@@ -1586,10 +1595,7 @@ export function Sidebar({
       </div>
 
       <div className="sidebar-foot">
-        <SidebarServiceBar
-          variant="nav"
-          onOpen={() => useSessionStore.getState().setApplicationsMode('devices')}
-        />
+        <SidebarServiceBar variant="nav" highlight={false} />
       </div>
       <UpdateCorner variant="inline" />
     </aside>

@@ -36,6 +36,16 @@ export function mapToolName(name: string): ToolName {
   ) {
     return 'fs_read'
   }
+  if (n === 'note_write' || n === 'notewrite') return 'note_write'
+  if (n === 'note_edit' || n === 'noteedit') return 'note_edit'
+  if (n === 'analysis_write' || n === 'analysiswrite') return 'analysis_write'
+  if (n === 'analysis_edit' || n === 'analysisedit') return 'analysis_edit'
+  if (n === 'schedule_write' || n === 'schedulewrite') return 'schedule_write'
+  if (n === 'schedule_edit' || n === 'scheduleedit') return 'schedule_edit'
+  if (n === 'storage_write' || n === 'storagewrite') return 'storage_write'
+  if (n === 'storage_edit' || n === 'storageedit') return 'storage_edit'
+  if (n === 'knowledge_write' || n === 'knowledgewrite') return 'knowledge_write'
+  if (n === 'knowledge_library' || n === 'knowledgelibrary') return 'knowledge_library'
   if (
     n === 'write' ||
     n === 'write_file' ||

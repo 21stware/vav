@@ -21,7 +21,17 @@ const TOOL_NAME_KEYS: Partial<Record<ToolName, MessageKey>> = {
   computer_observe: 'tool.computerObserve',
   computer_act: 'tool.computerAct',
   task: 'tool.task',
-  plan_doc: 'tool.planDoc'
+  plan_doc: 'tool.planDoc',
+  app: 'tool.app',
+  note_write: 'tool.noteWrite',
+  note_edit: 'tool.noteEdit',
+  knowledge_library: 'tool.knowledgeLibrary',
+  analysis_write: 'tool.analysisWrite',
+  analysis_edit: 'tool.analysisEdit',
+  schedule_write: 'tool.scheduleWrite',
+  schedule_edit: 'tool.scheduleEdit',
+  storage_write: 'tool.storageWrite',
+  storage_edit: 'tool.storageEdit'
 }
 
 const TOOL_IDS = new Set<string>(Object.keys(TOOL_LABELS))

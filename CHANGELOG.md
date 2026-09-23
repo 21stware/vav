@@ -4,6 +4,36 @@ User-facing changes by release. Unreleased work lives at the top until the next 
 
 ## Unreleased
 
+Settings → Workspace can choose the app data folder (conversations and app info; default `~/.vav`, including iCloud) and the temporary-workspace folder (system temp by default). A custom temp folder is never cleaned by the OS; both rows show how much disk they use. Changing app data requires a restart.
+
+In an isolated session window, ⌘N (Ctrl+N) starts a new session in that window. ⌘⇧N (Ctrl+Shift+N) opens another isolated window. The title bar has a new-session button.
+
+Shift-click and Shift+arrow in the session list follow the visible sidebar order, including workspace groups.
+
+App column modes sit in a top accordion tab bar. Back lives in a reserved slot to the left of the tabs; create actions sit on the right, separated from close by a rule.
+
+Clicking the already-active app tab returns to its list; switching away and back restores the open object.
+
+Analysis and Scheduled have the same folder rail as Notes.
+
+Storage source is a select to the left of view options, with a fixed-width search aligned to the right.
+
+Product name, icons, and the agent identity line come from a brand pack (`brand/<slug>`), so a rebadge no longer requires hunting hardcoded VAV strings.
+
+The right-hand app column registers Knowledge / Data / Scheduled / Storage as plugins. Agent create opens that object in the column.
+
+Desktop and web send now carry the open app (file / note / table) and selected blocks to vav-server, so a remote turn sees the same app context as a local one.
+
+Session history no longer drops a conversation when a quit flush overlaps a background save; a damaged shard is renamed and kept in the index instead of being deleted.
+
+A stuck CLI agent that ignores SIGTERM is force-killed after a grace period, including processes it spawned.
+
+Auto-mode no longer treats chained or substituted shell as read-only, so `cat x; curl …` waits for approval.
+
+The local web bridge rejects DNS-rebinding Host / Origin headers before it answers discovery.
+
+Local file access follows real paths (symlink escape is denied) and no longer allows every path before a workspace is watched.
+
 ## 1.31.0
 
 ⌘⇧? (Ctrl+Shift+/) opens faaaaast — a small overlay for a glanceable answer from any app. Math, units, and encode stay on this computer; weather, trains, flights, and FX are looked up this turn.

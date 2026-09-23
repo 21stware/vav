@@ -47,16 +47,127 @@ export function fileReadOnlySwitchBlock(
 }
 
 /** Terminal commands treated as read-only under Auto approval / file Read mode. */
-const READONLY_TERMINAL =
-  /^(?:cat|ls|grep|rg|head|tail|wc|pwd|echo|which|type|file|stat|find|tree|du|df|uname|date|whoami|id|env|printenv|realpath|basename|dirname|md5|shasum|sha256sum|hexdump|xxd|jq|yq|sed\s+-n|awk)\b/
+const READONLY_BINS = new Set([
+  'cat',
+  'ls',
+  'grep',
+  'rg',
+  'head',
+  'tail',
+  'wc',
+  'pwd',
+  'echo',
+  'which',
+  'type',
+  'file',
+  'stat',
+  'find',
+  'tree',
+  'du',
+  'df',
+  'uname',
+  'date',
+  'whoami',
+  'id',
+  'printenv',
+  'env',
+  'realpath',
+  'basename',
+  'dirname',
+  'md5',
+  'shasum',
+  'sha256sum',
+  'hexdump',
+  'xxd',
+  'jq',
+  'yq',
+  'sed'
+])
+
+const FIND_DENIED = /^-exec|^-ok|^-fprint|^-delete$/
+
+/** Quote-aware split. `null` if the line has control / substitution / redirect syntax. */
+export function tokenizeReadonlyShell(command: string): string[] | null {
+  const tokens: string[] = []
+  let i = 0
+  const s = command
+  const n = s.length
+  while (i < n) {
+    while (i < n && (s[i] === ' ' || s[i] === '\t')) i++
+    if (i >= n) break
+    const c = s[i]!
+    if (c === '#') break
+    if (c === '\n' || c === '\r' || c === ';' || c === '|' || c === '&') return null
+    if (c === '>' || c === '<') return null
+    if (c === '`') return null
+    if (c === '$' && (s[i + 1] === '(' || s[i + 1] === '{')) return null
+    let token = ''
+    let quote: '"' | "'" | null = null
+    while (i < n) {
+      const ch = s[i]!
+      if (quote) {
+        if (ch === quote) {
+          quote = null
+          i++
+          continue
+        }
+        if (quote === '"' && ch === '\\' && i + 1 < n) {
+          token += s[i + 1]
+          i += 2
+          continue
+        }
+        if (quote === '"' && (ch === '`' || (ch === '$' && (s[i + 1] === '(' || s[i + 1] === '{')))) {
+          return null
+        }
+        token += ch
+        i++
+        continue
+      }
+      if (ch === "'" || ch === '"') {
+        quote = ch
+        i++
+        continue
+      }
+      if (ch === '\\' && i + 1 < n) {
+        token += s[i + 1]
+        i += 2
+        continue
+      }
+      if (ch === ' ' || ch === '\t') break
+      if (ch === '\n' || ch === '\r' || ch === ';' || ch === '|' || ch === '&') return null
+      if (ch === '>' || ch === '<') return null
+      if (ch === '`') return null
+      if (ch === '$' && (s[i + 1] === '(' || s[i + 1] === '{')) return null
+      token += ch
+      i++
+    }
+    if (quote) return null
+    if (token) tokens.push(token)
+  }
+  return tokens
+}
+
+function isReadonlySed(args: string[]): boolean {
+  const hasN = args.some((arg) => arg === '-n' || (arg.startsWith('-') && !arg.startsWith('--') && arg.includes('n')))
+  if (!hasN) return false
+  if (args.some((arg) => arg === '-i' || arg.startsWith('-i') || arg.startsWith('--in-place'))) return false
+  return !args.some((arg) => /(^|[;\n])\s*[we]\b/.test(arg))
+}
+
+function isReadonlyFind(args: string[]): boolean {
+  return !args.some((arg) => FIND_DENIED.test(arg))
+}
 
 export function isReadonlyTerminalCommand(command: string): boolean {
-  const cmd = command.trim()
-  // Reject obvious write redirects / mutators even if the head looks read-only.
-  if (/[>]{1,2}|tee\b|\brm\b|\bmv\b|\bcp\b|\bmkdir\b|\btouch\b|\bchmod\b|\bchown\b|\bsed\s+-i|\btruncate\b|\bdd\b/.test(cmd)) {
-    return false
-  }
-  return READONLY_TERMINAL.test(cmd)
+  const tokens = tokenizeReadonlyShell(command.trim())
+  if (!tokens || tokens.length === 0) return false
+  const bin = tokens[0]!
+  if (!READONLY_BINS.has(bin)) return false
+  const args = tokens.slice(1)
+  if (bin === 'env') return args.length === 0
+  if (bin === 'sed') return isReadonlySed(args)
+  if (bin === 'find') return isReadonlyFind(args)
+  return true
 }
 
 export type ToolExecuteResult = {

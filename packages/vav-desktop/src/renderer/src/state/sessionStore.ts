@@ -6,7 +6,6 @@ import type {
   ChatMessage,
   ConversationMeta,
   PreviewRef,
-  QuoteDraft,
   TerminalSplitAxis,
   TokenSnapshot,
   TurnErrorKind
@@ -14,7 +13,14 @@ import type {
 import type { SqliteDatabaseInfo } from '@shared/ipc'
 import type { StorageSource } from '@shared/storageSource'
 import type { ApplicationsMode } from './sessionTypes'
+import { nextApplicationsModePatch, type AppDetailByMode } from '../lib/appModeSwitch'
 import { applicationsModeForConversation } from '../lib/applicationsWidth'
+import { appColumnFocusEqual } from '@shared/appColumnFocus'
+import {
+  appColumnFocusForSendFromState,
+  commentCardsForAppItem,
+  resolveAppColumnContext
+} from '../lib/appColumnContext'
 import { DEFAULT_CLI_AGENTS, DEFAULT_SETTINGS } from '@shared/types'
 import type { WorkspaceHostInfo } from '@shared/workspaceHost'
 import type { IncomingController } from '@shared/daemonProtocol'
@@ -118,6 +124,7 @@ import { isDraftScheduledTitle } from '../lib/draftEditorTitle'
 import { isTemporaryWorkspace } from '../lib/format'
 import { conversationFitsListMode, nextConversationForListMode } from '../lib/sidebarList'
 import { isAppObjectSession, isDbSession, isTimerDefinition, isWorkspaceSession } from '@shared/sessionKind'
+import { timerJobAgentFromConversation } from '@shared/timer'
 import { isCompanionSessionShell, isMainSessionShell, readWindowMachineId } from '../lib/windowKind'
 import { isLocalMachine, normalizeMachineId } from '@shared/workspaceHost'
 import { compactionForLeaf } from '@shared/compaction'
@@ -150,6 +157,11 @@ import { inheritCreateWorkingDirectory, nextConversationForMachine, nextFileCate
 import { notifyImageAttachPlan, trimAttachmentPathsForHost } from './sessionAttach'
 import { persistSwarmLayout, setLeaf } from './sessionSwarm'
 import { swarmBlocksWorkdirSwitch as swarmSurfaceBlocksWorkdir } from '../lib/workdirSwitch'
+import {
+  homeWorkspaceCreateOptions,
+  isPendingComposerId,
+  type PendingHomeWorkspace
+} from '../lib/pendingComposer'
 import { nextFavoriteIds, nextPinnedWorkspaceDirs, setArchivedConversationPatch } from './sessionPins'
 import { chatHostPickerModels, coercedChatHostModel, defaultModelSettingsPatch, defaultThinkingSettingsPatch, nextSteppedModelId } from './sessionModels'
 
@@ -208,21 +220,44 @@ interface SessionState {
    * file so Back to file list can restore the same source.
    */
   filesSource: StorageSource
+  /** Storage browser folder opened from the agent (This Mac / iCloud). */
+  storageBrowsePath: string | null
+  storageBrowseNonce: number
+  browseStoragePath(path: string): void
   /** Right-hand Knowledge / Storage / Data column. */
   applicationsMode: ApplicationsMode
   applicationsVisible: boolean
   /** App object open in the right column — independent of the workspace agent. */
   focusedAppObjectId: string | null
+  /** Multi-select in the app object list (session-list additive / range). */
+  selectedAppObjectIds: string[]
+  /** List vs object workspace in the app column. Select focuses; open enters. */
+  applicationsDetailOpen: boolean
+  /** Per-tab detail so switching away does not reset the previous tab. */
+  applicationsDetailByMode: AppDetailByMode
+  focusedAppObjectByMode: Partial<Record<ApplicationsMode, string | null>>
+  selectedAppObjectIdsByMode: Partial<Record<ApplicationsMode, string[]>>
   setApplicationsMode(mode: ApplicationsMode): void
-  focusAppObject(id: string): void
+  /** Open the right-hand Services panel (Schedule / Storage / Analysis / Notes). */
+  showApplications(): void
+  setApplicationsDetailOpen(open: boolean): void
+  /** Leave the open object and return to the current app tab's list. */
+  popAppRoute(): void
+  focusAppObject(
+    id: string,
+    options?: { additive?: boolean; range?: boolean; rangeIds?: string[] }
+  ): void
+  openAppObject(id: string): void
   restoreWorkspaceAgent(): void
   toggleApplications(): void
   /** Center agent column. Closed from the agent chrome; New session / a row opens it. */
   agentVisible: boolean
   setAgentVisible(visible: boolean): void
   toggleAgent(): void
-  /** Show the empty composer shell without minting a conversation. */
+  /** Show the empty composer shell without minting a conversation. Isolated windows mint in place. */
   beginNewSession(): void
+  /** Close the session and app columns and show the workbench home. */
+  showHome(): void
   /** Selected table inside the active database session. Null = connection info. */
   activeDbTable: string | null
   /** Cached live-DB schema by connection id. */
@@ -304,8 +339,6 @@ interface SessionState {
   /** Composer state is per conversation, like the rest of its ChatStore. */
   drafts: Record<string, string>
   attachments: Record<string, string[]>
-  /** Pending quote strip above the composer (main-chat.rpml §引用). */
-  quotes: Record<string, QuoteDraft | null>
   /** Preview selection chips pinned above the composer (file-preview edit). */
   previewRefs: Record<string, PreviewRef[]>
   /** Pick mode active (comment picker) — from file preview Tools header. */
@@ -333,7 +366,7 @@ interface SessionState {
   markEnclosedDirChip(id: string): void
   /** After user picks/switches workdir, show the real path thereafter. */
   revealWorkdirPath(id: string): void
-  /** Message id briefly highlighted after quote-strip / bubble jump. */
+  /** Message id briefly highlighted after a bubble jump. */
   flashMessageId: string | null
   flashTick: number
   /** Per-conversation token samples for the context-window popover. */
@@ -491,19 +524,19 @@ interface SessionState {
     openIn?: 'here' | 'detached' | 'none'
   }): Promise<string | void>
   /** New scheduled task: mint the group, select it, then edit in the form. */
-  createScheduledConversation(): Promise<void>
+  createScheduledConversation(): Promise<string | undefined>
   /**
    * Scheduled category: keep the selected group or run. Empty list stays empty.
    */
   ensureScheduledConversation(): void
   /** New database connection: mint the row, select it, then edit in the form. */
-  createDbConversation(): Promise<void>
+  createDbConversation(): Promise<string | undefined>
   /** Bind a local CSV / TSV / SQLite / Parquet file as a Data resource. */
-  createDataFromFile(path: string): Promise<void>
-  /** New knowledge note. */
-  createKnowledgeNote(): Promise<void>
+  createDataFromFile(path: string): Promise<string | undefined>
+  /** New knowledge note. `folderId` files it; omit for All Notes. */
+  createKnowledgeNote(folderId?: string | null): Promise<void>
   /** Ingest a document into Knowledge. */
-  importKnowledgeDocument(path: string): Promise<void>
+  importKnowledgeDocument(path: string, folderId?: string | null): Promise<void>
   /** DB category: keep a connection selected. Empty list stays empty. */
   ensureDbConversation(): void
   /** ⌘D / ⌘⇧D: mint a sibling agent session and split the Thread surface. */
@@ -538,6 +571,12 @@ interface SessionState {
    * transcript (via setCliHost).
    */
   selectChatHost(id: string, host: string | null, vendorId?: string | null, accountId?: string | null): Promise<void>
+  /**
+   * Home / empty-shell workspace pick. Null = use the default new-session
+   * workdir. `{ path: null }` is an explicit temp folder.
+   */
+  pendingHomeWorkspace: PendingHomeWorkspace | null
+  setPendingHomeWorkspace(next: PendingHomeWorkspace | null): void
   pickWorkingDirectory(id: string): Promise<void>
   useTempWorkingDirectory(id: string): Promise<void>
   setWorkingDirectory(id: string, path: string, machineId?: string | null): Promise<void>
@@ -589,6 +628,11 @@ interface SessionState {
   setFocusedFile(id: string, path: string | null): Promise<void>
   /** Live-DB table focus — built-in VAV agent system context. */
   setFocusedDbTable(id: string, table: string | null): Promise<void>
+  /** App-column snapshot — built-in VAV agent system context. */
+  setAppColumnFocus(
+    id: string,
+    focus: import('@shared/appColumnFocus').AppColumnFocus | null
+  ): Promise<void>
   /**
    * Attach (or replace) leftover open-file context for a conversation.
    * Syncs focusedFilePath for the built-in agent. Does not paste into CLI TUIs.
@@ -607,8 +651,6 @@ interface SessionState {
     incoming: string[],
     opts?: { sizes?: Record<string, number> }
   ): void
-  setQuote(id: string, quote: QuoteDraft | null): void
-  clearQuote(id?: string): void
   setPreviewRefs(id: string, refs: PreviewRef[]): void
   clearPreviewRefs(id?: string): void
   setPickMode(id: string, on: boolean): void
@@ -753,14 +795,28 @@ const sessionToolsLayouts = loadSessionToolsMap()
 /** Cancels overlapping Workspace View enters (fast sidebar clicks / HMR remounts). */
 let workspaceSelectGen = 0
 const hydrationGen = new Map<string, number>()
+
+function syncTimerDefinitionAgent(id: string): void {
+  const row = useSessionStore.getState().conversations.find((item) => item.id === id)
+  if (!isTimerDefinition(row ?? {}) || !row?.timerJobId || !window.vav?.timers?.updateJob) return
+  void window.vav.timers.updateJob(row.timerJobId, timerJobAgentFromConversation(row))
+}
+
 export const useSessionStore = create<SessionState>((set, get) => ({
   sidebarVisible: globalLayout.sidebarVisible,
   pictureInPicture: false,
   sidebarListMode: 'main',
   filesSource: 'recent',
+  storageBrowsePath: null,
+  storageBrowseNonce: 0,
   applicationsMode: 'storage',
   applicationsVisible: true,
   focusedAppObjectId: null,
+  selectedAppObjectIds: [],
+  applicationsDetailOpen: false,
+  applicationsDetailByMode: {},
+  focusedAppObjectByMode: {},
+  selectedAppObjectIdsByMode: {},
   agentVisible: globalLayout.agentVisible,
   activeDbTable: null,
   dbSchemas: {},
@@ -827,7 +883,6 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   turns: {},
   drafts: {},
   attachments: {},
-  quotes: {},
   previewRefs: {},
   pickMode: {},
   commentCards: {},
@@ -860,6 +915,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   modelPickerConversationId: null,
   approvalMenuNonce: 0,
   approvalConversationId: null,
+  pendingHomeWorkspace: null,
   activeGroupId: null,
   filePreviewOpen: false,
   sessionPreview: { kind: 'file' },
@@ -983,10 +1039,17 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   setFilePreviewOpen(open) {
-    set({
+    set((state) => ({
       filePreviewOpen: open,
-      ...(open ? { applicationsVisible: true, applicationsMode: 'storage' as const } : {})
-    })
+      ...(open
+        ? {
+            applicationsVisible: true,
+            applicationsMode: 'storage' as const,
+            applicationsDetailOpen: true,
+            applicationsDetailByMode: { ...state.applicationsDetailByMode, storage: true }
+          }
+        : {})
+    }))
   },
 
   toggleFilePreview() {
@@ -994,7 +1057,14 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       const open = !state.filePreviewOpen
       return {
         filePreviewOpen: open,
-        ...(open ? { applicationsVisible: true, applicationsMode: 'storage' as const } : {})
+        ...(open
+          ? {
+              applicationsVisible: true,
+              applicationsMode: 'storage' as const,
+              applicationsDetailOpen: true,
+              applicationsDetailByMode: { ...state.applicationsDetailByMode, storage: true }
+            }
+          : {})
       }
     })
   },
@@ -1080,7 +1150,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       target = meta
     }
     if (target && isAppObjectSession(target)) {
-      get().focusAppObject(target.id)
+      get().openAppObject(target.id)
       return
     }
     let nextSelection = nextConversationSelection({
@@ -1217,8 +1287,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     set((state) => seedEmptyConversationPatch(state, meta))
 
     // Companion windows are bound to one conversation (native map + local
-    // SessionWindow id). Selecting here replaces the chrome but not the
-    // binding — send works, the transcript never updates. Open a new window.
+    // SessionWindow id). `openIn: 'here'` rebinds this window; otherwise a
+    // bound companion opens a new window so send/transcript stay aligned.
     const spawnDetached = shouldSpawnDetachedConversation(
       options?.openIn,
       isCompanionSessionShell() && Boolean(get().pinnedConversationId)
@@ -1226,6 +1296,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     if (spawnDetached) {
       await get().openDetached(meta.id)
       return
+    }
+    if (isCompanionSessionShell() && options?.openIn === 'here') {
+      await window.vav.window.navigateSession(meta.id)
+      return meta.id
     }
 
     await get().selectConversation(meta.id)
@@ -1253,6 +1327,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       }))
       await get().selectConversation(result.conversation.id)
       get().focusComposer()
+      return result.conversation.id
     } catch (err) {
       get().showToast({
         kind: 'error',
@@ -1289,6 +1364,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         activeDbTable: null
       }))
       await get().selectConversation(result.conversation.id)
+      return result.conversation.id
     } catch (err) {
       get().showToast({
         kind: 'error',
@@ -1320,6 +1396,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         activeDbTable: null
       }))
       await get().selectConversation(result.conversation.id)
+      return result.conversation.id
     } catch (err) {
       get().showToast({
         kind: 'error',
@@ -1329,7 +1406,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     }
   },
 
-  async createKnowledgeNote() {
+  async createKnowledgeNote(folderId) {
     if (!window.vav?.knowledge?.createNote) return
     set({
       sidebarListMode: 'main',
@@ -1337,15 +1414,18 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       applicationsVisible: true
     })
     try {
-      const result = await window.vav.knowledge.createNote()
+      const result = await window.vav.knowledge.createNote(folderId ?? null)
       set((state) => ({
         ...seedEmptyConversationPatch(state, result.conversation),
         sidebarListMode: 'main',
         applicationsMode: 'knowledge',
-        applicationsVisible: true
+        applicationsVisible: true,
+        focusedAppObjectId: result.conversation.id,
+        applicationsDetailOpen: true,
+        applicationsDetailByMode: { ...state.applicationsDetailByMode, knowledge: true },
+        focusedAppObjectByMode: { ...state.focusedAppObjectByMode, knowledge: result.conversation.id }
       }))
-      await get().selectConversation(result.conversation.id)
-      get().focusComposer()
+      get().restoreWorkspaceAgent()
     } catch (err) {
       get().showToast({
         kind: 'error',
@@ -1355,7 +1435,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     }
   },
 
-  async importKnowledgeDocument(path) {
+  async importKnowledgeDocument(path, folderId) {
     if (!window.vav?.knowledge?.importDocument) return
     set({
       sidebarListMode: 'main',
@@ -1363,7 +1443,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       applicationsVisible: true
     })
     try {
-      const result = await window.vav.knowledge.importDocument(path)
+      const result = await window.vav.knowledge.importDocument(path, folderId ?? null)
       if (!result) return
       set((state) => ({
         ...seedEmptyConversationPatch(state, result.conversation),
@@ -1535,6 +1615,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     if (row?.sessionKind === 'db' && row.dbConnectionId && window.vav?.db?.update) {
       void window.vav.db.update(row.dbConnectionId, { title })
     }
+    if (row?.sessionKind === 'knowledge' && row.knowledgeHostId && window.vav?.knowledge?.rename) {
+      void window.vav.knowledge.rename(row.knowledgeHostId, title)
+    }
   },
 
   beginRename(id) {
@@ -1636,12 +1719,19 @@ export const useSessionStore = create<SessionState>((set, get) => ({
           for (const id of departing) hydrationGen.delete(id)
           const toolsLayouts = omitKeys(state.toolsLayouts, departing)
           saveSessionToolsMap(toolsLayouts)
+          const selectedAppObjectIds = state.selectedAppObjectIds.filter((id) => !departingSet.has(id))
+          const focusedAppObjectId =
+            state.focusedAppObjectId && departingSet.has(state.focusedAppObjectId)
+              ? (selectedAppObjectIds[0] ?? null)
+              : state.focusedAppObjectId
           return {
             conversations: mergeConversationList(
               state.conversations.filter((row) => !departingSet.has(row.id)),
               next
             ),
             toolsLayouts,
+            selectedAppObjectIds,
+            focusedAppObjectId,
             ...omitMappedKeys(state, SESSION_DELETE_MAPPED_KEYS, departing)
           }
         })
@@ -1727,6 +1817,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       const settings = get().settings
       const defaults = defaultModelSettingsPatch(host, model, settings)
       if (defaults) void get().updateSettings(defaults)
+      syncTimerDefinitionAgent(id)
     } catch (err) {
       console.error('[setModel] failed', err)
     }
@@ -1803,6 +1894,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     }
     const latest = get().conversations.find((c) => c.id === id)
     trimAttachmentsForHost(id, latest?.cliHost ?? nextHost, get, set)
+    syncTimerDefinitionAgent(id)
   },
 
   async selectChatHost(id, host, vendorId, accountId) {
@@ -1842,7 +1934,22 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     }))
   },
 
+  setPendingHomeWorkspace(next) {
+    set({ pendingHomeWorkspace: next })
+  },
+
   async pickWorkingDirectory(id) {
+    if (isPendingComposerId(id)) {
+      const machineId = normalizeMachineId(get().windowMachineId)
+      if (!isLocalMachine(machineId)) {
+        get().openRemoteFolderPicker(id, machineId)
+        return
+      }
+      const path = await window.vav.settings.pickDirectory()
+      if (!path) return
+      set({ pendingHomeWorkspace: { path, machineId } })
+      return
+    }
     const conversation = get().conversations.find((c) => c.id === id)
     if (
       swarmBlocksWorkdirSwitch(
@@ -1869,6 +1976,15 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   async useTempWorkingDirectory(id) {
+    if (isPendingComposerId(id)) {
+      set({
+        pendingHomeWorkspace: {
+          path: null,
+          machineId: normalizeMachineId(get().windowMachineId)
+        }
+      })
+      return
+    }
     if (
       swarmBlocksWorkdirSwitch(
         id,
@@ -1887,6 +2003,15 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   async setWorkingDirectory(id, path, machineId) {
+    if (isPendingComposerId(id)) {
+      set({
+        pendingHomeWorkspace: {
+          path,
+          machineId: machineId ?? normalizeMachineId(get().windowMachineId)
+        }
+      })
+      return
+    }
     if (
       swarmBlocksWorkdirSwitch(
         id,
@@ -1929,6 +2054,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     if (!chosen) return
     if (result.purpose === 'locate' && result.conversationId) {
       await get().finishLocateWorkspace(result.conversationId, chosen)
+      return
+    }
+    if (isPendingComposerId(result.conversationId)) {
+      set({
+        pendingHomeWorkspace: { path: chosen, machineId: result.machineId }
+      })
       return
     }
     if (!result.conversationId) {
@@ -2127,6 +2258,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       }))
       const thinking = defaultThinkingSettingsPatch(level, get().settings.defaultThinkingLevel)
       if (thinking) void get().updateSettings(thinking)
+      syncTimerDefinitionAgent(id)
     } catch (err) {
       console.error('[setThinkingLevel] failed', err)
     }
@@ -2141,6 +2273,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       set((state) => ({
         conversations: mergeConversationList(state.conversations, list)
       }))
+      syncTimerDefinitionAgent(id)
     } catch (err) {
       console.error('[setFast] failed', err)
     }
@@ -2170,6 +2303,19 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     }))
     try {
       await window.vav.conversations.setFocusedDbTable(id, next)
+    } catch {
+      // keep local patch; main may be unavailable
+    }
+  },
+
+  async setAppColumnFocus(id, focus) {
+    const current = get().conversations.find((c) => c.id === id)
+    if (current && appColumnFocusEqual(current.appColumnFocus, focus)) return
+    set((state) => ({
+      conversations: patchConversationById(state.conversations, id, { appColumnFocus: focus })
+    }))
+    try {
+      await window.vav.conversations.setAppColumnFocus(id, focus)
     } catch {
       // keep local patch; main may be unavailable
     }
@@ -2225,16 +2371,6 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     notifyImageAttachPlan(get().showToast, plan, tt)
   },
 
-  setQuote(id, quote) {
-    set((state) => ({ quotes: { ...state.quotes, [id]: quote } }))
-  },
-
-  clearQuote(id) {
-    const target = id ?? get().activeId
-    if (!target) return
-    set((state) => ({ quotes: { ...state.quotes, [target]: null } }))
-  },
-
   setPreviewRefs(id, refs) {
     set((state) => ({ previewRefs: { ...state.previewRefs, [id]: refs } }))
   },
@@ -2281,43 +2417,56 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   async send(text, attachments, conversationId) {
     const {
       activeId: storeActiveId,
-      settings,
-      turns,
-      quotes,
       previewRefs,
-      commentCards,
-      contextFiles,
       conversations,
-      hosts,
-      messageQueues
+      hosts
     } = get()
     let activeId = conversationId?.trim() || storeActiveId
     if (isArchivedConversation(conversations, activeId)) return
-    // Empty chat shell: mint the session on first send (workspace materializes).
-    if (!activeId || !conversations.some((c) => c.id === activeId)) {
-      await get().createConversation({ openIn: 'here' })
+    const pendingComposer = isPendingComposerId(activeId) || !activeId
+    const pendingComposerId = pendingComposer
+      ? (isPendingComposerId(conversationId) ? conversationId : null) ||
+        (isPendingComposerId(storeActiveId) ? storeActiveId : null)
+      : null
+    // Empty chat shell / workbench home: mint the session on first send.
+    if (pendingComposer || !conversations.some((c) => c.id === activeId)) {
+      await get().createConversation({
+        openIn: 'here',
+        ...homeWorkspaceCreateOptions(get().pendingHomeWorkspace)
+      })
       activeId = get().activeId
       if (!activeId) return
+      if (get().pendingHomeWorkspace) set({ pendingHomeWorkspace: null })
     }
-    const turn = turns[activeId]
-    const refs = previewRefs[activeId] ?? []
-    const cards = commentCards[activeId] ?? []
-    const leftoverContext = resolveComposerContextFile(contextFiles, activeId)
+    const composerSourceId = pendingComposerId ?? activeId
+    const live = get()
+    const turn = live.turns[activeId]
+    const refs =
+      live.previewRefs[composerSourceId] ?? live.previewRefs[activeId] ?? previewRefs[activeId] ?? []
+    const appContext = resolveAppColumnContext(live)
+    const sourceCards = live.commentCards[composerSourceId] ?? live.commentCards[activeId] ?? []
+    const cards =
+      appContext?.level === 'selected'
+        ? commentCardsForAppItem(sourceCards, appContext.path)
+        : []
+    const leftoverContext = resolveComposerContextFile(live.contextFiles, composerSourceId)
+    const sendContextFile =
+      leftoverContext && leftoverContext !== appContext?.path ? leftoverContext : null
     const mentionedFiles = [
       ...collectFileMentionPaths(text),
       ...collectDataMentionPaths(text)
     ]
     text = expandComposerMentionTokens(text)
-    const files = mergeComposerFilePaths(leftoverContext, [...attachments, ...mentionedFiles])
-    const activeConversation = conversations.find((c) => c.id === activeId)
+    const files = mergeComposerFilePaths(sendContextFile, [...attachments, ...mentionedFiles])
+    const activeConversation = live.conversations.find((c) => c.id === activeId)
     const activeHost = activeConversation?.cliHost ?? null
     const hostHoldsKeys = hostHoldsControlPlaneKeys(hosts, activeConversation?.machineId)
     const disposition = composerSendDisposition({
       empty: isEmptyComposerSend(text, files, refs, cards),
       awaitingTool: !!turn?.awaitingToolCallId,
-      needsApiKey: !activeHost && !settings.apiKeyPresent && !hostHoldsKeys,
+      needsApiKey: !activeHost && !live.settings.apiKeyPresent && !hostHoldsKeys,
       isRunning: !!turn?.isRunning,
-      queueLength: (messageQueues[activeId] ?? []).length
+      queueLength: (live.messageQueues[activeId] ?? []).length
     })
     if (disposition === 'empty' || disposition === 'awaiting') return
     if (disposition === 'need-key') {
@@ -2340,14 +2489,13 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
     // Streaming: enqueue instead of interrupting (main-chat-streaming.rpml §5).
     if (disposition === 'enqueue') {
-      const quote = quotes[activeId] ?? null
       const item: QueuedMessage = buildQueuedMessage({
         text,
         attachments: files,
         previewRefs: refs,
         commentCards: cards,
-        quote,
-        contextFile: null
+        contextFile: null,
+        appColumnFocus: appColumnFocusForSendFromState(live)
       })
       set((state) => enqueueQueuedMessagePatch(state, activeId!, item))
       return
@@ -2359,21 +2507,36 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       await get().selectConversation(activeId)
     }
 
-    const quote = quotes[activeId] ?? null
-
     const allRefs = mergePreviewAndCommentRefs(refs, cards)
 
     // No optimistic echo: the stored message comes back as a `user` turn event
     // a moment later, already carrying the id and parent the tree needs.
-    set((state) => composerClearedPatch(state, activeId))
+    set((state) => {
+      const cleared = composerClearedPatch(state, activeId)
+      return pendingComposerId
+        ? { ...cleared, ...composerClearedPatch({ ...state, ...cleared }, pendingComposerId) }
+        : cleared
+    })
+
+    // ApplicationsPanel syncs focus in an effect (fire-and-forget IPC). A first
+    // send after minting a session, or right after switching notes, would
+    // otherwise start the turn before main has appColumnFocus.
+    const focused = get()
+    const appFocus = appColumnFocusForSendFromState(focused)
+    const appFocusPath = appFocus && appFocus.level !== 'list' ? appFocus.path : null
+    await Promise.all([
+      get().setFocusedFile(activeId, appFocusPath),
+      get().setFocusedDbTable(activeId, appFocus?.table ?? null),
+      get().setAppColumnFocus(activeId, appFocus)
+    ])
 
     await window.vav.agent.send(
       activeId,
       text,
       files,
-      quote,
       allRefs.length ? allRefs : null,
-      null
+      null,
+      appFocus
     )
   },
 
@@ -2933,22 +3096,118 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     set({ filesSource: source })
   },
 
-  setApplicationsMode(mode) {
-    set({ applicationsMode: mode, applicationsVisible: true })
+  browseStoragePath(path) {
+    const next = path.trim()
+    if (!next) return
+    set((state) => ({
+      filesSource: 'thisMac',
+      applicationsMode: 'storage',
+      applicationsVisible: true,
+      applicationsDetailOpen: false,
+      applicationsDetailByMode: { ...state.applicationsDetailByMode, storage: false },
+      focusedAppObjectId: null,
+      selectedAppObjectIds: [],
+      filePreviewOpen: false,
+      storageBrowsePath: next,
+      storageBrowseNonce: state.storageBrowseNonce + 1
+    }))
     get().restoreWorkspaceAgent()
   },
 
-  focusAppObject(id) {
-    const row = get().conversations.find((item) => item.id === id)
-    if (!row) return
-    const mode = applicationsModeForConversation(row)
+  setApplicationsMode(mode) {
+    const state = get()
+    const same = state.applicationsMode === mode
+    const patch = nextApplicationsModePatch(
+      state.applicationsMode,
+      mode,
+      state.applicationsDetailOpen,
+      state.applicationsDetailByMode
+    )
+    const focusedAppObjectByMode = {
+      ...state.focusedAppObjectByMode,
+      [state.applicationsMode]: state.focusedAppObjectId
+    }
+    const selectedAppObjectIdsByMode = {
+      ...state.selectedAppObjectIdsByMode,
+      [state.applicationsMode]: state.selectedAppObjectIds
+    }
     set({
-      focusedAppObjectId: id,
+      ...patch,
       applicationsVisible: true,
-      ...(mode ? { applicationsMode: mode } : {}),
-      ...(isDbSession(row) ? { activeDbTable: row.focusedDbTable ?? get().activeDbTable } : {})
+      focusedAppObjectByMode,
+      selectedAppObjectIdsByMode,
+      focusedAppObjectId: same ? state.focusedAppObjectId : (focusedAppObjectByMode[mode] ?? null),
+      selectedAppObjectIds: same ? state.selectedAppObjectIds : (selectedAppObjectIdsByMode[mode] ?? [])
     })
     get().restoreWorkspaceAgent()
+  },
+
+  showApplications() {
+    const { applicationsMode, applicationsVisible } = get()
+    if (applicationsMode === 'devices') {
+      get().setApplicationsMode('storage')
+      return
+    }
+    if (!applicationsVisible) {
+      set({ applicationsVisible: true })
+      get().restoreWorkspaceAgent()
+    }
+  },
+
+  setApplicationsDetailOpen(open) {
+    const mode = get().applicationsMode
+    set({
+      applicationsDetailOpen: open,
+      applicationsDetailByMode: { ...get().applicationsDetailByMode, [mode]: open }
+    })
+  },
+
+  popAppRoute() {
+    if (!get().applicationsDetailOpen) return
+    if (get().applicationsMode === 'storage') {
+      get().showFileList()
+      return
+    }
+    get().setApplicationsDetailOpen(false)
+  },
+
+  focusAppObject(id, options) {
+    const row = get().conversations.find((item) => item.id === id)
+    const mode = row ? applicationsModeForConversation(row) : undefined
+    const nextSelection = nextConversationSelection({
+      id,
+      selectedIds: get().selectedAppObjectIds,
+      activeId: get().focusedAppObjectId,
+      additive: options?.additive,
+      range: options?.range,
+      rangeIds: options?.rangeIds,
+      listedIds: options?.rangeIds ?? []
+    })
+    set({
+      focusedAppObjectId: id,
+      selectedAppObjectIds: nextSelection,
+      applicationsVisible: true,
+      ...(mode
+        ? {
+            applicationsMode: mode,
+            focusedAppObjectByMode: { ...get().focusedAppObjectByMode, [mode]: id },
+            selectedAppObjectIdsByMode: { ...get().selectedAppObjectIdsByMode, [mode]: nextSelection }
+          }
+        : {}),
+      ...(row && isDbSession(row) ? { activeDbTable: row.focusedDbTable ?? get().activeDbTable } : {})
+    })
+    get().restoreWorkspaceAgent()
+  },
+
+  openAppObject(id) {
+    get().focusAppObject(id)
+    const mode = get().applicationsMode
+    set({
+      applicationsDetailOpen: true,
+      applicationsVisible: true,
+      applicationsDetailByMode: { ...get().applicationsDetailByMode, [mode]: true },
+      focusedAppObjectByMode: { ...get().focusedAppObjectByMode, [mode]: id }
+    })
   },
 
   restoreWorkspaceAgent() {
@@ -2995,6 +3254,10 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   beginNewSession() {
+    if (isCompanionSessionShell()) {
+      void window.vav.window.newSessionHere()
+      return
+    }
     const { activeId, agentVisible } = get()
     if (!activeId && agentVisible) {
       get().setToolsCollapsed(true)
@@ -3011,12 +3274,24 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     get().focusComposer()
   },
 
+  showHome() {
+    const { agentVisible, applicationsVisible } = get()
+    if (!agentVisible && !applicationsVisible) return
+    set({ agentVisible: false, applicationsVisible: false })
+    if (agentVisible) saveGlobalLayout({ agentVisible: false })
+  },
+
   showFileList() {
     const { conversations, activeId, windowMachineId } = get()
     const current = conversations.find((row) => row.id === activeId)
     set({
       applicationsMode: 'storage',
-      applicationsVisible: true
+      applicationsVisible: true,
+      applicationsDetailOpen: false,
+      applicationsDetailByMode: { ...get().applicationsDetailByMode, storage: false },
+      focusedAppObjectId: null,
+      selectedAppObjectIds: [],
+      filePreviewOpen: false
     })
     if (!current?.fileId) return
     const nextId = nextConversationForListMode(

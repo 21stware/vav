@@ -20,7 +20,8 @@ export function ComposerAttachments({
   const showHint = !imageInputSupported && images.length > 0
 
   return (
-    <div className={`attachments${showHint ? ' is-unsupported' : ''}`}>
+    <div className={`attachments is-added${showHint ? ' is-unsupported' : ''}`}>
+      <p className="attachments-label">{t('composer.addedContext')}</p>
       {showHint ? (
         <p className="attachment-image-hint">{t('composer.imageInputUnsupported')}</p>
       ) : null}

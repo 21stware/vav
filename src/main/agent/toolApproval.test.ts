@@ -49,6 +49,9 @@ describe('readonlyApprovalBlock / shouldPauseForApproval', () => {
     assert.equal(readonlyApprovalBlock('terminal', 'ls'), null)
     assert.match(readonlyApprovalBlock('connector', 'act')?.reason ?? '', /connector deploy/)
     assert.equal(readonlyApprovalBlock('connector', 'list'), null)
+    assert.match(readonlyApprovalBlock('app', 'write')?.reason ?? '', /app write/)
+    assert.match(readonlyApprovalBlock('app', 'create')?.reason ?? '', /app write/)
+    assert.equal(readonlyApprovalBlock('app', 'list'), null)
   })
 
   it('pauses auto high-risk and edit-mode tools, not bypass', () => {
@@ -114,6 +117,33 @@ describe('readonlyApprovalBlock / shouldPauseForApproval', () => {
         autoApproveReadonly: true
       }),
       false
+    )
+    assert.equal(
+      shouldPauseForApproval({
+        mode: 'auto',
+        name: 'app',
+        command: 'list',
+        autoApproveReadonly: true
+      }),
+      false
+    )
+    assert.equal(
+      shouldPauseForApproval({
+        mode: 'auto',
+        name: 'app',
+        command: 'delete',
+        autoApproveReadonly: true
+      }),
+      true
+    )
+    assert.equal(
+      shouldPauseForApproval({
+        mode: 'auto',
+        name: 'app',
+        command: 'create',
+        autoApproveReadonly: true
+      }),
+      true
     )
     assert.equal(
       shouldPauseForApproval({

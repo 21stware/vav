@@ -79,7 +79,19 @@ def save_ico(image: Image.Image, path: str, sizes: tuple[int, ...]) -> None:
     image.save(path, format='ICO', sizes=[(s, s) for s in sizes])
 
 
+def copy_pack_icons() -> None:
+    slug = os.environ.get('BRAND', 'vav').strip() or 'vav'
+    pack = os.path.join(ROOT, 'brand', slug)
+    for name in ('icon.png', 'icon-dark.png', 'icon-mark.png'):
+        src = os.path.join(pack, name)
+        if os.path.isfile(src):
+            os.makedirs(BUILD, exist_ok=True)
+            shutil.copy2(src, os.path.join(BUILD, name))
+            print(f'build/{name} ← brand/{slug}/{name}')
+
+
 def main() -> None:
+    copy_pack_icons()
     if not os.path.isfile(ICON_PNG):
         raise SystemExit(f'missing source {ICON_PNG}')
 
