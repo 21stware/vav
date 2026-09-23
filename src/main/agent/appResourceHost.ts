@@ -283,7 +283,7 @@ export function createAppResourceHost(deps: {
       conversationId: conversation.id,
       workdirPolicy: 'mint',
       sourceWorkdir: null,
-      ...timerJobAgentFromConversation(deps.conversations.get(conversation.id) ?? conversation)
+      ...timerJobAgentFromConversation(deps.conversations.get(conversation.id) ?? {})
     })
     deps.conversations.updateMeta(conversation.id, {
       timerJobId: job.id,

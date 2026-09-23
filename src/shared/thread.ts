@@ -38,7 +38,7 @@ export function forkActiveLeaf(target: {
   return target.role === 'user' ? (target.parentId ?? ROOT_LEAF) : target.id
 }
 
-export function indexById(messages: ChatMessage[]): Map<string, ChatMessage> {
+export function indexById(messages: readonly ChatMessage[]): Map<string, ChatMessage> {
   return new Map(messages.map((message) => [message.id, message]))
 }
 
@@ -63,7 +63,7 @@ export function deepestLeaf(messages: ChatMessage[], startId: string): string {
 }
 
 /** The newest leaf overall — the fallback when no leaf has been chosen yet. */
-export function newestLeafId(messages: ChatMessage[]): string | null {
+export function newestLeafId(messages: readonly ChatMessage[]): string | null {
   if (messages.length === 0) return null
   const parents = new Set(
     messages.map((message) => message.parentId).filter((id): id is string => !!id)
@@ -73,7 +73,7 @@ export function newestLeafId(messages: ChatMessage[]): string | null {
 }
 
 /** Root → leaf, in display order. Unknown leaves fall back to the newest one. */
-export function threadPath(messages: ChatMessage[], leafId: string | null): ChatMessage[] {
+export function threadPath(messages: readonly ChatMessage[], leafId: string | null): ChatMessage[] {
   if (leafId === ROOT_LEAF) return []
   if (messages.length === 0) return []
   const byId = indexById(messages)

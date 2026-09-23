@@ -29,7 +29,7 @@ export type VavE2eContextPeek = {
 declare global {
   interface Window {
     __vavE2e?: {
-      createDataFromFile: (path: string) => Promise<void>
+      createDataFromFile: (path: string) => Promise<string | undefined>
       createKnowledgeNote: () => Promise<void>
       peekContext: () => VavE2eContextPeek
       openInApp: (path: string) => Promise<void>

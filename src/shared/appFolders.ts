@@ -75,7 +75,10 @@ export function appFolderDragType(library: AppFolderLibraryId): string {
   return `application/x-vav-app-${library}`
 }
 
-export function readAppFolderDrag(transfer: DataTransfer, library: AppFolderLibraryId): string[] {
+export function readAppFolderDrag(
+  transfer: { getData(type: string): string },
+  library: AppFolderLibraryId
+): string[] {
   const raw = transfer.getData(appFolderDragType(library))
   if (!raw) return []
   try {

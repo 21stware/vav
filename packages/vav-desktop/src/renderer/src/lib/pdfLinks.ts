@@ -109,7 +109,7 @@ export async function resolvePdfDestPage(
   dest: unknown,
   api: {
     getDestination: (name: string) => Promise<unknown>
-    getPageIndex: (ref: unknown) => Promise<number>
+    getPageIndex: (ref: never) => Promise<number>
   }
 ): Promise<number | null> {
   let explicit: unknown = dest
@@ -126,7 +126,7 @@ export async function resolvePdfDestPage(
     return Math.max(1, Math.floor(ref) + 1)
   }
   try {
-    const index = await api.getPageIndex(ref)
+    const index = await api.getPageIndex(ref as never)
     if (!Number.isFinite(index) || index < 0) return null
     return index + 1
   } catch {

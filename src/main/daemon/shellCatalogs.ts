@@ -8,7 +8,11 @@ import {
   type ConnectorActionRequest,
   type ConnectorId
 } from '../../shared/connector.ts'
-import { conversationPatchFromTimerJob, type TimerJobInput } from '../../shared/timer.ts'
+import {
+  conversationPatchFromTimerJob,
+  type TimerJobAgent,
+  type TimerJobInput
+} from '../../shared/timer.ts'
 import { getCloudflareStatus } from '../cloudflare/CloudflareService.ts'
 import { clearCloudflareAuthCache, peekCloudflareAuth } from '../cloudflare/wranglerAuth.ts'
 import {
@@ -144,10 +148,13 @@ export function createTimerCatalog(opts: {
       opts.store.getJobForConversation(conversationId) ?? null,
     createJob: (input) => opts.store.createJob(input as TimerJobInput),
     updateJob: (id, patch) => {
-      const job = opts.store.updateJob(id, patch as Partial<TimerJobInput> & { enabled?: boolean })
+      const typed = (
+        patch && typeof patch === 'object' ? patch : {}
+      ) as Partial<TimerJobInput> & Partial<TimerJobAgent> & { enabled?: boolean; title?: string }
+      const job = opts.store.updateJob(id, typed)
       if (job?.conversationId) {
-        const convPatch = conversationPatchFromTimerJob(patch)
-        if (typeof patch.title === 'string' && patch.title.trim()) {
+        const convPatch = conversationPatchFromTimerJob(typed)
+        if (typeof typed.title === 'string' && typed.title.trim()) {
           Object.assign(convPatch, { title: job.title })
         }
         if (Object.keys(convPatch).length > 0) {

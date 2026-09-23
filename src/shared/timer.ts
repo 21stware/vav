@@ -81,7 +81,7 @@ export type TimerJobAgent = Pick<
 >
 
 export function coerceTimerCliHost(raw: unknown): CliHostKind | null {
-  return isStructuredCliHost(typeof raw === 'string' ? raw : null) ? raw : null
+  return typeof raw === 'string' && isStructuredCliHost(raw) ? raw : null
 }
 
 export function coerceTimerThinkingLevel(raw: unknown): ThinkingLevel | null {

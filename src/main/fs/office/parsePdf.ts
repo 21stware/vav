@@ -9,8 +9,6 @@ import { pathToFileURL } from 'node:url'
 import type { PreviewBlock } from '@shared/previewBlock'
 import type { StructuredDocument, StructuredSection } from '@shared/structuredDoc'
 
-const require = createRequire(import.meta.url)
-
 type PdfJs = {
   getDocument: (src: { data: Uint8Array; useSystemFonts?: boolean }) => {
     promise: Promise<PdfDoc>
@@ -35,7 +33,8 @@ async function loadPdfJs(): Promise<PdfJs> {
       // Legacy build works in Electron main without a worker thread.
       const mod = (await import('pdfjs-dist/legacy/build/pdf.mjs')) as unknown as PdfJs
       try {
-        const workerPath = require.resolve('pdfjs-dist/legacy/build/pdf.worker.mjs')
+        const req = createRequire(import.meta.url ?? process.argv[1] ?? '.')
+        const workerPath = req.resolve('pdfjs-dist/legacy/build/pdf.worker.mjs')
         mod.GlobalWorkerOptions.workerSrc = pathToFileURL(workerPath).href
       } catch {
         // Worker optional for getTextContent in some builds.

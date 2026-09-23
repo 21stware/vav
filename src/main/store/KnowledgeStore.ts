@@ -219,7 +219,7 @@ export class KnowledgeStore {
     const id = randomUUID()
     const ext = extname(sourcePath) || '.bin'
     const storedPath = join(this.docsDir, `${id}${ext}`)
-    copyFileSync(sourcePath, storedPath)
+    cpSync(sourcePath, storedPath)
     const title = knowledgeTitleFromPath(sourcePath)
     const host: KnowledgeHost = {
       id,

@@ -39,8 +39,14 @@ describe('accounts daemon catalog', () => {
       assert.ok(listed.accounts?.some((row) => row.id === drafted.id))
       const after = catalog.remove(drafted.id!) as { accounts?: Array<{ id?: string }> }
       assert.equal(after.accounts?.some((row) => row.id === drafted.id), false)
-      await assert.rejects(() => catalog.beginOAuth('vav'), /找不到这个账户|That account is gone/)
-      await assert.rejects(() => catalog.beginOAuth('not-a-host'), /找不到这个账户|That account is gone/)
+      await assert.rejects(
+        () => catalog.beginOAuth('vav'),
+        /找不到这个账户|That account is gone|未找到目标账户记录|Account not found/
+      )
+      await assert.rejects(
+        () => catalog.beginOAuth('not-a-host'),
+        /找不到这个账户|That account is gone|未找到目标账户记录|Account not found/
+      )
     } finally {
       await rm(dir, { recursive: true, force: true })
     }

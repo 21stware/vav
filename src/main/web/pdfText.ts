@@ -6,8 +6,6 @@
 import { createRequire } from 'node:module'
 import { pathToFileURL } from 'node:url'
 
-const require = createRequire(import.meta.url)
-
 type PdfJs = {
   getDocument: (src: { data: Uint8Array; useSystemFonts?: boolean }) => {
     promise: Promise<{
@@ -27,7 +25,8 @@ async function loadPdfJs(): Promise<PdfJs> {
     pdfjsPromise = (async () => {
       const mod = (await import('pdfjs-dist/legacy/build/pdf.mjs')) as unknown as PdfJs
       try {
-        const workerPath = require.resolve('pdfjs-dist/legacy/build/pdf.worker.mjs')
+        const req = createRequire(import.meta.url ?? process.argv[1] ?? '.')
+        const workerPath = req.resolve('pdfjs-dist/legacy/build/pdf.worker.mjs')
         mod.GlobalWorkerOptions.workerSrc = pathToFileURL(workerPath).href
       } catch {
         /* worker optional for text extraction */
