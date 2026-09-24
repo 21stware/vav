@@ -125,7 +125,7 @@ export const KEY_BINDING_DEFS: readonly KeyBindingDef[] = [
     group: 'session',
     labelKey: 'shortcut.newSessionWindow',
     kind: 'accelerator',
-    defaultAccelerator: 'CmdOrCtrl+Shift+N'
+    defaultAccelerator: 'CmdOrCtrl+Shift+Return'
   },
   {
     id: 'focusComposer',

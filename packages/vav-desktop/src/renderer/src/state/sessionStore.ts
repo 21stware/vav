@@ -153,12 +153,13 @@ import {
   swarmRootId
 } from '@shared/swarmLayout'
 import { patchAcpConfigOption, patchAcpSessionMode } from '@shared/acpSession'
-import { inheritCreateWorkingDirectory, nextConversationForMachine, nextFileCategoryForMachine, pickBootstrapActiveId, seedCliAgentCatalogue, seedEmptyConversationPatch, shouldSpawnDetachedConversation, claimDetachedSessionPatch } from './sessionBootstrap'
+import { inheritCreateWorkingDirectory, nextConversationForMachine, nextFileCategoryForMachine, pickBootstrapActiveId, seedCliAgentCatalogue, seedEmptyConversationPatch, shouldReuseEmptyNewSession, shouldSpawnDetachedConversation, claimDetachedSessionPatch } from './sessionBootstrap'
 import { notifyImageAttachPlan, trimAttachmentPathsForHost } from './sessionAttach'
 import { persistSwarmLayout, setLeaf } from './sessionSwarm'
 import { swarmBlocksWorkdirSwitch as swarmSurfaceBlocksWorkdir } from '../lib/workdirSwitch'
 import {
   homeWorkspaceCreateOptions,
+  isHomeComposerId,
   isPendingComposerId,
   PENDING_COMPOSER_ID,
   type PendingHomeWorkspace
@@ -255,7 +256,7 @@ interface SessionState {
   agentVisible: boolean
   setAgentVisible(visible: boolean): void
   toggleAgent(): void
-  /** Show the empty composer shell without minting a conversation. Isolated windows mint in place. */
+  /** Mint a new agent conversation (or focus the current empty one). Isolated windows mint in place. */
   beginNewSession(): void
   /** Close the session and app columns and show the workbench home. */
   showHome(): void
@@ -1267,13 +1268,16 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       options?.machineId ?? get().windowMachineId
     )
     let createOpts = { ...options, machineId: activeMachine }
-    const pendingShell =
-      isPendingComposerId(get().activeId) ||
-      !get().conversations.some((c) => c.id === get().activeId)
+    const fromHome = isHomeComposerId(get().activeId)
     if (createOpts.workingDirectory === undefined) {
-      const pending = pendingShell ? get().pendingHomeWorkspace : null
+      const pending = fromHome ? get().pendingHomeWorkspace : null
       if (pending) {
-        createOpts = { ...createOpts, ...homeWorkspaceCreateOptions(pending) }
+        const homeOpts = homeWorkspaceCreateOptions(pending)
+        createOpts = {
+          ...createOpts,
+          ...homeOpts,
+          machineId: normalizeMachineId(homeOpts.machineId ?? createOpts.machineId)
+        }
       } else {
         const inherited = inheritCreateWorkingDirectory({
           active: get().conversations.find((c) => c.id === get().activeId),
@@ -1286,7 +1290,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       }
     }
     const meta = await window.vav.conversations.create(createOpts)
-    if (pendingShell && get().pendingHomeWorkspace) {
+    if (fromHome && get().pendingHomeWorkspace) {
       set({ pendingHomeWorkspace: null })
     }
     if (options?.openIn === 'none') {
@@ -1951,7 +1955,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   async pickWorkingDirectory(id) {
-    if (isPendingComposerId(id)) {
+    if (isHomeComposerId(id)) {
       const machineId = normalizeMachineId(get().windowMachineId)
       if (!isLocalMachine(machineId)) {
         get().openRemoteFolderPicker(id, machineId)
@@ -1988,7 +1992,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   async useTempWorkingDirectory(id) {
-    if (isPendingComposerId(id)) {
+    if (isHomeComposerId(id)) {
       set({
         pendingHomeWorkspace: {
           path: null,
@@ -2015,7 +2019,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   async setWorkingDirectory(id, path, machineId) {
-    if (isPendingComposerId(id)) {
+    if (isHomeComposerId(id)) {
       set({
         pendingHomeWorkspace: {
           path,
@@ -2068,7 +2072,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       await get().finishLocateWorkspace(result.conversationId, chosen)
       return
     }
-    if (isPendingComposerId(result.conversationId)) {
+    if (isHomeComposerId(result.conversationId)) {
       set({
         pendingHomeWorkspace: { path: chosen, machineId: result.machineId }
       })
@@ -2435,13 +2439,14 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     } = get()
     let activeId = conversationId?.trim() || storeActiveId
     if (isArchivedConversation(conversations, activeId)) return
+    const homeComposer = isHomeComposerId(activeId)
     const pendingComposer = isPendingComposerId(activeId) || !activeId
-    const pendingComposerId = pendingComposer ? PENDING_COMPOSER_ID : null
-    // Empty chat shell / workbench home: mint the session on first send.
+    const pendingComposerId = homeComposer ? PENDING_COMPOSER_ID : null
+    // Workbench home (and a rare empty agent shell): mint on first send.
     if (pendingComposer || !conversations.some((c) => c.id === activeId)) {
       await get().createConversation({
         openIn: 'here',
-        ...homeWorkspaceCreateOptions(get().pendingHomeWorkspace)
+        ...(homeComposer ? homeWorkspaceCreateOptions(get().pendingHomeWorkspace) : {})
       })
       activeId = get().activeId
       if (!activeId) return
@@ -3267,20 +3272,19 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       void window.vav.window.newSessionHere()
       return
     }
-    const { activeId, agentVisible } = get()
-    if (!activeId && agentVisible) {
+    const { activeId, agentVisible, conversations, messages } = get()
+    if (
+      shouldReuseEmptyNewSession({
+        agentVisible,
+        hasActiveConversation: conversations.some((row) => row.id === activeId),
+        messageCount: (messages[activeId] ?? []).length
+      })
+    ) {
       get().setToolsCollapsed(true)
       get().focusComposer()
       return
     }
-    set({
-      activeId: '',
-      selectedIds: [],
-      agentVisible: true,
-      ...activeToolsFields(DEFAULT_SESSION_TOOLS)
-    })
-    saveGlobalLayout({ agentVisible: true })
-    get().focusComposer()
+    void get().createConversation({ openIn: 'here' })
   },
 
   showHome() {

@@ -3,13 +3,21 @@ import { describe, it } from 'node:test'
 import {
   PENDING_COMPOSER_ID,
   homeWorkspaceCreateOptions,
+  isHomeComposerId,
   isPendingComposerId,
   resolveComposerId,
   resolvePendingWorkspace
 } from './pendingComposer.ts'
 
 describe('pendingComposer', () => {
-  it('treats the empty session shell as the pending composer', () => {
+  it('treats only the home composer as the home id', () => {
+    assert.equal(isHomeComposerId(PENDING_COMPOSER_ID), true)
+    assert.equal(isHomeComposerId(''), false)
+    assert.equal(isHomeComposerId(null), false)
+    assert.equal(isHomeComposerId('sess-1'), false)
+  })
+
+  it('treats empty ids as pending mint, not as home', () => {
     assert.equal(isPendingComposerId(PENDING_COMPOSER_ID), true)
     assert.equal(isPendingComposerId(''), true)
     assert.equal(isPendingComposerId(null), true)
@@ -17,9 +25,9 @@ describe('pendingComposer', () => {
     assert.equal(isPendingComposerId('sess-1'), false)
   })
 
-  it('resolves empty ids to the pending composer key', () => {
-    assert.equal(resolveComposerId(''), PENDING_COMPOSER_ID)
-    assert.equal(resolveComposerId(null), PENDING_COMPOSER_ID)
+  it('does not alias an empty agent id onto the home composer', () => {
+    assert.equal(resolveComposerId(''), '')
+    assert.equal(resolveComposerId(null), '')
     assert.equal(resolveComposerId(PENDING_COMPOSER_ID), PENDING_COMPOSER_ID)
     assert.equal(resolveComposerId('sess-1'), 'sess-1')
   })

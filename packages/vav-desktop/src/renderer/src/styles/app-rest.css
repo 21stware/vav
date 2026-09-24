@@ -209,10 +209,14 @@
   padding: 0;
 }
 
-/* Push trailing chrome (file-preview toggle) to the far right. */
+/* Push trailing chrome (file-preview toggle) to the far right.
+   This mid-span is the window drag strip — the chrome bar itself stays
+   no-drag so isolation cannot swallow clicks on the overlay buttons. */
 .agent-mode-chrome-row > .spacer {
   flex: 1 1 auto;
+  align-self: stretch;
   min-width: 8px;
+  -webkit-app-region: drag;
 }
 
 /* VAV | CLI Agent segmented control */
@@ -2733,6 +2737,7 @@
   /* Voice IME / long unwrapped lines must not grow the whole window sideways. */
   min-width: 0;
   box-sizing: border-box;
+  -webkit-app-region: no-drag;
 }
 
 /* Composer is first in the dock (above tools): modest top inset vs transcript.

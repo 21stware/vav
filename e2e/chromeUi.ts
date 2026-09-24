@@ -347,6 +347,6 @@ export async function assertSessionListActions(page: Page, conversationId: strin
 export async function assertNewSessionRow(page: Page): Promise<void> {
   const before = await page.locator('[data-testid="session-row"]').count()
   await page.locator('[data-testid="new-session"]').click()
-  await expect(page.locator('[data-testid="session-row"]')).toHaveCount(before)
+  await expect(page.locator('[data-testid="session-row"]')).toHaveCount(before + 1)
   await expect(page.locator('.empty-state-session')).toBeVisible()
 }

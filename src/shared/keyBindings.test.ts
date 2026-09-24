@@ -46,26 +46,56 @@ describe('faaaaast binding', () => {
 })
 
 describe('new session bindings', () => {
-  it('defaults Cmd+N in this window and Cmd+Shift+N for an isolated window', () => {
+  it('defaults Cmd+N in this window and Cmd+Shift+Enter for an isolated window', () => {
     const bindings = resolveKeyBindings({})
     assert.equal(bindings.newSession, 'CmdOrCtrl+N')
-    assert.equal(bindings.newSessionWindow, 'CmdOrCtrl+Shift+N')
-    const chord = {
+    assert.equal(bindings.newSessionWindow, 'CmdOrCtrl+Shift+Return')
+    assert.equal(prettyAccelerator(bindings.newSessionWindow, 'darwin'), '⌘⇧↵')
+    const windowChord = {
+      type: 'keyDown' as const,
+      key: 'Enter',
+      code: 'Enter',
+      control: false,
+      alt: false,
+      meta: true
+    }
+    const inWindow = {
       type: 'keyDown' as const,
       key: 'n',
       code: 'KeyN',
       control: false,
       alt: false,
+      shift: false,
       meta: true
     }
-    assert.equal(matchesAccelerator({ ...chord, shift: false }, bindings.newSession, 'darwin'), true)
+    assert.equal(matchesAccelerator(inWindow, bindings.newSession, 'darwin'), true)
     assert.equal(
-      matchesAccelerator({ ...chord, shift: false }, bindings.newSessionWindow, 'darwin'),
+      matchesAccelerator({ ...windowChord, shift: false }, bindings.newSessionWindow, 'darwin'),
       false
     )
     assert.equal(
-      matchesAccelerator({ ...chord, shift: true }, bindings.newSessionWindow, 'darwin'),
+      matchesAccelerator({ ...windowChord, shift: true }, bindings.newSessionWindow, 'darwin'),
       true
+    )
+    assert.equal(
+      matchesAccelerator({ ...windowChord, shift: true }, bindings.sendMenu, 'darwin'),
+      false
+    )
+    assert.equal(
+      matchingKeyBindingId(
+        {
+          type: 'keydown',
+          key: 'Enter',
+          code: 'Enter',
+          ctrlKey: false,
+          altKey: false,
+          shiftKey: true,
+          metaKey: true
+        },
+        bindings,
+        'darwin'
+      ),
+      'newSessionWindow'
     )
   })
 })

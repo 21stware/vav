@@ -1,5 +1,4 @@
 import {
-  formatWorkspaceLabel,
   isLocalMachine,
   normalizeMachineId,
   recentsForMachine,
@@ -7,19 +6,8 @@ import {
   type WorkspaceRef
 } from '@shared/workspaceHost'
 import type { MessageKey, TParams } from '@shared/i18n'
-import { useCallback } from 'react'
-import { useSessionStore } from '../state/sessionStore'
-import { useWorkspaceStore } from '../state/workspaceStore'
-import { useT } from '../i18n/useT'
-import { isTemporaryWorkspace, workdirShortLabel } from './format'
 import { basename } from './path'
 import { menuAnchor, showMenu, type MenuItem } from './nativeMenu'
-import { allowWorkdirSwitch, isSwarmSurfaceActive } from './workdirSwitch'
-import {
-  isPendingComposerId,
-  resolveComposerId,
-  resolvePendingWorkspace
-} from './pendingComposer'
 
 type TFn = (key: MessageKey, params?: TParams) => string
 
@@ -82,90 +70,4 @@ export function workspaceSwitchMenuItems(input: {
 
 export function openWorkspaceSwitchMenu(items: MenuItem[], anchor?: HTMLElement | null): void {
   void showMenu(items, anchor ? menuAnchor(anchor) : undefined)
-}
-
-/** Empty-session title: project name + the change-workspace menu. */
-export function useWorkspaceSwitchMenu(conversationId?: string): {
-  projectName: string
-  cwd: string | null
-  allowSwitch: boolean
-  openMenu: (anchor?: HTMLElement | null) => void
-} {
-  const t = useT()
-  const conversation = useSessionStore((s) =>
-    conversationId && !isPendingComposerId(conversationId)
-      ? s.conversations.find((c) => c.id === conversationId)
-      : undefined
-  )
-  const pending = useSessionStore((s) => s.pendingHomeWorkspace)
-  const defaultWorkdir = useSessionStore((s) => s.settings.defaultWorkingDirectory)
-  const tmp = useSessionStore((s) => s.tmp)
-  const hosts = useSessionStore((s) => s.hosts)
-  const recentDirs = useSessionStore((s) => s.settings.recentWorkspaceDirectories)
-  const windowMachineId = useSessionStore((s) => s.windowMachineId)
-  const swarmEnabled = useSessionStore((s) => s.settings.swarmModeEnabled === true)
-  const cliMode = useWorkspaceStore((s) =>
-    conversationId && !isPendingComposerId(conversationId)
-      ? !!s.workspaces[conversationId]?.cliMode
-      : false
-  )
-  const pickWorkingDirectory = useSessionStore((s) => s.pickWorkingDirectory)
-  const useTempWorkingDirectory = useSessionStore((s) => s.useTempWorkingDirectory)
-  const setWorkingDirectory = useSessionStore((s) => s.setWorkingDirectory)
-  const openRemoteFolderPicker = useSessionStore((s) => s.openRemoteFolderPicker)
-
-  const pendingShell = isPendingComposerId(conversationId)
-  const pendingWs = resolvePendingWorkspace(pending, defaultWorkdir)
-  const cwd = pendingShell ? pendingWs.path : (conversation?.workingDirectory ?? null)
-  const temporary = isTemporaryWorkspace(cwd, tmp)
-  const machineId = normalizeMachineId(
-    pendingShell ? (pendingWs.machineId ?? windowMachineId) : (conversation?.machineId ?? windowMachineId)
-  )
-  const projectName = formatWorkspaceLabel(
-    pendingShell ? pendingWs.machineId : conversation?.machineId,
-    temporary ? t('sidebar.defaultWorkspace') : workdirShortLabel(cwd ?? '', tmp),
-    hosts.find((h) => h.id === (pendingShell ? pendingWs.machineId : conversation?.machineId))
-      ?.name
-  )
-  const allowSwitch = allowWorkdirSwitch({
-    swarmSurface: isSwarmSurfaceActive(swarmEnabled, cliMode),
-    enclosedUnrevealed: false,
-    rootMissing: false,
-    archived: conversation?.archived === true
-  })
-  const targetId = resolveComposerId(conversationId)
-
-  const items = useCallback((): MenuItem[] => {
-    return workspaceSwitchMenuItems({
-      t,
-      recentDirs,
-      conversationId: targetId,
-      machineId,
-      hosts,
-      setWorkingDirectory,
-      useTempWorkingDirectory,
-      pickWorkingDirectory,
-      openRemoteFolderPicker
-    })
-  }, [
-    hosts,
-    machineId,
-    openRemoteFolderPicker,
-    pickWorkingDirectory,
-    recentDirs,
-    setWorkingDirectory,
-    t,
-    targetId,
-    useTempWorkingDirectory
-  ])
-
-  const openMenu = useCallback(
-    (anchor?: HTMLElement | null) => {
-      if (!allowSwitch) return
-      openWorkspaceSwitchMenu(items(), anchor)
-    },
-    [allowSwitch, items]
-  )
-
-  return { projectName, cwd, allowSwitch, openMenu }
 }

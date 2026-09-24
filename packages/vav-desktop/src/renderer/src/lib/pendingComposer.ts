@@ -1,6 +1,7 @@
 /**
- * Composer id used on the workbench home (and empty agent shell) before the
- * first send mints a conversation.
+ * Composer id used on the workbench home before the first send mints a
+ * conversation. The agent column never shares this key — New Session mints
+ * its own conversation so drafts, workspace, usage, and CLI stay separate.
  */
 export const PENDING_COMPOSER_ID = '__pending__'
 
@@ -9,17 +10,22 @@ export type PendingHomeWorkspace = {
   machineId?: string | null
 }
 
-/** Home / empty-session shell — no minted conversation yet. */
+/** Workbench home composer only — not an empty agent session. */
+export function isHomeComposerId(id: string | null | undefined): boolean {
+  return id === PENDING_COMPOSER_ID
+}
+
+/** No minted conversation yet — first send should create one. */
 export function isPendingComposerId(id: string | null | undefined): boolean {
   return !id?.trim() || id === PENDING_COMPOSER_ID
 }
 
-/** Stable key for drafts / workspace / model picks on the empty shell. */
+/** Draft / workspace key. Empty agent ids stay empty; do not alias onto home. */
 export function resolveComposerId(id: string | null | undefined): string {
-  return isPendingComposerId(id) ? PENDING_COMPOSER_ID : id
+  return id?.trim() ?? ''
 }
 
-/** Workspace shown on home / empty session before a conversation exists. */
+/** Workspace shown on home before a conversation exists. */
 export function resolvePendingWorkspace(
   pending: PendingHomeWorkspace | null,
   defaultWorkdir: string

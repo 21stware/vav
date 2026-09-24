@@ -342,7 +342,7 @@
   height: auto;
   min-height: var(--toolbar-height);
   box-sizing: border-box;
-  -webkit-app-region: drag;
+  -webkit-app-region: no-drag;
 }
 
 .file-preview-shell:not(.embedded) .preview-agent-panel .agent-mode-chrome button,

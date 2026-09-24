@@ -4,6 +4,18 @@ User-facing changes by release. Unreleased work lives at the top until the next 
 
 ## Unreleased
 
+## 1.32.3
+
+New Session now mints its own conversation instead of sharing Home’s pending composer, so drafts, workspace, usage, and CLI stay separate. ⌘N on an already-empty agent session just focuses it.
+
+Empty session chrome shows Enter CLI Mode instead of the workspace name on the logo. A new isolated window is ⌘⇧↵ (Ctrl+Shift+Enter).
+
+Thinking rows tick as “Thinking for…” and fold to “Thought for…” with minutes and hours. Process narration that landed before a later think stays inside the thinking viewport.
+
+GitHub Actions list and detail show the run conclusion (failed, cancelled, skipped, timed out) instead of treating every completed run as success.
+
+Clicks on empty home, session chrome, and overlay buttons no longer move the window — drag is limited to title spacers. The in-app update chip floats on the session list above Devices.
+
 ## 1.32.2
 
 Home and the empty session now show the default workspace and keep a folder pick through the first send.

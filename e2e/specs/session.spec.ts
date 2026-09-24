@@ -116,10 +116,15 @@ test('new session is created and selected', async () => {
   try {
     const { page } = harness
     await page.locator('[data-testid="new-session"]').click()
-    await expect(page.locator('[data-testid="session-row"]')).toHaveCount(1)
+    await expect(page.locator('[data-testid="session-row"]')).toHaveCount(2)
     await expect(page.locator('[data-testid="session-row"]').getByText('E2E session')).toBeVisible()
+    await expect(page.locator('[data-testid="session-row"].selected')).toBeVisible()
     await expect(page.locator('.empty-state-session')).toBeVisible()
     await expect(page.locator('[data-testid="composer-input"]')).toBeVisible()
+    await expect(page.locator('[data-testid="agent-column"] [data-testid="composer-workspace"]')).toHaveCount(
+      0
+    )
+    await expect(page.locator('.session-workspace-text-btn')).toContainText('Enter CLI Mode')
     await expect(page.locator('[data-testid="tools-panel"]')).toHaveAttribute(
       'data-tools-collapsed',
       'true'

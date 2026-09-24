@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { dismissNativeMenu, launchWorkbench, peekNativeMenu } from '../launch'
+import { launchWorkbench } from '../launch'
 
 /**
  * first-run/first-run-no-api-key.rpml + session/main-chat-empty.rpml
@@ -25,16 +25,10 @@ test('empty VAV session shows the no-key empty state and keeps local tools', asy
       'true'
     )
     await expect(page.locator('[data-testid="workdir-chip"]')).toBeVisible()
-    const name = page.locator('.empty-state-session [data-testid="empty-workspace-name"]')
-    await expect(name).toHaveText('TEMP DIR')
-    await name.evaluate((el) => (el as HTMLElement).click())
-    await expect
-      .poll(async () => {
-        const items = await peekNativeMenu(page)
-        return items?.some((item) => item.label === 'A new temp folder') ?? false
-      })
-      .toBe(true)
-    await dismissNativeMenu(page)
+    await expect(page.locator('.empty-state-session [data-testid="empty-workspace-name"]')).toHaveCount(
+      0
+    )
+    await expect(page.locator('.session-workspace-text-btn')).toContainText('Enter CLI Mode')
   } finally {
     await harness.dispose()
   }
@@ -80,6 +74,8 @@ test('empty session hero plays logo and name empty-in on a new visit', async () 
     const { page } = harness
     await expect(page.locator('.empty-state-session')).toBeVisible()
 
+    await page.locator('[data-testid="home-page"]').click()
+    await expect(page.locator('[data-testid="workbench-home"]')).toBeVisible()
     await page.locator('[data-testid="new-session"]').click()
     await expect(page.locator('.empty-state-session')).toBeVisible()
 
@@ -103,8 +99,8 @@ test('empty session hero plays logo and name empty-in on a new visit', async () 
       )
       .toBe('ok')
 
-    await expect(page.locator('.empty-state-session [data-testid="empty-workspace-name"]')).toHaveText(
-      'TEMP DIR'
+    await expect(page.locator('.empty-state-session [data-testid="empty-workspace-name"]')).toHaveCount(
+      0
     )
   } finally {
     await harness.dispose()

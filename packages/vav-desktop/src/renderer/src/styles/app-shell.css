@@ -514,6 +514,25 @@ html[data-resizing='true'] webview {
   pointer-events: none !important;
 }
 
+/*
+ * Electron paints -webkit-app-region in DOM order, not z-index. A parent
+ * `drag` (or a stale region after :has() flips) swallows clicks — the window
+ * then only moves. Interactive controls always punch a no-drag hole.
+ */
+button,
+.btn,
+a,
+input,
+select,
+textarea,
+label,
+[role='button'],
+[contenteditable='true'],
+.empty-agent-name,
+.linkish {
+  -webkit-app-region: no-drag;
+}
+
 .titlebar {
   height: var(--toolbar-height);
   flex: 0 0 auto;
@@ -647,6 +666,7 @@ html[data-resizing='true'] webview {
 .sidebar-column.is-rail .sidebar-nav-item > span,
 .sidebar-column.is-rail .sidebar-search,
 .sidebar-column.is-rail .sidebar-rule,
+.sidebar-column.is-rail .sidebar-body,
 .sidebar-column.is-rail .sidebar-list,
 .sidebar-column.is-rail .update-corner {
   display: none;
@@ -798,9 +818,11 @@ html[data-resizing='true'] webview {
 .workbench-home[data-empty='true'] .workbench-home-body {
   padding-top: 28px;
   padding-bottom: 28px;
-  /* Blank field around the centered stack. The body is the scrollport, so the
-     drag region has to be this element, not a descendant. */
-  -webkit-app-region: drag;
+  /* Hide overflow so ::before/::after drag spacers register (a scrollport
+     drops descendant window-drag). Do not drag the body itself — a full-box
+     region goes stale after data-empty flips and the window only moves. */
+  overflow: hidden;
+  -webkit-app-region: no-drag;
 }
 
 .workbench-home[data-empty='true'] .workbench-home-stage {
@@ -1362,19 +1384,20 @@ html[data-summoning] .workbench-home-stage > * {
 .storage-source-body > .empty-state {
   flex: 1 1 auto;
   padding: 28px 20px;
-  -webkit-app-region: drag;
+  -webkit-app-region: no-drag;
 }
 
 /*
  * Empty trays sit in scrollports, and a scrollport drops descendant window-drag
- * regions. Nothing here scrolls — the stack is centered in the pane — so the
- * tray itself is the drag surface (padding included).
+ * regions. Nothing here scrolls — hide overflow so optical spacers can drag.
+ * The tray itself stays no-drag so a :has() flip cannot leave a stale
+ * full-pane drag region.
  */
 :is(.applications-object-body, .file-recents-body):has(> .empty-state),
 .storage-source-body:has(> .empty-state),
 .applications-home:has(> .empty-state) {
   overflow: hidden;
-  -webkit-app-region: drag;
+  -webkit-app-region: no-drag;
 }
 
 .file-recents-body:has(> .empty-state)::before,
@@ -1447,7 +1470,7 @@ html[data-summoning] .workbench-home-stage > * {
  * field. Keep actions clickable.
  */
 .empty-state:has(.app-empty-mark) {
-  -webkit-app-region: drag;
+  -webkit-app-region: no-drag;
 }
 
 :is(
@@ -2604,9 +2627,11 @@ html[data-summoning] .workbench-home-stage > * {
   padding-bottom: 0;
 }
 
-/* Docked sidebar owns traffic-light chrome in the list column. */
+/* Docked sidebar owns traffic-light chrome in the list column.
+   Overlay agent chrome uses isolation — a parent drag swallows child
+   no-drag. Only the mid-span spacer is the window drag strip. */
 .app-shell.panel-flush-top .terminal-host-chrome {
-  -webkit-app-region: drag;
+  -webkit-app-region: no-drag;
 }
 
 .app-shell[data-chrome-lead='rail'] {
@@ -2628,7 +2653,18 @@ html[data-summoning] .workbench-home-stage > * {
   height: var(--toolbar-height);
   min-height: var(--toolbar-height);
   box-sizing: border-box;
+}
+
+.app-shell[data-chrome-lead='flush'] .agent-column:not([hidden]) .file-viewer-header,
+.app-shell[data-chrome-lead='rail'] .agent-column:not([hidden]) .file-viewer-header,
+.app-shell[data-chrome-lead='flush'] .agent-column:not([hidden]) .workspace-preview-chrome,
+.app-shell[data-chrome-lead='rail'] .agent-column:not([hidden]) .workspace-preview-chrome {
   -webkit-app-region: drag;
+}
+
+.app-shell[data-chrome-lead='flush'] .agent-column:not([hidden]) .terminal-host-chrome,
+.app-shell[data-chrome-lead='rail'] .agent-column:not([hidden]) .terminal-host-chrome {
+  -webkit-app-region: no-drag;
 }
 
 .app-shell[data-chrome-lead='flush']:not(:has(.agent-column:not([hidden]))) .app-mode-tabs,
@@ -3167,6 +3203,8 @@ html[data-summoning] .workbench-home-stage > * {
   isolation: isolate;
   pointer-events: none;
   background: var(--bg-content);
+  /* isolation + parent drag swallows no-drag on overlay buttons. */
+  -webkit-app-region: no-drag;
 }
 
 .app-shell:not(.session-window) .detail:has(> .session-surfaces) > .terminal-host-chrome.agent-mode-chrome > * {
@@ -3897,10 +3935,22 @@ kbd {
   box-shadow: inset 0 0 0 1px var(--border);
 }
 
+.sidebar-body {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .sidebar-list {
   flex: 1;
   overflow-y: auto;
   padding: 2px var(--list-inset-x) 10px;
+}
+
+.sidebar-body:has(.sidebar-update-slot) .sidebar-list {
+  padding-bottom: 52px;
 }
 
 /* The header is the divider. Time buckets stay quiet captions; workspace
@@ -4629,6 +4679,7 @@ kbd {
   gap: 6px;
   min-width: 0;
   box-sizing: border-box;
+  -webkit-app-region: no-drag;
   /* Above scroll content if it peeks under. */
   position: relative;
   z-index: 2;
@@ -9488,8 +9539,19 @@ button.tool-row {
 }
 
 .sidebar-update-slot {
-  flex: 0 0 auto;
-  padding: 0 8px;
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 2;
+  padding: 10px 8px 8px;
+  pointer-events: none;
+  background: linear-gradient(
+    to top,
+    var(--bg-window) 55%,
+    color-mix(in srgb, var(--bg-window) 70%, transparent) 78%,
+    transparent
+  );
 }
 
 /* Detached session window LED (no sidebar row). Main shell uses `.conv-badge`. */
@@ -9579,7 +9641,8 @@ button.tool-row {
   z-index: auto;
   width: 100%;
   max-width: none;
-  margin: 4px 0 2px;
+  margin: 0;
+  pointer-events: auto;
   transform: none;
   transition: opacity var(--dur-sheet) var(--ease-drawer);
 }
@@ -11639,6 +11702,7 @@ button.tool-row {
   flex-direction: column;
   align-items: center;
   justify-content: flex-start;
+  -webkit-app-region: no-drag;
 }
 
 .empty-state-session::before,
@@ -11650,10 +11714,13 @@ button.tool-row {
   min-height: 0;
 }
 
-/* New-session canvas fills the log. The transcript is the scrollport, so it
-   owns the drag region; the name and controls stay clickable. */
+/* New-session canvas fills the log. A full-box drag on the scrollport is
+   painted after overlay chrome (DOM order, not z-index) and can go stale
+   after the empty state unmounts — the window then only moves. Hide
+   overflow so optical spacers register; the scrollport stays no-drag. */
 .transcript:has(> .transcript-inner > .empty-state-session) {
-  -webkit-app-region: drag;
+  overflow: hidden;
+  -webkit-app-region: no-drag;
 }
 
 .transcript:has(> .transcript-inner > .empty-state-session)
@@ -11679,6 +11746,7 @@ button.tool-row {
   flex: 0 0 auto;
   min-height: auto;
   overflow: visible;
+  -webkit-app-region: no-drag;
 }
 
 .empty-state-session .empty-logo {
@@ -12324,6 +12392,7 @@ button.tool-row {
   /* Narrow docks shrink composer side pad (see @container below). */
   container-type: inline-size;
   container-name: dock;
+  -webkit-app-region: no-drag;
 }
 
 /**
@@ -14060,6 +14129,21 @@ button.tool-row {
   color: var(--text-tertiary);
 }
 
+.github-action-job-status.is-closed,
+.github-detail-state.is-closed {
+  color: #f85149;
+}
+
+.github-action-job-status.is-merged,
+.github-detail-state.is-merged {
+  color: #a371f7;
+}
+
+.github-action-job-status.is-open,
+.github-detail-state.is-open {
+  color: #3fb950;
+}
+
 .github-action-spin {
   animation: github-action-spin 1s linear infinite;
 }
@@ -14166,23 +14250,23 @@ button.tool-row {
   color: var(--text-tertiary);
 }
 
-.github-pr-list .github-pr-state.is-open {
+.github-pr-state.is-open {
   color: #3fb950;
 }
 
-.github-pr-list .github-pr-state.is-draft {
+.github-pr-state.is-draft {
   color: #8b949e;
 }
 
-.github-pr-list .github-pr-state.is-merged {
+.github-pr-state.is-merged {
   color: #a371f7;
 }
 
-.github-pr-list .github-pr-state.is-closed {
+.github-pr-state.is-closed {
   color: #f85149;
 }
 
-.github-pr-list .github-pr-state.is-tag {
+.github-pr-state.is-tag {
   color: var(--text-secondary);
 }
 

@@ -171,8 +171,11 @@ export function ActionDetail({
     <div className="github-detail-scroll">
       <div className="github-detail-hero">
         <div className="github-detail-title-row">
-          <span className={`github-pr-state ${githubActionStateClass(run.status)}`} aria-hidden>
-            <ActionStatusIcon status={run.status} size={13} />
+          <span
+            className={`github-pr-state ${githubActionStateClass(run.status, run.conclusion)}`}
+            aria-hidden
+          >
+            <ActionStatusIcon status={run.status} conclusion={run.conclusion} size={13} />
           </span>
           <h2 className="github-detail-heading" title={run.title || run.name}>
             {run.title || run.name}
@@ -188,8 +191,8 @@ export function ActionDetail({
           ) : null}
         </div>
         <div className="github-detail-status-row">
-          <span className={`github-detail-state ${githubActionStateClass(run.status)}`}>
-            {actionStatusLabel(run.status, t)}
+          <span className={`github-detail-state ${githubActionStateClass(run.status, run.conclusion)}`}>
+            {actionStatusLabel(run.status, t, run.conclusion)}
           </span>
           <p className="github-merge-prose">
             {run.name ? <span>{run.name}</span> : null}
@@ -234,11 +237,13 @@ function ActionJobRow({ job }: { job: GithubActionJob }): React.JSX.Element {
         if (job.htmlUrl) window.open(job.htmlUrl, '_blank', 'noopener,noreferrer')
       }}
     >
-      <span className={`github-pr-state ${githubActionStateClass(job.status)}`} aria-hidden>
-        <ActionStatusIcon status={job.status} />
+      <span className={`github-pr-state ${githubActionStateClass(job.status, job.conclusion)}`} aria-hidden>
+        <ActionStatusIcon status={job.status} conclusion={job.conclusion} />
       </span>
       <span className="github-action-job-name">{job.name}</span>
-      <span className="github-action-job-status">{actionStatusLabel(job.status, t)}</span>
+      <span className={`github-action-job-status ${githubActionStateClass(job.status, job.conclusion)}`}>
+        {actionStatusLabel(job.status, t, job.conclusion)}
+      </span>
     </button>
   )
 }

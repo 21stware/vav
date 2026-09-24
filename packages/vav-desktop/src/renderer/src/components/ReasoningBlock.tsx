@@ -1,21 +1,12 @@
 import { useEffect, useState } from 'react'
 import { ChevronRight } from 'lucide-react'
-import { thinkingSeconds } from '@shared/thinkingLevel'
 import { useT } from '../i18n/useT'
+import { thinkingLabel } from '../lib/thinkingCopy'
 import { ThinkingViewport } from './ThinkingViewport'
 
-function thoughtLabel(
-  t: ReturnType<typeof useT>,
-  durationMs?: number
-): string {
-  if (durationMs == null) return t('composer.thinking')
-  const n = thinkingSeconds(durationMs)
-  return n === 1 ? t('composer.thinkingForOne') : t('composer.thinkingFor', { n })
-}
-
 /**
- * Live: body open, "Thinking…" shimmers.
- * After this step seals: fold to "Thought for n seconds".
+ * Live: body open, duration ticks as "Thinking for…".
+ * After this step seals: fold to "Thought for…".
  * `flat`: no row chrome — just the thinking prose (inside Thinking process).
  */
 export function ReasoningBlock({
@@ -50,7 +41,7 @@ export function ReasoningBlock({
     )
   }
 
-  const label = live ? t('composer.thinking') : thoughtLabel(t, durationMs)
+  const label = thinkingLabel(durationMs, live, t)
 
   return (
     <div

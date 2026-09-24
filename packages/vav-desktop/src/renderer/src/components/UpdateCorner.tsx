@@ -11,8 +11,8 @@ function formatSpeed(bytesPerSecond: number): string {
 
 /**
  * Bottom-left update affordance: available → download → prepare → restart.
- * `inline` sits in the sidebar foot; `fixed` covers the window when the
- * sidebar is hidden.
+ * `inline` floats on the session list, just above Devices; `fixed` covers
+ * the window when the sidebar is hidden.
  */
 export function UpdateCorner({
   variant = 'fixed'

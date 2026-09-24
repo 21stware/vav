@@ -39,8 +39,9 @@ test('new session is selected and the previous row stays listed', async () => {
     const { page } = harness
     await expect(page.locator('[data-testid="session-row"]')).toHaveCount(2)
     await page.locator('[data-testid="new-session"]').click()
-    await expect(page.locator('[data-testid="session-row"]')).toHaveCount(2)
+    await expect(page.locator('[data-testid="session-row"]')).toHaveCount(3)
     await expect(page.locator('.empty-state-session')).toBeVisible()
+    await expect(page.locator('[data-testid="session-row"].selected')).toBeVisible()
     await expect(
       page.locator(`[data-testid="session-row"][data-conversation-id="${E2E_SESSION_ID}"]`)
     ).toBeVisible()

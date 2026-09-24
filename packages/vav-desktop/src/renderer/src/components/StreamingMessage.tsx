@@ -14,7 +14,6 @@ import { ReasoningBlock } from './ReasoningBlock'
 import { StreamStatus } from './StreamStatus'
 import { ProcessText } from './ProcessText'
 import { ThinkingProcess } from './ThinkingProcess'
-import { ThinkingViewport } from './ThinkingViewport'
 import { ToolCard } from './ToolCard'
 
 function streamAsMessage(block: StreamBlock): MessageBlock {
@@ -41,7 +40,11 @@ export function StreamingMessage({ conversationId }: { conversationId: string })
   const awaiting = snapshot.phase === 'awaiting-user'
   const live = isLiveStreamPhase(snapshot.phase)
 
-  const { process, live: tail } = splitLiveAssistantProcess(snapshot.blocks.map(streamAsMessage))
+  const liveBlocks = snapshot.blocks.map(streamAsMessage)
+  const { process, live: tail } = splitLiveAssistantProcess(liveBlocks)
+  const well =
+    process.length > 0 ||
+    liveBlocks.some((block) => block.kind === 'reasoning' || block.kind === 'toolCall')
 
   const renderLive = (item: IndexedBlock): React.JSX.Element | null => {
     const block = snapshot.blocks[item.index]
@@ -96,15 +99,17 @@ export function StreamingMessage({ conversationId }: { conversationId: string })
             </ThinkingProcess>
             {tail.map(renderLive)}
           </>
-        ) : snapshot.blocks.length > 0 ? (
-          <ThinkingViewport follow>
-            <div className="thinking-process-body">
-              {snapshot.blocks.map((_, index) =>
-                renderFolded({ block: streamAsMessage(snapshot.blocks[index]!), index })
-              )}
-            </div>
-          </ThinkingViewport>
-        ) : null}
+        ) : well ? (
+          <ThinkingProcess
+            steps={liveBlocks.length}
+            durationMs={processThoughtMs(liveBlocks.map((block, index) => ({ block, index })))}
+            follow
+          >
+            {liveBlocks.map((block, index) => renderFolded({ block, index }))}
+          </ThinkingProcess>
+        ) : (
+          tail.map(renderLive)
+        )}
 
         {awaiting && <div className="muted tiny">{t('transcript.awaitingContinue')}</div>}
         {live && (

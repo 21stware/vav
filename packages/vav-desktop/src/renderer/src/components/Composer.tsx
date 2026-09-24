@@ -51,7 +51,7 @@ import { AgentModelPicker } from './AgentModelPicker'
 import { ComposerAttachments } from './ComposerAttachments'
 import { SessionRunPicker } from './SessionRunPicker'
 import { ComposerWorkspacePicker } from './ComposerWorkspacePicker'
-import { isPendingComposerId, PENDING_COMPOSER_ID } from '../lib/pendingComposer'
+import { PENDING_COMPOSER_ID } from '../lib/pendingComposer'
 import { filterComputerApps, type ComputerApp } from '@shared/computerUse'
 import { MentionBox, type MentionBoxHandle, type MentionItem } from './mentionBox/MentionBox'
 import type { MentionOptions } from './mentionBox/mentionModel'
@@ -165,8 +165,8 @@ export function Composer({
     ? (pinnedConversationId?.trim() ?? '')
     : isHome
       ? PENDING_COMPOSER_ID
-      : (pinnedConversationId?.trim() || storeActiveId) || PENDING_COMPOSER_ID
-  const showWorkspace = isHome || isPendingComposerId(conversationId)
+      : pinnedConversationId?.trim() || storeActiveId
+  const showWorkspace = isHome
   const conversation = useSessionStore((s) =>
     s.conversations.find((c) => c.id === conversationId)
   )

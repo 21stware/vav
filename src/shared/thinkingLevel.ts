@@ -151,3 +151,17 @@ export function thinkingSeconds(durationMs: number): number {
   if (!Number.isFinite(durationMs) || durationMs <= 0) return 1
   return Math.max(1, Math.round(durationMs / 1000))
 }
+
+/** Carry seconds into minutes / hours for thinking labels. */
+export function thinkingDurationParts(durationMs: number): {
+  hours: number
+  minutes: number
+  seconds: number
+} {
+  const total = thinkingSeconds(durationMs)
+  return {
+    hours: Math.floor(total / 3600),
+    minutes: Math.floor((total % 3600) / 60),
+    seconds: total % 60
+  }
+}

@@ -10,6 +10,7 @@ import {
   sessionShowsFast,
   sessionShowsThinking,
   thinkingLevelsForSession,
+  thinkingDurationParts,
   thinkingSeconds,
   toPiReasoning,
   vavModelSupportsThinking
@@ -147,5 +148,15 @@ describe('thinkingSeconds', () => {
     assert.equal(thinkingSeconds(1499), 1)
     assert.equal(thinkingSeconds(1500), 2)
     assert.equal(thinkingSeconds(0), 1)
+  })
+})
+
+describe('thinkingDurationParts', () => {
+  it('carries seconds into minutes and hours', () => {
+    assert.deepEqual(thinkingDurationParts(1_000), { hours: 0, minutes: 0, seconds: 1 })
+    assert.deepEqual(thinkingDurationParts(59_000), { hours: 0, minutes: 0, seconds: 59 })
+    assert.deepEqual(thinkingDurationParts(60_000), { hours: 0, minutes: 1, seconds: 0 })
+    assert.deepEqual(thinkingDurationParts(65_400), { hours: 0, minutes: 1, seconds: 5 })
+    assert.deepEqual(thinkingDurationParts(3_661_000), { hours: 1, minutes: 1, seconds: 1 })
   })
 })

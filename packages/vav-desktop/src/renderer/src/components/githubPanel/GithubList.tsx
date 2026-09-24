@@ -1,7 +1,9 @@
 import type { KeyboardEvent as ReactKeyboardEvent, RefObject } from 'react'
 import {
+  Ban,
   Check,
   ChevronRight,
+  CircleAlert,
   CircleDashed,
   ExternalLink,
   GitMerge,
@@ -9,8 +11,10 @@ import {
   GitPullRequestClosed,
   GitPullRequestDraft,
   LoaderCircle,
+  Minus,
   Play,
-  Tag
+  Tag,
+  X
 } from 'lucide-react'
 import type {
   GithubActionRun,
@@ -24,7 +28,11 @@ import type {
 import { githubRepoSectionUrl } from '@shared/github'
 import { useT } from '../../i18n/useT'
 import { relativeTime } from '../../lib/format'
-import { githubActionStateClass, githubPullStateClass } from '../../lib/githubPanelState'
+import {
+  githubActionOutcome,
+  githubActionStateClass,
+  githubPullStateClass
+} from '../../lib/githubPanelState'
 import { emptyForCode } from '../../lib/githubPanelCopy'
 import { makeListKeyDown } from '../../lib/githubPanelNav'
 import { EmptyState } from '../ui'
@@ -48,17 +56,33 @@ export function PullStateIcon({
 
 export function ActionStatusIcon({
   status,
+  conclusion,
   size = 12
 }: {
   status: GithubActionStatus
+  conclusion?: string | null
   size?: number
 }): React.JSX.Element {
-  if (status === 'in_progress') return <LoaderCircle size={size} className="github-action-spin" />
-  if (status === 'queued' || status === 'pending' || status === 'requested') {
-    return <CircleDashed size={size} />
+  switch (githubActionOutcome(status, conclusion)) {
+    case 'in_progress':
+      return <LoaderCircle size={size} className="github-action-spin" />
+    case 'queued':
+    case 'pending':
+      return <CircleDashed size={size} />
+    case 'failure':
+    case 'timed_out':
+      return <X size={size} />
+    case 'cancelled':
+      return <Ban size={size} />
+    case 'skipped':
+      return <Minus size={size} />
+    case 'action_required':
+      return <CircleAlert size={size} />
+    case 'success':
+      return <Check size={size} />
+    default:
+      return <Play size={size} />
   }
-  if (status === 'completed') return <Check size={size} />
-  return <Play size={size} />
 }
 
 export function ListGroupHead({
@@ -186,8 +210,11 @@ export function ActionRunRow({
         onMenu?.(run, event.clientX, event.clientY)
       }}
     >
-      <span className={`github-pr-state ${githubActionStateClass(run.status)}`} aria-hidden>
-        <ActionStatusIcon status={run.status} />
+      <span
+        className={`github-pr-state ${githubActionStateClass(run.status, run.conclusion)}`}
+        aria-hidden
+      >
+        <ActionStatusIcon status={run.status} conclusion={run.conclusion} />
       </span>
       <span className="github-pr-title" title={run.title || run.name}>
         {run.title || run.name}

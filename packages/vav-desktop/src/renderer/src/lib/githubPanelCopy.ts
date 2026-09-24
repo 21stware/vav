@@ -4,6 +4,7 @@ import type {
   GithubErrorCode,
   GithubReviewState
 } from '@shared/github.ts'
+import { githubActionOutcome } from './githubPanelState.ts'
 
 export type GithubPanelTranslate = (key: MessageKey, params?: TParams) => string
 
@@ -30,12 +31,33 @@ export function emptyForCode(
   return { title: t('github.loadFailed'), description: fallback }
 }
 
-export function actionStatusLabel(status: GithubActionStatus, t: GithubPanelTranslate): string {
-  if (status === 'in_progress') return t('github.actionInProgress')
-  if (status === 'queued') return t('github.actionQueued')
-  if (status === 'waiting') return t('github.actionWaiting')
-  if (status === 'pending' || status === 'requested') return t('github.actionPending')
-  return t('github.actionCompleted')
+export function actionStatusLabel(
+  status: GithubActionStatus,
+  t: GithubPanelTranslate,
+  conclusion?: string | null
+): string {
+  switch (githubActionOutcome(status, conclusion)) {
+    case 'in_progress':
+      return t('github.actionInProgress')
+    case 'queued':
+      return t('github.actionQueued')
+    case 'waiting':
+      return t('github.actionWaiting')
+    case 'pending':
+      return t('github.actionPending')
+    case 'failure':
+      return t('github.actionFailed')
+    case 'cancelled':
+      return t('github.actionCancelled')
+    case 'skipped':
+      return t('github.actionSkipped')
+    case 'timed_out':
+      return t('github.actionTimedOut')
+    case 'action_required':
+      return t('github.actionRequired')
+    default:
+      return t('github.actionCompleted')
+  }
 }
 
 export function pagesStatusLabel(status: string | null, t: GithubPanelTranslate): string {

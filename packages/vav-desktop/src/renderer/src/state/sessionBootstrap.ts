@@ -129,6 +129,15 @@ type InheritCreateConversation = {
   machineId?: string | null
 }
 
+/** ⌘N on an already-empty agent session just focuses — don't mint another. */
+export function shouldReuseEmptyNewSession(opts: {
+  agentVisible: boolean
+  hasActiveConversation: boolean
+  messageCount: number
+}): boolean {
+  return opts.agentVisible && opts.hasActiveConversation && opts.messageCount === 0
+}
+
 /**
  * First send / ⌘N inherit the active session folder when it is a real project
  * on this machine — never a temp shell or another daemon's path.

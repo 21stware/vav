@@ -105,6 +105,7 @@ export function splitAssistantProcess(blocks: MessageBlock[]): {
   const process = visible.slice(0, cut)
   const conclusion = visible.slice(cut)
   peelReasoningFromConclusion(process, conclusion)
+  peelInterstitialText(process, conclusion)
 
   if (process.length === 0 || conclusion.length === 0) {
     return { process: [], conclusion: visible }
@@ -141,6 +142,30 @@ function peelReasoningFromConclusion(process: IndexedBlock[], conclusion: Indexe
   const moved: IndexedBlock[] = []
   for (const item of conclusion) {
     if (item.block.kind === 'reasoning') moved.push(item)
+    else kept.push(item)
+  }
+  if (moved.length === 0) return
+  process.push(...moved)
+  process.sort((a, b) => a.index - b.index)
+  conclusion.length = 0
+  conclusion.push(...kept)
+}
+
+/**
+ * Text that landed before a later peeled think is process narration, not the
+ * answer. Leaving it in the conclusion reprints thinking outside the viewport.
+ */
+function peelInterstitialText(process: IndexedBlock[], conclusion: IndexedBlock[]): void {
+  if (process.length === 0 || conclusion.length === 0) return
+  const maxProcess = Math.max(...process.map((item) => item.index))
+  const hasAnswerAfter = conclusion.some(
+    (item) => item.block.kind === 'text' && item.block.text.trim() && item.index > maxProcess
+  )
+  if (!hasAnswerAfter) return
+  const kept: IndexedBlock[] = []
+  const moved: IndexedBlock[] = []
+  for (const item of conclusion) {
+    if (item.index < maxProcess) moved.push(item)
     else kept.push(item)
   }
   if (moved.length === 0) return

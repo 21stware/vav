@@ -1503,7 +1503,8 @@ export function Sidebar({
           </button>
       </div>
 
-      <div className="sidebar-list" id="sessions" ref={listRef} tabIndex={-1}>
+      <div className="sidebar-body">
+        <div className="sidebar-list" id="sessions" ref={listRef} tabIndex={-1}>
         {listMode === 'main' &&
           visible.length === 0 &&
           conversations.filter(
@@ -1592,12 +1593,13 @@ export function Sidebar({
         )}
 
         {mainGroups.map(renderGroup)}
+        </div>
+        <UpdateCorner variant="inline" />
       </div>
 
       <div className="sidebar-foot">
         <SidebarServiceBar variant="nav" highlight={false} />
       </div>
-      <UpdateCorner variant="inline" />
     </aside>
   )
 }

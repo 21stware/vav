@@ -6697,7 +6697,7 @@ function registerGlobalHotkey(accelerator: string): boolean {
   } else {
     console.log('[hotkey] toggle hotkey cleared (empty)')
   }
-  // 2) New detached session from any app (default ⌘⇧N / Ctrl+Shift+N)
+  // 2) New detached session from any app (default ⌘⇧↵ / Ctrl+Shift+Enter)
   const newSessionAccel = currentKeyBindings().newSessionWindow
   try {
     const ok = globalShortcut.register(newSessionAccel, () => {

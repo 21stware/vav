@@ -217,7 +217,7 @@ export class StreamProjection {
           kind: 'reasoning',
           key: block.key,
           text: block.text,
-          durationMs: block.durationMs
+          durationMs: block.durationMs ?? Math.max(0, Date.now() - block.startedAt)
         })
       } else {
         blocks.push(block)

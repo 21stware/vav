@@ -1,14 +1,14 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { ChevronRight } from 'lucide-react'
-import { thinkingSeconds } from '@shared/thinkingLevel'
 import { useT } from '../i18n/useT'
 import { EXPAND_PROCESS_EVENT } from '../lib/mdMarks'
+import { thinkingLabel } from '../lib/thinkingCopy'
 import { ThinkingViewport } from './ThinkingViewport'
 
 /**
- * Shell for the non-final stretch of a turn. The body is a fixed viewport,
- * so it stays open; the header still toggles it. Children are themselves
- * collapsed rows (reasoning / tools / notes).
+ * Shell for the non-final stretch of a turn. Live stays open in a fixed
+ * viewport; a finished process starts collapsed. The header is the duration
+ * phrase — not a separate "Thinking process" title plus a second clock.
  */
 export function ThinkingProcess({
   steps,
@@ -24,7 +24,7 @@ export function ThinkingProcess({
 }): React.JSX.Element {
   const t = useT()
   const rootRef = useRef<HTMLDivElement>(null)
-  const [open, setOpen] = useState(true)
+  const [open, setOpen] = useState(follow)
   useEffect(() => {
     const el = rootRef.current
     if (!el) return
@@ -34,8 +34,10 @@ export function ThinkingProcess({
   }, [])
   const summary =
     durationMs != null
-      ? t('composer.thinkingFor', { n: thinkingSeconds(durationMs) })
-      : t('composer.thinkingProcessSteps', { n: steps })
+      ? thinkingLabel(durationMs, follow, t)
+      : follow
+        ? t('composer.thinking')
+        : t('composer.thinkingProcessSteps', { n: steps })
 
   return (
     <div
@@ -51,8 +53,7 @@ export function ThinkingProcess({
         onClick={() => setOpen((value) => !value)}
       >
         <ChevronRight className="tool-chevron" size={11} />
-        <span className="tool-name">{t('composer.thinkingProcess')}</span>
-        <span className="tool-summary">{summary}</span>
+        <span className={`tool-name${follow ? ' stream-status-shimmer' : ''}`}>{summary}</span>
       </button>
       <div className="tool-detail" aria-hidden={!open}>
         <div className="tool-detail-inner">

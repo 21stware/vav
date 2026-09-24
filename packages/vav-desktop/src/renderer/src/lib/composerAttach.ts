@@ -1,19 +1,18 @@
 import { tt } from '../i18n/useT'
 import { handoffFileFocusToCli } from './cliFocusHandoff'
-import { isPendingComposerId, PENDING_COMPOSER_ID } from './pendingComposer'
+import { isHomeComposerId, PENDING_COMPOSER_ID } from './pendingComposer'
 import { useSessionStore } from '../state/sessionStore'
 
 async function ensureComposerTarget(conversationId?: string | null): Promise<string | null> {
   const pinned = conversationId?.trim() || ''
-  if (isPendingComposerId(pinned)) return PENDING_COMPOSER_ID
+  if (isHomeComposerId(pinned)) return PENDING_COMPOSER_ID
   const store = useSessionStore.getState()
   if (pinned && store.conversations.some((c) => c.id === pinned)) return pinned
   const current = store.activeId
   if (current && store.conversations.some((c) => c.id === current)) return current
-  if (pinned || !current) return PENDING_COMPOSER_ID
   const created = await store.createConversation({ openIn: 'here' })
   if (typeof created === 'string' && created) return created
-  return useSessionStore.getState().activeId || PENDING_COMPOSER_ID
+  return useSessionStore.getState().activeId || null
 }
 
 /**
@@ -69,10 +68,9 @@ export async function attachPickedFiles(conversationId?: string | null): Promise
 export function addFilesToComposer(paths: string[], conversationId?: string | null): void {
   const store = useSessionStore.getState()
   const pinned = conversationId?.trim() || ''
-  const id =
-    (isPendingComposerId(pinned) ? PENDING_COMPOSER_ID : pinned) ||
-    store.activeId ||
-    PENDING_COMPOSER_ID
+  const id = isHomeComposerId(pinned)
+    ? PENDING_COMPOSER_ID
+    : pinned || store.activeId || PENDING_COMPOSER_ID
   if (!id) return
   const files = [...new Set(paths.map((path) => path.trim()).filter(Boolean))]
   if (files.length === 0) return

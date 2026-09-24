@@ -8,6 +8,7 @@ import {
   pickBootstrapActiveId,
   seedCliAgentCatalogue,
   seedEmptyConversationPatch,
+  shouldReuseEmptyNewSession,
   shouldSpawnDetachedConversation,
   claimDetachedSessionPatch
 } from './sessionBootstrap.ts'
@@ -67,6 +68,41 @@ describe('sessionBootstrap', () => {
     assert.equal(persistCliAgents, false)
     assert.deepEqual(settings.disabledAgentModels, {})
     assert.deepEqual(settings.defaultAgentModels, {})
+  })
+
+  it('reuses an empty agent session instead of minting another', () => {
+    assert.equal(
+      shouldReuseEmptyNewSession({
+        agentVisible: true,
+        hasActiveConversation: true,
+        messageCount: 0
+      }),
+      true
+    )
+    assert.equal(
+      shouldReuseEmptyNewSession({
+        agentVisible: true,
+        hasActiveConversation: true,
+        messageCount: 2
+      }),
+      false
+    )
+    assert.equal(
+      shouldReuseEmptyNewSession({
+        agentVisible: false,
+        hasActiveConversation: true,
+        messageCount: 0
+      }),
+      false
+    )
+    assert.equal(
+      shouldReuseEmptyNewSession({
+        agentVisible: true,
+        hasActiveConversation: false,
+        messageCount: 0
+      }),
+      false
+    )
   })
 
   it('inherits a live project folder and skips temp / remote / pending paths', () => {

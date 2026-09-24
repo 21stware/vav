@@ -99,12 +99,14 @@ describe('splitAssistantProcess', () => {
       text('End.')
     ])
     assert.deepEqual(
-      split.process.map((item) => item.block.kind === 'reasoning' ? item.block.text : ''),
-      ['first', 'middle']
+      split.process.map((item) =>
+        item.block.kind === 'reasoning' || item.block.kind === 'text' ? item.block.text : ''
+      ),
+      ['first', 'Start.', 'middle']
     )
     assert.deepEqual(
       split.conclusion.map((item) => (item.block.kind === 'text' ? item.block.text : '')),
-      ['Start.', 'End.']
+      ['End.']
     )
   })
 
