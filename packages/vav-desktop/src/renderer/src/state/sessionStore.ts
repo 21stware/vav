@@ -160,6 +160,7 @@ import { swarmBlocksWorkdirSwitch as swarmSurfaceBlocksWorkdir } from '../lib/wo
 import {
   homeWorkspaceCreateOptions,
   isPendingComposerId,
+  PENDING_COMPOSER_ID,
   type PendingHomeWorkspace
 } from '../lib/pendingComposer'
 import { nextFavoriteIds, nextPinnedWorkspaceDirs, setArchivedConversationPatch } from './sessionPins'
@@ -1266,17 +1267,28 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       options?.machineId ?? get().windowMachineId
     )
     let createOpts = { ...options, machineId: activeMachine }
+    const pendingShell =
+      isPendingComposerId(get().activeId) ||
+      !get().conversations.some((c) => c.id === get().activeId)
     if (createOpts.workingDirectory === undefined) {
-      const inherited = inheritCreateWorkingDirectory({
-        active: get().conversations.find((c) => c.id === get().activeId),
-        activeMachine,
-        isTemporary: (path) => isTemporaryWorkspace(path, get().tmp)
-      })
-      if (inherited) {
-        createOpts = { ...createOpts, workingDirectory: inherited }
+      const pending = pendingShell ? get().pendingHomeWorkspace : null
+      if (pending) {
+        createOpts = { ...createOpts, ...homeWorkspaceCreateOptions(pending) }
+      } else {
+        const inherited = inheritCreateWorkingDirectory({
+          active: get().conversations.find((c) => c.id === get().activeId),
+          activeMachine,
+          isTemporary: (path) => isTemporaryWorkspace(path, get().tmp)
+        })
+        if (inherited) {
+          createOpts = { ...createOpts, workingDirectory: inherited }
+        }
       }
     }
     const meta = await window.vav.conversations.create(createOpts)
+    if (pendingShell && get().pendingHomeWorkspace) {
+      set({ pendingHomeWorkspace: null })
+    }
     if (options?.openIn === 'none') {
       set((state) => seedEmptyConversationPatch(state, meta))
       return meta.id
@@ -2424,10 +2436,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     let activeId = conversationId?.trim() || storeActiveId
     if (isArchivedConversation(conversations, activeId)) return
     const pendingComposer = isPendingComposerId(activeId) || !activeId
-    const pendingComposerId = pendingComposer
-      ? (isPendingComposerId(conversationId) ? conversationId : null) ||
-        (isPendingComposerId(storeActiveId) ? storeActiveId : null)
-      : null
+    const pendingComposerId = pendingComposer ? PENDING_COMPOSER_ID : null
     // Empty chat shell / workbench home: mint the session on first send.
     if (pendingComposer || !conversations.some((c) => c.id === activeId)) {
       await get().createConversation({

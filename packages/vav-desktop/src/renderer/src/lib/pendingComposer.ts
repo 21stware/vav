@@ -9,8 +9,23 @@ export type PendingHomeWorkspace = {
   machineId?: string | null
 }
 
+/** Home / empty-session shell — no minted conversation yet. */
 export function isPendingComposerId(id: string | null | undefined): boolean {
-  return id === PENDING_COMPOSER_ID
+  return !id?.trim() || id === PENDING_COMPOSER_ID
+}
+
+/** Stable key for drafts / workspace / model picks on the empty shell. */
+export function resolveComposerId(id: string | null | undefined): string {
+  return isPendingComposerId(id) ? PENDING_COMPOSER_ID : id
+}
+
+/** Workspace shown on home / empty session before a conversation exists. */
+export function resolvePendingWorkspace(
+  pending: PendingHomeWorkspace | null,
+  defaultWorkdir: string
+): PendingHomeWorkspace {
+  if (pending) return pending
+  return { path: defaultWorkdir.trim() || null }
 }
 
 /** Create-conversation opts from an explicit home workspace pick. */

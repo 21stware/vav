@@ -25,7 +25,12 @@ import { BranchPager, MessageRow } from './MessageRow'
 import { RewindRail } from './RewindRail'
 import { StreamingMessage } from './StreamingMessage'
 import { StreamStatus } from './StreamStatus'
-import { displayNameForCliHost, enabledCliAgents, isStructuredCliHost } from '@shared/types'
+import {
+  displayNameForCliHost,
+  enabledCliAgents,
+  isStructuredCliHost,
+  resolveDefaultChatHost
+} from '@shared/types'
 import { vendorDisplayName, vendorIdFromEndpoint } from '@shared/llmVendors'
 import { useAccountGroups, vavAccountsOf } from '../lib/accountGroups'
 import { Button, EmptyState } from './ui'
@@ -132,9 +137,11 @@ export function Transcript({
   const clearCompaction = useSessionStore((s) => s.clearCompaction)
   // Do not `?? []` here — a fresh array each snapshot loops zustand/React.
   const compactions = useSessionStore((s) => s.compactions[activeId])
-  const cliHost = useSessionStore(
-    (s) => s.conversations.find((c) => c.id === activeId)?.cliHost ?? null
-  )
+  const cliHost = useSessionStore((s) => {
+    const row = s.conversations.find((c) => c.id === activeId)
+    if (row) return row.cliHost ?? null
+    return resolveDefaultChatHost(s.settings.defaultAgentId)
+  })
   const hostHoldsKeys = useSessionStore((s) => {
     const conversation = s.conversations.find((c) => c.id === activeId)
     return hostHoldsRemoteKeys(s.hosts, conversation?.machineId)

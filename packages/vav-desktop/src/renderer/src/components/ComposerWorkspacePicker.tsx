@@ -5,7 +5,7 @@ import { useSessionStore } from '../state/sessionStore'
 import { useT } from '../i18n/useT'
 import { isTemporaryWorkspace, workdirShortLabel } from '../lib/format'
 import { createMenuNonceGate } from '../lib/menuNonce'
-import { PENDING_COMPOSER_ID } from '../lib/pendingComposer'
+import { PENDING_COMPOSER_ID, resolvePendingWorkspace } from '../lib/pendingComposer'
 import {
   openWorkspaceSwitchMenu,
   workspaceSwitchMenuItems
@@ -29,13 +29,14 @@ export function ComposerWorkspacePicker(): React.JSX.Element {
   const setWorkingDirectory = useSessionStore((s) => s.setWorkingDirectory)
   const openRemoteFolderPicker = useSessionStore((s) => s.openRemoteFolderPicker)
 
-  const machineId = normalizeMachineId(pending?.machineId ?? windowMachineId)
-  const cwd = pending ? pending.path : defaultWorkdir.trim() || null
+  const pendingWs = resolvePendingWorkspace(pending, defaultWorkdir)
+  const machineId = normalizeMachineId(pendingWs.machineId ?? windowMachineId)
+  const cwd = pendingWs.path
   const temporary = isTemporaryWorkspace(cwd, tmp)
   const label = formatWorkspaceLabel(
-    pending?.machineId ?? windowMachineId,
+    pendingWs.machineId ?? windowMachineId,
     temporary ? t('sidebar.defaultWorkspace') : workdirShortLabel(cwd ?? '', tmp),
-    hosts.find((h) => h.id === (pending?.machineId ?? windowMachineId))?.name
+    hosts.find((h) => h.id === (pendingWs.machineId ?? windowMachineId))?.name
   )
 
   const items = useCallback(

@@ -15,6 +15,11 @@ import { isTemporaryWorkspace, workdirShortLabel } from './format'
 import { basename } from './path'
 import { menuAnchor, showMenu, type MenuItem } from './nativeMenu'
 import { allowWorkdirSwitch, isSwarmSurfaceActive } from './workdirSwitch'
+import {
+  isPendingComposerId,
+  resolveComposerId,
+  resolvePendingWorkspace
+} from './pendingComposer'
 
 type TFn = (key: MessageKey, params?: TParams) => string
 
@@ -88,28 +93,39 @@ export function useWorkspaceSwitchMenu(conversationId?: string): {
 } {
   const t = useT()
   const conversation = useSessionStore((s) =>
-    conversationId ? s.conversations.find((c) => c.id === conversationId) : undefined
+    conversationId && !isPendingComposerId(conversationId)
+      ? s.conversations.find((c) => c.id === conversationId)
+      : undefined
   )
+  const pending = useSessionStore((s) => s.pendingHomeWorkspace)
+  const defaultWorkdir = useSessionStore((s) => s.settings.defaultWorkingDirectory)
   const tmp = useSessionStore((s) => s.tmp)
   const hosts = useSessionStore((s) => s.hosts)
   const recentDirs = useSessionStore((s) => s.settings.recentWorkspaceDirectories)
   const windowMachineId = useSessionStore((s) => s.windowMachineId)
   const swarmEnabled = useSessionStore((s) => s.settings.swarmModeEnabled === true)
   const cliMode = useWorkspaceStore((s) =>
-    conversationId ? !!s.workspaces[conversationId]?.cliMode : false
+    conversationId && !isPendingComposerId(conversationId)
+      ? !!s.workspaces[conversationId]?.cliMode
+      : false
   )
   const pickWorkingDirectory = useSessionStore((s) => s.pickWorkingDirectory)
   const useTempWorkingDirectory = useSessionStore((s) => s.useTempWorkingDirectory)
   const setWorkingDirectory = useSessionStore((s) => s.setWorkingDirectory)
   const openRemoteFolderPicker = useSessionStore((s) => s.openRemoteFolderPicker)
 
-  const cwd = conversation?.workingDirectory ?? null
+  const pendingShell = isPendingComposerId(conversationId)
+  const pendingWs = resolvePendingWorkspace(pending, defaultWorkdir)
+  const cwd = pendingShell ? pendingWs.path : (conversation?.workingDirectory ?? null)
   const temporary = isTemporaryWorkspace(cwd, tmp)
-  const machineId = normalizeMachineId(conversation?.machineId ?? windowMachineId)
+  const machineId = normalizeMachineId(
+    pendingShell ? (pendingWs.machineId ?? windowMachineId) : (conversation?.machineId ?? windowMachineId)
+  )
   const projectName = formatWorkspaceLabel(
-    conversation?.machineId,
+    pendingShell ? pendingWs.machineId : conversation?.machineId,
     temporary ? t('sidebar.defaultWorkspace') : workdirShortLabel(cwd ?? '', tmp),
-    hosts.find((h) => h.id === conversation?.machineId)?.name
+    hosts.find((h) => h.id === (pendingShell ? pendingWs.machineId : conversation?.machineId))
+      ?.name
   )
   const allowSwitch = allowWorkdirSwitch({
     swarmSurface: isSwarmSurfaceActive(swarmEnabled, cliMode),
@@ -117,13 +133,13 @@ export function useWorkspaceSwitchMenu(conversationId?: string): {
     rootMissing: false,
     archived: conversation?.archived === true
   })
+  const targetId = resolveComposerId(conversationId)
 
   const items = useCallback((): MenuItem[] => {
-    if (!conversationId) return []
     return workspaceSwitchMenuItems({
       t,
       recentDirs,
-      conversationId,
+      conversationId: targetId,
       machineId,
       hosts,
       setWorkingDirectory,
@@ -132,7 +148,6 @@ export function useWorkspaceSwitchMenu(conversationId?: string): {
       openRemoteFolderPicker
     })
   }, [
-    conversationId,
     hosts,
     machineId,
     openRemoteFolderPicker,
@@ -140,6 +155,7 @@ export function useWorkspaceSwitchMenu(conversationId?: string): {
     recentDirs,
     setWorkingDirectory,
     t,
+    targetId,
     useTempWorkingDirectory
   ])
 

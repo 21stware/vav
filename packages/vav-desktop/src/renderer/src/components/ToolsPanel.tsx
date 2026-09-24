@@ -41,6 +41,7 @@ import { focusBashPane, getUiFocusScope, resolveUiFocusScope } from '../lib/uiFo
 import { createMenuNonceGate } from '../lib/menuNonce'
 import { menuAnchor, menuAnchorIfVisible, showMenu, type MenuItem } from '../lib/nativeMenu'
 import { workspaceSwitchMenuItems } from '../lib/workspaceSwitchMenu'
+import { resolveComposerId, resolvePendingWorkspace } from '../lib/pendingComposer'
 import { matchingKeyBindingId, resolveKeyBindings } from '@shared/keyBindings'
 import { fileManagerLabel, keys, PLATFORM } from '../lib/platform'
 import { allowWorkdirSwitch as workdirSwitchAllowed, isSwarmSurfaceActive } from '../lib/workdirSwitch'
@@ -89,6 +90,8 @@ export function ToolsPanel({
   const home = useSessionStore((s) => s.home)
   const hosts = useSessionStore((s) => s.hosts)
   const recentDirs = useSessionStore((s) => s.settings.recentWorkspaceDirectories)
+  const pendingHomeWorkspace = useSessionStore((s) => s.pendingHomeWorkspace)
+  const defaultWorkdir = useSessionStore((s) => s.settings.defaultWorkingDirectory)
   const workspaceMenuNonce = useSessionStore((s) => s.workspaceMenuNonce)
   const agentVisible = useSessionStore((s) => s.agentVisible)
 
@@ -152,7 +155,9 @@ export function ToolsPanel({
     return () => cancelAnimationFrame(frame)
   }, [activeId])
 
-  const workdir = conversation?.workingDirectory ?? null
+  const pendingWs = resolvePendingWorkspace(pendingHomeWorkspace, defaultWorkdir)
+  const workdir =
+    conversation?.workingDirectory ?? (activeId ? null : pendingWs.path)
   const temporary = isTemporaryWorkspace(workdir, tmp)
   const gitRepoEpoch = useGitRepoSyncEpoch()
 
@@ -204,8 +209,8 @@ export function ToolsPanel({
             workdir,
             tmp,
             home,
-            conversation?.machineId,
-            hosts.find((h) => h.id === conversation?.machineId)?.name
+            conversation?.machineId ?? pendingWs.machineId,
+            hosts.find((h) => h.id === (conversation?.machineId ?? pendingWs.machineId))?.name
           )
         )
   const pathTitle = rootMissing
@@ -348,8 +353,11 @@ export function ToolsPanel({
     return workspaceSwitchMenuItems({
       t,
       recentDirs,
-      conversationId: activeId,
-      machineId: conversation?.machineId ?? useSessionStore.getState().windowMachineId,
+      conversationId: resolveComposerId(activeId),
+      machineId:
+        conversation?.machineId ??
+        pendingWs.machineId ??
+        useSessionStore.getState().windowMachineId,
       hosts,
       setWorkingDirectory,
       useTempWorkingDirectory,
@@ -361,6 +369,7 @@ export function ToolsPanel({
     recentDirs,
     activeId,
     conversation?.machineId,
+    pendingWs.machineId,
     setWorkingDirectory,
     useTempWorkingDirectory,
     pickWorkingDirectory,

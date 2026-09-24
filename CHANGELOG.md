@@ -4,6 +4,10 @@ User-facing changes by release. Unreleased work lives at the top until the next 
 
 ## Unreleased
 
+## 1.32.2
+
+Home and the empty session now show the default workspace and keep a folder pick through the first send.
+
 ## 1.32.1
 
 Same as 1.32.0. That tag did not publish — the vendored HandyMd editor files were ignored by `dist/`.
