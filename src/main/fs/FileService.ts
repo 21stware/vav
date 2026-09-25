@@ -151,10 +151,14 @@ export class FileService {
    * paths granted by a native open/save dialog or the app column. Unwatched
    * paths are denied — open-file / drag / argv must `grantPath` first.
    */
+  private *allowRoots(): Iterable<string> {
+    yield* this.roots.values()
+    yield* this.extraRoots
+  }
+
   isAllowedPath(path: string): boolean {
     if (!path || path.includes('\0')) return false
-    const roots = [...this.roots.values(), ...this.extraRoots]
-    return isPathAllowed(path, roots, this.grantedPaths)
+    return isPathAllowed(path, this.allowRoots(), this.grantedPaths)
   }
 
   private accessError(path: string): string | null {

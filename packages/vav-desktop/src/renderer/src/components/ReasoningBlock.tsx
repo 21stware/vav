@@ -1,13 +1,14 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { ChevronRight } from 'lucide-react'
 import { useT } from '../i18n/useT'
 import { thinkingLabel } from '../lib/thinkingCopy'
+import { MarkdownView } from './MarkdownView'
 import { ThinkingViewport } from './ThinkingViewport'
 
 /**
- * Live: body open, duration ticks as "Thinking for…".
- * After this step seals: fold to "Thought for…".
- * `flat`: no row chrome — just the thinking prose (inside Thinking process).
+ * Collapsed by default. Live still ticks the header as "Thinking for…";
+ * the user opens the body. `flat`: no row chrome — just the thinking prose
+ * (inside Thinking process).
  */
 export function ReasoningBlock({
   text,
@@ -24,19 +25,17 @@ export function ReasoningBlock({
   follow?: boolean
 }): React.JSX.Element {
   const t = useT()
-  const [open, setOpen] = useState(live)
+  const [open, setOpen] = useState(false)
   const canToggle = text.trim().length > 0
   const stick = follow || live
-
-  useEffect(() => {
-    setOpen(live)
-  }, [live])
 
   if (flat) {
     if (!text.trim()) return <div className="reasoning-flat" data-testid="reasoning" />
     return (
       <div className="reasoning-flat" data-testid="reasoning">
-        <div className="reasoning-body">{text}</div>
+        <div className="reasoning-body">
+          <MarkdownView source={text} cached={!live} />
+        </div>
       </div>
     )
   }
@@ -69,7 +68,9 @@ export function ReasoningBlock({
         <div className="tool-detail" aria-hidden={!open}>
           <div className="tool-detail-inner">
             <ThinkingViewport follow={stick}>
-              <div className="reasoning-body">{text}</div>
+              <div className="reasoning-body">
+                <MarkdownView source={text} cached={!live} />
+              </div>
             </ThinkingViewport>
           </div>
         </div>

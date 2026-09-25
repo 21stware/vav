@@ -100,18 +100,20 @@ export function KeychainOnboarding({
             <BrandAppIcon size={108} appearance="any" className="keychain-gate-hero" />
             {busy && (
               <span className="keychain-gate-busy-mark" aria-hidden>
-                <img
-                  className="keychain-gate-busy-sprite logo-light"
-                  src={loadingSprite}
-                  alt=""
-                  draggable={false}
-                />
-                <img
-                  className="keychain-gate-busy-sprite logo-dark"
-                  src={loadingSpriteDark}
-                  alt=""
-                  draggable={false}
-                />
+                <span className="keychain-gate-busy-clip">
+                  <img
+                    className="keychain-gate-busy-sprite logo-light"
+                    src={loadingSprite}
+                    alt=""
+                    draggable={false}
+                  />
+                  <img
+                    className="keychain-gate-busy-sprite logo-dark"
+                    src={loadingSpriteDark}
+                    alt=""
+                    draggable={false}
+                  />
+                </span>
               </span>
             )}
           </div>

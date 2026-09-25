@@ -11,6 +11,7 @@ import {
   writeFile
 } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
+import { lookupWorkingCopyKey, stripWorkingCopySlash } from './workingCopyLookup'
 
 /**
  * Document sandbox — single source of truth for Save / Discard.
@@ -64,9 +65,7 @@ type PersistIndex = Record<
   { key: string; realPath: string; copyName: string }
 >
 
-function stripSlash(path: string): string {
-  return path.replace(/\/+$/, '') || path
-}
+const stripSlash = stripWorkingCopySlash
 
 /** Best-effort canonical path; falls back to stripped input. */
 function canonicalPath(path: string): string {
@@ -385,15 +384,7 @@ export class WorkingCopyService {
   }
 
   private entryFor(path: string): Entry | undefined {
-    const raw = stripSlash(path)
-    const canon = canonicalPath(raw)
-    return (
-      this.byReal.get(canon) ??
-      this.byReal.get(raw) ??
-      this.byCopy.get(canon) ??
-      this.byCopy.get(raw) ??
-      this.byCopy.get(normalizeCopy(path))
-    )
+    return lookupWorkingCopyKey(path, this.byReal, this.byCopy, normalizeCopy, canonicalPath)
   }
 
   private register(entry: Entry): void {

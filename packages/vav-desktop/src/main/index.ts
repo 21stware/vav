@@ -9,7 +9,6 @@ import {
   type IpcMainInvokeEvent,
   Menu,
   nativeTheme,
-  net,
   powerMonitor,
   protocol,
   safeStorage,
@@ -19,7 +18,6 @@ import {
   systemPreferences
 } from 'electron'
 import { basename, dirname, extname, join } from 'node:path'
-import { pathToFileURL } from 'node:url'
 import { execFile } from 'node:child_process'
 import {
   existsSync,
@@ -78,11 +76,8 @@ import {
 } from '@shared/types'
 import type { AppColumnFocus } from '@shared/appColumnFocus'
 import { agentBinaryCandidates } from '@shared/agentBinary'
-import {
-  VAV_LOCAL_CORS_HEADERS,
-  localFileStreamUrl,
-  parseVavLocalFilePath
-} from '@shared/localFileUrl'
+import { VAV_LOCAL_CORS_HEADERS, localFileStreamUrl } from '@shared/localFileUrl'
+import { serveVavLocalRequest } from '@main/protocol/vavLocalServe'
 import { compactionForLeaf } from '@shared/compaction'
 import {
   chatMessagesFromRemoteThread,
@@ -1641,7 +1636,7 @@ timerScheduler = new TimerScheduler({
   tmp: () => currentTempDir(),
   defaultModel: () => settingsStore.get().defaultModel || DEFAULT_SETTINGS.defaultModel,
   runTurn: (id, text) => {
-    void agent.run(id, text, [], null, null, null)
+    startRemoteTurn(id, text, [])
   },
   isRunning: (id) => agent.isRunning(id),
   reload: () => timerStore.load(),
@@ -9129,34 +9124,25 @@ if (singleInstance) {
         })
       }
       try {
-        if (request.method === 'OPTIONS') {
+        const served = await serveVavLocalRequest(
+          {
+            url: request.url,
+            method: request.method,
+            range: request.headers.get('Range')
+          },
+          {
+            ioPath: (path) => workingCopyService.ioPath(path),
+            isAllowed: (path) => fileService.isAllowedPath(path)
+          }
+        )
+        if (served.kind === 'options') {
           return withCors(new Response(null, { status: 204 }))
         }
-        // Query form (`preview/?path=`) or path form (`local/abs/file`) so
-        // relative JS modules next to an HTML preview resolve as siblings.
-        const requested = parseVavLocalFilePath(request.url)
-        if (!requested) {
-          return withCors(new Response('Not found', { status: 404 }))
+        if (served.kind === 'error') {
+          const text = served.status === 403 ? 'Forbidden' : served.status === 404 ? 'Not found' : 'Bad request'
+          return withCors(new Response(text, { status: served.status }))
         }
-        // Document sandbox: preview must read the working copy when one exists.
-        const mapped = workingCopyService.ioPath(requested)
-        const filePath = existsSync(mapped) ? mapped : requested
-        if (!fileService.isAllowedPath(requested) && !fileService.isAllowedPath(filePath)) {
-          return withCors(new Response('Forbidden', { status: 403 }))
-        }
-        if (!existsSync(filePath)) {
-          return withCors(new Response('Not found', { status: 404 }))
-        }
-        // Forward Range headers so pdf.js can stream large files efficiently.
-        const headers: Record<string, string> = {}
-        const range = request.headers.get('Range')
-        if (range) headers.Range = range
-        const response = await net.fetch(pathToFileURL(filePath).href, {
-          headers,
-          method: request.method
-        })
-        const ext = extname(filePath).toLowerCase()
-        // Ensure MIME for PDF streaming and HTML sibling assets (css/img/fonts).
+        const ext = extname(served.filePath).toLowerCase()
         const mimeByExt: Record<string, string> = {
           '.pdf': 'application/pdf',
           '.css': 'text/css; charset=utf-8',
@@ -9201,22 +9187,16 @@ if (singleInstance) {
           '.json': 'application/json',
           '.map': 'application/json'
         }
+        const headers = new Headers(served.headers)
         const forcedMime = mimeByExt[ext]
-        if (forcedMime) {
-          const out = new Headers(response.headers)
-          out.set('Content-Type', forcedMime)
-          // Range enables seeking for PDF/media/large office.
-          out.set('Accept-Ranges', 'bytes')
-          out.set('Cache-Control', 'no-store')
-          return withCors(
-            new Response(response.body, {
-              status: response.status,
-              statusText: response.statusText,
-              headers: out
-            })
-          )
-        }
-        return withCors(response)
+        if (forcedMime) headers.set('Content-Type', forcedMime)
+        headers.set('Cache-Control', 'no-store')
+        return withCors(
+          new Response(served.body, {
+            status: served.status,
+            headers
+          })
+        )
       } catch {
         return withCors(new Response('Bad request', { status: 400 }))
       }

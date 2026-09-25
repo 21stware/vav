@@ -426,44 +426,43 @@ export function FileViewer({
         // Capture open-time bytes so Discard can restore even before Agent opens.
         // Also used as a safety net if working-copy discard is unavailable.
         void captureBaseline(filePath, result.kind, null)
-        // Progressive structured index for block-pick (does not block native canvas).
-        void window.vav.files
-          .inspectStructured?.(filePath, {
-            conversationId: hostConversationIdRef.current,
-            maxBlocks:
-              result.kind === 'docx'
-                ? 48
-                : result.kind === 'pptx'
-                  ? 1
-                  : result.kind === 'pdf'
-                    ? 2
-                    : undefined,
-            maxRows: result.kind === 'xlsx' ? 120 : undefined
-          })
-          .then((chunk) => {
-            if (cancelled || !chunk || !chunk.ok) return
-            setStructuredPreview(chunk.structured)
-            setInfo((prev) =>
-              prev?.path === filePath
-                ? { ...prev, structured: chunk.structured, text: chunk.structured.plainText }
-                : prev
-            )
-            markViewer('structured:partial')
-            if (chunk.partial) {
-              void window.vav.files.inspectStructured?.(filePath, {
-                conversationId: hostConversationIdRef.current
-              }).then((full) => {
-                if (cancelled || !full?.ok) return
-                setStructuredPreview(full.structured)
-                setInfo((prev) =>
-                  prev?.path === filePath
-                    ? { ...prev, structured: full.structured, text: full.structured.plainText }
-                    : prev
-                )
-                markViewer('structured:full')
-              })
-            }
-          })
+        // PDF: native canvas first. inspectStructured reads the whole file in
+        // main and starves the vav-local range requests that paint the pages.
+        if (result.kind !== 'pdf') {
+          void window.vav.files
+            .inspectStructured?.(filePath, {
+              conversationId: hostConversationIdRef.current,
+              maxBlocks:
+                result.kind === 'docx' ? 48 : result.kind === 'pptx' ? 1 : undefined,
+              maxRows: result.kind === 'xlsx' ? 120 : undefined
+            })
+            .then((chunk) => {
+              if (cancelled || !chunk || !chunk.ok) return
+              setStructuredPreview(chunk.structured)
+              setInfo((prev) =>
+                prev?.path === filePath
+                  ? { ...prev, structured: chunk.structured, text: chunk.structured.plainText }
+                  : prev
+              )
+              markViewer('structured:partial')
+              if (chunk.partial) {
+                void window.vav.files
+                  .inspectStructured?.(filePath, {
+                    conversationId: hostConversationIdRef.current
+                  })
+                  .then((full) => {
+                    if (cancelled || !full?.ok) return
+                    setStructuredPreview(full.structured)
+                    setInfo((prev) =>
+                      prev?.path === filePath
+                        ? { ...prev, structured: full.structured, text: full.structured.plainText }
+                        : prev
+                    )
+                    markViewer('structured:full')
+                  })
+              }
+            })
+        }
       } else if (result.text != null) {
         setWorkingContent(result.text)
         setBaselineContent(result.text)
@@ -477,6 +476,59 @@ export function FileViewer({
       cancelled = true
     }
   }, [filePath, reloadInfo, isBinaryOfficeKind, extendTextWindow, captureBaseline])
+
+  useEffect(() => {
+    if (!nativeOfficeReady || info?.kind !== 'pdf') return
+    let cancelled = false
+    const path = filePath
+    const start = (): void => {
+      void window.vav.files
+        .inspectStructured?.(path, {
+          conversationId: hostConversationIdRef.current,
+          maxBlocks: 2
+        })
+        .then((chunk) => {
+          if (cancelled || !chunk || !chunk.ok) return
+          setStructuredPreview(chunk.structured)
+          setInfo((prev) =>
+            prev?.path === path
+              ? { ...prev, structured: chunk.structured, text: chunk.structured.plainText }
+              : prev
+          )
+          markViewer('structured:partial')
+          if (!chunk.partial) return
+          const rest = (): void => {
+            void window.vav.files
+              .inspectStructured?.(path, {
+                conversationId: hostConversationIdRef.current
+              })
+              .then((full) => {
+                if (cancelled || !full?.ok) return
+                setStructuredPreview(full.structured)
+                setInfo((prev) =>
+                  prev?.path === path
+                    ? { ...prev, structured: full.structured, text: full.structured.plainText }
+                    : prev
+                )
+                markViewer('structured:full')
+              })
+          }
+          if (typeof requestIdleCallback === 'function') {
+            requestIdleCallback(rest, { timeout: 4000 })
+          } else {
+            window.setTimeout(rest, 800)
+          }
+        })
+    }
+    if (typeof requestIdleCallback === 'function') {
+      requestIdleCallback(start, { timeout: 2500 })
+    } else {
+      window.setTimeout(start, 400)
+    }
+    return () => {
+      cancelled = true
+    }
+  }, [nativeOfficeReady, info?.kind, filePath])
 
   useEffect(() => {
     persistPanelWidth(panelWidth)

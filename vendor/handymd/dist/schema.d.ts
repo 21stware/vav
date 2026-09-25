@@ -8,5 +8,5 @@ import { Schema } from 'prosemirror-model';
  *   - "元素解散"（Broken）零成本（只是 decoration 消失）
  *   - undo/redo、协同 patch、粘贴天然正确
  */
-export declare const schema: Schema<"block" | "doc" | "text", any>;
+export declare const schema: Schema<"doc" | "block" | "text", any>;
 export type HandySchema = typeof schema;

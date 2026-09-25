@@ -2,6 +2,7 @@ import type { Transaction } from 'prosemirror-state';
 import { Plugin, PluginKey } from 'prosemirror-state';
 import { DecorationSet } from 'prosemirror-view';
 import type { DiagramRenderCallback } from '../diagram';
+import type { ImageResolver } from '../image';
 import { type BlockMeta } from '../parse/docparse';
 /**
  * L3 conceal/reveal 状态机的宿主插件，同时承担 L2 管线的 Reconciling 阶段：
@@ -24,6 +25,8 @@ import { type BlockMeta } from '../parse/docparse';
 export interface ConcealMeta {
     composing?: boolean;
     readOnly?: boolean;
+    /** 源码模式：关闭全部 conceal / 渲染 decoration，整篇直面 Markdown 源码 */
+    source?: boolean;
     /** 强制全量重算（compositionend / 外部主题切换等场景） */
     refresh?: boolean;
 }
@@ -36,16 +39,25 @@ export interface ConcealState {
     /** composing 期间发生过 docChanged，解冻后需要全量重算 */
     stale: boolean;
     readOnly: boolean;
+    source: boolean;
 }
 export declare const concealKey: PluginKey<ConcealState>;
+/** 起始位置恰为 pos 的块下标（blocks 按位置有序），没有则 -1 */
+export declare function findBlockAt(blocks: readonly BlockMeta[], pos: number): number;
 export interface ConcealOptions {
     readOnly?: boolean;
+    /** 以源码模式启动（见 ConcealMeta.source） */
+    source?: boolean;
     /**
      * diagram block（如 ```mermaid）在 Concealed 态的渲染回调
      * （见 diagram.ts 的 createDiagramRenderCallback）。缺省时 diagram
      * block 按普通 code block 呈现。
      */
     renderDiagram?: DiagramRenderCallback;
+    /** 表格单元格里链接被单击时的回调，默认 window.open */
+    onOpenLink?: (href: string) => void;
+    /** 图片地址解析（见 HandyEditorOptions.resolveImage） */
+    resolveImage?: ImageResolver;
 }
 export declare function concealPlugin(options?: ConcealOptions): Plugin<ConcealState>;
 /** 向 conceal 状态机投递配置迁移（readOnly / composing / 强制重算）。 */

@@ -2,10 +2,12 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { describe, it } from 'node:test'
-import { isPathAllowed, isPathInside } from './pathAllow.ts'
+import { beforeEach, describe, it } from 'node:test'
+import { clearPathAllowCache, isPathAllowed, isPathInside } from './pathAllow.ts'
 
 describe('isPathInside', () => {
+  beforeEach(() => clearPathAllowCache())
+
   it('accepts the root itself and nested files', () => {
     const root = join('/tmp', 'proj')
     assert.equal(isPathInside(root, root), true)
@@ -49,6 +51,8 @@ describe('isPathInside', () => {
 })
 
 describe('isPathAllowed', () => {
+  beforeEach(() => clearPathAllowCache())
+
   it('matches watched roots and granted files', () => {
     const root = join('/tmp', 'ws')
     const extra = join('/tmp', 'vav-tuips')

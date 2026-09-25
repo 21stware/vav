@@ -4,6 +4,16 @@ User-facing changes by release. Unreleased work lives at the top until the next 
 
 ## Unreleased
 
+## 1.32.4
+
+Services tab switches stay on the last open object instead of remounting it, and PDF previews stream from a cached range handler so opening a local PDF no longer stalls the panel.
+
+Thinking stays in stream order — later thoughts sit after the prose they belong to, instead of folding every think to the top. Thinking rows start collapsed. The loading mark stays a single frame.
+
+Notes no longer flash a conflict banner when autosave echoes the same body back. The vendored HandyMd editor gains heading shortcuts, source-faithful copy/paste, and a source-mode toggle.
+
+Timer jobs keep their CLI host and account even when they do not pin a model.
+
 ## 1.32.3
 
 New Session now mints its own conversation instead of sharing Home’s pending composer, so drafts, workspace, usage, and CLI stay separate. ⌘N on an already-empty agent session just focuses it.

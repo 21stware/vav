@@ -53,71 +53,76 @@ export function isVisibleAssistantBlock(block: MessageBlock): boolean {
   return true
 }
 
-/**
- * Split a finished assistant turn into the working trail and the last answer.
- *
- * After the last tool, first trailing text is the conclusion. With no tools,
- * first text is the answer and leading reasoning is the process — otherwise
- * the last think sits next to the result every turn. Reasoning after or
- * between answer texts is peeled back onto the process in stream order.
- * No concluding text → ungrouped (live still needs the in-flight tail
- * visible). Sealed turns use {@link splitSealedAssistantProcess} so a Stop
- * keeps that trail in the thinking well instead of laying it out flat.
- */
-export function splitAssistantProcess(blocks: MessageBlock[]): {
-  process: IndexedBlock[]
-  conclusion: IndexedBlock[]
-} {
+export type AssistantSegment =
+  | { kind: 'thinking'; items: IndexedBlock[] }
+  | { kind: 'text'; item: IndexedBlock }
+  | { kind: 'tool'; item: IndexedBlock }
+
+function visibleAssistantItems(blocks: MessageBlock[]): IndexedBlock[] {
   const visible: IndexedBlock[] = []
   for (let index = 0; index < blocks.length; index++) {
     const block = blocks[index]!
     if (isVisibleAssistantBlock(block)) visible.push({ block, index })
   }
-
-  const lastTool = lastWhere(visible, (item) => item.block.kind === 'toolCall')
-  const lastText = lastWhere(
-    visible,
-    (item) => item.block.kind === 'text' && item.block.text.trim().length > 0
-  )
-  if (lastText < 0) return { process: [], conclusion: visible }
-
-  let cut = -1
-  if (lastTool >= 0) {
-    for (let i = lastTool + 1; i < visible.length; i++) {
-      const item = visible[i]!
-      if (item.block.kind === 'text' && item.block.text.trim()) {
-        cut = i
-        break
-      }
-    }
-    if (cut < 0) return { process: [], conclusion: visible }
-  } else {
-    for (let i = 0; i < visible.length; i++) {
-      const item = visible[i]!
-      if (item.block.kind === 'text' && item.block.text.trim()) {
-        cut = i
-        break
-      }
-    }
-  }
-  if (cut < 0) return { process: [], conclusion: visible }
-
-  const process = visible.slice(0, cut)
-  const conclusion = visible.slice(cut)
-  peelReasoningFromConclusion(process, conclusion)
-  peelInterstitialText(process, conclusion)
-
-  if (process.length === 0 || conclusion.length === 0) {
-    return { process: [], conclusion: visible }
-  }
-
-  return { process: prepareProcessSteps(process), conclusion }
+  return visible
 }
 
 /**
- * Sealed-turn split. Same cut as {@link splitAssistantProcess}, except an
+ * Keep thinking, tools, and answer text in stream order.
+ *
+ * Models often interleave reasoning with prose (think → answer → think →
+ * more answer). Folding every think into one well at the top reprints that
+ * trail out of order and hides the body that landed between thoughts.
+ */
+export function segmentAssistantTurn(blocks: MessageBlock[]): AssistantSegment[] {
+  const out: AssistantSegment[] = []
+  let thinking: IndexedBlock[] = []
+
+  const flushThinking = (): void => {
+    if (thinking.length === 0) return
+    out.push({ kind: 'thinking', items: prepareProcessSteps(thinking) })
+    thinking = []
+  }
+
+  for (const item of visibleAssistantItems(blocks)) {
+    if (item.block.kind === 'reasoning') {
+      thinking.push(item)
+      continue
+    }
+    flushThinking()
+    if (item.block.kind === 'toolCall') out.push({ kind: 'tool', item })
+    else if (item.block.kind === 'text') out.push({ kind: 'text', item })
+  }
+  flushThinking()
+  return out
+}
+
+/**
+ * Flat split for callers that only need "any think" vs "everything else".
+ * Rendering should use {@link segmentAssistantTurn} so interleaved think and
+ * body stay in stream order.
+ */
+export function splitAssistantProcess(blocks: MessageBlock[]): {
+  process: IndexedBlock[]
+  conclusion: IndexedBlock[]
+} {
+  const segments = segmentAssistantTurn(blocks)
+  const process: IndexedBlock[] = []
+  const conclusion: IndexedBlock[] = []
+  for (const segment of segments) {
+    if (segment.kind === 'thinking') process.push(...segment.items)
+    else conclusion.push(segment.item)
+  }
+  if (process.length === 0 || conclusion.length === 0) {
+    return { process: [], conclusion: visibleAssistantItems(blocks) }
+  }
+  return { process, conclusion }
+}
+
+/**
+ * Sealed-turn split. Same groups as {@link splitAssistantProcess}, except an
  * incomplete trail (Stop mid-think, or a turn that ended on a tool) stays
- * in the thinking well instead of flattening into the transcript.
+ * collected instead of flattening into a bare conclusion.
  */
 export function splitSealedAssistantProcess(blocks: MessageBlock[]): {
   process: IndexedBlock[]
@@ -130,49 +135,6 @@ export function splitSealedAssistantProcess(blocks: MessageBlock[]): {
   )
   if (!hasTrail) return split
   return { process: prepareProcessSteps(split.conclusion), conclusion: [] }
-}
-
-/**
- * Thinking belongs on the process trail, including leftover think after the
- * answer and think that landed between two answer texts. Leaving it in the
- * conclusion reprints it next to the result and in the wrong order.
- */
-function peelReasoningFromConclusion(process: IndexedBlock[], conclusion: IndexedBlock[]): void {
-  const kept: IndexedBlock[] = []
-  const moved: IndexedBlock[] = []
-  for (const item of conclusion) {
-    if (item.block.kind === 'reasoning') moved.push(item)
-    else kept.push(item)
-  }
-  if (moved.length === 0) return
-  process.push(...moved)
-  process.sort((a, b) => a.index - b.index)
-  conclusion.length = 0
-  conclusion.push(...kept)
-}
-
-/**
- * Text that landed before a later peeled think is process narration, not the
- * answer. Leaving it in the conclusion reprints thinking outside the viewport.
- */
-function peelInterstitialText(process: IndexedBlock[], conclusion: IndexedBlock[]): void {
-  if (process.length === 0 || conclusion.length === 0) return
-  const maxProcess = Math.max(...process.map((item) => item.index))
-  const hasAnswerAfter = conclusion.some(
-    (item) => item.block.kind === 'text' && item.block.text.trim() && item.index > maxProcess
-  )
-  if (!hasAnswerAfter) return
-  const kept: IndexedBlock[] = []
-  const moved: IndexedBlock[] = []
-  for (const item of conclusion) {
-    if (item.index < maxProcess) moved.push(item)
-    else kept.push(item)
-  }
-  if (moved.length === 0) return
-  process.push(...moved)
-  process.sort((a, b) => a.index - b.index)
-  conclusion.length = 0
-  conclusion.push(...kept)
 }
 
 /** Fold snapshot reprints and keep steps in stream order. */
@@ -204,10 +166,8 @@ export function prepareProcessSteps(items: IndexedBlock[]): IndexedBlock[] {
 }
 
 /**
- * Live split: collapse as soon as the likely answer starts — first text after
- * the last tool, or first text after leading think when there are no tools.
- * If another tool follows, keep the earlier trail folded and leave only the
- * in-flight tail visible so the process does not spring back open.
+ * Live split derived from {@link segmentAssistantTurn}. Prefer the segments
+ * themselves so later think can land after body text that already started.
  */
 export function splitLiveAssistantProcess(blocks: MessageBlock[]): {
   process: IndexedBlock[]
@@ -217,31 +177,7 @@ export function splitLiveAssistantProcess(blocks: MessageBlock[]): {
   if (finished.process.length > 0) {
     return { process: finished.process, live: finished.conclusion }
   }
-
-  const visible: IndexedBlock[] = []
-  for (let index = 0; index < blocks.length; index++) {
-    const block = blocks[index]!
-    if (isVisibleAssistantBlock(block)) visible.push({ block, index })
-  }
-  if (visible.length < 2) return { process: [], live: visible }
-
-  const hadTextAfterATool = visible.some((item, i) => {
-    if (item.block.kind !== 'text' || !item.block.text.trim()) return false
-    return visible.slice(0, i).some((prior) => prior.block.kind === 'toolCall')
-  })
-  if (!hadTextAfterATool) return { process: [], live: visible }
-
-  return {
-    process: prepareProcessSteps(visible.slice(0, -1)),
-    live: visible.slice(-1)
-  }
-}
-
-function lastWhere(items: IndexedBlock[], test: (item: IndexedBlock) => boolean): number {
-  for (let i = items.length - 1; i >= 0; i--) {
-    if (test(items[i]!)) return i
-  }
-  return -1
+  return { process: [], live: visibleAssistantItems(blocks) }
 }
 
 /** First line of interstitial narration, for a collapsed process row. */

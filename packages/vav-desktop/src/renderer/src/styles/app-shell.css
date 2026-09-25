@@ -1292,11 +1292,38 @@ html[data-summoning] .workbench-home-stage > * {
 }
 
 .applications-main {
+  position: relative;
   display: flex;
   flex-direction: column;
   flex: 1 1 auto;
   min-height: 0;
   min-width: 0;
+}
+
+.applications-mode-pane {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+}
+
+.applications-mode-pane .applications-split {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.applications-mode-pane[data-active='true'] {
+  position: relative;
+  z-index: 1;
+}
+
+.applications-mode-pane[data-active='false'] {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  visibility: hidden;
+  pointer-events: none;
 }
 
 .applications-tabs {
@@ -5384,12 +5411,24 @@ kbd {
 }
 
 /* Waiting chip under the mark — same spirit as stream status. */
+.keychain-gate-busy-clip {
+  position: relative;
+  display: block;
+  width: 16px;
+  height: 16px;
+  min-width: 16px;
+  max-width: 16px;
+  overflow: hidden;
+}
+
 .keychain-gate-busy-mark {
   position: absolute;
   right: -6px;
   bottom: -6px;
   width: 28px;
   height: 28px;
+  min-width: 28px;
+  max-width: 28px;
   border-radius: 50%;
   display: flex;
   align-items: center;
@@ -5428,6 +5467,9 @@ kbd {
 
 .keychain-gate-busy-sprite {
   --frames: 4;
+  position: absolute;
+  top: 0;
+  left: 0;
   display: block;
   width: calc(16px * var(--frames)) !important;
   max-width: none !important;
@@ -7598,8 +7640,8 @@ mark {
 }
 
 .reasoning-body {
-  white-space: pre-wrap;
   overflow-wrap: anywhere;
+  word-break: break-word;
   line-height: 1.6;
   font-size: 12.5px;
   color: var(--text-secondary);
@@ -7612,8 +7654,9 @@ mark {
 
 /*
  * One reading well for a live think and for an expanded thinking process.
- * Height stays fixed so the trace scrolls inside the turn instead of pushing
- * the answer down. Fades are painted only on edges that still have more text.
+ * Grows with the trace up to --thinking-viewport-h, then scrolls inside the
+ * turn instead of pushing the answer down. Fades are painted only on edges
+ * that still have more text.
  */
 .thinking-viewport {
   --thinking-viewport-h: 160px;
@@ -7621,10 +7664,11 @@ mark {
   --thinking-viewport-bg: color-mix(in srgb, var(--bg-sunken) 58%, var(--bg-content));
   position: relative;
   box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
   width: 100%;
   max-width: 100%;
-  height: var(--thinking-viewport-h);
-  min-height: var(--thinking-viewport-h);
+  max-height: var(--thinking-viewport-h);
   border: 1px solid color-mix(in srgb, var(--border-strong) 85%, transparent);
   border-radius: var(--radius);
   background: var(--thinking-viewport-bg);
@@ -7632,8 +7676,10 @@ mark {
 }
 
 .thinking-viewport-scroll {
-  position: absolute;
-  inset: 0;
+  box-sizing: border-box;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
   /* clip, not hidden: hidden would make the inline axis a scrollport and
      can shift the text so the left edge is cut off. */
   overflow-x: clip;
@@ -7644,8 +7690,11 @@ mark {
 
 .thinking-viewport-content,
 .thinking-process-body {
+  width: 100%;
   min-width: 0;
   max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .thinking-viewport-fade {
@@ -7676,8 +7725,10 @@ mark {
 
 /* The process well is the scroller. Nested reasoning wells flatten into it. */
 .thinking-process-body .thinking-viewport {
+  display: block;
   height: auto;
   min-height: 0;
+  max-height: none;
   border: 0;
   border-radius: 0;
   background: transparent;
@@ -7691,7 +7742,9 @@ mark {
 .thinking-process-body .thinking-viewport-scroll {
   position: static;
   inset: auto;
+  flex: none;
   height: auto;
+  max-height: none;
   overflow: visible;
   overscroll-behavior: auto;
   padding: 0;
@@ -7702,9 +7755,14 @@ mark {
   color: var(--text-secondary);
 }
 
-.process-text-body .markdown {
+.process-text-body .markdown,
+.reasoning-body .markdown,
+.thinking-viewport .markdown {
   font-size: inherit;
   color: inherit;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: normal;
 }
 
 /*
@@ -8181,13 +8239,17 @@ mark {
   color: var(--text-tertiary);
 }
 
-/* Flip-book / settled mark — themed spirit strips (light black / dark soft gray). */
+/* Flip-book / settled mark — themed spirit strips (light black / dark soft gray).
+ * Clamp the flex item: min-width:auto would grow to the 4-frame strip and
+ * paint the VAV mark as four cats side by side. */
 .stream-status-mark {
-  flex-shrink: 0;
+  flex: 0 0 16px;
   display: block;
   position: relative;
   width: 16px;
   height: 16px;
+  min-width: 16px;
+  max-width: 16px;
   overflow: hidden;
   opacity: 0.7;
 }
@@ -8226,9 +8288,13 @@ mark {
   }
 }
 
-/* 4-frame spirit strip: steps(N) + translateX(-100%) jumps one cell per tick. */
+/* 4-frame spirit strip: steps(N) + translateX(-100%) jumps one cell per tick.
+ * Absolute so the strip cannot stretch the 16px clip (flex min-content). */
 .stream-status-mark-sprite {
   --frames: 4;
+  position: absolute;
+  top: 0;
+  left: 0;
   width: calc(16px * var(--frames)) !important;
   max-width: none !important;
   height: 16px !important;
@@ -8591,10 +8657,9 @@ button.tool-row {
 }
 
 /*
- * An open thinking well is a fixed 160px frame. 1fr in an auto-height grid
- * plus min-height:0 on the clip can resolve the row to 0 once the trace stops
- * growing, which drops the thought and the answer out of view together.
- * Keep 1fr so the row still animates; the well itself is the height floor.
+ * An open thinking well sizes to its trace (capped by --thinking-viewport-h).
+ * 1fr in an auto-height grid follows that intrinsic height so the accordion
+ * still animates; the scroller is in-flow so the row cannot collapse to 0.
  */
 .thinking-process.expanded > .tool-detail,
 .reasoning-call.expanded > .tool-detail {
@@ -8604,11 +8669,6 @@ button.tool-row {
 .tool-detail-inner {
   overflow: hidden;
   min-height: 0;
-}
-
-.thinking-process.expanded > .tool-detail > .tool-detail-inner,
-.reasoning-call.expanded > .tool-detail > .tool-detail-inner {
-  min-height: var(--thinking-viewport-h, 160px);
 }
 
 /* The detail spans the full text column rather than indenting under the row:
@@ -10653,6 +10713,7 @@ button.tool-row {
   --hm-hr: var(--border-strong);
   --hm-table-border: var(--border-strong);
   --hm-table-header-bg: var(--accent-veil);
+  --hm-table-cell-edit-bg: var(--bg);
   --hm-selection: var(--accent-soft);
   min-height: 100%;
 }

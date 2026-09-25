@@ -140,6 +140,31 @@ describe('TimerScheduler', () => {
     assert.equal(run?.approvalMode, 'bypass')
   })
 
+  it('inherits cliHost from the definition conversation when the job only pinned a model', () => {
+    const { store, scheduler } = harness()
+    const conversations = (
+      scheduler as unknown as {
+        deps: { conversations: ConversationStore }
+      }
+    ).deps.conversations
+    const definition = conversations.create('/tmp/sched-def', 'cursor-grok-4.6-xhigh', {
+      sessionKind: 'timer',
+      cliHost: 'cursor'
+    })
+    const job = store.createJob({
+      title: 'Nightly',
+      prompt: 'Write a note',
+      schedule: { kind: 'interval', everyMs: 60_000 },
+      conversationId: definition.id,
+      model: 'cursor-grok-4.6-xhigh'
+    })
+    const fired = scheduler.fire(job)
+    assert.ok(fired)
+    const run = conversations.get(fired.conversationId)
+    assert.equal(run?.model, 'cursor-grok-4.6-xhigh')
+    assert.equal(run?.cliHost, 'cursor')
+  })
+
   it('prefers the job agent settings over the definition conversation', () => {
     const { store, scheduler } = harness()
     const conversations = (

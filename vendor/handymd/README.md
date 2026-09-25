@@ -59,7 +59,9 @@ await editor.destroy()
 
 - `- ` → bullet，`- [ ] ` / `- [x] ` → checkbox，`> ` → 引用，`---` → 分隔线
 - 标题：源码 `#`/`##` 永远隐藏；**聚焦时**左侧 gutter 出层级图标
-- 行首 Backspace 去掉格式；空前缀行再 Enter 退出块
+- 行首 Backspace 去掉格式；空前缀行再 Enter 退出块；`⌘1…6` 设标题
+- 选区永远不吞隐藏前缀；复制粘贴按源码行无损，外部 HTML 转 Markdown
+- `setSourceMode(true)` 切换整篇源码模式
 
 **其它**
 

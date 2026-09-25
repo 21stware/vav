@@ -2,7 +2,8 @@ import { useSyncExternalStore } from 'react'
 import type { MessageBlock } from '@shared/types'
 import {
   processThoughtMs,
-  splitLiveAssistantProcess,
+  segmentAssistantTurn,
+  type AssistantSegment,
   type IndexedBlock
 } from '../lib/assistantProcess'
 import { getProjection, type StreamBlock } from '../state/StreamProjection'
@@ -12,7 +13,6 @@ import { useT } from '../i18n/useT'
 import { handleMarkdownOverlayDoubleClick, MarkdownView } from './MarkdownView'
 import { ReasoningBlock } from './ReasoningBlock'
 import { StreamStatus } from './StreamStatus'
-import { ProcessText } from './ProcessText'
 import { ThinkingProcess } from './ThinkingProcess'
 import { ToolCard } from './ToolCard'
 
@@ -41,16 +41,35 @@ export function StreamingMessage({ conversationId }: { conversationId: string })
   const live = isLiveStreamPhase(snapshot.phase)
 
   const liveBlocks = snapshot.blocks.map(streamAsMessage)
-  const { process, live: tail } = splitLiveAssistantProcess(liveBlocks)
-  const well =
-    process.length > 0 ||
-    liveBlocks.some((block) => block.kind === 'reasoning' || block.kind === 'toolCall')
+  const segments = segmentAssistantTurn(liveBlocks)
 
-  const renderLive = (item: IndexedBlock): React.JSX.Element | null => {
+  const renderThinking = (items: IndexedBlock[], streaming: boolean): React.JSX.Element => (
+    <ThinkingProcess
+      key={`think-${items[0]?.index ?? 0}`}
+      steps={items.length}
+      durationMs={processThoughtMs(items)}
+      follow={streaming}
+    >
+      {items.map((item, offset) => {
+        const block = item.block
+        if (block.kind !== 'reasoning') return null
+        return (
+          <ReasoningBlock
+            key={`r${item.index}`}
+            text={block.text}
+            flat
+            live={streaming && offset === items.length - 1}
+          />
+        )
+      })}
+    </ThinkingProcess>
+  )
+
+  const renderItem = (item: IndexedBlock): React.JSX.Element | null => {
     const block = snapshot.blocks[item.index]
     if (!block) return null
     if (block.kind === 'reasoning') {
-      return <ReasoningBlock key={block.key} text={block.text} flat />
+      return <ReasoningBlock key={block.key} text={block.text} flat live={live} />
     }
     if (block.kind === 'tool') {
       if (block.block.tool === 'plan') return null
@@ -70,46 +89,19 @@ export function StreamingMessage({ conversationId }: { conversationId: string })
     )
   }
 
-  const renderFolded = (item: IndexedBlock): React.JSX.Element | null => {
-    const { block, index } = item
-    if (block.kind === 'reasoning') {
-      return <ReasoningBlock key={`r${index}`} text={block.text} flat />
+  const renderSegment = (segment: AssistantSegment, index: number): React.JSX.Element | null => {
+    if (segment.kind === 'thinking') {
+      const streaming = live && index === segments.length - 1
+      return renderThinking(segment.items, streaming)
     }
-    if (block.kind === 'toolCall') {
-      return <ToolCard key={block.id} block={block} startCollapsed />
-    }
-    if (block.kind === 'text') {
-      return <ProcessText key={`t${index}`} text={block.text} />
-    }
-    return null
+    return renderItem(segment.item)
   }
 
   return (
     <div className="message-turn assistant" data-testid="streaming-message">
       <div className="message-role">{t('message.roleAgent')}</div>
       <div className="message assistant">
-        {process.length > 0 ? (
-          <>
-            <ThinkingProcess
-              steps={process.length}
-              durationMs={processThoughtMs(process)}
-              follow
-            >
-              {process.map(renderFolded)}
-            </ThinkingProcess>
-            {tail.map(renderLive)}
-          </>
-        ) : well ? (
-          <ThinkingProcess
-            steps={liveBlocks.length}
-            durationMs={processThoughtMs(liveBlocks.map((block, index) => ({ block, index })))}
-            follow
-          >
-            {liveBlocks.map((block, index) => renderFolded({ block, index }))}
-          </ThinkingProcess>
-        ) : (
-          tail.map(renderLive)
-        )}
+        {segments.map(renderSegment)}
 
         {awaiting && <div className="muted tiny">{t('transcript.awaitingContinue')}</div>}
         {live && (

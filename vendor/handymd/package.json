@@ -1,7 +1,7 @@
 {
   "name": "@21stware/handymd",
-  "version": "0.1.0",
-  "description": "Bear-style source-fidelity Markdown editor SDK. Vendored from https://github.com/21stware/handymd (19009c2301e0779b6141cffe4e185708e4c0e66e).",
+  "version": "0.2.0",
+  "description": "Bear-style source-fidelity Markdown editor SDK. Vendored from https://github.com/21stware/handymd (f3d1709eddd9ff053b8d1e8945a3c708734b8a5a).",
   "type": "module",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
@@ -23,6 +23,18 @@
     "prosemirror-state": "^1.4.3",
     "prosemirror-transform": "^1.10.4",
     "prosemirror-view": "^1.41.3"
+  },
+  "peerDependencies": {
+    "mermaid": ">=10.0.0",
+    "shiki": ">=1.0.0"
+  },
+  "peerDependenciesMeta": {
+    "mermaid": {
+      "optional": true
+    },
+    "shiki": {
+      "optional": true
+    }
   },
   "repository": {
     "type": "git",

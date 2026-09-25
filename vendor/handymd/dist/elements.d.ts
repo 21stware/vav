@@ -39,6 +39,8 @@ export interface ElementAttrs {
     col?: number;
     /** 表格区域首/末行（用于边框圆角） */
     tableEdge?: 'first' | 'last' | 'only';
+    /** 整张表的源码（只挂在 tableHeader 上；任一行变化都会让表头块重建网格） */
+    tableSrc?: string;
 }
 export interface ElementRange {
     kind: ElementKind;

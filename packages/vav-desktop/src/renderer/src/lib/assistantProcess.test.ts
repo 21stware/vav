@@ -7,6 +7,7 @@ import {
   isVisibleAssistantBlock,
   previewProcessText,
   processThoughtMs,
+  segmentAssistantTurn,
   splitAssistantProcess,
   splitLiveAssistantProcess,
   splitSealedAssistantProcess
@@ -46,7 +47,7 @@ describe('splitAssistantProcess', () => {
     )
   })
 
-  it('peels trailing think off the answer', () => {
+  it('keeps trailing think out of the answer text', () => {
     const blocks = [text('Here is the answer.'), think('leftover')]
     const split = splitAssistantProcess(blocks)
     assert.deepEqual(
@@ -73,7 +74,7 @@ describe('splitAssistantProcess', () => {
     assert.equal(split.conclusion[0]?.block.kind, 'reasoning')
   })
 
-  it('groups everything before the post-tool answer', () => {
+  it('does not fold tools or narration into the thinking well', () => {
     const blocks = [
       think('plan'),
       text('Let me search.'),
@@ -85,13 +86,15 @@ describe('splitAssistantProcess', () => {
     const split = splitAssistantProcess(blocks)
     assert.deepEqual(
       split.process.map((item) => item.block.kind),
-      ['reasoning', 'text', 'toolCall', 'text', 'toolCall']
+      ['reasoning']
     )
-    assert.equal(split.conclusion.length, 1)
-    assert.equal(split.conclusion[0]?.block.kind, 'text')
+    assert.deepEqual(
+      split.conclusion.map((item) => item.block.kind),
+      ['text', 'toolCall', 'text', 'toolCall', 'text']
+    )
   })
 
-  it('moves mid-answer think onto the process trail in stream order', () => {
+  it('keeps mid-answer think out of the body without hiding earlier prose', () => {
     const split = splitAssistantProcess([
       think('first'),
       text('Start.'),
@@ -102,11 +105,11 @@ describe('splitAssistantProcess', () => {
       split.process.map((item) =>
         item.block.kind === 'reasoning' || item.block.kind === 'text' ? item.block.text : ''
       ),
-      ['first', 'Start.', 'middle']
+      ['first', 'middle']
     )
     assert.deepEqual(
       split.conclusion.map((item) => (item.block.kind === 'text' ? item.block.text : '')),
-      ['End.']
+      ['Start.', 'End.']
     )
   })
 
@@ -140,14 +143,16 @@ describe('splitAssistantProcess', () => {
     )
   })
 
-  it('peels leftover think after a post-tool answer', () => {
+  it('keeps leftover think after a post-tool answer out of the body', () => {
     const split = splitAssistantProcess([tool('a'), text('Gold is up.'), think('leftover')])
     assert.deepEqual(
       split.process.map((item) => item.block.kind),
-      ['toolCall', 'reasoning']
+      ['reasoning']
     )
-    assert.equal(split.conclusion.length, 1)
-    assert.equal(split.conclusion[0]?.block.kind, 'text')
+    assert.deepEqual(
+      split.conclusion.map((item) => item.block.kind),
+      ['toolCall', 'text']
+    )
   })
 
   it('does not hide a turn that ended on a tool', () => {
@@ -260,8 +265,67 @@ describe('splitSealedAssistantProcess', () => {
   })
 })
 
+describe('segmentAssistantTurn', () => {
+  it('keeps interleaved think and body in stream order', () => {
+    const segments = segmentAssistantTurn([
+      think('first'),
+      text('Start.'),
+      think('middle'),
+      text('End.')
+    ])
+    assert.deepEqual(
+      segments.map((segment) => segment.kind),
+      ['thinking', 'text', 'thinking', 'text']
+    )
+    assert.equal(
+      segments[0]?.kind === 'thinking' ? segments[0].items[0]?.block.kind : '',
+      'reasoning'
+    )
+    assert.equal(segments[1]?.kind === 'text' ? segments[1].item.block.kind : '', 'text')
+    assert.equal(
+      segments[1]?.kind === 'text' && segments[1].item.block.kind === 'text'
+        ? segments[1].item.block.text
+        : '',
+      'Start.'
+    )
+    assert.equal(
+      segments[3]?.kind === 'text' && segments[3].item.block.kind === 'text'
+        ? segments[3].item.block.text
+        : '',
+      'End.'
+    )
+  })
+
+  it('leaves tools in place between think and answer', () => {
+    const segments = segmentAssistantTurn([think('plan'), tool('a'), text('Gold is up.')])
+    assert.deepEqual(
+      segments.map((segment) => segment.kind),
+      ['thinking', 'tool', 'text']
+    )
+  })
+
+  it('folds snapshot reprints inside one thinking run', () => {
+    const later =
+      '正在检查工作区环境、浏览器自动化技能及历史记录，确定如何操作日历。用户要求操作日历至12月份。'
+    const segments = segmentAssistantTurn([
+      think('用户要求操作日历至12月。'),
+      think(later),
+      think(later),
+      text('已调到 12 月。')
+    ])
+    assert.equal(segments.length, 2)
+    assert.equal(segments[0]?.kind, 'thinking')
+    assert.equal(
+      segments[0]?.kind === 'thinking' && segments[0].items[0]?.block.kind === 'reasoning'
+        ? segments[0].items[0].block.text
+        : '',
+      later
+    )
+  })
+})
+
 describe('splitLiveAssistantProcess', () => {
-  it('folds the trail as soon as post-tool text starts', () => {
+  it('folds leading think as soon as the answer starts', () => {
     const split = splitLiveAssistantProcess([
       think('plan'),
       tool('a'),
@@ -269,28 +333,36 @@ describe('splitLiveAssistantProcess', () => {
     ])
     assert.deepEqual(
       split.process.map((item) => item.block.kind),
-      ['reasoning', 'toolCall']
+      ['reasoning']
     )
-    assert.equal(split.live.length, 1)
-    assert.equal(split.live[0]?.block.kind, 'text')
+    assert.deepEqual(
+      split.live.map((item) => item.block.kind),
+      ['toolCall', 'text']
+    )
   })
 
-  it('keeps the process folded when a later tool starts', () => {
+  it('keeps later think out of the live body when a tool follows', () => {
     const split = splitLiveAssistantProcess([
       think('plan'),
       tool('a'),
       text('Let me fetch.'),
       tool('b')
     ])
-    assert.ok(split.process.length >= 3)
-    assert.equal(split.live.length, 1)
-    assert.equal(split.live[0]?.block.kind, 'toolCall')
+    assert.deepEqual(
+      split.process.map((item) => item.block.kind),
+      ['reasoning']
+    )
+    assert.deepEqual(
+      split.live.map((item) => item.block.kind),
+      ['toolCall', 'text', 'toolCall']
+    )
   })
 
-  it('stays live before any post-tool answer', () => {
-    const split = splitLiveAssistantProcess([think('plan'), text('Looking.'), tool('a')])
+  it('stays live before any answer when think is the only trail', () => {
+    const split = splitLiveAssistantProcess([think('plan')])
     assert.equal(split.process.length, 0)
-    assert.equal(split.live.length, 3)
+    assert.equal(split.live.length, 1)
+    assert.equal(split.live[0]?.block.kind, 'reasoning')
   })
 
   it('folds leading think as soon as the no-tool answer starts', () => {

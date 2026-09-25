@@ -18,6 +18,7 @@
   --hm-hr: #e2dccf;
   --hm-table-border: #e2dccf;
   --hm-table-header-bg: rgba(135, 131, 120, 0.08);
+  --hm-table-cell-edit-bg: #fff;
   --hm-selection: rgba(201, 96, 60, 0.18);
 }
 
@@ -32,6 +33,14 @@
   padding: 24px 32px 24px 52px;
   white-space: pre-wrap;
   word-wrap: break-word;
+  tab-size: 4;
+}
+
+/* 源码模式：不渲染任何 Markdown 语义，等宽直面源码 */
+.handymd.hm-source .ProseMirror {
+  font-family: var(--hm-mono);
+  font-size: 14px;
+  padding-left: 32px;
 }
 
 .handymd .ProseMirror ::selection,
@@ -103,6 +112,22 @@
   border-radius: 8px;
   display: block;
   margin: 4px 0;
+  cursor: default;
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  transition: outline-color 0.12s;
+}
+.handymd img.hm-image-loading {
+  min-width: 4em;
+  min-height: 3em;
+  background: var(--hm-code-bg);
+}
+/* 选中：选区完整覆盖图片源码（单击 / Backspace / 方向键跨入） */
+.handymd img.hm-image.hm-image-selected {
+  outline-color: var(--hm-accent);
+}
+.handymd .ProseMirror[contenteditable="false"] img.hm-image-selected {
+  outline-color: transparent;
 }
 .handymd .hm-tag {
   background: var(--hm-tag-bg);
@@ -273,87 +298,240 @@
   width: 100%;
 }
 
-/* 表格：Concealed 用 widget（.hm-table-visual）画列；源码行折叠。
-   每行是独立 block，边框必须拼成「一张表」——禁止行间空隙与双边线。 */
-.handymd .hm-table.hm-table-rendered {
-  position: relative;
-  min-height: 0 !important;
+/* ---- 表格：表头行承载整张表的网格 widget，其余源码行折叠为零高 ---- */
+.handymd .hm-block.hm-table-host {
+  min-height: 0;
   line-height: 0;
-  margin: 0 !important;
-  padding: 0 !important;
-  border: none;
 }
-.handymd .hm-table.hm-table-first,
-.handymd .hm-table.hm-table-only {
-  margin-top: 0.75em !important;
+.handymd .hm-block.hm-table-hidden {
+  min-height: 0;
+  height: 0;
+  line-height: 0;
+  overflow: hidden;
 }
-.handymd .hm-table.hm-table-last,
-.handymd .hm-table.hm-table-only {
-  margin-bottom: 0.75em !important;
-}
-.handymd .hm-table-visual {
-  display: flex;
-  align-items: stretch;
-  width: 100%;
-  box-sizing: border-box;
-  min-height: 1.75em;
-  line-height: 1.75;
-  padding: 0;
-  margin: 0;
-  /* 单线网格：上边叠进上一行底边，避免双线 / 镂空层 */
-  margin-top: -1px;
-  border: 1px solid var(--hm-table-border);
-  background: transparent;
-  border-radius: 0;
+.handymd .hm-table-wrap {
+  position: relative;
+  margin: 0.6em 0;
+  line-height: 1.6;
+  font-size: 0.95em;
   cursor: text;
-  user-select: none;
+  outline: none;
 }
-.handymd .hm-table-first .hm-table-visual,
-.handymd .hm-table-only .hm-table-visual {
-  margin-top: 0;
-  border-top-left-radius: 8px;
-  border-top-right-radius: 8px;
+/* 横向溢出在这里滚动。上 / 右 / 下留出把手与添加条的位置，
+   再用负 margin 抵消，表格仍与正文左右对齐 */
+.handymd .hm-table-scroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+  margin: -12px -20px -18px 0;
+  padding: 12px 20px 18px 0;
+  scrollbar-width: thin;
 }
-.handymd .hm-table-last .hm-table-visual,
-.handymd .hm-table-only .hm-table-visual {
-  border-bottom-left-radius: 8px;
-  border-bottom-right-radius: 8px;
+.handymd .hm-table-inner {
+  position: relative;
+  width: fit-content;
+  min-width: 100%;
 }
-.handymd .hm-table-visual-header {
+/* 边框画在表格自身（而不是滚动容器）上：圆角不会被 overflow 裁掉，
+   横向滚动时右边框随内容移动，提示还有更多列 */
+.handymd table.hm-table-grid {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  table-layout: auto;
+  border: 1px solid var(--hm-table-border);
+  border-radius: 8px;
+}
+.handymd .hm-table-grid tr:first-child > .hm-table-cell:first-child { border-top-left-radius: 7px; }
+.handymd .hm-table-grid tr:first-child > .hm-table-cell:last-child { border-top-right-radius: 7px; }
+.handymd .hm-table-grid tbody tr:last-child > .hm-table-cell:first-child,
+.handymd .hm-table-grid thead:last-child tr > .hm-table-cell:first-child { border-bottom-left-radius: 7px; }
+.handymd .hm-table-grid tbody tr:last-child > .hm-table-cell:last-child,
+.handymd .hm-table-grid thead:last-child tr > .hm-table-cell:last-child { border-bottom-right-radius: 7px; }
+.handymd .hm-table-grid .hm-table-cell {
+  /* 列太多时靠最小列宽撑出横向滚动，而不是把每格挤成一两个字 */
+  min-width: 6em;
+  /* 单元格的 height 即最小行高（含 padding）：空格子也保持一行高度 */
+  height: calc(1.6em + 12px);
+  padding: 6px 12px;
+  text-align: left;
+  vertical-align: top;
+  font-weight: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  border-right: 1px solid var(--hm-table-border);
+  border-bottom: 1px solid var(--hm-table-border);
+  outline: none;
+}
+.handymd .hm-table-grid tr > .hm-table-cell:last-child {
+  border-right: none;
+}
+.handymd .hm-table-grid tbody tr:last-child > .hm-table-cell,
+.handymd .hm-table-grid thead:last-child tr > .hm-table-cell {
+  border-bottom: none;
+}
+.handymd .hm-table-grid thead .hm-table-cell {
   font-weight: 600;
   background: var(--hm-table-header-bg);
 }
-.handymd .hm-table-visual .hm-table-cell {
-  flex: 1 1 0;
-  min-width: 0;
-  padding: 8px 12px;
-  box-sizing: border-box;
-  overflow-wrap: anywhere;
+/* 编辑中的单元格：展示这一格的源码，描边提示焦点 */
+.handymd .hm-table-grid .hm-table-cell.hm-table-cell-editing {
+  background: var(--hm-table-cell-edit-bg);
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--hm-accent) 55%, transparent);
+  caret-color: var(--hm-accent);
 }
-.handymd .hm-table-visual .hm-table-cell[data-col]:not([data-col='0']) {
-  border-left: 1px solid var(--hm-table-border);
+.handymd .hm-table-grid .hm-table-cell.hm-table-cell-picked {
+  background: color-mix(in srgb, var(--hm-accent) 11%, transparent);
 }
-/* 源码态（光标在行内）：普通文本行，管道符弱化可见 */
-.handymd .hm-table.hm-table-source {
-  min-height: 1.75em;
-  line-height: 1.75;
-  font-family: var(--hm-mono);
-  font-size: 0.92em;
+
+/* —— 行列把手 / 添加条 / 菜单：只在可编辑态出现 —— */
+.handymd .hm-table-ui {
+  user-select: none;
+  -webkit-user-select: none;
+  line-height: 1;
 }
-/* 分隔行：彻底从布局中拿走，否则会在表头与首行间顶出空隙 */
-.handymd .hm-table.hm-table-sep {
-  display: block !important;
-  height: 0 !important;
-  min-height: 0 !important;
-  max-height: 0 !important;
-  line-height: 0 !important;
-  overflow: hidden !important;
-  padding: 0 !important;
-  margin: 0 !important;
-  border: none !important;
+.handymd .ProseMirror[contenteditable="false"] .hm-table-ui {
+  display: none;
+}
+.handymd .hm-table-handle {
+  position: absolute;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--hm-fg-dim);
+  fill: currentColor;
+  background: var(--hm-table-cell-edit-bg);
+  border: 1px solid var(--hm-table-border);
+  border-radius: 4px;
+  cursor: grab;
   opacity: 0;
   pointer-events: none;
-  font-size: 0 !important;
+  transform: translate(-50%, -50%);
+  transition: opacity 0.12s;
+  touch-action: none;
+}
+.handymd .hm-table-handle-row {
+  left: -11px;
+  width: 14px;
+  height: 22px;
+}
+.handymd .hm-table-handle-col {
+  top: 0;
+  width: 22px;
+  height: 14px;
+}
+.handymd .hm-table-handle-col svg {
+  transform: rotate(90deg);
+}
+.handymd .hm-table-handle.hm-table-handle-on {
+  opacity: 1;
+  pointer-events: auto;
+}
+.handymd .hm-table-handle:hover,
+.handymd .hm-table-handle.hm-table-handle-picked {
+  color: #fff;
+  background: var(--hm-accent);
+  border-color: var(--hm-accent);
+}
+.handymd .hm-table-dragging,
+.handymd .hm-table-dragging * {
+  cursor: grabbing !important;
+}
+.handymd .hm-table-add {
+  position: absolute;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--hm-fg-dim);
+  font-size: 13px;
+  border-radius: 4px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s, background 0.12s;
+}
+.handymd .hm-table-add-row {
+  left: 0;
+  right: 0;
+  bottom: -16px;
+  height: 12px;
+}
+.handymd .hm-table-add-col {
+  top: 0;
+  bottom: 0;
+  right: -17px;
+  width: 12px;
+}
+.handymd .hm-table-wrap:hover .hm-table-add {
+  opacity: 0.55;
+}
+.handymd .hm-table-wrap .hm-table-add:hover {
+  opacity: 1;
+  color: var(--hm-accent);
+  background: color-mix(in srgb, var(--hm-accent) 12%, transparent);
+}
+.handymd .hm-table-drop {
+  position: absolute;
+  z-index: 4;
+  display: none;
+  background: var(--hm-accent);
+  pointer-events: none;
+  width: 100%;
+  height: 2px;
+  margin-top: -1px;
+}
+.handymd .hm-table-drop.hm-table-drop-col {
+  width: 2px;
+  height: 100%;
+  margin: 0 0 0 -1px;
+}
+.handymd .hm-table-drop.hm-table-drop-on {
+  display: block;
+}
+.handymd .hm-table-menu {
+  position: absolute;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  white-space: nowrap;
+  font-family: var(--hm-font);
+  font-size: 12px;
+  background: var(--hm-table-cell-edit-bg);
+  border: 1px solid var(--hm-table-border);
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.1);
+}
+.handymd .hm-table-menu button {
+  font: inherit;
+  color: var(--hm-fg);
+  background: none;
+  border: none;
+  border-radius: 5px;
+  padding: 4px 7px;
+  cursor: pointer;
+}
+.handymd .hm-table-menu button:hover:not(:disabled) {
+  background: var(--hm-code-bg);
+}
+.handymd .hm-table-menu button:disabled {
+  color: var(--hm-fg-dim);
+  opacity: 0.5;
+  cursor: default;
+}
+.handymd .hm-table-menu button.hm-table-menu-active {
+  color: var(--hm-accent);
+  background: color-mix(in srgb, var(--hm-accent) 12%, transparent);
+}
+.handymd .hm-table-menu button.hm-table-menu-danger:hover {
+  color: #c0392b;
+}
+.handymd .hm-table-menu-sep {
+  width: 1px;
+  align-self: stretch;
+  margin: 3px 2px;
+  background: var(--hm-table-border);
 }
 
 /* 只读态光标 */

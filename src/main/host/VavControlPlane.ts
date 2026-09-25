@@ -375,7 +375,7 @@ export function createVavControlPlane(opts: VavControlPlaneOpts): VavControlPlan
     tmp,
     defaultModel: () => settings.get().defaultModel || VAV_DEFAULT_MODEL_ID,
     runTurn: (id, text) => {
-      void agent.run(id, text, [], null, null, null)
+      startTurn(id, text, [])
     },
     isRunning: (id) => agent.isRunning(id),
     reload: () => timerStore.load(),

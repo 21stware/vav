@@ -15,9 +15,10 @@ function edgesOf(el: HTMLElement): Edges {
 }
 
 /**
- * Fixed-height reading well. Live thinking and an expanded thinking process
- * share this frame so a long trace scrolls inside instead of growing the turn.
- * Fades show only on edges that still have more text.
+ * Reading well that grows with the trace up to a max height. Live thinking
+ * and an expanded thinking process share this frame so a long trace scrolls
+ * inside instead of pushing the answer down. Fades show only on edges that
+ * still have more text.
  */
 export function ThinkingViewport({
   children,

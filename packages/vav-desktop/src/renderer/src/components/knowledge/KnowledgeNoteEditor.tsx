@@ -8,6 +8,10 @@ import {
 import { noteMarkdownWithTitle } from '@shared/knowledge'
 import { Plugin, TextSelection } from 'prosemirror-state'
 import { applyFileDraftContent } from '../../lib/fileViewerHelpers'
+import {
+  decideKnowledgeNotePaint,
+  type KnowledgeNotePaintSource
+} from '../../lib/knowledgeNotePaint'
 import '@21stware/handymd/style.css'
 import { useT } from '../../i18n/useT'
 import { isDraftNoteTitle } from '../../lib/draftEditorTitle'
@@ -25,21 +29,37 @@ function renderNoteDiagram(code: string): Promise<string> {
 }
 
 /**
- * Paint an agent write into the open note. A viewer who is not typing should
- * see the body (and its heading) change as the write streams — leaving and
- * re-entering must not be required. Local typing still goes through conflict
- * resolution instead of being overwritten.
+ * Paint a disk or agent write into the open note. A viewer who is not typing
+ * should see the body change as a write streams. Own autosave echoes must not
+ * look like a remote conflict — local typing still goes through conflict
+ * resolution when the incoming body is actually new.
  */
 function paintAgentNote(
   editor: HandyEditor,
   markdown: string,
   lastSaved: { current: string },
-  userEdited: { current: boolean }
+  userEdited: { current: boolean },
+  source: KnowledgeNotePaintSource
 ): void {
   if (editor.phase === 'destroyed' || editor.phase === 'error' || editor.phase === 'loading') return
   if (!editor.view) return
-  const localDirty = userEdited.current && editor.getMarkdown() !== lastSaved.current
-  if (localDirty && editor.phase === 'ready') {
+  const current = editor.getMarkdown()
+  const action = decideKnowledgeNotePaint({
+    incoming: markdown,
+    current,
+    lastSaved: lastSaved.current,
+    localDirty: userEdited.current && current !== lastSaved.current,
+    source,
+    phase: editor.phase
+  })
+  if (action === 'ignore') return
+  if (action === 'ack') {
+    lastSaved.current = markdown
+    userEdited.current = false
+    editor.autosave?.markClean()
+    return
+  }
+  if (action === 'conflict') {
     editor.notifyRemote(markdown)
     return
   }
@@ -47,12 +67,14 @@ function paintAgentNote(
   if (editor.phase !== 'ready') return
   if (markdown === editor.getMarkdown()) {
     lastSaved.current = markdown
+    userEdited.current = false
     editor.autosave?.markClean()
     return
   }
   editor.setMarkdown(markdown, { addToHistory: false })
   editor.autosave?.markClean()
   lastSaved.current = editor.getMarkdown()
+  userEdited.current = false
 }
 
 export type KnowledgeNoteEditorHandle = {
@@ -220,10 +242,16 @@ const NoteEditor = forwardRef<
         return markdown
       },
       save: async (markdown) => {
-        const note = await window.vav.knowledge.writeNote(hostId, markdown)
-        if (!note) throw new Error('knowledge-write-failed')
+        const previous = lastSavedRef.current
         lastSavedRef.current = markdown
-        setSavedAt(note.updatedAt)
+        try {
+          const note = await window.vav.knowledge.writeNote(hostId, markdown)
+          if (!note) throw new Error('knowledge-write-failed')
+          setSavedAt(note.updatedAt)
+        } catch (err) {
+          lastSavedRef.current = previous
+          throw err
+        }
       },
       autosave: { debounceMs: 400 },
       highlight: highlightPlain,
@@ -251,21 +279,21 @@ const NoteEditor = forwardRef<
 
     const userEdited = userEditedRef
     const painting = { current: false }
-    const pending = { current: null as string | null }
+    const pending = { current: null as { markdown: string; source: KnowledgeNotePaintSource } | null }
     const onBeforeInput = (): void => {
       if (!painting.current) userEdited.current = true
     }
     mount.addEventListener('beforeinput', onBeforeInput)
 
-    const paint = (markdown: string): void => {
+    const paint = (markdown: string, source: KnowledgeNotePaintSource): void => {
       if (editor.phase === 'loading' || !editor.view) {
-        pending.current = markdown
+        pending.current = { markdown, source }
         return
       }
       pending.current = null
       painting.current = true
       try {
-        paintAgentNote(editor, markdown, lastSavedRef, userEdited)
+        paintAgentNote(editor, markdown, lastSavedRef, userEdited, source)
       } finally {
         painting.current = false
       }
@@ -276,15 +304,15 @@ const NoteEditor = forwardRef<
       if (phase === 'ready' && pending.current != null) {
         const next = pending.current
         pending.current = null
-        paintAgentNote(editor, next, lastSavedRef, userEdited)
-        setWords(countWritingUnits(next))
+        paintAgentNote(editor, next.markdown, lastSavedRef, userEdited, next.source)
+        setWords(countWritingUnits(next.markdown))
       }
     })
 
     const off = window.vav.knowledge.onChanged(() => {
       void window.vav.knowledge.readNote(hostId).then((note) => {
         if (!note || editor.phase === 'destroyed') return
-        paint(note.markdown)
+        paint(note.markdown, 'disk')
         setSavedAt(note.updatedAt)
       })
     })
@@ -293,7 +321,7 @@ const NoteEditor = forwardRef<
       if (event.type !== 'knowledge-draft' || event.hostId !== hostId) return
       const next = applyFileDraftContent(editor.getMarkdown() || '', event)
       if (next == null) return
-      paint(next)
+      paint(next, 'agent')
     })
 
     return () => {

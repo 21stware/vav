@@ -135,7 +135,7 @@ export class TimerScheduler {
       'utf8'
     )
     const source = job.conversationId ? this.deps.conversations.get(job.conversationId) : undefined
-    const pinned = Boolean(job.model?.trim())
+    const pinned = Boolean(job.model?.trim()) || job.cliHost != null
     const model = job.model?.trim() || source?.model?.trim() || this.deps.defaultModel()
     const conversation = this.deps.conversations.create(workdir, model, {
       title: job.title,
@@ -145,8 +145,8 @@ export class TimerScheduler {
       approvalMode: 'bypass',
       thinkingLevel: (pinned ? job.thinkingLevel : null) ?? source?.thinkingLevel,
       fast: pinned ? job.fast === true : source?.fast === true,
-      cliHost: pinned ? job.cliHost : (source?.cliHost ?? null),
-      accountId: pinned ? job.accountId : (source?.accountId ?? null)
+      cliHost: job.cliHost ?? source?.cliHost ?? null,
+      accountId: job.accountId ?? source?.accountId ?? null
     })
     const run = this.deps.store.beginRun({
       jobId: job.id,

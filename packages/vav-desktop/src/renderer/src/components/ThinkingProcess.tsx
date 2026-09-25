@@ -6,9 +6,8 @@ import { thinkingLabel } from '../lib/thinkingCopy'
 import { ThinkingViewport } from './ThinkingViewport'
 
 /**
- * Shell for the non-final stretch of a turn. Live stays open in a fixed
- * viewport; a finished process starts collapsed. The header is the duration
- * phrase — not a separate "Thinking process" title plus a second clock.
+ * Shell for a thinking run. Collapsed by default — the user opens it.
+ * The header is the duration phrase, not a second clock under a title.
  */
 export function ThinkingProcess({
   steps,
@@ -24,7 +23,7 @@ export function ThinkingProcess({
 }): React.JSX.Element {
   const t = useT()
   const rootRef = useRef<HTMLDivElement>(null)
-  const [open, setOpen] = useState(follow)
+  const [open, setOpen] = useState(false)
   useEffect(() => {
     const el = rootRef.current
     if (!el) return

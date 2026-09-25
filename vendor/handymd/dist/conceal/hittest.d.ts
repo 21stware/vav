@@ -14,6 +14,12 @@ export interface SelLike {
  * 区域；static / permanent 元素永远不 reveal（hr/bullet/quote/todo 一旦渲染
  * 就不再回到源码 —— Bear 的手感）；heading 参与 reveal（聚焦展示层级图标，
  * 源码 `#` 仍在 decoration 层永久隐藏）；readOnly 强制全部 Concealed。
+ *
+ * 范围选区只在两个端点处 reveal：选区覆盖的中间部分保持渲染态，
+ * 否则全选 / 拖选会让整片内容回到源码，文字重排后选区端点在拖动中跳动。
+ *
+ * 图片是原子元素，永远不回到源码：对它而言 "revealed" 表示「被选中」
+ * （选区完整覆盖整段 `![alt](src)`），只用来画选中态。
  */
 export declare function isRevealed(el: ElementRange, sel: SelLike, readOnly: boolean): boolean;
 /** 一个块的 reveal 签名：只有签名变化的块才需要重建 decoration。 */

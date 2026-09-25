@@ -34,7 +34,8 @@ import { absoluteTime, relativeTime } from '../lib/format'
 import { basename } from '../lib/path'
 import { countWritingUnits } from '../lib/writingStats'
 import { openPickedFileSessions } from '../lib/openFileSession'
-import { applicationsModeForConversation } from '../lib/applicationsWidth'
+import { conversationForAppMode, rememberVisitedAppMode } from '../lib/appColumnObject'
+import type { ApplicationsMode } from '../state/sessionTypes'
 import { AppFolderRail } from './AppFolderRail'
 import {
   appFolderCounts,
@@ -92,17 +93,12 @@ export function ApplicationsPanel(): React.JSX.Element {
   const mode = useSessionStore((s) => s.applicationsMode)
   const setFilePreviewHost = useSessionStore((s) => s.setFilePreviewHost)
   const filePreviewOpen = useSessionStore((s) => s.filePreviewOpen)
-  const conversation = useSessionStore((s) => {
-    const focused = s.focusedAppObjectId
-      ? s.conversations.find((row) => row.id === s.focusedAppObjectId)
-      : undefined
-    if (focused && applicationsModeForConversation(focused) === s.applicationsMode) return focused
-    const active = s.conversations.find((row) => row.id === s.activeId)
-    if (active && applicationsModeForConversation(active) === s.applicationsMode) return active
-    return undefined
-  })
+  const conversation = useSessionStore((s) => conversationForAppMode(s, s.applicationsMode))
   const previewPath = usePreviewFilePath(conversation?.workingDirectory ?? null)
   const [deviceId, setDeviceId] = useState<string | null>(null)
+  const [visitedModes, setVisitedModes] = useState<ApplicationsMode[]>(() => [mode])
+  const nextVisited = rememberVisitedAppMode(visitedModes, mode)
+  if (nextVisited) setVisitedModes(nextVisited)
   const detailOpen = useSessionStore((s) => s.applicationsDetailOpen)
   const applicationsVisible = useSessionStore((s) => s.applicationsVisible)
   const setApplicationsDetailOpen = useSessionStore((s) => s.setApplicationsDetailOpen)
@@ -180,42 +176,107 @@ export function ApplicationsPanel(): React.JSX.Element {
     >
       <AppModeTabs trailing={trailing} canBack={showingDetail} />
       <div className="applications-main">
+        {visitedModes.map((modeId) => (
+          <AppModePane
+            key={modeId}
+            modeId={modeId}
+            active={mode === modeId}
+            filePreviewOpen={filePreviewOpen}
+            previewPath={previewPath}
+            onStoragePath={setStoragePath}
+            onOpenDetail={openDetail}
+            deviceId={deviceId}
+            onSelectDevice={setDeviceId}
+            onOpenDevice={(id) => {
+              setDeviceId(id)
+              openDetail()
+            }}
+          />
+        ))}
+      </div>
+    </aside>
+  )
+}
+
+function AppModePane({
+  modeId,
+  active,
+  filePreviewOpen,
+  previewPath,
+  onStoragePath,
+  onOpenDetail,
+  deviceId,
+  onSelectDevice,
+  onOpenDevice
+}: {
+  modeId: ApplicationsMode
+  active: boolean
+  filePreviewOpen: boolean
+  previewPath: string | null
+  onStoragePath: (path: string | null) => void
+  onOpenDetail: () => void
+  deviceId: string | null
+  onSelectDevice: (id: string | null) => void
+  onOpenDevice: (id: string) => void
+}): React.JSX.Element {
+  const plugin = getAppColumnPlugin(modeId)
+  const conversation = useSessionStore((s) => conversationForAppMode(s, modeId))
+  const detailOpen = useSessionStore((s) =>
+    s.applicationsMode === modeId
+      ? s.applicationsDetailOpen
+      : s.applicationsDetailByMode[modeId] === true
+  )
+  const hasDetail = plugin
+    ? plugin.hasDetail({ conversation, filePreviewOpen: modeId === 'storage' && filePreviewOpen })
+    : modeId === 'devices' && deviceId !== null
+  const showingDetail = detailOpen && hasDetail
+
+  return (
+    <div
+      className="applications-mode-pane"
+      data-app={modeId}
+      data-active={active ? 'true' : 'false'}
+      aria-hidden={!active}
+      {...(!active ? { inert: true } : {})}
+    >
+      <div
+        className="applications-split"
+        data-has-detail={hasDetail ? 'true' : 'false'}
+        data-pane={showingDetail ? 'detail' : 'list'}
+      >
         <div
-          className="applications-split"
-          data-has-detail={hasDetail ? 'true' : 'false'}
-          data-pane={showingDetail ? 'detail' : 'list'}
+          className="applications-object-list"
+          data-testid={active ? 'applications-object-list' : undefined}
         >
-        <div className="applications-object-list" data-testid="applications-object-list">
-          {plugin ? <plugin.List onOpenDetail={openDetail} /> : null}
-          {mode === 'devices' ? (
+          {plugin ? <plugin.List onOpenDetail={onOpenDetail} /> : null}
+          {modeId === 'devices' ? (
             <DevicesObjectList
               selectedId={deviceId}
-              onSelect={setDeviceId}
-              onOpen={(id) => {
-                setDeviceId(id)
-                openDetail()
-              }}
+              onSelect={onSelectDevice}
+              onOpen={onOpenDevice}
             />
           ) : null}
         </div>
         {showingDetail ? (
-          <div className="applications-object-detail" data-testid="applications-object-detail">
+          <div
+            className="applications-object-detail"
+            data-testid={active ? 'applications-object-detail' : undefined}
+          >
             {plugin ? (
               <plugin.Detail
                 conversation={conversation}
                 previewPath={previewPath}
                 filePreviewOpen={filePreviewOpen}
-                onStoragePath={setStoragePath}
+                onStoragePath={onStoragePath}
               />
             ) : null}
-            {mode === 'devices' && deviceId !== null ? (
+            {modeId === 'devices' && deviceId !== null ? (
               <DevicesObjectDetail selectedId={deviceId} />
             ) : null}
           </div>
         ) : null}
-        </div>
       </div>
-    </aside>
+    </div>
   )
 }
 

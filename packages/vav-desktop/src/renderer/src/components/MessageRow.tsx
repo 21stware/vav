@@ -24,9 +24,8 @@ import { useT } from '../i18n/useT'
 import { InlineChangeReview } from './InlineChangeReview'
 import { MarkdownView } from './MarkdownView'
 import { ReasoningBlock } from './ReasoningBlock'
-import { ProcessText } from './ProcessText'
 import { ThinkingProcess } from './ThinkingProcess'
-import { processThoughtMs, splitSealedAssistantProcess } from '../lib/assistantProcess'
+import { processThoughtMs, segmentAssistantTurn } from '../lib/assistantProcess'
 
 import { ToolCard } from './ToolCard'
 import { Button } from './ui'
@@ -453,47 +452,32 @@ export const MessageRow = memo(function MessageRow({
     <div className="message-turn assistant" data-testid="message-assistant" onContextMenu={onContextMenu}>
       <div className="message-role">{t('message.roleAgent')}</div>
       <div className={classes} id={`msg-${message.id}`}>
-        {(() => {
-          const { process, conclusion } = splitSealedAssistantProcess(message.blocks)
-          const render = (
-            item: (typeof process)[number],
-            nested: boolean
-          ): React.JSX.Element | null => {
-            const { block, index } = item
-            if (block.kind === 'reasoning') {
-              return (
-                <ReasoningBlock
-                  key={`r${index}`}
-                  text={block.text}
-                  durationMs={nested ? undefined : block.durationMs}
-                  flat={nested}
-                />
-              )
-            }
-            if (block.kind === 'toolCall') {
-              return <ToolCard key={block.id} block={block} startCollapsed={nested} />
-            }
-            if (block.kind === 'text') {
-              if (isQuotedErrorBlock(block.text, message.errorText)) return null
-              return nested ? (
-                <ProcessText key={`t${index}`} text={block.text} />
-              ) : (
-                <MarkdownView key={`t${index}`} source={block.text} highlight={highlight} />
-              )
-            }
-            return null
+        {segmentAssistantTurn(message.blocks).map((segment) => {
+          if (segment.kind === 'thinking') {
+            return (
+              <ThinkingProcess
+                key={`think-${segment.items[0]?.index ?? 0}`}
+                steps={segment.items.length}
+                durationMs={processThoughtMs(segment.items)}
+              >
+                {segment.items.map((item) => {
+                  const { block, index } = item
+                  if (block.kind !== 'reasoning') return null
+                  return <ReasoningBlock key={`r${index}`} text={block.text} flat />
+                })}
+              </ThinkingProcess>
+            )
           }
-          return (
-            <>
-              {process.length > 0 ? (
-                <ThinkingProcess steps={process.length} durationMs={processThoughtMs(process)}>
-                  {process.map((item) => render(item, true))}
-                </ThinkingProcess>
-              ) : null}
-              {conclusion.map((item) => render(item, false))}
-            </>
-          )
-        })()}
+          const { block, index } = segment.item
+          if (segment.kind === 'tool' && block.kind === 'toolCall') {
+            return <ToolCard key={block.id} block={block} />
+          }
+          if (segment.kind === 'text' && block.kind === 'text') {
+            if (isQuotedErrorBlock(block.text, message.errorText)) return null
+            return <MarkdownView key={`t${index}`} source={block.text} highlight={highlight} />
+          }
+          return null
+        })}
 
         {message.cancelled && (
           <div className="message system" data-testid="message-cancelled">

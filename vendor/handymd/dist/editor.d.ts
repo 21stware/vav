@@ -4,6 +4,8 @@ import { type CodeHighlighter } from './highlight';
 import { type DiagramRenderer } from './diagram';
 import { Autosave, type AutosaveOptions, type SaveStatus } from './autosave';
 import { type InsertTableOptions } from './table';
+import { type ExportPDFOptions } from './export';
+import { type ImageResolver, type ImageUploader, type InsertImageOptions } from './image';
 /**
  * L1 编辑器生命周期状态机：
  *
@@ -28,6 +30,8 @@ export interface HandyEditorOptions {
     /** L4 参数（防抖/退避等） */
     autosave?: Omit<AutosaveOptions, 'save' | 'onStatusChange'>;
     readOnly?: boolean;
+    /** 以源码模式启动：关闭全部渲染，整篇直面 Markdown 源码（见 setSourceMode） */
+    sourceMode?: boolean;
     /** Concealed 链接被点击时的回调，默认 window.open */
     onOpenLink?: (href: string) => void;
     onChange?: (markdown: string) => void;
@@ -50,6 +54,16 @@ export interface HandyEditorOptions {
      * 缺省时 diagram block 按普通代码块呈现。
      */
     diagram?: DiagramRenderer | Promise<DiagramRenderer>;
+    /**
+     * 粘贴 / 拖放 / insertImageFiles 的图片上传函数，返回写进 Markdown 的地址。
+     * 缺省时图片以 data: URL 内联进源码（没有后端时推荐 createLocalImageStore）。
+     */
+    uploadImage?: ImageUploader;
+    /**
+     * 渲染图片前把 Markdown 里的地址解析成可加载的 URL（可异步）：
+     * 相对路径、`assets/…` 本地存储、需要签名的私有地址等。缺省原样使用。
+     */
+    resolveImage?: ImageResolver;
 }
 type EventMap = {
     phase: EditorPhase;
@@ -61,6 +75,7 @@ export declare class HandyEditor {
     autosave: Autosave | null;
     private phaseValue;
     private readOnlyValue;
+    private sourceModeValue;
     private readOnlyBeforeConflict;
     private remoteMarkdown;
     private lastLoadError;
@@ -76,6 +91,7 @@ export declare class HandyEditor {
     /** Error → Loading：重试加载 */
     retry(): void;
     private createView;
+    private readonly onMountKeyDown;
     getMarkdown(): string;
     setMarkdown(markdown: string, options?: {
         addToHistory?: boolean;
@@ -85,8 +101,26 @@ export declare class HandyEditor {
      * 表格是多行结构，不提供 Markdown 输入触发；请用本方法或 `insertTable` command。
      */
     insertTable(options?: InsertTableOptions): boolean;
+    /** 以独立一行插入图片 `![alt](src)` */
+    insertImage(options: InsertImageOptions): boolean;
+    /**
+     * 插入图片文件（宿主的文件选择器等）：立即以本地预览占位，
+     * 经 `uploadImage` 上传（缺省内联为 data: URL）后替换为最终地址。
+     */
+    insertImageFiles(files: Iterable<File> | FileList): Promise<void>;
     focus(): void;
+    /**
+     * 导出 PDF：以渲染态打开系统打印对话框（选「存储为 PDF」）。
+     * 光标所在元素、源码模式也按渲染态导出，不改变编辑器状态。
+     */
+    exportToPDF(options?: ExportPDFOptions): Promise<void>;
     setReadOnly(readOnly: boolean): void;
+    get sourceMode(): boolean;
+    /**
+     * 源码模式 ⇄ 渲染模式。源码模式下所有标记符可见、块前缀可直接编辑，
+     * 列表续行等编辑行为保留；文档内容与撤销历史不受影响。
+     */
+    setSourceMode(source: boolean): void;
     /**
      * 远端版本变化时调用。本地干净 → 直接吃掉远端；本地有未保存改动 → Conflicted，
      * 编辑冻结，等 resolveConflict。
