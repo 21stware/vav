@@ -153,7 +153,7 @@ import {
   swarmRootId
 } from '@shared/swarmLayout'
 import { patchAcpConfigOption, patchAcpSessionMode } from '@shared/acpSession'
-import { inheritCreateWorkingDirectory, nextConversationForMachine, nextFileCategoryForMachine, pickBootstrapActiveId, seedCliAgentCatalogue, seedEmptyConversationPatch, shouldReuseEmptyNewSession, shouldSpawnDetachedConversation, claimDetachedSessionPatch } from './sessionBootstrap'
+import { inheritCreateWorkingDirectory, nextConversationForMachine, nextFileCategoryForMachine, pickBootstrapActiveId, seedCliAgentCatalogue, seedEmptyConversationPatch, shouldSpawnDetachedConversation, claimDetachedSessionPatch } from './sessionBootstrap'
 import { notifyImageAttachPlan, trimAttachmentPathsForHost } from './sessionAttach'
 import { persistSwarmLayout, setLeaf } from './sessionSwarm'
 import { swarmBlocksWorkdirSwitch as swarmSurfaceBlocksWorkdir } from '../lib/workdirSwitch'
@@ -1654,10 +1654,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         if (toRemove.length === 0) return
         const jobIds = new Set<string>()
         const dbIds = new Set<string>()
+        const knowledgeIds = new Set<string>()
         for (const id of toRemove) {
           const row = get().conversations.find((item) => item.id === id)
           if (row?.timerJobId) jobIds.add(row.timerJobId)
           if (row?.dbConnectionId) dbIds.add(row.dbConnectionId)
+          if (row?.knowledgeHostId) knowledgeIds.add(row.knowledgeHostId)
           if (window.vav?.timers?.getJobForConversation) {
             try {
               const job = await window.vav.timers.getJobForConversation(id)
@@ -1672,6 +1674,14 @@ export const useSessionStore = create<SessionState>((set, get) => ({
               if (connection) dbIds.add(connection.id)
             } catch {
               // Connection lookup is best-effort.
+            }
+          }
+          if (window.vav?.knowledge?.getForConversation) {
+            try {
+              const host = await window.vav.knowledge.getForConversation(id)
+              if (host) knowledgeIds.add(host.id)
+            } catch {
+              // Host lookup is best-effort.
             }
           }
         }
@@ -1697,6 +1707,19 @@ export const useSessionStore = create<SessionState>((set, get) => ({
               await window.vav.db.remove(connectionId)
             } catch {
               // Connection may already be gone.
+            }
+          }
+        }
+        if (window.vav?.knowledge?.remove) {
+          for (const hostId of knowledgeIds) {
+            try {
+              await window.vav.knowledge.remove(hostId)
+            } catch (err) {
+              get().showToast({
+                kind: 'error',
+                title: tt('knowledge.deleteFailed'),
+                description: err instanceof Error ? err.message : String(err)
+              })
             }
           }
         }
@@ -1780,9 +1803,15 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         }
       }
 
-      // A lone empty chat can go without a sheet. Multi-select always confirms
-      // — even if every target is empty — so Backspace on a range is reversible.
-      if (shouldSkipSessionDeleteConfirm(targets.length, empty.length)) {
+      const appObjectCount = targets.filter((id) => {
+        const row = conversations.find((item) => item.id === id)
+        return row ? isAppObjectSession(row) : false
+      }).length
+
+      // A lone empty chat can go without a sheet. App objects always confirm
+      // (notes / analysis / storage / schedules hold content with no messages).
+      // Multi-select always confirms so Backspace on a range is reversible.
+      if (shouldSkipSessionDeleteConfirm(targets.length, empty.length, appObjectCount)) {
         await applyRemove(empty)
         return
       }
@@ -3270,18 +3299,6 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   beginNewSession() {
     if (isCompanionSessionShell()) {
       void window.vav.window.newSessionHere()
-      return
-    }
-    const { activeId, agentVisible, conversations, messages } = get()
-    if (
-      shouldReuseEmptyNewSession({
-        agentVisible,
-        hasActiveConversation: conversations.some((row) => row.id === activeId),
-        messageCount: (messages[activeId] ?? []).length
-      })
-    ) {
-      get().setToolsCollapsed(true)
-      get().focusComposer()
       return
     }
     void get().createConversation({ openIn: 'here' })

@@ -1,5 +1,6 @@
 import { StrictMode, Suspense, lazy } from 'react'
 import { createRoot } from 'react-dom/client'
+import { installWebVav } from './webPreview/install'
 import { IS_MAC, PLATFORM } from './lib/platform'
 import { installLiveResizeTracking } from './lib/liveResize'
 import { installSiblingRepaint } from './lib/siblingRepaint'
@@ -31,7 +32,7 @@ const view = params.get('view')
 const conversationId = params.get('conversationId')
 const filePath = params.get('path')
 // Main shell defaults to system glass until settings hydrate (Appearance can turn it off).
-if (IS_MAC && !view) {
+if (IS_MAC && !view && document.documentElement.dataset.webPreview !== 'true') {
   document.documentElement.dataset.vibrancy = 'true'
 }
 
@@ -52,10 +53,12 @@ function Root(): React.JSX.Element {
   return <App />
 }
 
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <Suspense fallback={null}>
-      <Root />
-    </Suspense>
-  </StrictMode>
-)
+void installWebVav().then(() => {
+  createRoot(document.getElementById('root')!).render(
+    <StrictMode>
+      <Suspense fallback={null}>
+        <Root />
+      </Suspense>
+    </StrictMode>
+  )
+})

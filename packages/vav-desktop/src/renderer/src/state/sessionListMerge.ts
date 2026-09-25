@@ -7,7 +7,13 @@
  * only real conversation activity (messages) bumps `updatedAt` on main.
  */
 
-import { isListSession } from '@shared/sessionKind.ts'
+import {
+  isDbSession,
+  isKnowledgeSession,
+  isListSession,
+  isTimerDefinition,
+  sessionKindOf
+} from '@shared/sessionKind.ts'
 import { regenerateActiveLeaf } from '@shared/thread.ts'
 
 export { regenerateActiveLeaf }
@@ -388,12 +394,40 @@ export function compactRefusalReason(opts: {
   return null
 }
 
-/** A lone empty chat skips the confirm sheet; multi-select always confirms. */
+/**
+ * A lone empty chat skips the confirm sheet. App objects (notes, analysis,
+ * storage, schedules) always confirm — they hold content even with no messages.
+ * Multi-select always confirms.
+ */
 export function shouldSkipSessionDeleteConfirm(
   targetCount: number,
-  emptyCount: number
+  emptyCount: number,
+  appObjectCount = 0
 ): boolean {
+  if (appObjectCount > 0) return false
   return targetCount === 1 && emptyCount === 1
+}
+
+export type DeleteConfirmKind = 'session' | 'note' | 'analysis' | 'storage' | 'schedule'
+
+export function deleteConfirmKind(
+  rows: Array<{
+    sessionKind?: import('@shared/sessionKind.ts').SessionKind | null
+    fileId?: string | null
+    timerRunId?: string | null
+  }>
+): DeleteConfirmKind {
+  if (rows.length === 0) return 'session'
+  const kinds = new Set(
+    rows.map((row): DeleteConfirmKind => {
+      if (isKnowledgeSession(row)) return 'note'
+      if (isDbSession(row)) return 'analysis'
+      if (isTimerDefinition(row)) return 'schedule'
+      if (sessionKindOf(row) === 'file' || row.fileId) return 'storage'
+      return 'session'
+    })
+  )
+  return kinds.size === 1 ? [...kinds][0]! : 'session'
 }
 
 /** After deleting the active session, prefer a live chat over archive/file rows. */
@@ -412,26 +446,57 @@ export function fallbackConversationIdAfterDelete(
   )
 }
 
-/** Confirm-sheet copy for one vs many session deletes. */
+/** Confirm-sheet copy for one vs many session / app-object deletes. */
 export function sessionDeleteDialogCopy(
   targetIds: string[],
-  conversations: Array<{ id: string; title?: string }>,
+  conversations: Array<{
+    id: string
+    title?: string
+    sessionKind?: import('@shared/sessionKind.ts').SessionKind | null
+    fileId?: string | null
+    timerRunId?: string | null
+  }>,
   t: (
     key:
       | 'dialog.deleteSession'
       | 'dialog.deleteSessions'
+      | 'dialog.deleteNote'
+      | 'dialog.deleteNotes'
+      | 'dialog.deleteAnalysis'
+      | 'dialog.deleteAnalyses'
+      | 'dialog.deleteStorage'
+      | 'dialog.deleteStorages'
+      | 'dialog.deleteSchedule'
+      | 'dialog.deleteSchedules'
       | 'dialog.deleteConfirmSingle'
-      | 'dialog.deleteConfirmMultiple',
+      | 'dialog.deleteConfirmMultiple'
+      | 'dialog.deleteConfirmMultipleItems',
     params?: { count?: number; name?: string }
   ) => string
 ): { title: string; body: string } {
   const single = targetIds.length === 1
-  const name = conversations.find((c) => c.id === targetIds[0])?.title ?? ''
+  const rows = targetIds
+    .map((id) => conversations.find((row) => row.id === id))
+    .filter((row): row is NonNullable<typeof row> => !!row)
+  const kind = deleteConfirmKind(rows)
+  const name = rows[0]?.title ?? ''
+  const count = targetIds.length
+  const titleKey = (
+    {
+      session: single ? 'dialog.deleteSession' : 'dialog.deleteSessions',
+      note: single ? 'dialog.deleteNote' : 'dialog.deleteNotes',
+      analysis: single ? 'dialog.deleteAnalysis' : 'dialog.deleteAnalyses',
+      storage: single ? 'dialog.deleteStorage' : 'dialog.deleteStorages',
+      schedule: single ? 'dialog.deleteSchedule' : 'dialog.deleteSchedules'
+    } as const
+  )[kind]
   return {
-    title: single ? t('dialog.deleteSession') : t('dialog.deleteSessions', { count: targetIds.length }),
+    title: single ? t(titleKey) : t(titleKey, { count }),
     body: single
       ? t('dialog.deleteConfirmSingle', { name })
-      : t('dialog.deleteConfirmMultiple', { count: targetIds.length })
+      : kind === 'session'
+        ? t('dialog.deleteConfirmMultiple', { count })
+        : t('dialog.deleteConfirmMultipleItems', { count })
   }
 }
 

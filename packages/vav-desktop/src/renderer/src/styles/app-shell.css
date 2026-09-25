@@ -800,8 +800,23 @@ label,
   display: flex;
   align-items: center;
   flex: 0 0 auto;
+  height: var(--toolbar-height);
   min-height: var(--toolbar-height);
   padding: 0 12px;
+  box-sizing: border-box;
+  -webkit-app-region: drag;
+}
+
+.workbench-home-chrome > .spacer {
+  align-self: stretch;
+  flex: 1 1 auto;
+  min-width: 12px;
+  -webkit-app-region: drag;
+}
+
+.workbench-home-chrome button,
+.workbench-home-chrome .btn {
+  -webkit-app-region: no-drag;
 }
 
 .workbench-home-body {
@@ -818,10 +833,6 @@ label,
 .workbench-home[data-empty='true'] .workbench-home-body {
   padding-top: 28px;
   padding-bottom: 28px;
-  /* Hide overflow so ::before/::after drag spacers register (a scrollport
-     drops descendant window-drag). Do not drag the body itself — a full-box
-     region goes stale after data-empty flips and the window only moves. */
-  overflow: hidden;
   -webkit-app-region: no-drag;
 }
 
@@ -833,9 +844,8 @@ label,
 .workbench-home[data-empty='true'] .workbench-home-body::after {
   content: '';
   align-self: stretch;
-  pointer-events: auto;
-  -webkit-app-region: drag;
   min-height: 0;
+  pointer-events: none;
 }
 
 .workbench-home[data-empty='true'] .workbench-home-body::before {
@@ -3177,7 +3187,7 @@ html[data-summoning] .workbench-home-stage > * {
   padding-top: var(--session-titlebar-h);
   padding-bottom: 12px;
   /* Overlay header is earlier in the DOM. A full-box drag here would cover
-     the titlebar buttons; empty-state optical spacers still drag the canvas. */
+     the titlebar buttons; drag stays on the chrome bar spacer. */
   -webkit-app-region: no-drag;
 }
 
@@ -11770,15 +11780,13 @@ button.tool-row {
 .empty-state-session::after {
   content: '';
   align-self: stretch;
-  pointer-events: auto;
-  -webkit-app-region: drag;
   min-height: 0;
+  pointer-events: none;
 }
 
-/* New-session canvas fills the log. A full-box drag on the scrollport is
-   painted after overlay chrome (DOM order, not z-index) and can go stale
-   after the empty state unmounts — the window then only moves. Hide
-   overflow so optical spacers register; the scrollport stays no-drag. */
+/* New-session canvas fills the log. Drag lives on the chrome bar, not
+   this scrollport — a full-box region is painted after overlay buttons
+   (DOM order, not z-index) and can go stale after the empty state unmounts. */
 .transcript:has(> .transcript-inner > .empty-state-session) {
   overflow: hidden;
   -webkit-app-region: no-drag;

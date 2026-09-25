@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { mergeConversationList, nextConversationSelection, patchConversationById, isArchivedConversation, regenerateActiveLeaf, canMutateActiveSession, compactRefusalReason, genericErrorBanner, shouldSkipSessionDeleteConfirm, fallbackConversationIdAfterDelete, sessionDeleteDialogCopy, prependConversationIfMissing, upsertConversationMeta, listedConversationIdsForSelect, fileSessionHydrateOnDemandPatch, fileSessionHintToMeta, deleteMessageHydratePatch, renameConversationPatch, rememberDroppedConversationIds, forgetDroppedConversationIds, replaceTimerSessions, type ConversationListItem } from './sessionListMerge.ts'
+import { mergeConversationList, nextConversationSelection, patchConversationById, isArchivedConversation, regenerateActiveLeaf, canMutateActiveSession, compactRefusalReason, genericErrorBanner, shouldSkipSessionDeleteConfirm, fallbackConversationIdAfterDelete, sessionDeleteDialogCopy, deleteConfirmKind, prependConversationIfMissing, upsertConversationMeta, listedConversationIdsForSelect, fileSessionHydrateOnDemandPatch, fileSessionHintToMeta, deleteMessageHydratePatch, renameConversationPatch, rememberDroppedConversationIds, forgetDroppedConversationIds, replaceTimerSessions, type ConversationListItem } from './sessionListMerge.ts'
 
 function row(
   partial: Partial<ConversationListItem> & { id: string }
@@ -226,6 +226,11 @@ describe('shouldSkipSessionDeleteConfirm', () => {
     assert.equal(shouldSkipSessionDeleteConfirm(2, 2), false)
     assert.equal(shouldSkipSessionDeleteConfirm(1, 0), false)
   })
+
+  it('never skips notes or other app objects', () => {
+    assert.equal(shouldSkipSessionDeleteConfirm(1, 1, 1), false)
+    assert.equal(shouldSkipSessionDeleteConfirm(2, 2, 2), false)
+  })
 })
 
 describe('genericErrorBanner', () => {
@@ -270,6 +275,50 @@ describe('sessionDeleteDialogCopy', () => {
       title: 'dialog.deleteSessions:2',
       body: 'dialog.deleteConfirmMultiple:2'
     })
+  })
+
+  it('names notes, analysis, storage, and schedules', () => {
+    const t = (key: string, params?: { count?: number; name?: string }) =>
+      params ? `${key}:${params.name ?? params.count}` : key
+    assert.deepEqual(
+      sessionDeleteDialogCopy(['n'], [{ id: 'n', title: 'Todo', sessionKind: 'knowledge' }], t),
+      { title: 'dialog.deleteNote', body: 'dialog.deleteConfirmSingle:Todo' }
+    )
+    assert.deepEqual(
+      sessionDeleteDialogCopy(
+        ['n1', 'n2'],
+        [
+          { id: 'n1', title: 'A', sessionKind: 'knowledge' },
+          { id: 'n2', title: 'B', sessionKind: 'knowledge' }
+        ],
+        t
+      ),
+      { title: 'dialog.deleteNotes:2', body: 'dialog.deleteConfirmMultipleItems:2' }
+    )
+    assert.deepEqual(
+      sessionDeleteDialogCopy(['d'], [{ id: 'd', title: 'Sales', sessionKind: 'db' }], t),
+      { title: 'dialog.deleteAnalysis', body: 'dialog.deleteConfirmSingle:Sales' }
+    )
+    assert.deepEqual(
+      sessionDeleteDialogCopy(['f'], [{ id: 'f', title: 'Report', sessionKind: 'file', fileId: '1' }], t),
+      { title: 'dialog.deleteStorage', body: 'dialog.deleteConfirmSingle:Report' }
+    )
+    assert.deepEqual(
+      sessionDeleteDialogCopy(['s'], [{ id: 's', title: 'Daily', sessionKind: 'timer' }], t),
+      { title: 'dialog.deleteSchedule', body: 'dialog.deleteConfirmSingle:Daily' }
+    )
+  })
+})
+
+describe('deleteConfirmKind', () => {
+  it('collapses a mixed selection to session copy', () => {
+    assert.equal(
+      deleteConfirmKind([
+        { sessionKind: 'knowledge' },
+        { sessionKind: 'db' }
+      ]),
+      'session'
+    )
   })
 })
 

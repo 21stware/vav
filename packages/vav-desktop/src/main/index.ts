@@ -41,7 +41,10 @@ import {
 import { isE2eRuntime } from '@main/e2eRuntime'
 import { installProcessErrorGuards } from '@main/process/stdioGuard'
 import { isRendererUrl } from '@main/window/rendererUrl'
-import { safeSend } from '@main/window/safeSend'
+import { safeSend, setObserveSendHook } from '@main/window/safeSend'
+import { startObserveGateway } from '@main/observe/observeGateway'
+import { installObserveIpcRegistry, type ObserveIpcRegistry } from '@main/observe/observeIpcRegistry'
+import { observeEnabled } from '@shared/observeIpc'
 import { applyUiZoomFactor } from '@main/window/uiZoom'
 import {
   e2eChoosePopupMenu,
@@ -542,6 +545,8 @@ let spawnedVavServerStateDir: string | null = null
 /** In-flight auto-pair for the spawned loopback vav-server (New Session waits on this). */
 let localShellPairing: Promise<unknown> | null = null
 let stopDesktopWeb: (() => void) | undefined
+let stopObserveGateway: (() => void) | undefined
+let observeIpc: ObserveIpcRegistry | null = null
 let stopVavServerLogs: (() => void) | undefined
 /** Machine the single main shell is showing. */
 let mainShellMachineId = LOCAL_MACHINE_ID
@@ -1519,6 +1524,8 @@ function teardownForQuit(): void {
   embeddedCua.stop()
   stopSpawnedVavServer?.()
   stopDesktopWeb?.()
+  stopObserveGateway?.()
+  setObserveSendHook(null)
   remoteControl.dispose()
   timerScheduler?.stop()
   void postgres.close()
@@ -7655,6 +7662,7 @@ async function confirmRevealSecret(event: IpcMainInvokeEvent): Promise<boolean> 
 
 function registerIpc(): void {
   installTrustedIpcGuard(ipcMain, isRendererUrl)
+  observeIpc = installObserveIpcRegistry(ipcMain)
   registerHapticsIpc()
   screenshotController ??= createScreenshotController({ loadScreenshotRenderer })
   registerScreenshotIpc(ipcMain, screenshotController!)
@@ -9236,6 +9244,35 @@ if (singleInstance) {
     watchSystemAccentColor()
     registerGlobalHotkey(settings.globalHotkey)
     registerIpc()
+    if (observeEnabled() && observeIpc) {
+      void startObserveGateway({
+        registry: observeIpc,
+        platform: process.platform,
+        rendererUrl: () => process.env.ELECTRON_RENDERER_URL || null,
+        senderEvent: () => {
+          const window = BrowserWindow.getAllWindows().find((item) => !item.isDestroyed())
+          const contents = window?.webContents
+          return {
+            sender: contents ?? {
+              id: 0,
+              isDestroyed: () => true,
+              getURL: () => ''
+            },
+            senderFrame: contents?.mainFrame ?? null
+          }
+        }
+      })
+        .then((gateway) => {
+          stopObserveGateway = () => {
+            setObserveSendHook(null)
+            gateway.close()
+          }
+          setObserveSendHook((channel, payload) => gateway.emit(channel, payload))
+        })
+        .catch((err) => {
+          console.error('[observe] failed to bind localhost gateway', err)
+        })
+    }
     notifications.applySettings()
     remoteControl.applySettings()
     daemonAttach.applySettings()

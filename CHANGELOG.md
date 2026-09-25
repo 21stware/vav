@@ -4,6 +4,16 @@ User-facing changes by release. Unreleased work lives at the top until the next 
 
 ## Unreleased
 
+## 1.32.5
+
+Deleting a note, analysis, storage item, or schedule asks for that object — not a “session” — and a deleted note is removed from disk instead of leaving an empty host behind.
+
+File-type icons keep the cat mark off 16px Finder and tree tiles so the badge stays readable. The composer sheds workspace / Fast / model chrome when the pane is narrow.
+
+Home and empty-session title bars keep a drag spacer; the canvas no longer steals window-drag from overlay buttons.
+
+`npm run dev` exposes `http://127.0.0.1:5175/` so ego / Chrome can open the desktop renderer against live Electron IPC. `npm run dev:web` still paints fixture sessions when Electron is down.
+
 ## 1.32.4
 
 Services tab switches stay on the last open object instead of remounting it, and PDF previews stream from a cached range handler so opening a local PDF no longer stalls the panel.

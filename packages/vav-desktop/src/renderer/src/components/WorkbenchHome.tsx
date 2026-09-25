@@ -48,11 +48,10 @@ export function WorkbenchHome(): React.JSX.Element {
       data-testid="workbench-home"
       data-empty={empty ? 'true' : 'false'}
     >
-      {showShellLeading ? (
-        <header className="workbench-home-chrome">
-          <ShellLeadingControls />
-        </header>
-      ) : null}
+      <header className="workbench-home-chrome">
+        {showShellLeading ? <ShellLeadingControls /> : null}
+        <span className="spacer" />
+      </header>
       <div className="workbench-home-body">
         <div className="workbench-home-stage">
           <WorkbenchHomeInsights />

@@ -2737,6 +2737,8 @@
   /* Voice IME / long unwrapped lines must not grow the whole window sideways. */
   min-width: 0;
   box-sizing: border-box;
+  container-type: inline-size;
+  container-name: composer;
   -webkit-app-region: no-drag;
 }
 
@@ -2898,6 +2900,7 @@
 .composer-bar {
   display: flex;
   align-items: center;
+  flex-wrap: nowrap;
   gap: 6px;
   font-size: 11px;
   color: var(--text-tertiary);
@@ -2917,6 +2920,7 @@
   justify-content: flex-end;
   gap: 6px;
   min-width: 0;
+  flex: 0 1 auto;
   color: inherit;
 }
 
@@ -3284,7 +3288,7 @@ html:has(.provider-account-popup) #root {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  flex: 0 0 auto;
+  flex: 0 1 auto;
   min-width: 0;
 }
 
@@ -7131,6 +7135,62 @@ html.is-screenshotting * {
 
 .composer-shot-group .session-run-btn.is-shot-caret svg {
   opacity: 0.55;
+}
+
+/* Narrow agent / home composer: keep one row, shed secondary chrome. */
+@container composer (max-width: 420px) {
+  .composer-workspace-btn .session-run-level,
+  .composer-workspace-btn .session-run-caret {
+    display: none;
+  }
+
+  .composer-workspace-btn {
+    width: 22px;
+    max-width: 22px;
+    padding: 0;
+    justify-content: center;
+    gap: 0;
+  }
+
+  .composer-shot-group .session-run-btn.is-shot-caret {
+    display: none;
+  }
+
+  .session-run-btn[data-testid='session-run-fast'] {
+    display: none;
+  }
+
+  .agent-model-picker {
+    max-width: 112px;
+  }
+}
+
+@container composer (max-width: 320px) {
+  .composer-workspace-btn {
+    display: none;
+  }
+
+  .session-run-config .session-run-caret {
+    display: none;
+  }
+
+  .session-run-btn.is-icon.has-caret {
+    width: 22px;
+    padding: 0;
+  }
+
+  .agent-model-picker {
+    max-width: 72px;
+  }
+
+  .agent-model-picker-model .model-name {
+    display: none;
+  }
+
+  .composer-bar .spacer {
+    min-width: 2px;
+    flex-basis: 4px;
+  }
 }
 
 .attachment-file-tile {

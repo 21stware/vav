@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { safeSend } from './safeSend.ts'
+import { safeSend, setObserveSendHook } from './safeSend.ts'
 
 describe('safeSend', () => {
   it('sends when the frame is alive and skips a destroyed or missing frame', () => {
@@ -29,5 +29,23 @@ describe('safeSend', () => {
       }
     }
     assert.doesNotThrow(() => safeSend(dying, 'late'))
+  })
+
+  it('fans out once when the same payload is sent to two windows', () => {
+    const seen: Array<{ channel: string; payload: unknown }> = []
+    setObserveSendHook((channel, payload) => seen.push({ channel, payload }))
+    const payload = { ok: true }
+    const live = {
+      isDestroyed: () => false,
+      send: () => undefined
+    }
+    safeSend(live, 'ping', payload)
+    safeSend(live, 'ping', payload)
+    safeSend(live, 'pong', payload)
+    setObserveSendHook(null)
+    assert.deepEqual(seen, [
+      { channel: 'ping', payload },
+      { channel: 'pong', payload }
+    ])
   })
 })

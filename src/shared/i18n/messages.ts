@@ -1503,6 +1503,14 @@ export const zhCN = {
   // —— dialogs ——
   'dialog.deleteSessions': '删除 {count} 个会话',
   'dialog.deleteSession': '删除会话',
+  'dialog.deleteNote': '删除笔记',
+  'dialog.deleteNotes': '删除 {count} 个笔记',
+  'dialog.deleteAnalysis': '删除分析',
+  'dialog.deleteAnalyses': '删除 {count} 个分析',
+  'dialog.deleteStorage': '删除存储项',
+  'dialog.deleteStorages': '删除 {count} 个存储项',
+  'dialog.deleteSchedule': '删除日程',
+  'dialog.deleteSchedules': '删除 {count} 个日程',
   'dialog.locateWorkspaceName': '工作区名称',
 
   // —— file manager platform ——
@@ -1618,6 +1626,7 @@ export const zhCN = {
   'dialog.keepOneSessionTitle': '至少保留一个会话',
   'dialog.deleteConfirmSingle': '确定删除「{name}」？此操作不可撤销。',
   'dialog.deleteConfirmMultiple': '确定删除选中的 {count} 个会话？此操作不可撤销。',
+  'dialog.deleteConfirmMultipleItems': '确定删除选中的 {count} 项？此操作不可撤销。',
   'dialog.configureApiKeyBody': '请先配置 API Key。',
   'dialog.duplicateFailedBody': '磁盘写入错误，请重试。',
   'dialog.restartRequired': '需重启应用',
@@ -1842,6 +1851,7 @@ export const zhCN = {
   'knowledge.newNote': '新建笔记',
   'knowledge.importDocument': '关联书籍',
   'knowledge.createFailed': '无法创建笔记',
+  'knowledge.deleteFailed': '无法删除笔记',
   'knowledge.importFailed': '无法关联书籍',
   'knowledge.missingTitle': '找不到这条笔记',
   'knowledge.missingDesc': '它可能已被删除',
@@ -4314,6 +4324,14 @@ export const en: Record<MessageKey, string> = {
 
   'dialog.deleteSessions': 'Delete {count} sessions',
   'dialog.deleteSession': 'Delete session',
+  'dialog.deleteNote': 'Delete note',
+  'dialog.deleteNotes': 'Delete {count} notes',
+  'dialog.deleteAnalysis': 'Delete analysis',
+  'dialog.deleteAnalyses': 'Delete {count} analyses',
+  'dialog.deleteStorage': 'Delete storage item',
+  'dialog.deleteStorages': 'Delete {count} storage items',
+  'dialog.deleteSchedule': 'Delete schedule',
+  'dialog.deleteSchedules': 'Delete {count} schedules',
   'dialog.locateWorkspaceName': 'Workspace name',
 
   'platform.finder': 'Finder',
@@ -4422,6 +4440,8 @@ export const en: Record<MessageKey, string> = {
   'dialog.deleteConfirmSingle': 'Delete “{name}”? This cannot be undone.',
   'dialog.deleteConfirmMultiple':
     'Delete the selected {count} sessions? This cannot be undone.',
+  'dialog.deleteConfirmMultipleItems':
+    'Delete the selected {count} items? This cannot be undone.',
   'dialog.configureApiKeyBody': 'Please configure an API key first.',
   'dialog.duplicateFailedBody': 'Disk write error. Please try again.',
   'dialog.restartRequired': 'Restart required',
@@ -4646,6 +4666,7 @@ export const en: Record<MessageKey, string> = {
   'knowledge.newNote': 'New note',
   'knowledge.importDocument': 'Link book',
   'knowledge.createFailed': 'Could not create the note',
+  'knowledge.deleteFailed': 'Could not delete the note',
   'knowledge.importFailed': 'Could not link the book',
   'knowledge.missingTitle': 'This note is gone',
   'knowledge.missingDesc': 'It may have been deleted',

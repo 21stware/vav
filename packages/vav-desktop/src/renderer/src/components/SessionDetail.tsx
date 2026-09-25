@@ -907,7 +907,7 @@ export function AgentModeChrome({
           </span>
         ) : null}
 
-        {showTrailing ? <span className="spacer" /> : null}
+        <span className="spacer" />
 
         {showTrailing ? (
           <div className="agent-mode-chrome-trailing">

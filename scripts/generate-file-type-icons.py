@@ -130,25 +130,33 @@ def load_mark_stencil() -> Image.Image:
     return _mark_stencil
 
 
-def paint_mark(plate: Image.Image, page_mask: Image.Image) -> Image.Image:
-    """Pale-white cat, oversized so only ~3/4 sits on the page (clipped seal)."""
+def paint_mark(
+    plate: Image.Image,
+    page_mask: Image.Image,
+    reserved_bottom: int = 0,
+    opacity: float = 0.38,
+) -> Image.Image:
+    """Pale-white cat, sized to the upper plate so it never collides with the badge."""
     stencil = load_mark_stencil()
     page_w, page_h = plate.size
+    usable_h = max(1, page_h - reserved_bottom)
     sw, sh = stencil.size
-    # 1 / 0.75 ≈ 1.33× the page, so about a quarter of the mark hangs off.
-    tw = max(1, round(page_w / 0.75))
-    th = max(1, round(sh * (tw / sw)))
-    if th < page_h / 0.75:
-        th = max(1, round(page_h / 0.75))
-        tw = max(1, round(sw * (th / sh)))
-    mark = stencil.resize((tw, th), Image.Resampling.LANCZOS)
-    tint = Image.new('RGBA', (tw, th), (255, 255, 255, 0))
-    tint.putalpha(mark.point(lambda p: round(p * 0.50)))
+    target_h = max(1, round(usable_h * 0.82))
+    target_w = max(1, round(sw * (target_h / sh)))
+    if target_w > page_w * 0.88:
+        target_w = max(1, round(page_w * 0.88))
+        target_h = max(1, round(sh * (target_w / sw)))
+    mark = stencil.resize((target_w, target_h), Image.Resampling.LANCZOS)
+    tint = Image.new('RGBA', (target_w, target_h), (255, 255, 255, 0))
+    tint.putalpha(mark.point(lambda p: round(p * opacity)))
     layer = Image.new('RGBA', plate.size, (0, 0, 0, 0))
-    mx = (page_w - tw) // 2
-    my = (page_h - th) // 2 - round(page_h * 0.06)
+    mx = (page_w - target_w) // 2
+    my = max(0, (usable_h - target_h) // 2)
     layer.paste(tint, (mx, my), tint)
-    layer.putalpha(ImageChops.multiply(layer.getchannel('A'), page_mask))
+    clip = page_mask.copy()
+    if reserved_bottom > 0:
+        ImageDraw.Draw(clip).rectangle((0, page_h - reserved_bottom, page_w, page_h), fill=0)
+    layer.putalpha(ImageChops.multiply(layer.getchannel('A'), clip))
     return Image.alpha_composite(plate, layer)
 
 
@@ -197,9 +205,13 @@ def render_plate(spec: dict, size: int) -> Image.Image:
     plate.putalpha(ImageChops.multiply(plate.getchannel('A'), mask))
 
     badge = spec['badge']
-    show_badge = size >= 24
+    show_badge = size >= 16
+    # 16/32 Finder tiles turn the cat + letters into noise; keep those sizes as
+    # a clean plate + badge. The mark only lands on 64px and up.
+    show_mark = size >= 64
     badge_band = round(page_h * (0.34 if show_badge else 0.08))
-    plate = paint_mark(plate, mask)
+    if show_mark:
+        plate = paint_mark(plate, mask, reserved_bottom=badge_band if show_badge else 0)
     image.alpha_composite(plate, (left, top))
 
     if show_badge:

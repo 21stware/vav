@@ -1,7 +1,7 @@
 {
   "name": "vav",
   "productName": "VAV",
-  "version": "1.32.4",
+  "version": "1.32.5",
   "description": "Local-first agent workbench: open files, ask and edit beside them, and run VAV or Claude/Codex in the same thread — with a real terminal on the side.",
   "license": "PolyForm-Noncommercial-1.0.0",
   "author": "Oboo Cheng",
@@ -16,6 +16,7 @@
     "fetch:cua-driver": "node scripts/fetch-cua-driver.mjs",
     "build:sidecar": "node scripts/build-tailcat-sidecar.mjs",
     "dev": "node scripts/fetch-officecli.mjs && node scripts/fetch-cua-driver.mjs && node scripts/build-tailcat-sidecar.mjs && node scripts/run-dev.mjs",
+    "dev:web": "node scripts/run-web-preview.mjs",
     "dev:kill": "node scripts/kill-dev.mjs",
     "start": "node scripts/run-preview.mjs",
     "build:mac-screencap": "node scripts/build-mac-screencap.mjs",

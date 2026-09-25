@@ -1,0 +1,755 @@
+import {
+  IPC,
+  type MenuCommand,
+  type NativeMenuItem,
+  type CliInstallLocation,
+  type AnalysisSnapshot,
+  type SettingsView,
+  type SettingsViewPayload,
+  type ProviderAccountViewPayload,
+  type RemoteFolderPickRequest,
+  type RemoteFolderPickResult,
+  type RemoteFolderViewPayload,
+  type SwarmHistoryResumeEvent,
+  type TokenUsageViewPayload,
+  type ScreenshotInitPayload,
+  type FaaaaastAskRequest,
+  type FaaaaastDelta,
+  type FaaaaastInitPayload,
+  type VavApi
+} from '@shared/ipc'
+import type { AppSettings, FileSortKey, ShellKind } from '@shared/types'
+import type { Platform } from '@shared/platform'
+
+export type VavIpcAdapter = {
+  platform: Platform
+  invoke: (channel: string, ...args: unknown[]) => Promise<any>
+  send: (channel: string, ...args: unknown[]) => void
+  subscribe: <T>(channel: string, handler: (payload: T) => void) => () => void
+  pathForFile?: (file: File) => string
+}
+
+/** Shared `window.vav` factory — Electron preload and the web observe proxy. */
+export function createVavApi(adapter: VavIpcAdapter): VavApi {
+  const { invoke, send, subscribe } = adapter
+  return {
+    platform: adapter.platform,
+
+  haptics: {
+    tap: () =>
+      invoke(IPC.hapticsTap) as Promise<{ ok: boolean; error?: string }>,
+    available: () => invoke(IPC.hapticsAvailable) as Promise<boolean>
+  },
+
+  bootstrap: () => invoke(IPC.bootstrap),
+
+  secrets: {
+    status: () => invoke(IPC.secretsStatus),
+    unlock: () => invoke(IPC.secretsUnlock)
+  },
+
+  sessionSecrets: {
+    list: (conversationId) => invoke(IPC.sessionSecretsList, conversationId),
+    reveal: (conversationId, name) =>
+      invoke(IPC.sessionSecretsReveal, conversationId, name),
+    set: (conversationId, name, value) =>
+      invoke(IPC.sessionSecretsSet, conversationId, name, value),
+    remove: (conversationId, name) =>
+      invoke(IPC.sessionSecretsRemove, conversationId, name),
+    onChanged: (handler) => subscribe(IPC.sessionSecretsChanged, handler)
+  },
+
+  settings: {
+    get: () => invoke(IPC.settingsGet),
+    update: (patch: Partial<AppSettings>) => invoke(IPC.settingsUpdate, patch),
+    reset: () => invoke(IPC.settingsReset),
+    setApiKey: (key: string) => invoke(IPC.settingsSetKey, key),
+    revealApiKey: () => invoke(IPC.settingsRevealKey),
+    apiKeyHint: () => invoke(IPC.settingsKeyHint),
+    setBraveSearchKey: (key: string) => invoke(IPC.settingsSetBraveSearchKey, key),
+    braveSearchKeyHint: () => invoke(IPC.settingsBraveSearchKeyHint),
+    setTinyfishSearchKey: (key: string) => invoke(IPC.settingsSetTinyfishSearchKey, key),
+    tinyfishSearchKeyHint: () => invoke(IPC.settingsTinyfishSearchKeyHint),
+    setCloudflareApiToken: (token: string) =>
+      invoke(IPC.settingsSetCloudflareToken, token),
+    cloudflareApiTokenHint: () => invoke(IPC.settingsCloudflareTokenHint),
+    setSupabaseAccessToken: (token: string) =>
+      invoke(IPC.settingsSetSupabaseToken, token),
+    supabaseAccessTokenHint: () => invoke(IPC.settingsSupabaseTokenHint),
+    setVercelApiToken: (token: string) => invoke(IPC.settingsSetVercelToken, token),
+    vercelApiTokenHint: () => invoke(IPC.settingsVercelTokenHint),
+    validateKey: (key: string) => invoke(IPC.settingsValidateKey, key),
+    availableFonts: () => invoke(IPC.settingsFonts),
+    pickDirectory: () => invoke(IPC.settingsPickDirectory),
+    pickColor: (defaultHex?: string) => invoke(IPC.settingsPickColor, defaultHex),
+    pickSurfacePatternImage: () => invoke(IPC.settingsPickSurfacePattern),
+    setHotkey: (accelerator: string) => invoke(IPC.settingsSetHotkey, accelerator),
+    cliStatus: () => invoke(IPC.settingsCliStatus),
+    cliSetLocation: (location: CliInstallLocation) =>
+      invoke(IPC.settingsCliSetLocation, location),
+    cliInstall: () => invoke(IPC.settingsCliInstall),
+    cliUninstall: () => invoke(IPC.settingsCliUninstall),
+    fileAssociations: () => invoke(IPC.settingsFileAssociations),
+    fileAssociationForPath: (path: string) =>
+      invoke(IPC.settingsFileAssociationForPath, path),
+    setFileAssociation: (formatId: string) =>
+      invoke(IPC.settingsSetFileAssociation, formatId),
+    unsetFileAssociation: (formatId: string) =>
+      invoke(IPC.settingsUnsetFileAssociation, formatId),
+    registerAllFileAssociations: () =>
+      invoke(IPC.settingsRegisterAllFileAssociations),
+    analysis: (options?: { refresh?: boolean }) =>
+      invoke(IPC.settingsAnalysis, options),
+    keepAwakeStatus: () => invoke(IPC.settingsKeepAwakeStatus),
+    keepAwakeGrant: () => invoke(IPC.settingsKeepAwakeGrant),
+    keepAwakeRevoke: () => invoke(IPC.settingsKeepAwakeRevoke),
+    appPaths: () => invoke(IPC.settingsAppPaths),
+    setAppDataDir: (path) => invoke(IPC.settingsSetAppDataDir, path),
+    setTempDir: (path) => invoke(IPC.settingsSetTempDir, path)
+  },
+
+  logs: {
+    query: (query) => invoke(IPC.logsQuery, query),
+    stats: () => invoke(IPC.logsStats),
+    clear: (scope) => invoke(IPC.logsClear, scope),
+    export: (query) => invoke(IPC.logsExport, query),
+    record: (input) => invoke(IPC.logsRecord, input),
+    onChanged: (handler) => subscribe(IPC.logsChanged, handler)
+  },
+
+  accounts: {
+    getPage: (workspaceKey?: string | null, options?: { refresh?: boolean; force?: boolean }) =>
+      invoke(IPC.accountsGetPage, workspaceKey, options),
+    createVav: (input) => invoke(IPC.accountsCreateVav, input),
+    createDraft: (input) => invoke(IPC.accountsCreateDraft, input),
+    updateVav: (id, patch) => invoke(IPC.accountsUpdateVav, id, patch),
+    setCurrent: (id) => invoke(IPC.accountsSetCurrent, id),
+    activate: (id) => invoke(IPC.accountsActivate, id),
+    remove: (id) => invoke(IPC.accountsRemove, id),
+    verify: (id, apiKey) => invoke(IPC.accountsVerify, id, apiKey),
+    revealKey: (id) => invoke(IPC.accountsRevealKey, id),
+    beginOAuth: (agentId, accountId) =>
+      invoke(IPC.accountsBeginOAuth, agentId, accountId),
+    cancelOAuth: (agentId) => invoke(IPC.accountsCancelOAuth, agentId),
+    signOut: (agentId) => invoke(IPC.accountsSignOut, agentId)
+  },
+
+  conversations: {
+    list: () => invoke(IPC.convList),
+    get: (id: string) => invoke(IPC.convGet, id),
+    create: (options?: import('@shared/ipc').CreateConversationOptions) =>
+      invoke(IPC.convCreate, options),
+    rename: (id: string, title: string) => invoke(IPC.convRename, id, title),
+    setModel: (id: string, model: string) => invoke(IPC.convSetModel, id, model),
+    setAgentBinaryName: (id: string, agentBinaryName: string | null) =>
+      invoke(IPC.convSetAgentBinary, id, agentBinaryName),
+    setCliHost: (id: string, host: string | null, accountId?: string | null) =>
+      invoke(IPC.convSetCliHost, id, host, accountId),
+    setSwarmLayout: (
+      id: string,
+      layout: import('@shared/types').TerminalLayoutNode | null,
+      full?: import('@shared/types').TerminalLayoutNode | null
+    ) => invoke(IPC.convSetSwarmLayout, id, layout, full),
+    setFocusedFile: (id: string, path: string | null) =>
+      invoke(IPC.convSetFocusedFile, id, path),
+    setFocusedDbTable: (id: string, table: string | null) =>
+      invoke(IPC.convSetFocusedDbTable, id, table),
+    setAppColumnFocus: (
+      id: string,
+      focus: import('@shared/appColumnFocus').AppColumnFocus | null
+    ) => invoke(IPC.convSetAppColumnFocus, id, focus),
+    accountQuota: (id: string, host?: import('@shared/types').CliHostKind | null) =>
+      invoke(IPC.convAccountQuota, id, host),
+    setWorkingDirectory: (id: string, path: string, machineId?: string | null) =>
+      invoke(IPC.convSetWorkdir, id, path, machineId),
+    pickWorkingDirectory: (id: string) => invoke(IPC.convPickWorkdir, id),
+    useTempWorkingDirectory: (id: string) => invoke(IPC.convUseTempWorkdir, id),
+    locateWorkspace: (id: string, destinationDir: string) =>
+      invoke(IPC.convLocateWorkspace, id, destinationDir),
+    remove: (ids: string[]) => invoke(IPC.convRemove, ids),
+    deleteMessage: (id: string, messageId: string) =>
+      invoke(IPC.convDeleteMessage, id, messageId),
+    revealInFinder: (path: string) => invoke(IPC.convReveal, path),
+    copyToClipboard: (text: string) => invoke(IPC.convCopy, text),
+    readClipboard: () => invoke(IPC.convClipboardRead) as Promise<string>,
+    copyImageToClipboard: (base64Png: string) =>
+      invoke(IPC.convCopyImage, base64Png) as Promise<
+        { ok: true } | { ok: false; error: string }
+      >,
+    readClipboardImage: () =>
+      invoke(IPC.convClipboardReadImage) as Promise<
+        { ok: true; path: string; bytes: number } | { ok: false; error: string }
+      >,
+    selectBranch: (id: string, messageId: string) =>
+      invoke(IPC.convSelectBranch, id, messageId),
+    setLeaf: (id: string, leafId: string) => invoke(IPC.convSetLeaf, id, leafId),
+    setPinned: (id: string, pinned: boolean) =>
+      invoke(IPC.convSetPinned, id, pinned),
+    setArchived: (id: string, archived: boolean) =>
+      invoke(IPC.convSetArchived, id, archived),
+    setApprovalMode: (id: string, mode) =>
+      invoke(IPC.convSetApprovalMode, id, mode),
+    setThinkingLevel: (id: string, level) =>
+      invoke(IPC.convSetThinkingLevel, id, level),
+    setFast: (id: string, fast: boolean) => invoke(IPC.convSetFast, id, fast),
+    setAcpMode: (id: string, modeId: string) =>
+      invoke(IPC.convSetAcpMode, id, modeId),
+    setAcpConfigOption: (id: string, configId: string, value: string | boolean) =>
+      invoke(IPC.convSetAcpConfig, id, configId, value),
+    setAcpGoal: (id: string, action, objective) =>
+      invoke(IPC.convSetAcpGoal, id, action, objective),
+    continueInNewSession: (id: string, messageId: string) =>
+      invoke(IPC.convContinueNew, id, messageId),
+    duplicate: (id: string) => invoke(IPC.convDuplicate, id),
+    exportPack: (ids: string[]) =>
+      invoke(IPC.convExportPack, ids) as Promise<
+        | { ok: true; path: string; blobCount: number; conversationCount: number }
+        | { ok: false; cancelled?: boolean; error?: string }
+      >,
+    importPack: () =>
+      invoke(IPC.convImportPack) as Promise<
+        | { ok: true; importedIds: string[]; path: string; blobCount: number }
+        | { ok: false; cancelled?: boolean; error?: string }
+      >,
+    onChanged: (handler) => subscribe(IPC.convChanged, handler),
+    onActivity: (handler) => subscribe(IPC.activityChanged, handler)
+  },
+
+  agent: {
+    send: (
+      id: string,
+      text: string,
+      attachments: string[],
+      contextBlocks?: import('@shared/types').PreviewRef[] | null,
+      contextFile?: string | null,
+      appColumnFocus?: import('@shared/appColumnFocus').AppColumnFocus | null
+    ) =>
+      invoke(
+        IPC.agentSend,
+        id,
+        text,
+        attachments,
+        contextBlocks ?? null,
+        contextFile ?? null,
+        appColumnFocus ?? null
+      ),
+    appendNotice: (id: string, text: string) =>
+      invoke(IPC.agentAppendNotice, id, text),
+    cancel: (id: string) => invoke(IPC.agentCancel, id),
+    answer: (id: string, toolCallId: string, answer: string): Promise<boolean> =>
+      invoke(IPC.agentAnswer, id, toolCallId, answer),
+    answerSecrets: (id, toolCallId, payload) =>
+      invoke(IPC.agentAnswerSecrets, id, toolCallId, payload),
+    status: (id: string) => invoke(IPC.agentStatus, id),
+    regenerate: (id: string, messageId: string) =>
+      invoke(IPC.agentRegenerate, id, messageId),
+    editUserMessage: (id: string, messageId: string, text: string) =>
+      invoke(IPC.agentEditUser, id, messageId, text),
+    fork: (id: string, messageId: string) => invoke(IPC.agentFork, id, messageId),
+    compact: (id, options) => invoke(IPC.agentCompact, id, options),
+    clearCompaction: (id, leafId) => invoke(IPC.agentClearCompaction, id, leafId),
+    onEvent: (handler) => subscribe(IPC.agentEvent, handler),
+    onCompactionsChanged: (handler) =>
+      subscribe<{ conversationId: string; compactions: import('@shared/types').LeafCompaction[] }>(
+        IPC.compactionsChanged,
+        handler
+      )
+  },
+
+  files: {
+    list: (path: string, sort: FileSortKey, ascending: boolean, conversationId?: string) =>
+      invoke(IPC.filesList, path, sort, ascending, conversationId),
+    read: (path: string, conversationId?: string) =>
+      invoke(IPC.filesRead, path, conversationId),
+    readTextWindow: (
+      path: string,
+      opts?: { startByte?: number; maxBytes?: number; force?: boolean; conversationId?: string }
+    ) => invoke(IPC.filesReadTextWindow, path, opts),
+    readBinary: (path: string, conversationId?: string) =>
+      invoke(IPC.filesReadBinary, path, conversationId),
+    readBinaryWindow: (
+      path: string,
+      opts?: { startByte?: number; maxBytes?: number; conversationId?: string }
+    ) => invoke(IPC.filesReadBinaryWindow, path, opts),
+    writeBinary: (path: string, base64: string, conversationId?: string) =>
+      invoke(IPC.filesWriteBinary, path, base64, conversationId),
+    write: (path: string, content: string, conversationId?: string) =>
+      invoke(IPC.filesWrite, path, content, conversationId),
+    workingCopyEnsure: (path: string, opts?: { fileId?: string | null }) =>
+      invoke(IPC.filesWorkingCopyEnsure, path, opts),
+    workingCopyPromote: (path: string) => invoke(IPC.filesWorkingCopyPromote, path),
+    workingCopyDiscard: (path: string) => invoke(IPC.filesWorkingCopyDiscard, path),
+    workingCopyStatus: (path: string) => invoke(IPC.filesWorkingCopyStatus, path),
+    quickLook: (path: string) => invoke(IPC.filesQuickLook, path),
+    openWithDefault: (path: string) => invoke(IPC.filesOpenWithDefault, path),
+    startDrag: (paths: string[]) => {
+      send(IPC.filesStartDrag, paths)
+    },
+    prefetchDragIcon: (path: string) => invoke(IPC.filesPrefetchDragIcon, path),
+    copyAsFile: (paths: string[], conversationId?: string) =>
+      invoke(IPC.filesCopyAsFile, paths, conversationId),
+    getInfo: (path: string, conversationId?: string) =>
+      invoke(IPC.filesGetInfo, path, conversationId),
+    watch: (conversationId: string, root: string | null) =>
+      invoke(IPC.filesWatch, conversationId, root),
+    onDirty: (handler) => subscribe(IPC.filesDirty, handler),
+    pathForFile: (file: File) => adapter.pathForFile?.(file) ?? '',
+    writeClip: (input) => invoke(IPC.filesWriteClip, input),
+    copyImage: (path) =>
+      invoke(IPC.filesCopyImage, path) as Promise<
+        { ok: true } | { ok: false; error: string }
+      >,
+    pickAttachments: () => invoke(IPC.filesPickAttachments),
+    captureScreenshot: (options) => invoke(IPC.filesCaptureScreenshot, options),
+    screenshotPermission: () => invoke(IPC.filesScreenshotPermission),
+    openScreenshotPermissionSettings: () =>
+      invoke(IPC.filesOpenScreenshotPermissionSettings),
+    saveAs: (defaultName: string, content: string) =>
+      invoke(IPC.filesSaveAs, defaultName, content),
+    rename: (path: string, newName: string, conversationId?: string) =>
+      invoke(IPC.filesRename, path, newName, conversationId),
+    trash: (paths: string[], conversationId?: string) =>
+      invoke(IPC.filesTrash, paths, conversationId),
+    inspect: (path: string, conversationId?: string) =>
+      invoke(IPC.filesInspect, path, conversationId),
+    inspectStructured: (
+      path: string,
+      opts?: { maxBlocks?: number; maxRows?: number; conversationId?: string }
+    ) => invoke(IPC.filesInspectStructured, path, opts),
+    dbQuery: (path: string, table: string, offset?: number, limit?: number) =>
+      invoke(IPC.filesDbQuery, path, table, offset ?? 0, limit ?? 500),
+    parseBlocks: (path: string, text: string) =>
+      invoke(IPC.filesParseBlocks, path, text)
+  },
+
+  git: {
+    status: (cwd: string, conversationId?: string) =>
+      invoke(IPC.gitStatus, cwd, conversationId),
+    diff: (cwd: string, path: string, opts?: { staged?: boolean; conversationId?: string }) =>
+      invoke(IPC.gitDiff, cwd, path, opts),
+    showBase64: (cwd: string, path: string, ref?: string, conversationId?: string) =>
+      invoke(IPC.gitShowBase64, cwd, path, ref, conversationId),
+    init: (cwd: string, conversationId?: string) =>
+      invoke(IPC.gitInit, cwd, conversationId),
+    log: (cwd: string, opts?: { limit?: number; conversationId?: string }) =>
+      invoke(IPC.gitLog, cwd, opts),
+    branches: (cwd: string, conversationId?: string) =>
+      invoke(IPC.gitBranches, cwd, conversationId),
+    stashes: (cwd: string, conversationId?: string) =>
+      invoke(IPC.gitStashes, cwd, conversationId),
+    patch: (cwd: string, spec: string, conversationId?: string) =>
+      invoke(IPC.gitPatch, cwd, spec, conversationId),
+    createBranch: (
+      cwd: string,
+      name: string,
+      opts?: { checkout?: boolean; startPoint?: string; conversationId?: string }
+    ) => invoke(IPC.gitCreateBranch, cwd, name, opts),
+    checkoutBranch: (cwd: string, name: string, conversationId?: string) =>
+      invoke(IPC.gitCheckoutBranch, cwd, name, conversationId),
+    deleteBranch: (cwd: string, name: string, conversationId?: string) =>
+      invoke(IPC.gitDeleteBranch, cwd, name, conversationId),
+    createWorktree: (
+      cwd: string,
+      options: { path: string; newBranch?: string; branch?: string },
+      conversationId?: string
+    ) => invoke(IPC.gitCreateWorktree, cwd, options, conversationId),
+    stashPush: (cwd: string, opts?: { message?: string; conversationId?: string }) =>
+      invoke(IPC.gitStashPush, cwd, opts),
+    stashApply: (
+      cwd: string,
+      index: number,
+      opts?: { pop?: boolean; conversationId?: string }
+    ) => invoke(IPC.gitStashApply, cwd, index, opts),
+    stashDrop: (cwd: string, index: number, conversationId?: string) =>
+      invoke(IPC.gitStashDrop, cwd, index, conversationId)
+  },
+
+  cloudflare: {
+    status: (cwd: string, query?: import('@shared/cloudflare').CloudflareStatusQuery) =>
+      invoke(IPC.cloudflareStatus, cwd, query)
+  },
+
+  supabase: {
+    status: (cwd: string, query?: import('@shared/supabase').SupabaseStatusQuery) =>
+      invoke(IPC.supabaseStatus, cwd, query)
+  },
+
+  plugins: {
+    list: (host) => invoke(IPC.pluginsList, host),
+    setEnabled: (host, pluginId, enabled) =>
+      invoke(IPC.pluginsSetEnabled, host, pluginId, enabled),
+    create: (kind, name) => invoke(IPC.pluginsCreate, kind, name),
+    write: (path, content) => invoke(IPC.pluginsWrite, path, content)
+  },
+
+  github: {
+    listPulls: (cwd: string, state?: import('@shared/github').GithubPullStateFilter) =>
+      invoke(IPC.githubListPulls, cwd, state),
+    getPull: (cwd: string, number: number) => invoke(IPC.githubGetPull, cwd, number),
+    listActions: (cwd: string, scope?: import('@shared/github').GithubActionsScope) =>
+      invoke(IPC.githubListActions, cwd, scope),
+    getActionRun: (cwd: string, runId: number) =>
+      invoke(IPC.githubGetActionRun, cwd, runId),
+    getSite: (cwd: string) => invoke(IPC.githubGetSite, cwd),
+    listReleases: (cwd: string) => invoke(IPC.githubListReleases, cwd)
+  },
+
+  connectors: {
+    catalog: () => invoke(IPC.connectorsCatalog),
+    probe: (cwd: string) => invoke(IPC.connectorsProbe, cwd),
+    act: (request) => invoke(IPC.connectorsAct, request),
+    authStatus: () => invoke(IPC.connectorsAuthStatus),
+    beginLogin: (id) => invoke(IPC.connectorsBeginLogin, id),
+    cancelLogin: (id) => invoke(IPC.connectorsCancelLogin, id)
+  },
+
+  vercel: {
+    status: (cwd: string, query?: import('@shared/vercel').VercelStatusQuery) =>
+      invoke(IPC.vercelStatus, cwd, query)
+  },
+
+  timers: {
+    listJobs: () => invoke(IPC.timersListJobs),
+    createScheduled: () => invoke(IPC.timersCreateScheduled),
+    getJobForConversation: (conversationId) =>
+      invoke(IPC.timersGetJobForConversation, conversationId),
+    createJob: (input) => invoke(IPC.timersCreateJob, input),
+    updateJob: (id, patch) => invoke(IPC.timersUpdateJob, id, patch),
+    removeJob: (id) => invoke(IPC.timersRemoveJob, id),
+    runNow: (id) => invoke(IPC.timersRunNow, id),
+    listRuns: (jobId) => invoke(IPC.timersListRuns, jobId),
+    listSessions: () => invoke(IPC.timersListSessions),
+    onChanged: (handler) => subscribe(IPC.timersChanged, handler)
+  },
+
+  db: {
+    list: () => invoke(IPC.dbList),
+    create: () => invoke(IPC.dbCreate),
+    createFromFile: (path) => invoke(IPC.dbCreateFromFile, path),
+    fileSchema: (path) => invoke(IPC.dbFileSchema, path),
+    fileQuery: (path, sql) => invoke(IPC.dbFileQuery, path, sql),
+    createSession: (connectionId) => invoke(IPC.dbCreateSession, connectionId),
+    getForConversation: (conversationId) =>
+      invoke(IPC.dbGetForConversation, conversationId),
+    ensureForConversation: (conversationId) =>
+      invoke(IPC.dbEnsureForConversation, conversationId),
+    update: (id, patch) => invoke(IPC.dbUpdate, id, patch),
+    remove: (id) => invoke(IPC.dbRemove, id),
+    test: (id) => invoke(IPC.dbTest, id),
+    open: (id) => invoke(IPC.dbOpen, id),
+    schema: (id) => invoke(IPC.dbSchema, id),
+    queryTable: (id, table, offset, limit) =>
+      invoke(IPC.dbQueryTable, id, table, offset, limit),
+    onChanged: (handler) => subscribe(IPC.dbChanged, handler)
+  },
+
+  knowledge: {
+    list: () => invoke(IPC.knowledgeList),
+    get: (id) => invoke(IPC.knowledgeGet, id),
+    getForConversation: (conversationId) =>
+      invoke(IPC.knowledgeGetForConversation, conversationId),
+    createNote: (folderId) => invoke(IPC.knowledgeCreateNote, folderId ?? null),
+    importDocument: (path, folderId) =>
+      invoke(IPC.knowledgeImportDocument, path, folderId ?? null),
+    listFolders: () => invoke(IPC.knowledgeListFolders),
+    createFolder: (name) => invoke(IPC.knowledgeCreateFolder, name),
+    renameFolder: (id, name) => invoke(IPC.knowledgeRenameFolder, id, name),
+    removeFolder: (id) => invoke(IPC.knowledgeRemoveFolder, id),
+    move: (ids, folderId) => invoke(IPC.knowledgeMove, ids, folderId),
+    readNote: (id) => invoke(IPC.knowledgeReadNote, id),
+    writeNote: (id, markdown) => invoke(IPC.knowledgeWriteNote, id, markdown),
+    rename: (id, title) => invoke(IPC.knowledgeRename, id, title),
+    remove: (id) => invoke(IPC.knowledgeRemove, id),
+    refresh: (id) => invoke(IPC.knowledgeRefresh, id),
+    onChanged: (handler) => subscribe(IPC.knowledgeChanged, handler)
+  },
+
+  apps: {
+    onApply: (handler) => subscribe(IPC.appHostApply, handler)
+  },
+
+  fileSessions: {
+    open: (path: string) => invoke(IPC.fileSessionsOpen, path),
+    create: (path: string) => invoke(IPC.fileSessionsCreate, path),
+    setActive: (fileId: string, sessionId: string) =>
+      invoke(IPC.fileSessionsSetActive, fileId, sessionId),
+    list: (fileId: string) => invoke(IPC.fileSessionsList, fileId),
+    listAll: () => invoke(IPC.fileSessionsListAll),
+    resolve: (fileId: string) => invoke(IPC.fileSessionsResolve, fileId),
+    setReadOnly: (sessionId: string, readOnly: boolean) =>
+      invoke(IPC.fileSessionsSetReadOnly, sessionId, readOnly),
+    onReadOnlyChanged: (handler) =>
+      subscribe<{ sessionId: string; readOnly: boolean }>(
+        IPC.fileSessionReadOnlyChanged,
+        handler
+      ),
+    onChanged: (handler) => subscribe(IPC.fileSessionsChanged, handler),
+    rename: (fileId: string, sessionId: string, title: string) =>
+      invoke(IPC.fileSessionsRename, fileId, sessionId, title),
+    delete: (fileId: string, sessionIds: string[]) =>
+      invoke(IPC.fileSessionsDelete, fileId, sessionIds),
+    forceDelete: (fileId: string, sessionIds: string[]) =>
+      invoke(IPC.fileSessionsForceDelete, fileId, sessionIds)
+  },
+
+  agents: {
+    resolveBinary: (candidates: string[], force?: boolean) =>
+      invoke(IPC.agentsResolveBinary, candidates, force === true),
+    probeBinaries: (items, force?: boolean, machineId?: string) =>
+      invoke(IPC.agentsProbeBinaries, items, force === true, machineId),
+    listModels: (host: string | null, force?: boolean) =>
+      invoke(IPC.agentsListModels, host, force === true),
+    getModelCatalog: () => invoke(IPC.agentsGetModelCatalog),
+    preloadModels: (force?: boolean) =>
+      invoke(IPC.agentsPreloadModels, force === true),
+    onModelCatalogChanged: (handler) => subscribe(IPC.agentsModelCatalogChanged, handler),
+    installStart: (payload) => invoke(IPC.agentsInstallStart, payload),
+    installCancel: (agentId) => invoke(IPC.agentsInstallCancel, agentId),
+    installClear: (agentId) => invoke(IPC.agentsInstallClear, agentId),
+    listInstallRuns: () => invoke(IPC.agentsListInstallRuns),
+    onInstallRunsChanged: (handler) => subscribe(IPC.agentsInstallRunsChanged, handler)
+  },
+
+  pty: {
+    create: (
+      conversationId: string,
+      cwd: string,
+      cols: number,
+      rows: number,
+      options?: import('@shared/ipc').PtyCreateOptions | string
+    ) => invoke(IPC.ptyCreate, conversationId, cwd, cols, rows, options),
+    // One-way: keyboard / wheel / paste must not wait for main ACK.
+    write: (tabId: string, data: string) => {
+      send(IPC.ptyWrite, tabId, data)
+    },
+    resize: (tabId: string, cols: number, rows: number, force?: boolean) => {
+      send(IPC.ptyResize, tabId, cols, rows, force === true)
+    },
+    kill: (tabId: string) => invoke(IPC.ptyKill, tabId),
+    isBusy: (tabId: string) => invoke(IPC.ptyIsBusy, tabId),
+    list: (conversationId: string) => invoke(IPC.ptyList, conversationId),
+    setLayouts: (
+      conversationId: string,
+      layouts: import('@shared/types').ConversationPtyLayouts
+    ) => invoke(IPC.ptySetLayouts, conversationId, layouts),
+    replay: (tabId: string) => invoke(IPC.ptyReplay, tabId),
+    onData: (handler) => subscribe(IPC.ptyData, handler),
+    onExit: (handler) => subscribe<string>(IPC.ptyExit, handler),
+    onChanged: (handler) => subscribe(IPC.ptyChanged, handler),
+    onStatus: (handler) => subscribe(IPC.ptyStatus, handler)
+  },
+
+  window: {
+    setTheme: (theme: AppSettings['theme']) => invoke(IPC.windowSetTheme, theme),
+    getAccentColor: () => invoke(IPC.windowGetAccentColor) as Promise<string>,
+    onAccentColorChanged: (handler) => subscribe<string>(IPC.accentColorChanged, handler),
+    shellPath: (kind: ShellKind) => invoke(IPC.windowShellPath, kind),
+    openSettings: (view?: SettingsView, agentId?: string, machineId?: string) =>
+      invoke(IPC.windowOpenSettings, view, agentId, machineId),
+    closeSettings: () => invoke(IPC.windowCloseSettings),
+    desiredSettingsView: () =>
+      invoke(IPC.settingsDesiredView) as Promise<SettingsViewPayload>,
+    popupMenu: (items: NativeMenuItem[], position?: { x: number; y: number }) =>
+      invoke(IPC.windowPopupMenu, items, position),
+    closePopupMenu: () => invoke(IPC.windowClosePopupMenu),
+    peekPopupMenu: () =>
+      invoke(IPC.windowE2ePeekMenu) as Promise<
+        { id?: string; label?: string; checked?: boolean }[] | null
+      >,
+    choosePopupMenu: (idOrLabel: string) =>
+      invoke(IPC.windowE2eChooseMenu, idOrLabel) as Promise<boolean>,
+    dismissPopupMenu: () =>
+      invoke(IPC.windowE2eDismissMenu) as Promise<boolean>,
+    openSession: (conversationId: string) =>
+      invoke(IPC.windowOpenSession, conversationId),
+    revealInList: (conversationId: string) =>
+      invoke(IPC.windowRevealInList, conversationId),
+    setPictureInPicture: (enabled: boolean) =>
+      invoke(IPC.windowSetPictureInPicture, enabled),
+    closeDetachedSession: (conversationId: string) =>
+      invoke(IPC.windowCloseDetached, conversationId),
+    newDetachedSession: () => invoke(IPC.windowNewDetached),
+    newSessionHere: () => invoke(IPC.windowNewSessionHere),
+    navigateSession: (conversationId) =>
+      invoke(IPC.windowNavigateSession, conversationId),
+    listDetachedSessions: () => invoke(IPC.windowListDetached),
+    onDetachedChanged: (handler) =>
+      subscribe<string[]>(IPC.windowDetachedChanged, handler),
+    onRepaint: (handler) => subscribe(IPC.windowRepaint, () => handler()),
+    openFilePreview: (path, options) =>
+      invoke(IPC.windowOpenFilePreview, path, options),
+    openOverlay: (payload) => invoke(IPC.windowOpenOverlay, payload),
+    onPreviewNavigate: (handler) =>
+      subscribe<import('@shared/overlayOpen').OverlayNavigatePayload>(IPC.previewNavigate, handler),
+    previewShellReady: () => {
+      send(IPC.previewShellReady)
+    },
+    onSessionNavigate: (handler) =>
+      subscribe<{
+        conversationId: string
+        meta?: import('@shared/types').ConversationMeta
+        empty?: boolean
+        collapseTools?: boolean
+        openSeq: number
+        requestedAt?: number
+      }>(IPC.sessionNavigate, handler),
+    sessionShellReady: () => {
+      send(IPC.sessionShellReady)
+    },
+    setPreviewCloseGuard: (enabled: boolean) =>
+      invoke(IPC.previewSetCloseGuard, enabled),
+    forcePreviewClose: () => invoke(IPC.previewForceClose),
+    onPreviewCloseAttempt: (handler) =>
+      subscribe(IPC.previewCloseAttempt, () => handler()),
+    openTokenUsage: (conversationId, anchor) =>
+      invoke(IPC.windowOpenTokenUsage, conversationId, anchor),
+    getTokenUsageView: () => invoke(IPC.tokenUsageGetView),
+    onTokenUsageView: (handler) => subscribe<TokenUsageViewPayload>(IPC.tokenUsageView, handler),
+    openProviderAccount: (conversationId, anchor) =>
+      invoke(IPC.windowOpenProviderAccount, conversationId, anchor),
+    getProviderAccountView: () => invoke(IPC.providerAccountGetView),
+    onProviderAccountView: (handler) =>
+      subscribe<ProviderAccountViewPayload>(IPC.providerAccountView, handler),
+    fitProviderAccount: (height) => invoke(IPC.providerAccountFit, height),
+    openRemoteFolderPicker: (request: RemoteFolderPickRequest) =>
+      invoke(IPC.windowOpenRemoteFolder, request),
+    getRemoteFolderView: () => invoke(IPC.remoteFolderGetView),
+    onRemoteFolderView: (handler) =>
+      subscribe<RemoteFolderViewPayload>(IPC.remoteFolderView, handler),
+    chooseRemoteFolder: (path) => invoke(IPC.remoteFolderChoose, path),
+    onRemoteFolderChosen: (handler) =>
+      subscribe<RemoteFolderPickResult>(IPC.remoteFolderChosen, handler),
+    openSwarmHistory: (conversationId, anchor) =>
+      invoke(IPC.windowOpenSwarmHistory, conversationId, anchor),
+    onSwarmHistoryResume: (handler) =>
+      subscribe<SwarmHistoryResumeEvent>(IPC.swarmHistoryResume, handler),
+    relaunch: () => invoke(IPC.windowRelaunch),
+    setMinSize: (size) => invoke(IPC.windowSetMinSize, size)
+  },
+
+  screenshot: {
+    ready: () => {
+      send(IPC.screenshotReady)
+    },
+    painted: () => {
+      send(IPC.screenshotPainted)
+    },
+    onInit: (handler) => subscribe<ScreenshotInitPayload>(IPC.screenshotInit, handler),
+    onEscape: (handler) => subscribe(IPC.screenshotEscape, () => handler()),
+    dismiss: () => {
+      send(IPC.screenshotDismiss)
+    },
+    finish: (payload) => {
+      send(IPC.screenshotFinish, payload)
+    },
+    setKey: (on) => {
+      send(IPC.screenshotSetKey, on)
+    }
+  },
+
+  faaaaast: {
+    onInit: (handler) => subscribe<FaaaaastInitPayload>(IPC.faaaaastInit, handler),
+    onDelta: (handler) => subscribe<FaaaaastDelta>(IPC.faaaaastDelta, handler),
+    ask: (request: FaaaaastAskRequest) => invoke(IPC.faaaaastAsk, request),
+    cancel: () => {
+      send(IPC.faaaaastCancel)
+    },
+    dismiss: () => {
+      send(IPC.faaaaastDismiss)
+    },
+    resize: (height) => {
+      send(IPC.faaaaastResize, height)
+    }
+  },
+
+  notifications: {
+    permission: () => invoke(IPC.notificationsPermission),
+    seen: (conversationId) => send(IPC.notificationsSeen, conversationId)
+  },
+
+  remoteControl: {
+    status: () => invoke(IPC.remoteControlStatus),
+    regenerateSecret: () => invoke(IPC.remoteControlRegenerateSecret),
+    resetIdentity: () => invoke(IPC.remoteControlResetIdentity),
+    onChanged: (handler) => subscribe(IPC.remoteControlChanged, handler)
+  },
+
+  hosts: {
+    list: () => invoke(IPC.hostsList),
+    pairing: () => invoke(IPC.hostsPairing),
+    pair: (payload: string) => invoke(IPC.hostsPair, payload),
+    pairLan: (peer) => invoke(IPC.hostsPairLan, peer),
+    cancelPair: () => {
+      send(IPC.hostsCancelPair)
+      return Promise.resolve()
+    },
+    forget: (machineId: string) => invoke(IPC.hostsForget, machineId),
+    incoming: () => invoke(IPC.hostsIncoming),
+    disconnectIncoming: (grantId: string) => invoke(IPC.hostsDisconnectIncoming, grantId),
+    unpairIncoming: (grantId: string) => invoke(IPC.hostsUnpairIncoming, grantId),
+    rotateOffer: () => invoke(IPC.hostsRotateOffer),
+    discovered: () => invoke(IPC.hostsDiscovered),
+    listDir: (machineId: string, path: string) =>
+      invoke(IPC.hostsListDir, machineId, path),
+    home: (machineId: string) => invoke(IPC.hostsHome, machineId),
+    specialFolder: (machineId, kind) => invoke(IPC.hostsSpecialFolder, machineId, kind),
+    show: (machineId: string) => invoke(IPC.hostsShow, machineId),
+    active: () => invoke(IPC.hostsActive),
+    openFolder: (machineId: string) => invoke(IPC.hostsOpenFolder, machineId),
+    probeProviders: (machineId: string) => invoke(IPC.hostsProbeProviders, machineId),
+    onChanged: (handler) => subscribe(IPC.hostsChanged, handler),
+    onDiscovered: (handler) => subscribe(IPC.hostsDiscoveredChanged, handler),
+    onIncomingChanged: (handler) => subscribe(IPC.hostsIncomingChanged, handler),
+    onPickFolder: (handler) => subscribe(IPC.hostsPickFolder, handler),
+    onActivate: (handler) => subscribe(IPC.hostsActivate, handler)
+  },
+
+  changeSets: {
+    get: (id) => invoke(IPC.changeSetGet, id),
+    active: (conversationId) => invoke(IPC.changeSetActive, conversationId),
+    accept: (setId, filePaths) => invoke(IPC.changeSetAccept, setId, filePaths),
+    reject: (setId, filePaths) => invoke(IPC.changeSetReject, setId, filePaths),
+    acceptAll: (setId) => invoke(IPC.changeSetAcceptAll, setId),
+    rejectAll: (setId) => invoke(IPC.changeSetRejectAll, setId),
+    undo: (setId, filePath) => invoke(IPC.changeSetUndo, setId, filePath),
+    applyEdit: (setId, filePath, content) =>
+      invoke(IPC.changeSetApplyEdit, setId, filePath, content)
+  },
+
+  updates: {
+    getState: () => invoke(IPC.updatesGet),
+    check: () => invoke(IPC.updatesCheck),
+    openDownload: () => invoke(IPC.updatesOpenDownload),
+    cancelDownload: () => invoke(IPC.updatesCancelDownload),
+    install: () => invoke(IPC.updatesInstall),
+    onChanged: (handler) => subscribe(IPC.updatesChanged, handler)
+  },
+
+  dialog: {
+    alert: (options) => invoke(IPC.dialogAlert, options),
+    confirm: (options) => invoke(IPC.dialogConfirm, options),
+    messageBox: (options) => invoke(IPC.dialogMessageBox, options)
+  },
+
+  onMenuCommand: (handler) => subscribe<MenuCommand>(IPC.menuCommand, handler),
+  onSettingsChanged: (handler) => subscribe<AppSettings>(IPC.settingsChanged, handler),
+  onKeepAwakeStatus: (handler) =>
+    subscribe<import('@shared/sleepBlocker').KeepAwakeStatus>(IPC.keepAwakeStatus, handler),
+  onSettingsView: (handler) => subscribe<SettingsViewPayload>(IPC.settingsView, handler),
+  onSettingsAnalysis: (handler) => subscribe<AnalysisSnapshot>(IPC.settingsAnalysisUpdated, handler),
+  onAccountsUpdated: (handler) =>
+    subscribe<import('@shared/ipc').AccountsPagePayload>(IPC.accountsUpdated, handler),
+  onCliOpen: (handler) => subscribe(IPC.cliOpen, handler),
+  onFullscreen: (handler) => subscribe<boolean>(IPC.windowFullscreen, handler),
+
+  computer: {
+    status: () => invoke(IPC.computerStatus),
+    listApps: () => invoke(IPC.computerListApps),
+    requestAccessibility: () => invoke(IPC.computerRequestAccessibility),
+    requestScreenRecording: () => invoke(IPC.computerRequestScreenRecording),
+    openAccessibilitySettings: () => invoke(IPC.computerOpenAccessibilitySettings),
+    openScreenRecordingSettings: () => invoke(IPC.computerOpenScreenRecordingSettings)
+  }
+}
+
+}
