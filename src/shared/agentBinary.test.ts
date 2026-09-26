@@ -37,7 +37,7 @@ describe('agentBinaryCandidates', () => {
 
 describe('agentWebsiteUrl', () => {
   it('accepts http(s) docs urls and rejects empty / relative', () => {
-    assert.equal(agentWebsiteUrl({ installDocsUrl: 'https://opencode.ai/docs/' }), 'https://opencode.ai/docs/')
+    assert.equal(agentWebsiteUrl({ installDocsUrl: 'https://cursor.com/docs/cli/overview' }), 'https://cursor.com/docs/cli/overview')
     assert.equal(agentWebsiteUrl({ installDocsUrl: '  ' }), null)
     assert.equal(agentWebsiteUrl({ installDocsUrl: '/local' }), null)
     assert.equal(agentWebsiteUrl({}), null)
@@ -45,7 +45,7 @@ describe('agentWebsiteUrl', () => {
 })
 
 describe('newlyInstalledCatalogueAgents', () => {
-  const catalogue = [fakeAgent('claude'), fakeAgent('grok'), fakeAgent('opencode'), fakeAgent('cursor')]
+  const catalogue = [fakeAgent('claude'), fakeAgent('grok'), fakeAgent('codex'), fakeAgent('cursor')]
 
   it('appends catalogue agents that are installed and not already listed', () => {
     const added = newlyInstalledCatalogueAgents(
@@ -53,14 +53,14 @@ describe('newlyInstalledCatalogueAgents', () => {
       {
         claude: '/usr/bin/claude',
         grok: '/usr/bin/grok',
-        opencode: '/usr/local/bin/opencode',
+        codex: '/usr/local/bin/codex',
         cursor: null
       },
       catalogue
     )
     assert.deepEqual(
       added.map((a) => a.id),
-      ['opencode']
+      ['codex']
     )
     assert.equal(added[0]?.enabled, true)
     assert.equal(added[0]?.builtin, true)
@@ -78,7 +78,7 @@ describe('newlyInstalledCatalogueAgents', () => {
       {
         claude: '/usr/bin/claude',
         grok: '/usr/bin/grok',
-        opencode: '/usr/local/bin/opencode',
+        codex: '/usr/local/bin/codex',
         cursor: '/usr/bin/cursor'
       },
       catalogue,
@@ -86,7 +86,7 @@ describe('newlyInstalledCatalogueAgents', () => {
     )
     assert.deepEqual(
       added.map((a) => a.id),
-      ['opencode']
+      ['codex']
     )
   })
 })

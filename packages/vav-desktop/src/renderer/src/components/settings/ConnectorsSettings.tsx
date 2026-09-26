@@ -191,187 +191,144 @@ export function ConnectorsSettings(): React.JSX.Element {
       <div className="form-hint">{t('connector.github.hint')}</div>
       {renderLogin('github')}
 
-      <div className="form-row">
-        <label>{t('workspace.cloudflareTray')}</label>
-        <div className="control">
-          <Toggle
-            checked={settings.cloudflareTrayEnabled === true}
-            title={t('workspace.cloudflareTray')}
-            testId="settings-cloudflare-tray"
-            onChange={(cloudflareTrayEnabled) => void updateSettings({ cloudflareTrayEnabled })}
-          />
-        </div>
-      </div>
       <div className="form-hint">{t('connector.cloudflare.hint')}</div>
       {renderLogin('cloudflare')}
 
-      {settings.cloudflareTrayEnabled === true ? (
-        <>
-          <div className="form-row">
-            <label>{t('workspace.cloudflareToken')}</label>
-            <div className="control">
-              <input
-                className="text-field"
-                type="password"
-                placeholder={
-                  settings.cloudflareApiTokenPresent
-                    ? t('workspace.cloudflareTokenConfigured')
-                    : t('workspace.cloudflareTokenPlaceholder')
-                }
-                value={cfDraft}
-                onChange={(event) => setCfDraft(event.currentTarget.value)}
-              />
-              <Button
-                label={cfSaving ? t('workspace.braveSaving') : t('workspace.braveSave')}
-                variant="secondary"
-                size="sm"
-                disabled={cfSaving || !cfDraft.trim()}
-                onClick={() => void saveCloudflareToken()}
-              />
-              {settings.cloudflareApiTokenPresent && (
-                <Button
-                  label={t('common.clear')}
-                  size="sm"
-                  onClick={() => {
-                    void window.vav.settings.setCloudflareApiToken('').then(() => {
-                      setCfDraft('')
-                      void loadAuth()
-                    })
-                  }}
-                />
-              )}
-            </div>
-          </div>
-          <div className="form-row">
-            <label>{t('workspace.cloudflareAccount')}</label>
-            <div className="control">
-              <input
-                className="text-field"
-                placeholder={t('workspace.cloudflareAccountPlaceholder')}
-                value={settings.cloudflareAccountId ?? ''}
-                onChange={(event) => void updateSettings({ cloudflareAccountId: event.currentTarget.value })}
-              />
-            </div>
-          </div>
-        </>
-      ) : null}
-
       <div className="form-row">
-        <label>{t('workspace.supabaseTray')}</label>
+        <label>{t('workspace.cloudflareToken')}</label>
         <div className="control">
-          <Toggle
-            checked={settings.supabaseTrayEnabled === true}
-            title={t('workspace.supabaseTray')}
-            testId="settings-supabase-tray"
-            onChange={(supabaseTrayEnabled) => void updateSettings({ supabaseTrayEnabled })}
+          <input
+            className="text-field"
+            type="password"
+            placeholder={
+              settings.cloudflareApiTokenPresent
+                ? t('workspace.cloudflareTokenConfigured')
+                : t('workspace.cloudflareTokenPlaceholder')
+            }
+            value={cfDraft}
+            onChange={(event) => setCfDraft(event.currentTarget.value)}
+          />
+          <Button
+            label={cfSaving ? t('workspace.braveSaving') : t('workspace.braveSave')}
+            variant="secondary"
+            size="sm"
+            disabled={cfSaving || !cfDraft.trim()}
+            onClick={() => void saveCloudflareToken()}
+          />
+          {settings.cloudflareApiTokenPresent && (
+            <Button
+              label={t('common.clear')}
+              size="sm"
+              onClick={() => {
+                void window.vav.settings.setCloudflareApiToken('').then(() => {
+                  setCfDraft('')
+                  void loadAuth()
+                })
+              }}
+            />
+          )}
+        </div>
+      </div>
+      <div className="form-row">
+        <label>{t('workspace.cloudflareAccount')}</label>
+        <div className="control">
+          <input
+            className="text-field"
+            placeholder={t('workspace.cloudflareAccountPlaceholder')}
+            value={settings.cloudflareAccountId ?? ''}
+            onChange={(event) => void updateSettings({ cloudflareAccountId: event.currentTarget.value })}
           />
         </div>
       </div>
+
       <div className="form-hint">{t('connector.supabase.hint')}</div>
       {renderLogin('supabase')}
 
-      {settings.supabaseTrayEnabled === true ? (
-        <>
-          <div className="form-row">
-            <label>{t('workspace.supabaseToken')}</label>
-            <div className="control">
-              <input
-                className="text-field"
-                type="password"
-                placeholder={
-                  settings.supabaseAccessTokenPresent
-                    ? t('workspace.supabaseTokenConfigured')
-                    : t('workspace.supabaseTokenPlaceholder')
-                }
-                value={sbDraft}
-                onChange={(event) => setSbDraft(event.currentTarget.value)}
-              />
-              <Button
-                label={sbSaving ? t('workspace.braveSaving') : t('workspace.braveSave')}
-                variant="secondary"
-                size="sm"
-                disabled={sbSaving || !sbDraft.trim()}
-                onClick={() => void saveSupabaseToken()}
-              />
-              {settings.supabaseAccessTokenPresent && (
-                <Button
-                  label={t('common.clear')}
-                  size="sm"
-                  onClick={() => {
-                    void window.vav.settings.setSupabaseAccessToken('').then(() => {
-                      setSbDraft('')
-                      void loadAuth()
-                    })
-                  }}
-                />
-              )}
-            </div>
-          </div>
-          <div className="form-row">
-            <label>{t('workspace.supabaseRef')}</label>
-            <div className="control">
-              <input
-                className="text-field"
-                placeholder={t('workspace.supabaseRefPlaceholder')}
-                value={settings.supabaseProjectRef ?? ''}
-                onChange={(event) => void updateSettings({ supabaseProjectRef: event.currentTarget.value })}
-              />
-            </div>
-          </div>
-        </>
-      ) : null}
-
       <div className="form-row">
-        <label>{t('workspace.vercelTray')}</label>
+        <label>{t('workspace.supabaseToken')}</label>
         <div className="control">
-          <Toggle
-            checked={settings.vercelTrayEnabled === true}
-            title={t('workspace.vercelTray')}
-            testId="settings-vercel-tray"
-            onChange={(vercelTrayEnabled) => void updateSettings({ vercelTrayEnabled })}
+          <input
+            className="text-field"
+            type="password"
+            placeholder={
+              settings.supabaseAccessTokenPresent
+                ? t('workspace.supabaseTokenConfigured')
+                : t('workspace.supabaseTokenPlaceholder')
+            }
+            value={sbDraft}
+            onChange={(event) => setSbDraft(event.currentTarget.value)}
+          />
+          <Button
+            label={sbSaving ? t('workspace.braveSaving') : t('workspace.braveSave')}
+            variant="secondary"
+            size="sm"
+            disabled={sbSaving || !sbDraft.trim()}
+            onClick={() => void saveSupabaseToken()}
+          />
+          {settings.supabaseAccessTokenPresent && (
+            <Button
+              label={t('common.clear')}
+              size="sm"
+              onClick={() => {
+                void window.vav.settings.setSupabaseAccessToken('').then(() => {
+                  setSbDraft('')
+                  void loadAuth()
+                })
+              }}
+            />
+          )}
+        </div>
+      </div>
+      <div className="form-row">
+        <label>{t('workspace.supabaseRef')}</label>
+        <div className="control">
+          <input
+            className="text-field"
+            placeholder={t('workspace.supabaseRefPlaceholder')}
+            value={settings.supabaseProjectRef ?? ''}
+            onChange={(event) => void updateSettings({ supabaseProjectRef: event.currentTarget.value })}
           />
         </div>
       </div>
+
       <div className="form-hint">{t('connector.vercel.hint')}</div>
       {renderLogin('vercel')}
 
-      {settings.vercelTrayEnabled === true ? (
-        <div className="form-row">
-          <label>{t('workspace.vercelToken')}</label>
-          <div className="control">
-            <input
-              className="text-field"
-              type="password"
-              placeholder={
-                settings.vercelApiTokenPresent
-                  ? t('workspace.vercelTokenConfigured')
-                  : t('workspace.vercelTokenPlaceholder')
-              }
-              value={vercelDraft}
-              onChange={(event) => setVercelDraft(event.currentTarget.value)}
-            />
+      <div className="form-row">
+        <label>{t('workspace.vercelToken')}</label>
+        <div className="control">
+          <input
+            className="text-field"
+            type="password"
+            placeholder={
+              settings.vercelApiTokenPresent
+                ? t('workspace.vercelTokenConfigured')
+                : t('workspace.vercelTokenPlaceholder')
+            }
+            value={vercelDraft}
+            onChange={(event) => setVercelDraft(event.currentTarget.value)}
+          />
+          <Button
+            label={vercelSaving ? t('workspace.braveSaving') : t('workspace.braveSave')}
+            variant="secondary"
+            size="sm"
+            disabled={vercelSaving || !vercelDraft.trim()}
+            onClick={() => void saveVercelToken()}
+          />
+          {settings.vercelApiTokenPresent && (
             <Button
-              label={vercelSaving ? t('workspace.braveSaving') : t('workspace.braveSave')}
-              variant="secondary"
+              label={t('common.clear')}
               size="sm"
-              disabled={vercelSaving || !vercelDraft.trim()}
-              onClick={() => void saveVercelToken()}
+              onClick={() => {
+                void window.vav.settings.setVercelApiToken('').then(() => {
+                  setVercelDraft('')
+                  void loadAuth()
+                })
+              }}
             />
-            {settings.vercelApiTokenPresent && (
-              <Button
-                label={t('common.clear')}
-                size="sm"
-                onClick={() => {
-                  void window.vav.settings.setVercelApiToken('').then(() => {
-                    setVercelDraft('')
-                    void loadAuth()
-                  })
-                }}
-              />
-            )}
-          </div>
+          )}
         </div>
-      ) : null}
+      </div>
     </div>
   )
 }

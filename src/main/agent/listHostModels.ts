@@ -23,7 +23,7 @@ const CACHE_TTL_MS = 30 * 60_000
 const RUN_TIMEOUT_MS = 12_000
 
 /** Hosts whose CLI can actually print a catalogue. Others stay on static fallback. */
-const LIVE_PROBE_HOSTS = new Set<CliHostKind>(['cursor', 'grok', 'opencode', 'pi'])
+const LIVE_PROBE_HOSTS = new Set<CliHostKind>(['cursor', 'grok'])
 
 /** Empty id = omit `--model` / use the CLI's own default. */
 export const CLI_DEFAULT_MODEL: ModelOption = { id: '', label: 'Default' }
@@ -458,20 +458,11 @@ async function probeLiveModels(
       const out = await runText(binary, ['models'], env)
       return parseGrokModels(out)
     }
-    case 'opencode': {
-      const out = await runText(binary, ['models'], env)
-      return parseLineIds(out)
-    }
-    case 'pi': {
-      const out = await runText(binary, ['--list-models'], env)
-      return parsePiModels(out)
-    }
     case 'claude':
       // No machine-readable list in the CLI; aliases are the supported surface.
       return [...CLAUDE_ALIASES]
     case 'codex':
     case 'devin':
-    case 'antigravity':
     case 'kiro':
     case 'cline':
       // No reliable non-interactive catalogue yet.
@@ -503,47 +494,6 @@ function parseGrokModels(text: string): ModelOption[] {
     const id = m[1]!
     const isDefault = !!m[2]
     models.push({ id, label: isDefault ? `${id} (default)` : id })
-  }
-  return dedupe(models)
-}
-
-function parseLineIds(text: string): ModelOption[] {
-  const models: ModelOption[] = []
-  for (const raw of text.split(/\r?\n/)) {
-    const id = raw.trim()
-    if (!id || id.includes(' ')) continue
-    models.push({ id, label: id })
-  }
-  return dedupe(models)
-}
-
-function parseContextSize(raw: string): number | undefined {
-  const m = raw.trim().match(/^(\d+(?:\.\d+)?)(k|m|b)?$/i)
-  if (!m) return undefined
-  const n = Number(m[1])
-  if (!Number.isFinite(n) || n <= 0) return undefined
-  const unit = (m[2] || '').toLowerCase()
-  if (unit === 'k') return Math.round(n * 1_000)
-  if (unit === 'm') return Math.round(n * 1_000_000)
-  if (unit === 'b') return Math.round(n * 1_000_000_000)
-  if (n >= 1_024) return Math.round(n)
-  return undefined
-}
-
-function parsePiModels(text: string): ModelOption[] {
-  const models: ModelOption[] = []
-  for (const raw of text.split(/\r?\n/)) {
-    const line = raw.trim()
-    if (!line || /^provider\s+model/i.test(line)) continue
-    // "deepseek  deepseek-v4-flash  1M  ..."
-    const parts = line.split(/\s+/)
-    if (parts.length < 2) continue
-    const provider = parts[0]!
-    const model = parts[1]!
-    if (!provider || !model) continue
-    const id = `${provider}/${model}`
-    const contextWindow = parts[2] ? parseContextSize(parts[2]) : undefined
-    models.push(contextWindow ? { id, label: id, contextWindow } : { id, label: id })
   }
   return dedupe(models)
 }

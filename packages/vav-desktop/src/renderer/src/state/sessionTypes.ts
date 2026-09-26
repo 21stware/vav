@@ -1,8 +1,6 @@
 import type { ModelOption, TurnPhase, TurnRecovery } from '@shared/types'
 import type { GitChangeEntry } from '@shared/git'
 import type { GithubActionRun, GithubPullListItem, GithubRelease, GithubSite } from '@shared/github'
-import type { CloudflareStatus } from '@shared/cloudflare'
-import type { SupabaseStatus } from '@shared/supabase'
 
 export type AgentModelCatalogEntry = {
   host: string
@@ -27,8 +25,6 @@ export type SessionPreview =
   | { kind: 'github-action'; cwd: string; run: GithubActionRun }
   | { kind: 'github-site'; cwd: string; site: GithubSite }
   | { kind: 'github-release'; cwd: string; release: GithubRelease }
-  | { kind: 'cloudflare'; cwd: string; status: CloudflareStatus; deploymentId: string | null }
-  | { kind: 'supabase'; cwd: string; status: SupabaseStatus; functionSlug: string | null }
 
 export interface ToastState {
   kind: 'info' | 'success' | 'error'

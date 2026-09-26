@@ -47,23 +47,22 @@ function phoneUiHasLiveXterm(): boolean {
 
 export async function ensurePhoneUiBundle(): Promise<void> {
   const js = join(root, 'out/phone-ui/phone.js')
-  const extJs = join(root, 'packages/vav-chrome-extension/extension/phone/phone.js')
   const sources = [
     join(root, 'packages/vav-desktop/src/renderer/src/state/workspaceStore.ts'),
-    join(root, 'packages/vav-chrome-extension/phone-ui/phoneVav.ts'),
-    join(root, 'packages/vav-chrome-extension/phone-ui/PhoneApp.tsx'),
+    join(root, 'src/web-ui/phoneVav.ts'),
+    join(root, 'src/web-ui/PhoneApp.tsx'),
     join(root, 'packages/vav-desktop/src/renderer/src/SettingsWindow.tsx'),
     join(root, 'packages/vav-desktop/src/renderer/src/components/WorkspaceView.tsx')
   ]
   const stale =
     existsSync(js) &&
     sources.some((path) => existsSync(path) && statSync(path).mtimeMs > statSync(js).mtimeMs)
-  if (existsSync(js) && existsSync(extJs) && phoneUiHasLiveXterm() && !stale) return
+  if (existsSync(js) && phoneUiHasLiveXterm() && !stale) return
   await execFileAsync(process.execPath, [join(root, 'scripts/build-phone-ui.mjs')], {
     cwd: root,
     timeout: 180_000
   })
-  if (!existsSync(js) || !existsSync(extJs) || !phoneUiHasLiveXterm()) {
+  if (!existsSync(js) || !phoneUiHasLiveXterm()) {
     throw new Error('phone-ui bundle missing — run npm run build:phone-ui')
   }
 }

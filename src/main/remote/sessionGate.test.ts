@@ -60,10 +60,10 @@ describe('remoteControlAgentRows', () => {
         builtin: true
       },
       {
-        id: 'pi',
+        id: 'grok',
         name: '',
-        binaryPath: 'pi',
-        binaryCandidates: ['pi'],
+        binaryPath: 'grok',
+        binaryCandidates: ['grok'],
         defaultArgs: [],
         envVars: {},
         enabled: true,
@@ -84,10 +84,10 @@ describe('remoteControlAgentRows', () => {
     ])
     assert.deepEqual(
       rows.map((row) => row.id),
-      ['claude', 'pi']
+      ['claude', 'grok']
     )
     assert.equal(rows[0]?.label, 'Claude Code')
-    assert.equal(rows[1]?.label, 'Pi')
+    assert.equal(rows[1]?.label, 'Grok build')
   })
 })
 

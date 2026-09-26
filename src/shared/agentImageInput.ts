@@ -33,10 +33,7 @@ const CATALOG: Record<string, AgentImageInput> = {
   cursor: { maxCount: 10, maxBytes: 8 * MB, mime: DEFAULT_IMAGE_MIMES },
   grok: { maxCount: 10, maxBytes: 10 * MB, mime: DEFAULT_IMAGE_MIMES },
   codex: { maxCount: 10, maxBytes: 20 * MB, mime: DEFAULT_IMAGE_MIMES },
-  opencode: { maxCount: 8, maxBytes: 5 * MB, mime: DEFAULT_IMAGE_MIMES },
-  pi: { maxCount: 8, maxBytes: 5 * MB, mime: DEFAULT_IMAGE_MIMES },
   devin: { maxCount: 8, maxBytes: 5 * MB, mime: DEFAULT_IMAGE_MIMES },
-  antigravity: { maxCount: 10, maxBytes: 7 * MB, mime: DEFAULT_IMAGE_MIMES },
   kiro: { maxCount: 8, maxBytes: 5 * MB, mime: DEFAULT_IMAGE_MIMES },
   cline: { maxCount: 8, maxBytes: 5 * MB, mime: DEFAULT_IMAGE_MIMES }
 }

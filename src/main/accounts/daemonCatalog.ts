@@ -50,10 +50,7 @@ const HOST_BINS: Record<string, string[]> = {
   codex: ['codex'],
   cursor: ['cursor-agent', 'agent', 'cursor'],
   grok: ['grok'],
-  opencode: ['opencode'],
-  pi: ['pi', 'pi-agent'],
   devin: ['devin'],
-  antigravity: ['agy', 'antigravity'],
   kiro: ['kiro-cli', 'kiro'],
   cline: ['cline']
 }

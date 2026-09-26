@@ -4,7 +4,8 @@
   "role": "vav-server",
   "kind": "service",
   "sources": [
-    "packages/vav-server/src/vav-server.ts"
+    "packages/vav-server/src/vav-server.ts",
+    "src/web-ui/PhoneApp.tsx"
   ],
   "talksTo": [],
   "hello": []

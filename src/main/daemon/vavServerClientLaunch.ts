@@ -32,9 +32,9 @@ function hasFlag(argv: string[], flag: string): boolean {
 
 /**
  * Spawn a local vav-server and auto-pair so the desktop window is a shell.
- * Default on for packaged and `npm run dev`. `VAV_SERVER_SPAWN=0` / `--no-vav-server`
- * keeps the in-process host. Playwright sets that unless a spec asks for
- * a child daemon. Ignored when a pairing URI is already set.
+ * Default on for packaged and `npm run dev` — one daemon instance.
+ * `VAV_SERVER_SPAWN=0` / `--no-vav-server` is test-only (Playwright / snapshot).
+ * Ignored when a pairing URI is already set.
  */
 export function resolveVavServerSpawn(
   env: NodeJS.ProcessEnv = process.env,

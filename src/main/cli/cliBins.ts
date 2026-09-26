@@ -1,17 +1,18 @@
 /**
  * Shell shims Settings → Command Line writes next to `vav`.
- * `vav` opens the desktop app; `vav-server` / `vav-board` / `vav-tui` talk to the daemon.
+ * `vav` opens the desktop app; `vav-server` is the daemon.
  */
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { findVavServerEntry, resolveNodeForVavServer, type VavServerEntry } from '../daemon/vavServerSpawn.ts'
 
-export const CLI_BIN_NAMES = ['vav', 'vav-server', 'vav-board', 'vav-tui'] as const
+export const CLI_BIN_NAMES = ['vav', 'vav-server'] as const
 export type CliBinName = (typeof CLI_BIN_NAMES)[number]
-export const DAEMON_BIN_NAMES = ['vav-server', 'vav-board', 'vav-tui'] as const
+export const DAEMON_BIN_NAMES = ['vav-server'] as const
+export const LEGACY_CLI_BIN_NAMES = ['vav-board', 'vav-tui', 'vavc', 'vavcli'] as const
 
 export type NodeBinSpec = {
-  name: 'vav-server' | 'vav-board' | 'vav-tui'
+  name: 'vav-server'
   execPath: string
   asNode: boolean
   scriptPath: string
@@ -38,28 +39,14 @@ export function nodeBinLauncherScript(spec: NodeBinSpec): string {
   return lines.join('\n')
 }
 
-const CLI_SOURCE_REL = {
-  'vav-board': ['packages/vav-board/src/vav-board.ts', 'src/main/cli/vav-board.ts'],
-  'vav-tui': ['packages/vav-tui/src/vav-tui.ts', 'src/main/cli/vav-tui.ts']
-} as const
-
-export function findCliSource(name: 'vav-server' | 'vav-board' | 'vav-tui', from = process.cwd()): string | null {
-  if (name === 'vav-server') {
-    const entry = findVavServerEntry(from)
-    return entry?.kind === 'source' ? entry.path : null
-  }
-  const roots = [from, join(from, '..'), join(from, '../..')]
-  for (const root of roots) {
-    for (const rel of CLI_SOURCE_REL[name]) {
-      const path = join(root, rel)
-      if (existsSync(path)) return path
-    }
-  }
-  return null
+export function findCliSource(name: 'vav-server', from = process.cwd()): string | null {
+  if (name !== 'vav-server') return null
+  const entry = findVavServerEntry(from)
+  return entry?.kind === 'source' ? entry.path : null
 }
 
 export function findCliBundle(
-  name: 'vav-server' | 'vav-board' | 'vav-tui',
+  name: 'vav-server',
   from = process.cwd(),
   resourcesPath?: string
 ): string | null {
@@ -73,7 +60,7 @@ export function findCliBundle(
 }
 
 export function resolveNodeBinSpec(
-  name: 'vav-server' | 'vav-board' | 'vav-tui',
+  name: 'vav-server',
   opts: { cwd?: string; resourcesPath?: string; stateDir: string }
 ): NodeBinSpec | null {
   const cwd = opts.cwd ?? process.cwd()

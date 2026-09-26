@@ -27,7 +27,6 @@ const FLAG_BOOL = new Set(['--continue', '-c', '--fork-session'])
 export function nativeSessionId(cursor: ProviderResumeCursor | null | undefined): string | null {
   if (!cursor) return null
   if (cursor.provider === 'codex') return cursor.threadId.trim() || null
-  if (cursor.provider === 'antigravity') return cursor.conversationId.trim() || null
   const id = cursor.sessionId?.trim()
   return id || null
 }
@@ -47,14 +46,8 @@ export function mintSwarmCursor(
       return { provider: 'cursor', sessionId: id }
     case 'grok':
       return { provider: 'grok', sessionId: id }
-    case 'opencode':
-      return { provider: 'opencode', sessionId: id }
-    case 'pi':
-      return { provider: 'pi', sessionId: id }
     case 'devin':
       return { provider: 'devin', sessionId: id }
-    case 'antigravity':
-      return { provider: 'antigravity', conversationId: id }
     case 'kiro':
       return { provider: 'kiro', sessionId: id }
     case 'cline':
@@ -73,7 +66,6 @@ export function canApplyResumeArgs(agentId: string): boolean {
     agentId === 'claude' ||
     agentId === 'grok' ||
     agentId === 'codex' ||
-    agentId === 'opencode' ||
     agentId === 'cursor'
   )
 }
@@ -133,7 +125,6 @@ export function applySwarmSessionArgs(
     if (agentId === 'claude' || agentId === 'grok' || agentId === 'cursor') {
       return [...stripped, '--resume', resumeId]
     }
-    if (agentId === 'opencode') return [...stripped, '--session', resumeId]
     return stripped
   }
   return stripped

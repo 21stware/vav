@@ -32,8 +32,6 @@ export type AcceleratorKeyBindingId =
   | 'togglePanelSegment'
   | 'focusBash'
   | 'switchWorkdir'
-  | 'switchCliMode'
-  | 'switchVavMode'
   | 'switchModel'
   | 'switchModelUp'
   | 'switchModelDown'
@@ -189,20 +187,6 @@ export const KEY_BINDING_DEFS: readonly KeyBindingDef[] = [
     labelKey: 'shortcut.switchWorkdir',
     kind: 'accelerator',
     defaultAccelerator: 'CmdOrCtrl+Shift+O'
-  },
-  {
-    id: 'switchCliMode',
-    group: 'chrome',
-    labelKey: 'shortcut.switchCliMode',
-    kind: 'accelerator',
-    defaultAccelerator: 'CmdOrCtrl+Shift+C'
-  },
-  {
-    id: 'switchVavMode',
-    group: 'chrome',
-    labelKey: 'shortcut.switchVavMode',
-    kind: 'accelerator',
-    defaultAccelerator: 'CmdOrCtrl+Shift+V'
   },
   {
     id: 'switchModel',

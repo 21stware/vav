@@ -145,17 +145,6 @@ export function buildAppMenu(
     },
     { type: 'separator' },
     {
-      label: t('menu.switchCliMode'),
-      accelerator: b.switchCliMode,
-      click: send('switch-cli-mode')
-    },
-    {
-      label: t('menu.switchVavMode'),
-      accelerator: b.switchVavMode,
-      click: send('switch-vav-mode')
-    },
-    { type: 'separator' },
-    {
       label: t('menu.focusWorkspace'),
       accelerator: b.focusTools1,
       click: send('focus-tools-1')

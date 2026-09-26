@@ -267,14 +267,6 @@
     {
       "from": "packages/vav-server/vav-server.js",
       "to": "vav-server/vav-server.js"
-    },
-    {
-      "from": "packages/vav-server/vav-board.js",
-      "to": "vav-server/vav-board.js"
-    },
-    {
-      "from": "packages/vav-server/vav-tui.js",
-      "to": "vav-server/vav-tui.js"
     }
   ],
   "asarUnpack": [

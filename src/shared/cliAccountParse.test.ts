@@ -11,7 +11,6 @@ import {
   parseCodexIdToken,
   parseCursorStatusPayload,
   parseDevinAuthStatusText,
-  parseOpencodeAuthFile,
   resolveClaudeAccount
 } from './cliAccountParse.ts'
 
@@ -199,15 +198,6 @@ describe('hostFromAnthropicBaseUrl', () => {
 
   it('keeps a custom gateway host', () => {
     assert.equal(hostFromAnthropicBaseUrl('https://api.muskapi.cc/v1'), 'api.muskapi.cc')
-  })
-})
-
-describe('parseOpencodeAuthFile', () => {
-  it('treats a stored key as signed in without inventing an email', () => {
-    const info = parseOpencodeAuthFile({
-      'opencode-go': { type: 'api', key: 'sk-test' }
-    })
-    assert.deepEqual(info, { signedIn: true, accountId: null, plan: null, authKind: 'api-key' })
   })
 })
 

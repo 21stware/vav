@@ -4,7 +4,6 @@ import { enabledCliAgents } from '@shared/types'
 import { useSessionStore } from '../state/sessionStore'
 import { CLI_SURFACE_KEY, useWorkspaceStore } from '../state/workspaceStore'
 import { setUiFocusScope } from '../lib/uiFocus'
-import { requestCliSurface } from '../lib/cliSurfaceSwitch'
 import { handleSessionSplitContextMenu } from '../lib/sessionSplit'
 import {
   matchingKeyBindingId,
@@ -341,18 +340,6 @@ export function CliAgentPicker({
           <div className="cli-agent-picker-rule" aria-hidden />
         </div>
       )}
-      <p className="cli-agent-picker-switch">
-        {t('empty.useThreadLead')}{' '}
-        <button
-          type="button"
-          className="session-workspace-text-btn"
-          title={t('empty.useThreadHint')}
-          onClick={() => requestCliSurface(conversationId, false)}
-        >
-          {t('empty.useThreadAction')}
-        </button>
-        {t('empty.useThreadEnd')}
-      </p>
       {help}
     </div>
   )

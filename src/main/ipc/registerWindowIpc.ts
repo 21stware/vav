@@ -47,11 +47,6 @@ export type WindowIpcActions = {
   openRemoteFolder: (sender: IpcMainInvokeEvent['sender'], request: unknown) => void
   remoteFolderView: () => unknown
   chooseRemoteFolder: (sender: IpcMainInvokeEvent['sender'], path: unknown) => void
-  openSwarmHistory: (
-    sender: IpcMainInvokeEvent['sender'],
-    conversationId: string,
-    anchor?: { x: number; y: number; width: number; height: number }
-  ) => void
   relaunch: () => void
 }
 
@@ -136,14 +131,6 @@ export function registerWindowIpc(ipcMain: IpcMain, actions: WindowIpcActions): 
   ipcMain.handle(IPC.remoteFolderChoose, (event, path: unknown) => {
     actions.chooseRemoteFolder(event.sender, path)
   })
-  ipcMain.handle(
-    IPC.windowOpenSwarmHistory,
-    (
-      event,
-      conversationId: string,
-      anchor?: { x: number; y: number; width: number; height: number }
-    ) => actions.openSwarmHistory(event.sender, conversationId, anchor)
-  )
   ipcMain.handle(IPC.windowRelaunch, () => actions.relaunch())
   ipcMain.handle(IPC.windowSetMinSize, (event, size: { width?: unknown; height?: unknown }) => {
     const win = BrowserWindow.fromWebContents(event.sender)

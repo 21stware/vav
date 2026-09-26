@@ -10,24 +10,18 @@ export type CliHostKind =
   | 'codex'
   | 'cursor'
   | 'grok'
-  | 'opencode'
-  | 'pi'
   | 'devin'
-  | 'antigravity'
   | 'kiro'
   | 'cline'
 
 /** Agents that speak a structured session protocol we can drive. */
 export const STRUCTURED_CLI_HOSTS: readonly CliHostKind[] = [
   'claude',
-  'pi',
   'cursor',
   'devin',
-  'antigravity',
   'codex',
   'grok',
   'kiro',
-  'opencode',
   'cline'
 ] as const
 
@@ -74,10 +68,7 @@ export type ProviderResumeCursor = (
   | { provider: 'codex'; threadId: string }
   | { provider: 'cursor'; sessionId: string }
   | { provider: 'grok'; sessionId: string }
-  | { provider: 'opencode'; sessionId: string }
-  | { provider: 'pi'; sessionId: string; sessionFile?: string | null }
   | { provider: 'devin'; sessionId: string }
-  | { provider: 'antigravity'; conversationId: string }
   | { provider: 'kiro'; sessionId: string }
   | { provider: 'cline'; sessionId: string }
 ) & {
@@ -111,14 +102,8 @@ export function displayNameForCliHost(kind: CliHostKind): string {
       return 'Cursor'
     case 'grok':
       return 'Grok build'
-    case 'opencode':
-      return 'OpenCode'
-    case 'pi':
-      return 'Pi'
     case 'devin':
       return 'Devin'
-    case 'antigravity':
-      return 'Antigravity'
     case 'kiro':
       return 'Kiro'
     case 'cline':
@@ -127,13 +112,7 @@ export function displayNameForCliHost(kind: CliHostKind): string {
 }
 
 /** Transport family used by {@link startDriver}. */
-export type CliHostTransport =
-  | 'claude-stream'
-  | 'codex-app-server'
-  | 'acp'
-  | 'opencode-http'
-  | 'pi-rpc'
-  | 'antigravity-print'
+export type CliHostTransport = 'claude-stream' | 'codex-app-server' | 'acp'
 
 export function transportForCliHost(kind: CliHostKind): CliHostTransport {
   switch (kind) {
@@ -147,12 +126,6 @@ export function transportForCliHost(kind: CliHostKind): CliHostTransport {
     case 'kiro':
     case 'cline':
       return 'acp'
-    case 'opencode':
-      return 'opencode-http'
-    case 'pi':
-      return 'pi-rpc'
-    case 'antigravity':
-      return 'antigravity-print'
   }
 }
 

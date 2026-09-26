@@ -4,6 +4,16 @@ User-facing changes by release. Unreleased work lives at the top until the next 
 
 ## Unreleased
 
+Desktop and vav-server are the only products. iOS, Android, the Chrome extension, `vav-board`, and `vav-tui` are gone. The loopback web UI stays with vav-server (`src/web-ui`). Settings → Command Line installs `vav` and `vav-server` only.
+
+Cloudflare, Supabase, and Vercel Files-tray panels are gone. Connector login in Settings and the agent `connector` tool stay.
+
+OpenCode, Pi, and Antigravity CLI hosts are gone. Claude Code, Codex, and ACP hosts (Cursor, Grok, Devin, Kiro, Cline) stay.
+
+CLI Swarm (raw vendor TUI in a session pane) is gone. Conversation split panes stay.
+
+Packaged builds and `npm run dev` still spawn one vav-server. The in-process host is test-only (`VAV_E2E` / `VAV_SNAPSHOT`). DuckDB stays bundled.
+
 ## 1.32.6
 
 `npm run dev` no longer shares the release app’s loopback ports or state dirs: web is `:4772–4782`, the daemon listen is `:4770`, and pairing / `VAV_HOME` stay under `vav-dev` so `/Applications/VAV.app` can keep `:4752` and `~/Library/Application Support/vav`.

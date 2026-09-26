@@ -2,7 +2,7 @@
   "include": [
     "packages/vav-desktop/src/renderer/**/*",
     "packages/vav-desktop/src/preload/index.ts",
-    "packages/vav-chrome-extension/phone-ui/**/*",
+    "src/web-ui/**/*",
     "src/shared/**/*"
   ],
   "exclude": ["src/**/*.test.ts", "packages/**/*.test.ts"],

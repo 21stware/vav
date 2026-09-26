@@ -16,8 +16,7 @@ import {
   windowsFromClaudeOAuthPayload,
   windowsFromCodexBackendPayload,
   windowsFromCursorPeriodPayload,
-  windowsFromGrokBillingPayload,
-  windowsFromOpencodeGoUsagePayload
+  windowsFromGrokBillingPayload
 } from './quotaWindows.ts'
 
 describe('normalizeQuotaPercent', () => {
@@ -297,29 +296,6 @@ describe('windowsFromCursorPeriodPayload', () => {
     assert.equal(windows[0]?.kind, 'monthly')
     assert.equal(windows[0]?.usedPercent, 37.1468)
     assert.equal(windows[0]?.resetsAt, 1788969122000)
-  })
-})
-
-describe('windowsFromOpencodeGoUsagePayload', () => {
-  it('maps rolling / weekly / monthly lanes', () => {
-    const windows = windowsFromOpencodeGoUsagePayload(
-      {
-        usage: {
-          rolling: { percent: 13, resetsAt: '2026-08-15T04:52:50.951Z' },
-          weekly: { percent: 42, resetsAt: '2026-08-17T00:00:00.951Z' },
-          monthly: { percent: 21, resetsAt: '2026-09-12T16:41:54.951Z' }
-        }
-      },
-      100
-    )
-    assert.deepEqual(
-      windows.map((w) => w.kind),
-      ['five_hour', 'seven_day', 'monthly']
-    )
-    assert.equal(windows[0]?.usedPercent, 13)
-    assert.equal(windows[1]?.usedPercent, 42)
-    assert.equal(windows[2]?.usedPercent, 21)
-    assert.equal(windows[0]?.resetsAt, Date.parse('2026-08-15T04:52:50.951Z'))
   })
 })
 

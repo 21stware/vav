@@ -72,15 +72,6 @@ describe('applySwarmSessionArgs', () => {
     )
   })
 
-  it('resumes OpenCode with --session', () => {
-    const cursor = mintSwarmCursor('opencode', 'ses_abc')
-    assert.deepEqual(applySwarmSessionArgs('opencode', ['--auto'], cursor, null), [
-      '--auto',
-      '--session',
-      'ses_abc'
-    ])
-  })
-
   it('resumes Cursor with --resume only when a chat id already exists', () => {
     const cursor = mintSwarmCursor('cursor', 'cur-1')
     assert.deepEqual(applySwarmSessionArgs('cursor', ['--force', '--trust'], cursor, null), [
@@ -120,7 +111,6 @@ describe('applySwarmSessionArgs', () => {
     assert.equal(canApplyResumeArgs('grok'), true)
     assert.equal(canApplyResumeArgs('claude'), true)
     assert.equal(canApplyResumeArgs('codex'), true)
-    assert.equal(canApplyResumeArgs('opencode'), true)
     assert.equal(canApplyResumeArgs('cursor'), true)
   })
 })
@@ -128,7 +118,7 @@ describe('applySwarmSessionArgs', () => {
 describe('cursor helpers', () => {
   it('reads the native id from each provider shape', () => {
     assert.equal(nativeSessionId(mintSwarmCursor('codex', 't1')), 't1')
-    assert.equal(nativeSessionId(mintSwarmCursor('antigravity', 'c1')), 'c1')
+    assert.equal(nativeSessionId(mintSwarmCursor('cursor', 'c1')), 'c1')
     assert.equal(nativeSessionId(mintSwarmCursor('grok', 'g1')), 'g1')
   })
 

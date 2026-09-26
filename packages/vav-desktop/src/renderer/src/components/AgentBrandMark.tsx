@@ -6,7 +6,6 @@ import { AGENT_ICONS, MONO_MARKS, vavGlyph, vavGlyphDark } from '../lib/agentMar
  *
  * Theme adaptation (glyphs must stay readable on light + dark chips):
  * - `is-mono` — dark monochrome (cursor, grok, lobe currentColor marks): invert on dark
- * - `is-mono-on-dark` — light monochrome (pi ships white): invert on light
  * - vav — dual wordmark glyphs (light / dark); never the solid app-icon plate
  */
 export function AgentBrandMark({
@@ -20,8 +19,6 @@ export function AgentBrandMark({
   const isVav = agent.id === 'vav'
   // Dark-on-light / currentColor monochrome assets
   const mono = MONO_MARKS.has(agent.id)
-  // Light-on-dark assets (Pi SVG fill is #fff)
-  const monoOnDark = agent.id === 'pi'
 
   if (!src) {
     const letter = (agent.name || agent.id || '?').slice(0, 1).toUpperCase()
@@ -44,7 +41,6 @@ export function AgentBrandMark({
   const classes = [
     'agent-brand-mark',
     mono ? 'is-mono' : '',
-    monoOnDark ? 'is-mono-on-dark' : '',
     isVav ? 'agent-brand-mark-vav' : ''
   ]
     .filter(Boolean)

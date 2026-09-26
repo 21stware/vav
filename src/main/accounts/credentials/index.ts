@@ -5,9 +5,7 @@ import {
   claudeKeychainUser,
   CURSOR_ACCESS_SERVICE,
   codexAuthPath,
-  grokAuthPath,
-  opencodeAuthPath,
-  piAuthPath
+  grokAuthPath
 } from '../../quota/hostPaths.ts'
 import type { HostCredentialAdapter } from './adapter.ts'
 import { makeFileAdapter } from './fileAdapter.ts'
@@ -17,8 +15,6 @@ import { parseClaudeKeychainMeta, parseCursorKeychainMeta } from './parseKeychai
 const ADAPTERS: Partial<Record<CliHostKind, HostCredentialAdapter>> = {
   grok: makeFileAdapter({ host: 'grok', path: grokAuthPath }),
   codex: makeFileAdapter({ host: 'codex', path: codexAuthPath }),
-  opencode: makeFileAdapter({ host: 'opencode', path: opencodeAuthPath }),
-  pi: makeFileAdapter({ host: 'pi', path: piAuthPath }),
   cursor: makeKeychainAdapter({
     host: 'cursor',
     service: () => CURSOR_ACCESS_SERVICE,

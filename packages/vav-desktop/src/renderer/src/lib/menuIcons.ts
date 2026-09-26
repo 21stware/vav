@@ -66,7 +66,7 @@ function brandMenuIcon(markId: string): Promise<ResolvedMenuIcon | null> {
       if (!src) return null
       const dataUrl = await rasterizeUrl(src)
       if (!dataUrl) return null
-      const template = MONO_MARKS.has(markId) || markId === 'pi' || markId === 'vav'
+      const template = MONO_MARKS.has(markId) || markId === 'vav'
       return { dataUrl, template }
     })()
     cache.set(key, cached)

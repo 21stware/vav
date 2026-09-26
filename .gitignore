@@ -3,8 +3,7 @@ playwright-report/
 blob-report/
 node_modules/
 out/
-# Built from packages/vav-chrome-extension/phone-ui (npm run build:phone-ui)
-packages/vav-chrome-extension/extension/phone/
+# Built from src/web-ui (npm run build:phone-ui)
 release/
 release-sidecars/
 /dist/
@@ -50,13 +49,5 @@ sidecar/tailcatbridge/tailcatbridge
 sidecar/tailcatbridge/tailcatbridge.exe
 !resources/bin/README.md
 
-# gomobile output (scripts/build-tailcat-ios.mjs)
-ios/VAVRemote/Frameworks/
-packages/vav-ios/VAVRemote/Frameworks/
-
-# Xcode build artifacts
-packages/vav-ios/DerivedData/
-
 # Generated pack / build outputs
-extension/
 packages/vavd/

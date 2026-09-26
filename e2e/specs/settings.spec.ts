@@ -1,30 +1,13 @@
-import { execFile } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { pathToFileURL } from 'node:url'
-import { promisify } from 'node:util'
 import { test, expect } from '@playwright/test'
-import { parseDaemonPairing } from '../../src/shared/daemonProtocol.ts'
 import {
   launchWorkbench,
   openSettingsWindow,
   readUserSetting,
   readVavServerSetting,
-  seedVavKeyAccount,
-  waitForDaemonPairing
+  seedVavKeyAccount
 } from '../launch'
-
-const execFileAsync = promisify(execFile)
-const root = join(__dirname, '../..')
-const aliasHook = pathToFileURL(join(root, 'scripts/register-shared-alias.mjs')).href
-
-function vavBoard(args: string[]): Promise<{ stdout: string; stderr: string }> {
-  return execFileAsync(
-    process.execPath,
-    ['--import', aliasHook, '--experimental-strip-types', join(root, 'packages/vav-board/src/vav-board.ts'), ...args],
-    { cwd: root, timeout: 20_000 }
-  )
-}
 
 /**
  * README.rpml §1.4 / §2.6 — Settings is its own window, save-on-change,
@@ -208,18 +191,9 @@ test('Workspace, Notifications, About, Usage, Command Line, and File Association
       'aria-checked',
       'true'
     )
-    await expect(settings.locator('[data-testid="settings-cloudflare-tray"]')).toHaveAttribute(
-      'aria-checked',
-      'false'
-    )
-    await expect(settings.locator('[data-testid="settings-supabase-tray"]')).toHaveAttribute(
-      'aria-checked',
-      'false'
-    )
-    await expect(settings.locator('[data-testid="settings-vercel-tray"]')).toHaveAttribute(
-      'aria-checked',
-      'false'
-    )
+    await expect(settings.getByText('Cloudflare API Token')).toBeVisible()
+    await expect(settings.getByText('Supabase Access Token')).toBeVisible()
+    await expect(settings.getByText('Vercel API Token')).toBeVisible()
     await settings.locator('[data-testid="settings-github-tray"]').click()
     await expect.poll(() => readVavServerSetting(harness.userData, 'githubTrayEnabled')).toBe(false)
     expect(readUserSetting(harness.userData, 'githubTrayEnabled')).not.toBe(false)
@@ -286,7 +260,7 @@ test('Logs shows retention policy and empty-or-boot records', async () => {
   }
 })
 
-test('spawned vav-server host settings match desktop Settings and vav-board', async () => {
+test('spawned vav-server host settings match desktop Settings', async () => {
   test.setTimeout(90_000)
   const harness = await launchWorkbench()
   try {
@@ -308,13 +282,7 @@ test('spawned vav-server host settings match desktop Settings and vav-board', as
     await expect.poll(() => readVavServerSetting(harness.userData, 'githubTrayEnabled')).toBe(false)
     expect(readUserSetting(harness.userData, 'githubTrayEnabled')).not.toBe(false)
 
-    const pairing = parseDaemonPairing(await waitForDaemonPairing(harness.page))
-    expect(pairing?.secret).toBeTruthy()
-    const auth = ['--host', '127.0.0.1', '--port', String(pairing!.port), '--secret', pairing!.secret]
-    const updated = JSON.parse(
-      (await vavBoard(['settings', 'set', '--approval', 'edit', ...auth])).stdout
-    ) as { defaultApprovalMode?: string }
-    expect(updated.defaultApprovalMode).toBe('edit')
+    await harness.page.evaluate(() => window.vav.settings.update({ defaultApprovalMode: 'edit' }))
     await expect
       .poll(async () => {
         const page = await harness.page.evaluate(() => window.vav.settings.get())

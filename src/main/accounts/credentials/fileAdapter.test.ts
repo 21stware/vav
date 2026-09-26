@@ -54,7 +54,7 @@ describe('file credential adapter', () => {
     assert.equal(await adapter.liveIdentity(), null)
   })
 
-  it('parses grok / opencode identities from raw files', () => {
+  it('parses grok identities from raw files', () => {
     const grok = parseFileSnapshotMeta(
       'grok',
       JSON.stringify({
@@ -63,10 +63,5 @@ describe('file credential adapter', () => {
     )
     assert.equal(grok.identity, 'ada@x.ai')
     assert.ok((grok.expiresAtMs ?? 0) > Date.parse('2029-01-01'))
-    const opencode = parseFileSnapshotMeta(
-      'opencode',
-      JSON.stringify({ 'opencode-go': { type: 'api', key: 'sk', email: 'zen@opencode.ai' } })
-    )
-    assert.equal(opencode.identity, 'zen@opencode.ai')
   })
 })

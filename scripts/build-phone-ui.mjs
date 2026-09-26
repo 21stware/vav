@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * Bundle the desktop session UI for vav-server's web page and the Chrome side panel.
+ * Bundle the desktop session UI for vav-server's loopback web page.
  */
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { createRequire } from 'node:module'
@@ -12,11 +12,8 @@ const require = createRequire(import.meta.url)
 const { build } = await import(pathToFileURL(require.resolve('esbuild')).href)
 
 const outDir = join(root, 'out', 'phone-ui')
-const extDir = join(root, 'packages/vav-chrome-extension/extension', 'phone')
 if (existsSync(outDir)) rmSync(outDir, { recursive: true, force: true })
-if (existsSync(extDir)) rmSync(extDir, { recursive: true, force: true })
 mkdirSync(outDir, { recursive: true })
-mkdirSync(extDir, { recursive: true })
 
 const STUB_MODULES = new Set([
   'mermaid',
@@ -37,14 +34,12 @@ const STUB_MODULES = new Set([
 
 await build({
   absWorkingDir: root,
-  entryPoints: [join(root, 'packages/vav-chrome-extension/phone-ui', 'main.tsx')],
+  entryPoints: [join(root, 'src/web-ui', 'main.tsx')],
   bundle: true,
   format: 'esm',
   outdir: outDir,
   entryNames: 'phone',
   chunkNames: 'chunk-[name]-[hash]',
-  // Relative URLs so Chrome's side panel (chrome-extension://<id>/phone/phone.js)
-  // loads brand marks from phone/, not the extension root.
   publicPath: './',
   splitting: true,
   platform: 'browser',
@@ -123,16 +118,6 @@ const html = `<!doctype html>
 `
 writeFileSync(join(outDir, 'index.html'), html)
 
-cpSync(outDir, extDir, { recursive: true })
-writeFileSync(
-  join(extDir, 'index.html'),
-  readFileSync(join(outDir, 'index.html'), 'utf8').replace('data-phone="web"', 'data-phone="extension"')
-)
-
 if (!existsSync(join(outDir, 'phone.js'))) {
   throw new Error('build-phone-ui: phone.js was not written')
-}
-const phoneJs = readFileSync(join(outDir, 'phone.js'), 'utf8')
-if (phoneJs.includes('"/deepseek-') || phoneJs.includes('"/sprite-')) {
-  throw new Error('build-phone-ui: brand assets must use relative URLs for the Chrome side panel')
 }

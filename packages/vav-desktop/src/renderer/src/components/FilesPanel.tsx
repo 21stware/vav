@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
   ArrowUpDown,
-  Cloud,
   Columns3,
   Folder,
   GitBranch,
@@ -13,8 +12,7 @@ import {
   Package,
   Plus,
   Puzzle,
-  RefreshCw,
-  Triangle
+  RefreshCw
 } from 'lucide-react'
 import { IGNORED_NAMES, IGNORED_SUFFIXES } from '@shared/types'
 import {
@@ -38,10 +36,6 @@ import { Button, EmptyState, InlineAlert, Segmented } from './ui'
 import { FileManagerIcon } from './FileManagerIcon'
 import { GitChangesPanel, type GitPanelChrome } from './GitChangesPanel'
 import { GithubPanel, type GithubPanelChrome } from './GithubPanel'
-import { SupabasePanel, type SupabasePanelChrome } from './SupabasePanel'
-import { SupabaseMark } from './SupabaseMark'
-import { CloudflarePanel, type CloudflarePanelChrome } from './CloudflarePanel'
-import { VercelPanel, type VercelPanelChrome } from './VercelPanel'
 import { ArtifactsPanel } from './ArtifactsPanel'
 import { SecretsPanel, type SecretsPanelChrome } from './SecretsPanel'
 import {
@@ -51,23 +45,9 @@ import {
 } from './PluginsPanel'
 import { openFileInSessionPreview } from '../lib/openSessionFile'
 import { ColumnBrowser, TreeLevel } from './filesPanel/FilesBrowser'
-import {
-  isCloudflareTrayEnabled,
-  isGithubTrayEnabled,
-  isSupabaseTrayEnabled,
-  isVercelTrayEnabled
-} from '@shared/workspaceTrays'
+import { isGithubTrayEnabled } from '@shared/workspaceTrays'
 
-type FilesTrayView =
-  | 'files'
-  | 'artifacts'
-  | 'secrets'
-  | 'plugins'
-  | 'git'
-  | 'github'
-  | 'supabase'
-  | 'cloudflare'
-  | 'vercel'
+type FilesTrayView = 'files' | 'artifacts' | 'secrets' | 'plugins' | 'git' | 'github'
 
 /** Scroll the row for `path` into view inside the files browser. */
 function scrollFileRowIntoView(path: string): void {
@@ -131,28 +111,15 @@ export function FilesPanel({
   const [creating, setCreating] = useState<{ dir: string; name: string } | null>(null)
   const [trayView, setTrayViewState] = useState<FilesTrayView>('files')
   const [rootIsGit, setRootIsGit] = useState<boolean | null>(null)
-  const [hasSupabase, setHasSupabase] = useState<boolean | null>(null)
-  const [hasCloudflare, setHasCloudflare] = useState(false)
-  const [hasVercel, setHasVercel] = useState(false)
   const githubTrayOn = isGithubTrayEnabled(settings)
-  const supabaseTrayOn = isSupabaseTrayEnabled(settings)
-  const cloudflareTrayOn = isCloudflareTrayEnabled(settings)
-  const vercelTrayOn = isVercelTrayEnabled(settings)
   const [gitChrome, setGitChrome] = useState<GitPanelChrome | null>(null)
   const [githubChrome, setGithubChrome] = useState<GithubPanelChrome | null>(null)
-  const [supabaseChrome, setSupabaseChrome] = useState<SupabasePanelChrome | null>(null)
-  const [cloudflareChrome, setCloudflareChrome] = useState<CloudflarePanelChrome | null>(null)
   const [pluginsChrome, setPluginsChrome] = useState<PluginsPanelChrome | null>(null)
   const [secretsChrome, setSecretsChrome] = useState<SecretsPanelChrome | null>(null)
   const [secretCount, setSecretCount] = useState(0)
-  const [vercelChrome, setVercelChrome] = useState<VercelPanelChrome | null>(null)
   const cliHost = conversation?.cliHost ?? null
   /** Temp dirs can become repos after Files → Git “enable version control”. */
   const gitRepoEpoch = useGitRepoSyncEpoch()
-  const supabaseHint = (dirs?.[root ?? ''] ?? [])
-    .filter((entry) => entry.name === 'supabase' || entry.name.startsWith('.env'))
-    .map((entry) => entry.name)
-    .join(',')
   const onGitChrome = useCallback((next: GitPanelChrome | null) => {
     setGitChrome((prev) => {
       if (prev === next) return prev
@@ -170,21 +137,6 @@ export function FilesPanel({
   }, [])
   const onGithubChrome = useCallback((next: GithubPanelChrome | null) => {
     setGithubChrome((prev) => {
-      if (prev === next) return prev
-      if (
-        prev &&
-        next &&
-        prev.meta === next.meta &&
-        prev.loading === next.loading &&
-        prev.refresh === next.refresh
-      ) {
-        return prev
-      }
-      return next
-    })
-  }, [])
-  const onSupabaseChrome = useCallback((next: SupabasePanelChrome | null) => {
-    setSupabaseChrome((prev) => {
       if (prev === next) return prev
       if (
         prev &&
@@ -217,36 +169,6 @@ export function FilesPanel({
   const onSecretsChrome = useCallback((next: SecretsPanelChrome | null) => {
     setSecretsChrome(next)
   }, [])
-  const onCloudflareChrome = useCallback((next: CloudflarePanelChrome | null) => {
-    setCloudflareChrome((prev) => {
-      if (prev === next) return prev
-      if (
-        prev &&
-        next &&
-        prev.meta === next.meta &&
-        prev.loading === next.loading &&
-        prev.refresh === next.refresh
-      ) {
-        return prev
-      }
-      return next
-    })
-  }, [])
-  const onVercelChrome = useCallback((next: VercelPanelChrome | null) => {
-    setVercelChrome((prev) => {
-      if (prev === next) return prev
-      if (
-        prev &&
-        next &&
-        prev.meta === next.meta &&
-        prev.loading === next.loading &&
-        prev.refresh === next.refresh
-      ) {
-        return prev
-      }
-      return next
-    })
-  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -267,26 +189,6 @@ export function FilesPanel({
       cancelled = true
     }
   }, [root, gitRepoEpoch])
-
-  useEffect(() => {
-    let cancelled = false
-    if (!supabaseTrayOn || !root || !window.vav?.supabase?.status) {
-      setHasSupabase(false)
-      return
-    }
-    setHasSupabase(null)
-    void window.vav.supabase
-      .status(root, { remote: false })
-      .then((result) => {
-        if (!cancelled) setHasSupabase(!!result?.ok && !!result.data.present)
-      })
-      .catch(() => {
-        if (!cancelled) setHasSupabase(false)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [root, visible, supabaseHint, supabaseTrayOn])
 
   const setTrayView = (view: FilesTrayView): void => {
     setTrayViewState(view)
@@ -319,56 +221,6 @@ export function FilesPanel({
   useEffect(() => {
     if ((!githubTrayOn || rootIsGit !== true) && trayView === 'github') setTrayView('files')
   }, [githubTrayOn, rootIsGit, trayView])
-
-  useEffect(() => {
-    if (hasSupabase !== true && trayView === 'supabase') setTrayView('files')
-  }, [hasSupabase, trayView])
-
-  useEffect(() => {
-    let cancelled = false
-    if (!cloudflareTrayOn || !root || !window.vav?.cloudflare?.status) {
-      setHasCloudflare(false)
-      return
-    }
-    void window.vav.cloudflare
-      .status(root, { remote: false })
-      .then((result) => {
-        if (!cancelled) setHasCloudflare(!!result?.ok && Boolean(result.data?.config))
-      })
-      .catch(() => {
-        if (!cancelled) setHasCloudflare(false)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [root, visible, cloudflareTrayOn])
-
-  useEffect(() => {
-    if (!hasCloudflare && trayView === 'cloudflare') setTrayView('files')
-  }, [hasCloudflare, trayView])
-
-  useEffect(() => {
-    let cancelled = false
-    if (!vercelTrayOn || !root || !window.vav?.vercel?.status) {
-      setHasVercel(false)
-      return
-    }
-    void window.vav.vercel
-      .status(root, { remote: false })
-      .then((result) => {
-        if (!cancelled) setHasVercel(!!result?.ok && !!result.data?.present)
-      })
-      .catch(() => {
-        if (!cancelled) setHasVercel(false)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [root, visible, vercelTrayOn])
-
-  useEffect(() => {
-    if (!hasVercel && trayView === 'vercel') setTrayView('files')
-  }, [hasVercel, trayView])
 
   useEffect(() => {
     if (!visible || !activeId || trayView !== 'files') return
@@ -821,36 +673,6 @@ export function FilesPanel({
                       icon: <Github size={14} />
                     }
                   ]
-                : []),
-              ...(supabaseTrayOn && hasSupabase === true
-                ? [
-                    {
-                      value: 'supabase' as const,
-                      label: t('files.tabSupabase'),
-                      title: t('files.tabSupabase'),
-                      icon: <SupabaseMark size={14} />
-                    }
-                  ]
-                : []),
-              ...(cloudflareTrayOn && hasCloudflare
-                ? [
-                    {
-                      value: 'cloudflare' as const,
-                      label: t('files.tabCloudflare'),
-                      title: t('files.tabCloudflare'),
-                      icon: <Cloud size={14} />
-                    }
-                  ]
-                : []),
-              ...(vercelTrayOn && hasVercel
-                ? [
-                    {
-                      value: 'vercel' as const,
-                      label: t('files.tabVercel'),
-                      title: t('files.tabVercel'),
-                      icon: <Triangle size={14} />
-                    }
-                  ]
                 : [])
             ]}
           />
@@ -990,57 +812,6 @@ export function FilesPanel({
               />
             </>
           )}
-          {trayView === 'supabase' && supabaseChrome && (
-            <>
-              {supabaseChrome.meta ? (
-                <span className="git-panel-meta" title={supabaseChrome.meta}>
-                  {supabaseChrome.meta}
-                </span>
-              ) : null}
-              <Button
-                icon={<RefreshCw size={14} />}
-                size="sm"
-                className={`git-refresh-btn${supabaseChrome.loading ? ' is-refreshing' : ''}`}
-                title={t('supabase.refresh')}
-                disabled={supabaseChrome.loading}
-                onClick={supabaseChrome.refresh}
-              />
-            </>
-          )}
-          {trayView === 'cloudflare' && cloudflareChrome && (
-            <>
-              {cloudflareChrome.meta ? (
-                <span className="git-panel-meta" title={cloudflareChrome.meta}>
-                  {cloudflareChrome.meta}
-                </span>
-              ) : null}
-              <Button
-                icon={<RefreshCw size={14} />}
-                size="sm"
-                className={`git-refresh-btn${cloudflareChrome.loading ? ' is-refreshing' : ''}`}
-                title={t('cloudflare.refresh')}
-                disabled={cloudflareChrome.loading}
-                onClick={cloudflareChrome.refresh}
-              />
-            </>
-          )}
-          {trayView === 'vercel' && vercelChrome && (
-            <>
-              {vercelChrome.meta ? (
-                <span className="git-panel-meta" title={vercelChrome.meta}>
-                  {vercelChrome.meta}
-                </span>
-              ) : null}
-              <Button
-                icon={<RefreshCw size={14} />}
-                size="sm"
-                className={`git-refresh-btn${vercelChrome.loading ? ' is-refreshing' : ''}`}
-                title={t('vercel.refresh')}
-                disabled={vercelChrome.loading}
-                onClick={vercelChrome.refresh}
-              />
-            </>
-          )}
         </div>
       </div>
 
@@ -1137,30 +908,6 @@ export function FilesPanel({
         {githubTrayOn && rootIsGit === true ? (
           <div className="files-tray-pane" data-hidden={trayView !== 'github'}>
             <GithubPanel visible={visible && trayView === 'github'} onChrome={onGithubChrome} />
-          </div>
-        ) : null}
-        {supabaseTrayOn && hasSupabase === true ? (
-          <div className="files-tray-pane" data-hidden={trayView !== 'supabase'}>
-            <SupabasePanel
-              visible={visible && trayView === 'supabase'}
-              onChrome={onSupabaseChrome}
-            />
-          </div>
-        ) : null}
-        {cloudflareTrayOn && hasCloudflare ? (
-          <div className="files-tray-pane" data-hidden={trayView !== 'cloudflare'}>
-            <CloudflarePanel
-              visible={visible && trayView === 'cloudflare'}
-              onChrome={onCloudflareChrome}
-            />
-          </div>
-        ) : null}
-        {vercelTrayOn && hasVercel ? (
-          <div className="files-tray-pane" data-hidden={trayView !== 'vercel'}>
-            <VercelPanel
-              visible={visible && trayView === 'vercel'}
-              onChrome={onVercelChrome}
-            />
           </div>
         ) : null}
       </div>

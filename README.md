@@ -13,7 +13,7 @@
 
 **Your agents' workbench.** Open a folder or a document, see it, pick a block, and ask — with the built-in VAV agent or Claude Code / Codex in the same thread. Writes land on disk and you accept or reject them. A real terminal sits beside the chat. Everything stays on your machine; each CLI agent manages its own auth.
 
-New session: pick a workspace, pick an agent, ask one thing. Multi-split CLI TUIs (Swarm) are an optional advanced mode under Settings → Providers.
+New session: pick a workspace, pick an agent, ask one thing. Split conversation panes sit side by side in the same window.
 
 ![vav](docs/screenshot.png)
 
@@ -28,9 +28,9 @@ New session: pick a workspace, pick an agent, ask one thing. Multi-split CLI TUI
 - **English / Chinese UI**, following the OS or a setting
 - API keys stored encrypted via `safeStorage` (Keychain) — never as plaintext
 - **Spending** — Settings panel for local usage plus provider subscriptions, and DeepSeek API balance when VAV talks to official DeepSeek
-- **Swarm** (optional) — multi-split raw CLI TUIs; off by default in Settings → Providers
-- **Remote** — Settings → Allow other devices; pair VAV Remote (iOS) or another computer. Conversations and keys stay on this machine
-- **Headless VAV** — `npx @21stware/vav-server` hosts sessions, keys, files, PTY, and agent turns. `vav-board` is the herdr-style control client; `vav-tui` / `vav-tui` is the Claude Code-style agent CLI. Seven products live under `packages/*` (npm workspaces): vav-desktop, vav-server, vav-tui, vav-board, vav-iOS, vav-android, vav-chrome-extension. Shared kernel stays in `src/main` + `src/shared`. See [docs/PRODUCT_MATRIX.md](docs/PRODUCT_MATRIX.md).
+- **Split panes** — split a conversation right or down and keep each pane on its own thread
+- **Remote** — Settings → Allow other devices; pair another computer. Conversations and keys stay on this machine
+- **Headless VAV** — `npx @21stware/vav-server` hosts sessions, keys, files, PTY, and agent turns, and serves a loopback web UI. Two products live under `packages/*` (npm workspaces): vav-desktop and vav-server. Shared kernel stays in `src/main` + `src/shared`. See [docs/PRODUCT_MATRIX.md](docs/PRODUCT_MATRIX.md).
 
 ## Website
 
@@ -58,25 +58,21 @@ Custom domain: `vavapp.com` (see `site/CNAME`). Apex uses GitHub Pages `A`/`AAAA
 
 ## Install
 
-Grab a build from [Releases](https://github.com/21stware/vav/releases). Each `v*` release includes the macOS DMG/ZIP, Windows installer, `@21stware/vav-server` tarball, and the Chrome extension zip.
+Grab a build from [Releases](https://github.com/21stware/vav/releases). Each `v*` release includes the macOS DMG/ZIP, Windows installer, and `@21stware/vav-server` tarball.
 
 - **macOS** — Developer ID signed and notarized (app + DMG, ticket stapled); open the DMG and drag to Applications. Later versions update in-app (About → Check for Updates).
 - **Windows** — not code-signed; SmartScreen may warn on first open (More info → Run anyway). In-app updates use the NSIS installer feed.
 
-Then in Settings → “VAV command”, install `vav`, `vav-server`, `vav-board`, and `vav-tui` (defaults to `~/.local/bin`). `vav .` opens a new desktop session in the current directory. `vav-server` is the daemon; `vav-board` controls sessions; `vav-tui` runs a turn in the terminal. All three talk to the same vav-server the app can spawn.
+Then in Settings → “VAV command”, install `vav` and `vav-server` (defaults to `~/.local/bin`). `vav .` opens a new desktop session in the current directory. `vav-server` is the daemon the app can spawn.
 
 On a machine that should host VAV without opening the desktop app:
 
 ```bash
 npx @21stware/vav-server
 # or: npm i -g @21stware/vav-server && vav-server
-vav-board session create --cwd .
-vav-tui -p "hello"
 ```
 
-Listens on all interfaces by default (`--listen 127.0.0.1` for local-only). Opens a web UI on `http://127.0.0.1:4752`. Paste the pairing line into VAV → Connect or VAV Remote. The local web UI and Chrome extension discover a loopback daemon and pair automatically — or launch the desktop app with `VAV_SERVER_URI` / `--vav-server-uri` so it opens as a vav-server UI without the Connect paste. `VAV_SERVER_SPAWN=1` / `--with-vav-server` starts vav-server as a child of the app and pairs automatically. Packaged builds do that by default (`VAV_SERVER_SPAWN=0` / `--no-vav-server` keeps the in-process host). The pairing secret is equivalent to local access on that machine. Set `VAV_API_KEY` (and optional `VAV_API_ENDPOINT`) so the daemon can call your model.
-
-From this repo, `npm run vav-board -- session list` / `npm run vav-tui -- -p "hello"` talks to that daemon over the same phone protocol. `npm run vav -- send "hello"` remains as a compatibility alias.
+Listens on all interfaces by default (`--listen 127.0.0.1` for local-only). Opens a web UI on `http://127.0.0.1:4752`. Paste the pairing line into VAV → Connect. The local web UI discovers a loopback daemon and pairs automatically — or launch the desktop app with `VAV_SERVER_URI` / `--vav-server-uri` so it opens as a vav-server UI without the Connect paste. Packaged builds and `npm run dev` spawn vav-server as a child and pair automatically (`VAV_SERVER_SPAWN=0` / `--no-vav-server` is a test-only in-process host). The pairing secret is equivalent to local access on that machine. Set `VAV_API_KEY` (and optional `VAV_API_ENDPOINT`) so the daemon can call your model.
 
 ## Develop
 
@@ -133,14 +129,10 @@ Most things match; these are OS differences, not missing features:
 src/
   shared/      domain types, IPC + phone/daemon contracts, i18n
   main/        shared kernel (stores, agent, daemon server, host, ipc)
+  web-ui/      loopback web UI (same session shell as desktop)
 packages/
-  vav-server/        daemon entry (`src/vav-server.ts`)
+  vav-server/  daemon entry (`src/vav-server.ts`)
   vav-desktop/ Electron main + preload + renderer
-  vav-tui/     Claude Code-style agent CLI
-  vav-board/        herdr-style control client
-  vav-ios/     native Remote
-  vav-android/ native Remote (same protocol as iOS)
-  vav-chrome-extension/  MV3 side panel + phone-ui
 ```
 
 Implementation notes: [docs/TECH_DESIGN.md](docs/TECH_DESIGN.md). Product behavior is specified in RPML via Origin and pulled by `.agents/skills/origin-product-spec-management` into `.agents/specs/` (not checked in).

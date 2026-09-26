@@ -39,20 +39,9 @@ export function pluginRootsForHost(
       const root = codexHome()
       return { root, scan: [join(root, 'plugins'), join(root, 'skills'), root] }
     }
-    case 'pi': {
-      const root = join(home, '.pi')
-      return { root, scan: [join(root, 'plugins'), join(root, 'agent', 'skills'), root] }
-    }
-    case 'opencode': {
-      const root = process.env.XDG_DATA_HOME?.trim()
-        ? join(process.env.XDG_DATA_HOME.trim(), 'opencode')
-        : join(home, '.local', 'share', 'opencode')
-      return { root, scan: [join(root, 'plugins'), join(root, 'skills'), root] }
-    }
     case 'devin':
     case 'kiro':
-    case 'cline':
-    case 'antigravity': {
+    case 'cline': {
       const root = join(home, `.${host}`)
       return { root, scan: [join(root, 'plugins'), join(root, 'skills'), root] }
     }

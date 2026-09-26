@@ -15,7 +15,13 @@ import { dirname, isAbsolute, join, resolve as resolvePath } from 'node:path'
 import { promisify } from 'node:util'
 import { APP_CLI_NAME } from './brand'
 import { packagedMacCliLauncher } from './macAppOpen.ts'
-import { CLI_BIN_NAMES, DAEMON_BIN_NAMES, nodeBinLauncherScript, resolveNodeBinSpec } from './cli/cliBins'
+import {
+  CLI_BIN_NAMES,
+  DAEMON_BIN_NAMES,
+  LEGACY_CLI_BIN_NAMES,
+  nodeBinLauncherScript,
+  resolveNodeBinSpec
+} from './cli/cliBins'
 import { t } from './i18n'
 
 const execFileAsync = promisify(execFile)
@@ -32,7 +38,7 @@ export interface CliStatus {
   error?: string
   /** Soft note after e.g. falling back from /usr/local/bin → ~/.local/bin. */
   notice?: string
-  /** All shims this install writes (`vav` plus vav-server / vav-board / vav-tui). */
+  /** All shims this install writes (`vav` plus `vav-server`). */
   commands: string[]
 }
 
@@ -120,11 +126,8 @@ const CLI_HELP = [
   '',
   'This install also writes:',
   '  vav-server     Headless daemon (same process the app can spawn)',
-  '  vav-board     Control client — sessions, files, panes (herdr-style)',
-  '  vav-tui   Agent CLI — interactive / print / JSON / RPC (Claude Code-style)',
   '',
-  'Those three talk to vav-server over the same protocols as the app.',
-  'Run vav-board -h or vav-tui -h for usage.',
+  'vav-server talks to the same protocols as the app. Run vav-server -h for usage.',
   ''
 ].join('\n')
 
@@ -323,6 +326,16 @@ function writeDaemonBins(dir: string): string[] {
     chmodSync(target, 0o755)
     written.push(target)
   }
+  for (const name of LEGACY_CLI_BIN_NAMES) {
+    const stale = join(dir, name)
+    if (existsSync(stale)) {
+      try {
+        unlinkSync(stale)
+      } catch {
+        /* ignore leftover board/tui shims */
+      }
+    }
+  }
   return written
 }
 
@@ -420,7 +433,7 @@ export async function uninstallCli(): Promise<CliStatus> {
   const target = meta.path ?? binaryPath(meta.preferredLocation)
   try {
     const dir = target ? dirname(target) : expandLocation(meta.preferredLocation)
-    for (const name of CLI_BIN_NAMES) {
+    for (const name of [...CLI_BIN_NAMES, ...LEGACY_CLI_BIN_NAMES]) {
       const file = join(dir, name)
       if (existsSync(file)) unlinkSync(file)
     }

@@ -875,8 +875,6 @@ if (existsSync(settingsPath)) {
     { id: 'grok', name: 'Grok', binaryPath: 'grok', defaultArgs: [], envVars: {}, enabled: true, builtin: true }
   ]
   settings.githubTrayEnabled = false
-  settings.cloudflareTrayEnabled = false
-  settings.supabaseTrayEnabled = false
   settings.surfacePattern = 'none'
   writeFileSync(settingsPath, JSON.stringify(settings, null, 2))
 } else {
@@ -900,8 +898,6 @@ if (existsSync(settingsPath)) {
           { id: 'grok', name: 'Grok', binaryPath: 'grok', defaultArgs: [], envVars: {}, enabled: true, builtin: true }
         ],
         githubTrayEnabled: false,
-        cloudflareTrayEnabled: false,
-        supabaseTrayEnabled: false,
         surfacePattern: 'none'
       },
       null,

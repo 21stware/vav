@@ -11,8 +11,6 @@ import {
   GithubReleasePreview,
   GithubSitePreview
 } from './githubPanel/GithubPreview'
-import { CloudflareDeployPreview } from './CloudflarePanel'
-import { SupabaseFunctionPreview } from './SupabasePanel'
 
 const FileViewer = lazy(() => import('./FileViewer').then((m) => ({ default: m.FileViewer })))
 
@@ -73,24 +71,6 @@ export function SessionPreviewPane({ path }: { path: string | null }): React.JSX
   }
   if (sessionPreview.kind === 'github-release') {
     return <GithubReleasePreview release={sessionPreview.release} onClose={close} />
-  }
-  if (sessionPreview.kind === 'cloudflare') {
-    return (
-      <CloudflareDeployPreview
-        status={sessionPreview.status}
-        deploymentId={sessionPreview.deploymentId}
-        onClose={close}
-      />
-    )
-  }
-  if (sessionPreview.kind === 'supabase') {
-    return (
-      <SupabaseFunctionPreview
-        status={sessionPreview.status}
-        functionSlug={sessionPreview.functionSlug}
-        onClose={close}
-      />
-    )
   }
   if (path) {
     return (

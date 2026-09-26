@@ -47,7 +47,6 @@ import {
 } from './lib/applicationsWidth'
 import { useT } from './i18n/useT'
 import { useAttentionSeen } from './lib/useAttentionSeen'
-import { installSwarmHistoryBridge } from './lib/swarmHistoryBridge'
 import { installE2eBridge } from './lib/e2eBridge'
 import { useAppHostApply } from './lib/apps/useAppHostApply'
 type LaunchPhase = 'checking' | 'keychain' | 'booting' | 'ready' | 'no-preload'
@@ -135,7 +134,6 @@ export default function App(): React.JSX.Element {
     const offUpdates = installUpdateBridge()
     const offModels = installAgentModelCatalogBridge()
     const offMenu = installDefaultContextMenu()
-    const offHistory = installSwarmHistoryBridge()
     const offCli = window.vav.onCliOpen((event) => {
       const store = useSessionStore.getState()
       // Reveal in List / CLI open: leave workspace view so the sidebar row is visible.
@@ -178,7 +176,6 @@ export default function App(): React.JSX.Element {
       offModels()
       offMenu()
       offCli()
-      offHistory()
       offInstall()
       offE2e()
     }

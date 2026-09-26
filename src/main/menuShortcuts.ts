@@ -20,8 +20,6 @@ const KEY_BINDING_MENU_COMMAND: Partial<Record<keyof ResolvedKeyBindings, MenuCo
   togglePanelSegment: 'toggle-panel-segment',
   focusBash: 'focus-bash',
   switchWorkdir: 'switch-workdir',
-  switchCliMode: 'switch-cli-mode',
-  switchVavMode: 'switch-vav-mode',
   switchModel: 'switch-model',
   switchModelUp: 'switch-model-up',
   switchModelDown: 'switch-model-down',

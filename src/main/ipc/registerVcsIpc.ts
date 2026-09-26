@@ -25,21 +25,17 @@ import {
   listGithubPulls,
   listGithubReleases
 } from '../github/GithubService'
-import { getCloudflareStatus } from '../cloudflare/CloudflareService'
-import { getSupabaseStatus } from '../supabase/SupabaseService'
 
 export type VcsIpcRemote = {
   request: (method: string, params?: unknown) => Promise<unknown>
 }
 
 export type VcsIpcCreds = {
-  cloudflare: () => { token: string | null; accountId: string | null }
-  supabase: () => { token: string | null; projectRef: string | null }
-  /** Spawned loopback vav-server — Git / vendor trays share the daemon plane Chrome uses. */
+  /** Spawned loopback vav-server — Git / GitHub trays share the daemon plane Chrome uses. */
   remote?: () => VcsIpcRemote | null
 }
 
-/** Git, GitHub, Cloudflare, and Supabase IPC — thin wrappers over the services. */
+/** Git and GitHub IPC — thin wrappers over the services. */
 export function registerVcsIpc(ipcMain: IpcMain, creds: VcsIpcCreds): void {
   const remote = (): VcsIpcRemote | null => creds.remote?.() ?? null
 
@@ -179,30 +175,6 @@ export function registerVcsIpc(ipcMain: IpcMain, creds: VcsIpcCreds): void {
     if (client) return client.request('github.getPull', { cwd, number })
     return getGithubPull(cwd, number)
   })
-  ipcMain.handle(
-    IPC.cloudflareStatus,
-    async (_event, cwd: string, query?: import('@shared/cloudflare').CloudflareStatusQuery) => {
-      const client = remote()
-      if (client) return client.request('cloudflare.status', { cwd, query })
-      return getCloudflareStatus(
-        String(cwd || ''),
-        creds.cloudflare(),
-        query && typeof query === 'object' ? { remote: query.remote !== false } : undefined
-      )
-    }
-  )
-  ipcMain.handle(
-    IPC.supabaseStatus,
-    async (_event, cwd: string, query?: import('@shared/supabase').SupabaseStatusQuery) => {
-      const client = remote()
-      if (client) return client.request('supabase.status', { cwd, query })
-      return getSupabaseStatus(
-        String(cwd || ''),
-        creds.supabase(),
-        query && typeof query === 'object' ? { remote: query.remote !== false } : undefined
-      )
-    }
-  )
   ipcMain.handle(
     IPC.githubListActions,
     async (_event, cwd: string, scope?: import('@shared/github').GithubActionsScope) => {

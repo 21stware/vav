@@ -1,8 +1,8 @@
 import { test, expect } from '@playwright/test'
-import { launchWorkbench, pressAccelerator } from '../launch'
+import { launchWorkbench } from '../launch'
 
 /**
- * Swarm mode: split VAV panes, focus by click / sidebar, close, CLI surface.
+ * Swarm mode: split VAV panes, focus by click / sidebar, close.
  * Does not spawn vendor CLI TUIs.
  */
 test('⌘D splits a Swarm thread into two panes and close restores one', async () => {
@@ -56,25 +56,6 @@ test('sidebar click focuses the matching Swarm pane', async () => {
     await expect(
       page.locator(`[data-testid="swarm-pane"][data-swarm-pane="${secondId}"]`)
     ).toHaveClass(/is-active/)
-  } finally {
-    await harness.dispose()
-  }
-})
-
-test('⌘⇧C / ⌘⇧V flip the Swarm CLI surface and back to VAV', async () => {
-  const harness = await launchWorkbench({ swarmMode: true })
-  try {
-    const { page } = harness
-    await pressAccelerator(harness, 'Meta+Shift+c')
-    await expect(page.locator('.terminal-host-main')).not.toHaveClass(/is-surface-parked/)
-    await expect(page.locator('[data-testid="cli-agent-picker"]')).toBeVisible()
-    await expect(page.locator('[data-testid="cli-agent-picker"] .cli-agent-picker-item').first()).toBeVisible()
-
-    await pressAccelerator(harness, 'Meta+Shift+v')
-    // Product parks the CLI surface (display/visibility) instead of unmounting.
-    await expect(page.locator('.terminal-host-main')).toHaveClass(/is-surface-parked/)
-    await expect(page.locator('[data-testid="cli-agent-picker"]')).toBeHidden()
-    await expect(page.locator('[data-testid="composer-input"]')).toBeVisible()
   } finally {
     await harness.dispose()
   }

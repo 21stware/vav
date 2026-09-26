@@ -19,7 +19,6 @@ describe('registerConnectorIpc', () => {
           throw new Error('local connector registry should not run')
         }
       } as never,
-      () => ({ token: null }),
       {
         broadcastSettings: () => undefined,
         remote: () => ({

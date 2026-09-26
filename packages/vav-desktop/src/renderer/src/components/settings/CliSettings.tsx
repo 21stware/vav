@@ -45,7 +45,7 @@ export function CliSettings(): React.JSX.Element {
   }, [])
 
   const location = status?.preferredLocation ?? '~/.local/bin'
-  const commandNames = status?.commands?.length ? status.commands.join(', ') : 'vav, vav-server, vav-board, vav-tui'
+  const commandNames = status?.commands?.length ? status.commands.join(', ') : 'vav, vav-server'
   const targetLabel = `${location} (${commandNames})`
 
   const install = async (): Promise<void> => {

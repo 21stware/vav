@@ -10,9 +10,9 @@ type ProductFile = Pick<ProductIdentity, 'name' | 'role' | 'kind' | 'sources' | 
   version: string
 }
 
-describe('seven-product split', () => {
+describe('product split', () => {
   it('keeps a first-class package for every product', () => {
-    assert.equal(PRODUCT_ROLES.length, 7)
+    assert.equal(PRODUCT_ROLES.length, 2)
     const rootPkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as {
       version?: string
       workspaces?: string[]
@@ -22,11 +22,7 @@ describe('seven-product split', () => {
       .filter((entry) => entry.isDirectory() && existsSync(join(root, 'packages', entry.name, 'package.json')))
       .map((entry) => entry.name)
       .sort()
-    assert.deepEqual(
-      dirs,
-      PRODUCT_ROLES.slice().sort(),
-      'packages/* must be exactly the seven product identities'
-    )
+    assert.deepEqual(dirs, PRODUCT_ROLES.slice().sort(), 'packages/* must be exactly the product identities')
     for (const role of PRODUCT_ROLES) {
       const spec = PRODUCTS[role]
       const pkgPath = join(root, spec.dir, 'package.json')
@@ -48,45 +44,5 @@ describe('seven-product split', () => {
         assert.ok(existsSync(join(root, file)), `${role} missing ${file}`)
       }
     }
-  })
-
-  it('keeps iOS and Android remotes as matching source trees', () => {
-    const swift = readdirSync(join(root, 'packages/vav-ios/VAVRemote/VAVRemote'), { recursive: true })
-      .filter((name) => String(name).endsWith('.swift'))
-      .map(String)
-    const kotlin = readdirSync(join(root, 'packages/vav-android/VAVRemote/app/src/main/java/com/vav/remote'), {
-      recursive: true
-    })
-      .filter((name) => String(name).endsWith('.kt'))
-      .map(String)
-    for (const name of [
-      'RemoteClient.swift',
-      'Models.swift',
-      'PairingView.swift',
-      'SessionsView.swift',
-      'SessionDetailView.swift',
-      'SettingsView.swift'
-    ]) {
-      assert.ok(swift.some((file) => file.endsWith(name)), `iOS missing ${name}`)
-    }
-    for (const name of [
-      'RemoteClient.kt',
-      'Models.kt',
-      'PairingScreen.kt',
-      'SessionsScreen.kt',
-      'SessionDetailScreen.kt',
-      'SettingsScreen.kt'
-    ]) {
-      assert.ok(kotlin.some((file) => file.endsWith(name)), `Android missing ${name}`)
-    }
-    const manifest = readFileSync(
-      join(root, 'packages/vav-android/VAVRemote/app/src/main/AndroidManifest.xml'),
-      'utf8'
-    )
-    assert.match(manifest, /android.permission.INTERNET/)
-    assert.match(manifest, /android.permission.CAMERA/)
-    const chrome = readFileSync(join(root, 'packages/vav-chrome-extension/extension/manifest.json'), 'utf8')
-    assert.match(chrome, /"manifest_version": 3/)
-    assert.match(chrome, /sidepanel.html/)
   })
 })

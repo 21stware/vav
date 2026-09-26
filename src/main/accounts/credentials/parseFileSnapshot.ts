@@ -1,8 +1,7 @@
 import {
   asAccountRecord,
   decodeJwtPayload,
-  parseCodexAuthFile,
-  parseOpencodeAuthFile
+  parseCodexAuthFile
 } from '../../../shared/cliAccountParse.ts'
 
 const PREFERRED_GROK_ISSUER = 'https://auth.x.ai'
@@ -13,8 +12,6 @@ export function parseFileSnapshotMeta(
 ): { identity: string | null; expiresAtMs: number | null } {
   if (host === 'grok') return parseGrokMeta(raw)
   if (host === 'codex') return parseCodexMeta(raw)
-  if (host === 'opencode') return parseOpencodeMeta(raw)
-  if (host === 'pi') return { identity: null, expiresAtMs: null }
   return { identity: null, expiresAtMs: null }
 }
 
@@ -73,9 +70,4 @@ function parseCodexMeta(raw: string): { identity: string | null; expiresAtMs: nu
     identity: info.accountId,
     expiresAtMs: (idToken && jwtExpiresAtMs(idToken)) || (access && jwtExpiresAtMs(access)) || null
   }
-}
-
-function parseOpencodeMeta(raw: string): { identity: string | null; expiresAtMs: number | null } {
-  const parsed = parseJson(raw)
-  return { identity: parseOpencodeAuthFile(parsed).accountId, expiresAtMs: null }
 }

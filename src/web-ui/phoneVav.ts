@@ -2237,45 +2237,6 @@ export function installPhoneVav(transport: PhoneTransport): PhoneVavHandle {
         }
       }
     },
-    supabase: {
-      status: async (cwd, query) => {
-        const plane = await daemonReady()
-        if (!plane) return { ok: false as const, error: 'unavailable' }
-        try {
-          return (await plane.request('supabase.status', { cwd, query })) as Awaited<
-            ReturnType<VavApi['supabase']['status']>
-          >
-        } catch (err) {
-          return { ok: false as const, error: (err as Error).message }
-        }
-      }
-    },
-    cloudflare: {
-      status: async (cwd, query) => {
-        const plane = await daemonReady()
-        if (!plane) return { ok: false as const, error: 'unavailable' }
-        try {
-          return (await plane.request('cloudflare.status', { cwd, query })) as Awaited<
-            ReturnType<VavApi['cloudflare']['status']>
-          >
-        } catch (err) {
-          return { ok: false as const, error: (err as Error).message }
-        }
-      }
-    },
-    vercel: {
-      status: async (cwd, query) => {
-        const plane = await daemonReady()
-        if (!plane) return { ok: false as const, error: 'unavailable', code: 'network' as const }
-        try {
-          return (await plane.request('vercel.status', { cwd, query })) as Awaited<
-            ReturnType<VavApi['vercel']['status']>
-          >
-        } catch (err) {
-          return { ok: false as const, error: (err as Error).message, code: 'network' as const }
-        }
-      }
-    },
     timers: {
       listJobs: async () => {
         const plane = await daemonReady()

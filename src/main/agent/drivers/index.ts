@@ -2,11 +2,8 @@ import type { AgentConfig, CliHostKind } from '@shared/types'
 import { isStructuredCliHost } from '@shared/types'
 import { resolveAgentExecutable } from '../../terminal/loginPath'
 import { startAcpDriver, type AcpHostKind } from './acp'
-import { startAntigravityDriver } from './antigravity'
 import { startClaudeDriver } from './claude'
 import { startCodexDriver } from './codex'
-import { startOpenCodeDriver } from './opencode'
-import { startPiDriver } from './pi'
 import type { DriverControl, DriverEventSink, DriverStartOptions } from './types'
 
 export type { DriverControl, DriverEvent, DriverEventSink, DriverStartOptions } from './types'
@@ -16,10 +13,7 @@ const CANDIDATES: Record<CliHostKind, string[]> = {
   codex: ['codex'],
   cursor: ['cursor-agent', 'agent', 'cursor'],
   grok: ['grok'],
-  opencode: ['opencode'],
-  pi: ['pi', 'pi-agent'],
   devin: ['devin'],
-  antigravity: ['agy', 'antigravity'],
   kiro: ['kiro-cli', 'kiro'],
   cline: ['cline']
 }
@@ -52,12 +46,6 @@ export async function startDriver(
       return startClaudeDriver(options, emit)
     case 'codex':
       return startCodexDriver(options, emit)
-    case 'opencode':
-      return startOpenCodeDriver(options, emit)
-    case 'pi':
-      return startPiDriver(options, emit)
-    case 'antigravity':
-      return startAntigravityDriver(options, emit)
     case 'cursor':
     case 'grok':
     case 'devin':

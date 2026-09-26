@@ -42,8 +42,6 @@ import type {
   GithubResult,
   GithubSite
 } from './github'
-import type { CloudflareResult, CloudflareStatus, CloudflareStatusQuery } from './cloudflare'
-import type { SupabaseResult, SupabaseStatus, SupabaseStatusQuery } from './supabase'
 import type { KeepAwakeGrantResult, KeepAwakeStatus } from './sleepBlocker'
 import type { Platform } from './platform'
 import type { AgentInstallRun } from './agentInstall'
@@ -302,7 +300,7 @@ export interface CliStatus {
   error?: string
   /** Soft note (e.g. auto-fallback to ~/.local/bin). */
   notice?: string
-  /** All shims this install writes (`vav` plus vav-server / vav-board / vav-tui). */
+  /** All shims this install writes (`vav` plus `vav-server`). */
   commands?: string[]
 }
 
@@ -1384,16 +1382,6 @@ export interface VavApi {
     ): Promise<GitResult<{ selector: string }>>
   }
 
-  /** Workspace Workers / Pages status from wrangler + the Cloudflare API. */
-  cloudflare: {
-    status(cwd: string, query?: CloudflareStatusQuery): Promise<CloudflareResult<CloudflareStatus>>
-  }
-
-  /** Workspace project / Edge Function status from supabase/ + the Management API. */
-  supabase: {
-    status(cwd: string, query?: SupabaseStatusQuery): Promise<SupabaseResult<SupabaseStatus>>
-  }
-
   /**
    * Global agent plugins (skills / MCP / hooks).
    * `host` is the session CLI host; ACP hosts return that product's on-disk plugins.
@@ -1441,13 +1429,6 @@ export interface VavApi {
     authStatus(): Promise<import('./connector').ConnectorAuthPage>
     beginLogin(id: import('./connector').ConnectorId): Promise<import('./connector').ConnectorAuthPage>
     cancelLogin(id?: import('./connector').ConnectorId): Promise<import('./connector').ConnectorAuthPage>
-  }
-
-  vercel: {
-    status(
-      cwd: string,
-      query?: import('./vercel').VercelStatusQuery
-    ): Promise<import('./vercel').VercelResult<import('./vercel').VercelStatus>>
   }
 
   /** Scheduled jobs. Definition chats are timer sessions; fires mint run chats. */
@@ -2348,8 +2329,6 @@ export const IPC = {
   gitStashDrop: 'vav:git:stash-drop',
   githubListPulls: 'vav:github:list-pulls',
   githubGetPull: 'vav:github:get-pull',
-  cloudflareStatus: 'vav:cloudflare:status',
-  supabaseStatus: 'vav:supabase:status',
   githubListActions: 'vav:github:list-actions',
   githubListReleases: 'vav:github:list-releases',
   githubGetActionRun: 'vav:github:get-action-run',
@@ -2358,7 +2337,6 @@ export const IPC = {
   pluginsSetEnabled: 'vav:plugins:set-enabled',
   pluginsCreate: 'vav:plugins:create',
   pluginsWrite: 'vav:plugins:write',
-  vercelStatus: 'vav:vercel:status',
   connectorsCatalog: 'vav:connectors:catalog',
   connectorsProbe: 'vav:connectors:probe',
   connectorsAct: 'vav:connectors:act',

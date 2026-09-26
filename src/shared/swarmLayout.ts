@@ -143,6 +143,14 @@ export function sanitizeSwarmLayout(value: unknown): TerminalLayoutNode | null {
   return { type: 'branch', direction: node.direction, weight, children: [left, right] }
 }
 
+/**
+ * Split the focused pane along its long edge.
+ * `row` = left/right (⌘D); `column` = top/bottom (⌘⇧D).
+ */
+export function longEdgeSplitAxis(width: number, height: number): 'row' | 'column' {
+  return width >= height ? 'row' : 'column'
+}
+
 export function swarmRootId(
   conversationId: string,
   parentId: string | null | undefined

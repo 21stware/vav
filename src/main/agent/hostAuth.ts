@@ -5,8 +5,6 @@ import { readCodexAccountInfo, readCodexAuthIdentity } from '../quota/codexUsage
 import { readCursorAccountInfo, readCursorAuthIdentity } from '../quota/cursorUsage'
 import { readDevinAccountInfo, readDevinAuthIdentity } from '../quota/devinUsage'
 import { readGrokAccountInfo, readGrokAuthIdentity } from '../quota/grokUsage'
-import { readOpencodeAccountInfo, readOpencodeAuthIdentity } from '../quota/opencodeUsage'
-import { readPiAccountInfo } from '../quota/piUsage'
 
 const IDENTITY_TTL_MS = 2 * 60_000
 const identityCache = new Map<CliHostKind, { value: string | null; at: number }>()
@@ -22,8 +20,6 @@ async function readHostAuthIdentityUncached(kind: CliHostKind): Promise<string |
       return readCodexAuthIdentity()
     case 'cursor':
       return readCursorAuthIdentity()
-    case 'opencode':
-      return readOpencodeAuthIdentity()
     case 'devin':
       return readDevinAuthIdentity()
     default:
@@ -74,12 +70,8 @@ export async function readHostAccountInfo(
       return readClaudeAccountInfo()
     case 'cursor':
       return readCursorAccountInfo()
-    case 'opencode':
-      return readOpencodeAccountInfo()
     case 'devin':
       return readDevinAccountInfo()
-    case 'pi':
-      return readPiAccountInfo()
     default:
       return unknownAccount()
   }

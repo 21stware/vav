@@ -1421,7 +1421,7 @@ export const zhCN = {
   'cli.installTitle': '安装 VAV 命令行工具',
   'cli.uninstallTitle': '卸载 VAV 命令行工具',
   'cli.uninstallBody':
-    '将从 {path} 中移除 vav、vav-server、vav-board 与 vav-tui 快捷命令。VAV 桌面应用本体及用户数据不受影响，可随时重新安装。',
+    '将从 {path} 中移除 vav 与 vav-server 快捷命令。VAV 桌面应用本体及用户数据不受影响，可随时重新安装。',
   'cli.pathWarning':
     '{location} 似乎不在系统环境变量 PATH 中。若终端提示找不到 vav 命令，请在 Shell 配置文件中添加 export PATH="$HOME/.local/bin:$PATH"（或对应目录）并重新加载终端。',
   'cli.fellBackToLocal':
@@ -2030,13 +2030,13 @@ export const zhCN = {
   // —— cli extras ——
   'cli.commandTitle': 'VAV 命令行工具集',
   'cli.commandIntro':
-    '一键安装 vav、vav-server、vav-board 与 vav-tui 命令行工具。vav 用于快速唤起桌面应用；vav-server 为核心后台守护进程；vav-board 管理并控制会话；vav-tui 支持在纯终端环境中直接执行 Agent 任务。所有工具共享同构后台服务。',
+    '一键安装 vav 与 vav-server 命令行工具。vav 用于快速唤起桌面应用；vav-server 为核心后台守护进程。两者连接同一套后台服务。',
   'cli.installingTo': '正在安装到 {path}…',
   'cli.installedAt': '已安装到 {path}{version}',
   'cli.installedHint':
-    'vav 启动桌面端；vav-server / vav-board / vav-tui 统一连接同一套后台守护进程。可运行 vav -h、vav-board -h 或 vav-tui -h 查看参数。',
+    'vav 启动桌面端；vav-server 连接同一套后台守护进程。可运行 vav -h 或 vav-server -h 查看参数。',
   'cli.afterInstallHint':
-    '安装完成后，可在终端执行 vav -h、vav-board -h 或 vav-tui -h。vav-board 与 vav-tui 会自动发现并连接本机运行中的 vav-server 服务。',
+    '安装完成后，可在终端执行 vav -h 或 vav-server -h。',
   'cli.installFailedPrefix': '安装失败：{message}',
   'cli.notInstalled': '尚未安装 — 点击右侧按钮一键安装至 {path}',
   'cli.confirmUninstall': '确认卸载',
@@ -4252,7 +4252,7 @@ export const en: Record<MessageKey, string> = {
   'cli.installTitle': 'Install VAV CLI Commands',
   'cli.uninstallTitle': 'Uninstall VAV CLI Commands',
   'cli.uninstallBody':
-    'Removes vav, vav-server, vav-board, and vav-tui commands from {path}. Application files and user data remain unaffected and can be reinstalled anytime.',
+    'Removes vav and vav-server commands from {path}. Application files and user data remain unaffected and can be reinstalled anytime.',
   'cli.pathWarning':
     '{location} does not appear to be in your PATH. If commands are not recognized, add export PATH="$HOME/.local/bin:$PATH" (or the appropriate directory) to your shell configuration.',
   'cli.fellBackToLocal':
@@ -4859,13 +4859,13 @@ export const en: Record<MessageKey, string> = {
 
   'cli.commandTitle': 'VAV Command Line Tools',
   'cli.commandIntro':
-    'Installs the vav, vav-server, vav-board, and vav-tui CLI tools. vav launches or focuses the desktop application; vav-server powers the core background daemon; vav-board manages sessions; vav-tui runs agent turns directly in terminal. All commands seamlessly connect to the same daemon.',
+    'Installs the vav and vav-server CLI tools. vav launches or focuses the desktop application; vav-server powers the core background daemon. Both talk to the same daemon.',
   'cli.installingTo': 'Installing to {path}…',
   'cli.installedAt': 'Installed at {path}{version}',
   'cli.installedHint':
-    'vav launches the desktop app; vav-server, vav-board, and vav-tui communicate with the same daemon. Run vav -h, vav-board -h, or vav-tui -h for options.',
+    'vav launches the desktop app; vav-server is the same daemon the app can spawn. Run vav -h or vav-server -h for options.',
   'cli.afterInstallHint':
-    'After installation, run vav -h, vav-board -h, or vav-tui -h from any terminal. vav-board and vav-tui automatically detect running local vav-server instances.',
+    'After installation, run vav -h or vav-server -h from any terminal.',
   'cli.installFailedPrefix': 'Install failed: {message}',
   'cli.notInstalled': 'Not installed — click Install to set up at {path}',
   'cli.confirmUninstall': 'Uninstall',

@@ -2,7 +2,7 @@ import type { CliHostKind } from './cliHost'
 import type { QuotaWindow, QuotaWindowKind } from './types'
 
 /** Hosts that expose an account-level subscription / rate-limit poll. */
-export const ACCOUNT_QUOTA_HOSTS = ['claude', 'codex', 'cursor', 'grok', 'opencode'] as const
+export const ACCOUNT_QUOTA_HOSTS = ['claude', 'codex', 'cursor', 'grok'] as const
 export type AccountQuotaHost = (typeof ACCOUNT_QUOTA_HOSTS)[number]
 
 const ACCOUNT_QUOTA_HOST_SET = new Set<string>(ACCOUNT_QUOTA_HOSTS)
@@ -479,35 +479,6 @@ export function windowsFromCursorPeriodPayload(
       updatedAt: now
     }
   ]
-}
-
-const OPENCODE_GO_LANES: Array<{ key: string; kind: QuotaWindowKind }> = [
-  { key: 'rolling', kind: 'five_hour' },
-  { key: 'weekly', kind: 'seven_day' },
-  { key: 'monthly', kind: 'monthly' }
-]
-
-/** OpenCode Go `GET /zen/go/v1/usage`. */
-export function windowsFromOpencodeGoUsagePayload(
-  payload: unknown,
-  now = Date.now()
-): QuotaWindow[] {
-  const usage = asRecord(asRecord(payload)?.usage)
-  if (!usage) return []
-  const windows: QuotaWindow[] = []
-  for (const lane of OPENCODE_GO_LANES) {
-    const rec = asRecord(usage[lane.key])
-    const pct = normalizeQuotaPercent(finiteNumber(rec?.percent) ?? NaN)
-    if (!rec || pct == null) continue
-    windows.push({
-      id: lane.kind,
-      kind: lane.kind,
-      usedPercent: pct,
-      resetsAt: parseQuotaResetsAt(rec.resetsAt ?? rec.resets_at),
-      updatedAt: now
-    })
-  }
-  return sortQuotaWindows(windows)
 }
 
 export function mergeQuotaWindows(

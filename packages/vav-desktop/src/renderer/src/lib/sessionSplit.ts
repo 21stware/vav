@@ -3,8 +3,7 @@ import { tt } from '../i18n/useT'
 import { PLATFORM } from './platform'
 import { showMenu } from './nativeMenu'
 import { useSessionStore } from '../state/sessionStore'
-import { CLI_SURFACE_KEY, useWorkspaceStore } from '../state/workspaceStore'
-import { focusAgentPane, setUiFocusScope } from './uiFocus'
+import { setUiFocusScope } from './uiFocus'
 
 /** Focus the first CLI agent option inside a pending pane after a split. */
 export function focusCliAgentPickerFirstOption(_conversationId: string, tabId?: string): void {
@@ -41,21 +40,6 @@ export function focusCliAgentPickerFirstOption(_conversationId: string, tabId?: 
   requestAnimationFrame(() => apply(0))
 }
 
-/** Split CLI Screen and move keyboard focus to the new pane’s first agent. */
-export function splitCliAndFocusPicker(
-  conversationId: string,
-  axis: 'row' | 'column'
-): void {
-  if (!conversationId) return
-  useWorkspaceStore.getState().splitCliSurface(conversationId, axis)
-  const host =
-    useWorkspaceStore.getState().workspaces[conversationId]?.agentHostSessions[CLI_SURFACE_KEY]
-  const pendingId = host?.activeTabId
-  if (!pendingId) return
-  focusAgentPane(conversationId, pendingId)
-  focusCliAgentPickerFirstOption(conversationId, pendingId)
-}
-
 export function canSplitSession(conversationId: string): boolean {
   if (!conversationId) return false
   const store = useSessionStore.getState()
@@ -67,9 +51,7 @@ export function canSplitSession(conversationId: string): boolean {
 
 export function splitSessionPane(conversationId: string, axis: 'row' | 'column'): void {
   if (!canSplitSession(conversationId)) return
-  const cliMode = !!useWorkspaceStore.getState().workspaces[conversationId]?.cliMode
-  if (cliMode) splitCliAndFocusPicker(conversationId, axis)
-  else void useSessionStore.getState().splitSwarmPane(axis)
+  void useSessionStore.getState().splitSwarmPane(axis)
 }
 
 /** Right-click blank session chrome — not messages, inputs, or chrome controls. */

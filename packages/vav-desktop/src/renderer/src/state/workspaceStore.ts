@@ -98,7 +98,7 @@ import {
   type TerminalSplitAxis,
   type TerminalTab
 } from '@shared/types'
-import { longEdgeSplitAxis } from '@shared/cliSessionHistory'
+import { longEdgeSplitAxis } from '@shared/swarmLayout'
 import {
   shouldAutoAssignSingleCliAgent,
   type SkipCliPickerReason

@@ -9,7 +9,7 @@ import {
   installWindowBridge,
   installActivityBridge
 } from './state/sessionBridges'
-import { installFsWatchBridge, installPtyBridge, useWorkspaceStore } from './state/workspaceStore'
+import { installFsWatchBridge, installPtyBridge } from './state/workspaceStore'
 import { AgentModeChrome, SessionDetail } from './components/SessionDetail'
 import { ActivityDot } from './components/ActivityDot'
 import { useAppearance } from './lib/appearance'
@@ -20,7 +20,6 @@ import { installInstallRunBridge } from './state/installRunStore'
 import { useT } from './i18n/useT'
 import { useAttentionSeen } from './lib/useAttentionSeen'
 import { acceptSessionNavigateSeq } from './lib/cliSurfaceAuthority'
-import { installSwarmHistoryBridge } from './lib/swarmHistoryBridge'
 import { useWindowMinSize } from './lib/useWindowMinSize'
 
 /** Open clock from main (requestedAt) for [session-perf] logs. */
@@ -71,14 +70,8 @@ export default function SessionWindow({
     conversationId ? s.conversations.find((c) => c.id === conversationId) : undefined
   )
   const agentBinaryName = conversation?.agentBinaryName ?? null
-  // Same source of truth as SessionDetail / AgentModeChrome: Screen cliMode,
-  // not agentBinaryName (that only names the focused pane's CLI type).
-  const isVavMode = useWorkspaceStore((s) => {
-    if (!conversationId) return true
-    return !s.workspaces[conversationId]?.cliMode
-  })
 
-  /** Focus CLI pane or VAV composer based on hydrated cliMode (not always composer). */
+  /** Focus the VAV composer after hydrate / navigate. */
   const scheduleSurfaceFocus = (conversationId: string, reason: string): void => {
     const gen = ++focusGenRef.current
     requestAnimationFrame(() => {
@@ -87,11 +80,10 @@ export default function SessionWindow({
         void (async () => {
           if (gen !== focusGenRef.current) return
           const { applySessionSurfaceFocus } = await import('./lib/sessionFocus')
-          const cli = useWorkspaceStore.getState().workspaces[conversationId]?.cliMode === true
           await applySessionSurfaceFocus({
             conversationId,
             toast: null,
-            surface: cli ? 'cli' : 'vav'
+            surface: 'vav'
           })
           if (gen === focusGenRef.current) markSession(reason)
         })()
@@ -173,8 +165,7 @@ export default function SessionWindow({
     void useSessionStore.getState().refreshAgentModelCatalog(false)
     const offMenu = installDefaultContextMenu()
     const offInstall = installInstallRunBridge()
-    const offHistory = installSwarmHistoryBridge()
-    // Tray / notify: main may raise this companion and ask for CLI pane focus.
+    // Tray / notify: main may raise this companion and ask for composer / bash focus.
     const offCli = window.vav.onCliOpen((event) => {
       if (!event.conversationId) return
       // Only handle opens for this companion's session (or warm shell claiming).
@@ -187,9 +178,7 @@ export default function SessionWindow({
         focusGenRef.current += 1
         const { applySessionSurfaceFocus } = await import('./lib/sessionFocus')
         await applySessionSurfaceFocus(event)
-        markSession(
-          event.surface === 'cli' || event.tabId ? 'focus-cli-pane' : 'focus-composer-cliOpen'
-        )
+        markSession(event.surface === 'bash' ? 'focus-bash-pane' : 'focus-composer-cliOpen')
       })()
     })
     return () => {
@@ -204,7 +193,6 @@ export default function SessionWindow({
       offModels()
       offMenu()
       offCli()
-      offHistory()
       offInstall()
     }
   }, [conversationId])
@@ -252,7 +240,7 @@ export default function SessionWindow({
           <AgentModeChrome
             conversationId={conversationId}
             agentBinaryName={agentBinaryName}
-            showSearch={isVavMode}
+            showSearch
             showNewSession
             trail={
               <button

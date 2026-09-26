@@ -12,19 +12,9 @@ import {
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 
-test('extension and every product package version match the app', () => {
+test('every product package version matches the app', () => {
   const version = packageVersion()
-  const extension = JSON.parse(readFileSync(join(root, 'packages/vav-chrome-extension/extension/manifest.json'), 'utf8'))
-  assert.equal(extension.version, version)
-  for (const dir of [
-    'vav-server',
-    'vav-desktop',
-    'vav-tui',
-    'vav-board',
-    'vav-chrome-extension',
-    'vav-ios',
-    'vav-android'
-  ]) {
+  for (const dir of ['vav-server', 'vav-desktop']) {
     const pkg = JSON.parse(readFileSync(join(root, 'packages', dir, 'package.json'), 'utf8'))
     assert.equal(pkg.version, version, dir)
     const product = JSON.parse(readFileSync(join(root, 'packages', dir, 'product.json'), 'utf8'))
@@ -32,7 +22,7 @@ test('extension and every product package version match the app', () => {
   }
 })
 
-test('every release lists desktop installers, updater feeds, vav-server, and the Chrome extension', () => {
+test('every release lists desktop installers, updater feeds, and vav-server', () => {
   const version = '1.2.3'
   const names = requiredReleaseAssets(version)
   assert.deepEqual(names, [
@@ -43,8 +33,7 @@ test('every release lists desktop installers, updater feeds, vav-server, and the
     'VAV-1.2.3-windows-x64-setup.exe',
     'VAV-1.2.3-windows-x64-setup.exe.blockmap',
     'latest.yml',
-    '21stware-vav-server-1.2.3.tgz',
-    'vav-chrome-extension-1.2.3.zip'
+    '21stware-vav-server-1.2.3.tgz'
   ])
   assert.equal(packageVersion().split('.').length, 3)
 })
@@ -57,7 +46,7 @@ test('missingReleaseAssets reports only the absent files', () => {
     const missing = missingReleaseAssets(dir, '9.9.9')
     assert.ok(missing.includes('VAV-9.9.9-macos-arm64.dmg'))
     assert.ok(missing.includes('21stware-vav-server-9.9.9.tgz'))
-    assert.ok(missing.includes('vav-chrome-extension-9.9.9.zip'))
+    assert.ok(!missing.includes('vav-chrome-extension-9.9.9.zip'))
     assert.ok(!missing.includes('latest.yml'))
   } finally {
     rmSync(dir, { recursive: true, force: true })

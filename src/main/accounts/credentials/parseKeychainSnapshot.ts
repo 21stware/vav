@@ -51,11 +51,10 @@ export function accessTokenFromSnapshot(
       return raw.includes('.') ? raw : undefined
     }
   }
-  if (host === 'grok' || host === 'opencode') {
+  if (host === 'grok') {
     try {
       const parsed = JSON.parse(raw) as Record<string, unknown>
-      const preferred =
-        host === 'opencode' ? ['opencode-go', 'opencode', 'zen'] : ['https://auth.x.ai']
+      const preferred = ['https://auth.x.ai']
       for (const id of preferred) {
         const entry = parsed[id]
         const key = entry && typeof entry === 'object' ? (entry as { key?: unknown }).key : null

@@ -347,9 +347,14 @@ export class SettingsStore {
       s.skipCliAgentPickerWhenSingle = false
     }
     if (typeof s.githubTrayEnabled !== 'boolean') s.githubTrayEnabled = true
-    if (typeof s.cloudflareTrayEnabled !== 'boolean') s.cloudflareTrayEnabled = false
-    if (typeof s.supabaseTrayEnabled !== 'boolean') s.supabaseTrayEnabled = false
-    if (typeof s.vercelTrayEnabled !== 'boolean') s.vercelTrayEnabled = false
+    const extras = s as AppSettings & {
+      cloudflareTrayEnabled?: unknown
+      supabaseTrayEnabled?: unknown
+      vercelTrayEnabled?: unknown
+    }
+    delete extras.cloudflareTrayEnabled
+    delete extras.supabaseTrayEnabled
+    delete extras.vercelTrayEnabled
     if (typeof s.vercelProjectId !== 'string') s.vercelProjectId = ''
     if (!s.disabledAgentModels || typeof s.disabledAgentModels !== 'object') {
       s.disabledAgentModels = {}

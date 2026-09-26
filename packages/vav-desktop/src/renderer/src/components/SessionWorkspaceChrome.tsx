@@ -1,9 +1,6 @@
 import { type ReactNode } from 'react'
-import { useSessionStore } from '../state/sessionStore'
-import { useWorkspaceStore } from '../state/workspaceStore'
-import { requestCliSurface } from '../lib/cliSurfaceSwitch'
 import { useT } from '../i18n/useT'
-import { StaggerLine, useEmptyEntranceCopy } from './ui'
+import { StaggerLine } from './ui'
 
 function TextBtn({
   children,
@@ -93,39 +90,10 @@ export function EnableVersionControlChrome({
 }
 
 /**
- * Empty-session chrome: current workspace, with a switcher.
- * Git init / branch / worktree live in Files → Git, not here.
+ * Empty-session chrome. Git init / branch / worktree live in Files → Git.
  */
-export function SessionWorkspaceChrome({
-  conversationId
-}: {
+export function SessionWorkspaceChrome(_props: {
   conversationId?: string
 } = {}): React.JSX.Element | null {
-  const t = useT()
-  const storeActiveId = useSessionStore((s) => s.activeId)
-  const activeId = conversationId || storeActiveId
-  const swarmEnabled = useSessionStore((s) => s.settings.swarmModeEnabled === true)
-  const cliMode = useWorkspaceStore((s) => !!s.workspaces[activeId]?.cliMode)
-  const copy = useEmptyEntranceCopy(true)
-  const motionKey = copy.motionKey ?? activeId ?? 'ws'
-
-  if (!activeId) return null
-
-  const showCli = swarmEnabled && !cliMode
-  if (!showCli) return null
-
-  return (
-    <div className={`session-workspace-chrome${copy.entering ? ' is-entering' : ''}`}>
-      <p className="session-workspace-prose">
-        <StaggerLine baseDelay={280} key={`${motionKey}:cli`}>
-          <TextBtn
-            title={t('empty.useCliHint')}
-            onClick={() => requestCliSurface(activeId, true)}
-          >
-            {t('empty.useCliAction')}
-          </TextBtn>
-        </StaggerLine>
-      </p>
-    </div>
-  )
+  return null
 }

@@ -1,19 +1,17 @@
 import type { JSX } from 'react'
 import { X } from 'lucide-react'
 import { useSessionStore } from '../state/sessionStore'
-import { useWorkspaceStore } from '../state/workspaceStore'
 import { setUiFocusScope } from '../lib/uiFocus'
 import { useConversationFileDrop } from '../lib/useConversationFileDrop'
 import { Transcript } from './Transcript'
 import { Composer, ComposerContext } from './Composer'
 import { PlanOverlay } from './PlanOverlay'
 import { GoalBanner } from './GoalBanner'
-import { TerminalPanel } from './TerminalPanel'
 import { Button } from './ui'
 import { useT } from '../i18n/useT'
 
 /**
- * One Swarm / Thread pane: structured chat, or a one-way CLI surface.
+ * One Swarm / Thread pane: structured chat.
  */
 export function SessionPane({
   conversationId,
@@ -29,28 +27,23 @@ export function SessionPane({
   onClose?: () => void
 }): JSX.Element {
   const t = useT()
-  const swarmEnabled = useSessionStore((s) => s.settings.swarmModeEnabled === true)
-  const cliMode = useWorkspaceStore((s) => !!s.workspaces[conversationId]?.cliMode)
   const archived = useSessionStore(
     (s) => !!s.conversations.find((c) => c.id === conversationId)?.archived
   )
-  const isCli = swarmEnabled && cliMode
   const { dropActive, dropHandlers } = useConversationFileDrop(
     conversationId,
-    !isCli && !archived
+    !archived
   )
 
   return (
     <div
-      className={`session-swarm-pane${focused ? ' is-active' : ''}${compact ? ' is-compact' : ''}${
-        isCli ? ' is-cli' : ''
-      }`}
+      className={`session-swarm-pane${focused ? ' is-active' : ''}${compact ? ' is-compact' : ''}`}
       data-testid="swarm-pane"
       data-swarm-pane={conversationId}
       data-cli-pane={conversationId}
       onMouseDown={() => {
         onFocus()
-        setUiFocusScope(isCli ? 'agent' : 'app')
+        setUiFocusScope('app')
       }}
       {...dropHandlers}
     >
@@ -76,31 +69,25 @@ export function SessionPane({
         </div>
       )}
 
-      {isCli ? (
-        <TerminalPanel visible conversationId={conversationId} surface="agent" />
+      <div className="session-swarm-stream">
+        <GoalBanner conversationId={conversationId} />
+        <PlanOverlay conversationId={conversationId} />
+        <Transcript conversationId={conversationId} />
+        {!archived && <ComposerContext conversationId={conversationId} />}
+      </div>
+      {archived ? (
+        <div className="banner archived-readonly">
+          <span>{t('session.archivedReadonly')}</span>
+          <span className="spacer" />
+          <Button
+            label={t('sidebar.menu.unarchive')}
+            size="sm"
+            variant="secondary"
+            onClick={() => void useSessionStore.getState().setArchived(conversationId, false)}
+          />
+        </div>
       ) : (
-        <>
-          <div className="session-swarm-stream">
-            <GoalBanner conversationId={conversationId} />
-            <PlanOverlay conversationId={conversationId} />
-            <Transcript conversationId={conversationId} />
-            {!archived && <ComposerContext conversationId={conversationId} />}
-          </div>
-          {archived ? (
-            <div className="banner archived-readonly">
-              <span>{t('session.archivedReadonly')}</span>
-              <span className="spacer" />
-              <Button
-                label={t('sidebar.menu.unarchive')}
-                size="sm"
-                variant="secondary"
-                onClick={() => void useSessionStore.getState().setArchived(conversationId, false)}
-              />
-            </div>
-          ) : (
-            <Composer conversationId={conversationId} />
-          )}
-        </>
+        <Composer conversationId={conversationId} />
       )}
     </div>
   )

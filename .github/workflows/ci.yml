@@ -44,7 +44,7 @@ jobs:
       - name: Typecheck and build
         run: npm run build
 
-      - name: Pack vav-server + Chrome extension sidecars
+      - name: Pack vav-server sidecar
         run: npm run pack:release-sidecars -- --out release-sidecars
 
       # Electron GUI: macOS runners have a session. Windows headed e2e is flaky

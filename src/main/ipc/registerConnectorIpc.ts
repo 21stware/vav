@@ -7,7 +7,6 @@ import {
   type ConnectorId
 } from '@shared/connector'
 import type { ConnectorRegistry } from '../connectors/registry'
-import { getVercelStatus } from '../connectors/vercel'
 import {
   cancelConnectorLogin,
   currentConnectorLogin,
@@ -19,7 +18,6 @@ import { clearCloudflareAuthCache, peekCloudflareAuth } from '../cloudflare/wran
 import { clearGithubTokenCache, peekGithubAuth } from '../github/GithubService'
 import { clearSupabaseAuthCache, peekSupabaseAuth } from '../supabase/cliAuth'
 import { clearVercelAuthCache, peekVercelAuth } from '../connectors/vercelAuth'
-import type { VercelStatusQuery } from '@shared/vercel'
 import { t } from '../i18n'
 
 export type ConnectorIpcRemote = {
@@ -49,7 +47,6 @@ async function connectorSignedIn(id: ConnectorId): Promise<boolean> {
 export function registerConnectorIpc(
   ipcMain: IpcMain,
   registry: ConnectorRegistry,
-  vercelAuth: () => { token: string | null },
   host: ConnectorIpcHost
 ): void {
   const remote = (): ConnectorIpcRemote | null => host.remote?.() ?? null
@@ -124,21 +121,4 @@ export function registerConnectorIpc(
     cancelConnectorLogin(isConnectorId(raw) ? raw : undefined)
     return authPage()
   })
-  ipcMain.handle(
-    IPC.vercelStatus,
-    async (_event, cwd: string, query?: VercelStatusQuery) => {
-      const client = remote()
-      if (client) {
-        return client.request('vercel.status', {
-          cwd: String(cwd || ''),
-          query: query && typeof query === 'object' ? query : undefined
-        })
-      }
-      return getVercelStatus(
-        String(cwd || ''),
-        vercelAuth(),
-        query && typeof query === 'object' ? { remote: query.remote !== false } : undefined
-      )
-    }
-  )
 }

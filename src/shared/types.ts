@@ -80,7 +80,7 @@ export type ToolName =
   | 'computer_list'
   | 'computer_observe'
   | 'computer_act'
-  /** Claude Task / OpenCode task+subtask — a nested agent run. */
+  /** Claude Task / nested agent run. */
   | 'task'
   /**
    * Reviewable plan document (Cursor createPlan / cursor/create_plan).
@@ -202,7 +202,7 @@ export interface ToolCallBlock {
   /** terminal only: which terminal tab mirrored this command. */
   targetTabId?: string
   /**
-   * Nested transcript of a subagent (OpenCode task/subtask, Claude Task).
+   * Nested transcript of a subagent (Claude Task).
    * Reasoning, tools, and text from the child run live here — not as sibling
    * blocks on the parent turn.
    */
@@ -382,7 +382,7 @@ export interface ConversationMeta {
   tokenLimit: number
   /**
    * Host-reported cumulative session cost in USD when the CLI/provider sends it
-   * (ACP `usage_update.cost`, OpenCode session.cost, Pi session stats, …).
+   * (ACP `usage_update.cost`, Claude session cost, …).
    * Null = no provider cost; UI falls back to summing estimated turn costs.
    */
   reportedSessionCostUsd?: number | null
@@ -546,7 +546,7 @@ export interface AgentConfig {
   binaryPath: string
   /**
    * Alternate command names tried when `binaryPath` is missing
-   * (e.g. cursor-agent | agent, pi | pi-agent).
+   * (e.g. cursor-agent | agent).
    */
   binaryCandidates?: string[]
   defaultArgs: string[]
@@ -587,19 +587,6 @@ export const DEFAULT_CLI_AGENTS: AgentConfig[] = [
     installDocsUrl: 'https://docs.anthropic.com/en/docs/claude-code/overview'
   },
   {
-    id: 'pi',
-    name: 'Pi',
-    binaryPath: 'pi',
-    binaryCandidates: ['pi', 'pi-agent'],
-    defaultArgs: ['--approve'],
-    envVars: {},
-    enabled: true,
-    providerName: null,
-    builtin: true,
-    installCommand: 'curl -fsSL https://pi.dev/install.sh | sh',
-    installDocsUrl: 'https://pi.dev/'
-  },
-  {
     id: 'cursor',
     name: 'Cursor',
     binaryPath: 'cursor-agent',
@@ -624,19 +611,6 @@ export const DEFAULT_CLI_AGENTS: AgentConfig[] = [
     builtin: true,
     installCommand: 'curl -fsSL https://cli.devin.ai/install.sh | bash',
     installDocsUrl: 'https://docs.devin.ai/cli'
-  },
-  {
-    id: 'antigravity',
-    name: 'Antigravity',
-    binaryPath: 'agy',
-    binaryCandidates: ['agy', 'antigravity'],
-    defaultArgs: ['--dangerously-skip-permissions'],
-    envVars: {},
-    enabled: true,
-    providerName: null,
-    builtin: true,
-    installCommand: 'curl -fsSL https://antigravity.google/cli/install.sh | bash',
-    installDocsUrl: 'https://antigravity.google/docs/cli/getting-started'
   },
   {
     id: 'codex',
@@ -676,20 +650,6 @@ export const DEFAULT_CLI_AGENTS: AgentConfig[] = [
     builtin: true,
     installCommand: 'curl -fsSL https://cli.kiro.dev/install | bash',
     installDocsUrl: 'https://kiro.dev/cli/'
-  },
-  {
-    id: 'opencode',
-    name: 'OpenCode',
-    binaryPath: 'opencode',
-    binaryCandidates: ['opencode'],
-    // --auto approves permission prompts that are not explicitly denied
-    defaultArgs: ['--auto'],
-    envVars: {},
-    enabled: true,
-    providerName: null,
-    builtin: true,
-    installCommand: 'curl -fsSL https://opencode.ai/install | bash',
-    installDocsUrl: 'https://opencode.ai/docs/'
   },
   {
     id: 'cline',
@@ -1113,10 +1073,6 @@ export interface AppSettings {
    */
   vercelApiTokenPresent?: boolean
   /**
-   * Files tray → Vercel deployments. Off by default.
-   */
-  vercelTrayEnabled: boolean
-  /**
    * Optional Cloudflare account id (not secret). Used with a stored API token
    * to resolve Workers / Pages deploy status for the workspace.
    */
@@ -1139,14 +1095,6 @@ export interface AppSettings {
    * Default on — already shipped; turn off to hide the tab.
    */
   githubTrayEnabled: boolean
-  /**
-   * Files tray → Cloudflare Workers / Pages status. Off by default.
-   */
-  cloudflareTrayEnabled: boolean
-  /**
-   * Files tray → Supabase functions status. Off by default.
-   */
-  supabaseTrayEnabled: boolean
   /**
    * Last-used detached window size { width, height }.
    * New detached windows restore these dimensions.
@@ -1415,9 +1363,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   cloudflareAccountId: '',
   supabaseProjectRef: '',
   githubTrayEnabled: true,
-  cloudflareTrayEnabled: false,
-  supabaseTrayEnabled: false,
-  vercelTrayEnabled: false,
   vercelProjectId: '',
   theme: 'system',
   bashBackground: 'theme',

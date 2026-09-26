@@ -3,10 +3,7 @@ import codexIcon from '../assets/agents/codex.svg'
 import cursorIcon from '../assets/agents/cursor.svg'
 import devinIcon from '../assets/agents/devin.svg'
 import grokIcon from '../assets/agents/grok.svg'
-import piIcon from '../assets/agents/pi-coding-agent.svg'
-import antigravityIcon from '../assets/agents/antigravity.png'
 import kiroIcon from '../assets/agents/kiro.svg'
-import opencodeIcon from '../assets/agents/opencode.svg'
 import clineIcon from '../assets/agents/cline.svg'
 import anthropicIcon from '../assets/vendors/anthropic.svg'
 import deepseekIcon from '../assets/vendors/deepseek.svg'
@@ -30,10 +27,7 @@ export const AGENT_ICONS: Record<string, string> = {
   cursor: cursorIcon,
   grok: grokIcon,
   devin: devinIcon,
-  pi: piIcon,
-  antigravity: antigravityIcon,
   kiro: kiroIcon,
-  opencode: opencodeIcon,
   cline: clineIcon,
   deepseek: deepseekIcon,
   openrouter: openrouterIcon,
@@ -52,7 +46,6 @@ export const MONO_MARKS = new Set([
   'codex',
   'devin',
   'grok',
-  'opencode',
   'cline',
   'kiro',
   'deepseek',

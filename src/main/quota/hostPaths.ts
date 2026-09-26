@@ -37,17 +37,3 @@ export function codexHome(): string {
 export function codexAuthPath(): string {
   return join(codexHome(), 'auth.json')
 }
-
-export function opencodeDataDir(): string {
-  return process.env.XDG_DATA_HOME?.trim()
-    ? join(process.env.XDG_DATA_HOME.trim(), 'opencode')
-    : join(homedir(), '.local', 'share', 'opencode')
-}
-
-export function opencodeAuthPath(): string {
-  return join(opencodeDataDir(), 'auth.json')
-}
-
-export function piAuthPath(): string {
-  return join(homedir(), '.pi', 'agent', 'auth.json')
-}

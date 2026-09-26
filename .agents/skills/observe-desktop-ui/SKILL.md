@@ -78,5 +78,5 @@ the same live IPC proxy. Add `?fixture=1` to keep the fake data.
 ## Do not
 
 - Tell the user to "just open the Electron window" as the only verification.
-- Edit `packages/vav-chrome-extension/phone-ui` when the change is desktop chrome.
+- Edit `src/web-ui` when the change is the loopback web shell.
 - Expect fixture mode (`?fixture=1` / no Electron) to run PTY, keychain, or a live agent.

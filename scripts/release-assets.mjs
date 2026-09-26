@@ -22,8 +22,7 @@ export function requiredReleaseAssets(version) {
     `VAV-${version}-windows-x64-setup.exe`,
     `VAV-${version}-windows-x64-setup.exe.blockmap`,
     'latest.yml',
-    `21stware-vav-server-${version}.tgz`,
-    `vav-chrome-extension-${version}.zip`
+    `21stware-vav-server-${version}.tgz`
   ]
 }
 

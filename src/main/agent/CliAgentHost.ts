@@ -307,7 +307,7 @@ function openExternalUrl(url: string): void {
 }
 
 /**
- * Hosts structured CLI agents (Claude / Codex / ACP / OpenCode / Pi) and
+ * Hosts structured CLI agents (Claude / Codex / ACP) and
  * projects their protocol events onto the same TurnEvent stream the built-in
  * AgentRuntime uses — so Transcript / Composer / ChangeSet stay unchanged.
  */

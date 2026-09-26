@@ -109,54 +109,6 @@ describe('hostSessionStore', () => {
     )
   })
 
-  it('reads OpenCode titles from sqlite and discovers by cwd', async () => {
-    const { DatabaseSync } = await import('node:sqlite')
-    const home = mkdtempSync(join(tmpdir(), 'vav-host-session-'))
-    const dir = join(home, '.local', 'share', 'opencode')
-    mkdirSync(dir, { recursive: true })
-    const db = new DatabaseSync(join(dir, 'opencode.db'))
-    db.exec(`
-      CREATE TABLE session (
-        id TEXT, parent_id TEXT, slug TEXT, directory TEXT, title TEXT,
-        time_created INTEGER, time_updated INTEGER, time_archived INTEGER
-      )
-    `)
-    db.prepare(
-      `INSERT INTO session (id, parent_id, slug, directory, title, time_created, time_updated, time_archived)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(
-      'ses_ff21de2aaffeTjaaD6spWnp9gb',
-      null,
-      'kind-sailor',
-      cwd,
-      'openship 仓库分析',
-      1_000,
-      2_000,
-      null
-    )
-    db.prepare(
-      `INSERT INTO session (id, parent_id, slug, directory, title, time_created, time_updated, time_archived)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run('ses_child', 'ses_parent', 'child', cwd, 'subagent', 3_000, 4_000, null)
-    db.close()
-
-    assert.equal(
-      readHostSessionTitle('opencode', 'ses_ff21de2aaffeTjaaD6spWnp9gb', cwd, { home }),
-      'openship 仓库分析'
-    )
-    const found = discoverHostSession('opencode', cwd, { afterMs: 0, excludeIds: [], home })
-    assert.equal(found?.id, 'ses_ff21de2aaffeTjaaD6spWnp9gb')
-    assert.equal(found?.title, 'openship 仓库分析')
-    assert.equal(
-      discoverHostSession('opencode', cwd, {
-        afterMs: 0,
-        excludeIds: ['ses_ff21de2aaffeTjaaD6spWnp9gb'],
-        home
-      }),
-      null
-    )
-  })
-
   it('reads Cursor acp-session meta titles', () => {
     const home = mkdtempSync(join(tmpdir(), 'vav-host-session-'))
     const id = 'a74a9097-651d-4667-8219-2213de23cbdf'

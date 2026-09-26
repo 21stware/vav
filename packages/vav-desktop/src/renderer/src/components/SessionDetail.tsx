@@ -1,32 +1,15 @@
 import {
-  useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
-  useRef,
-  useState,
   type ReactNode,
   type RefObject
 } from 'react'
 import { Clock, Plus, Search, X } from 'lucide-react'
-import { buildWorkspaceFocusContext } from '@shared/agentContextInject'
-import { DEFAULT_CLI_AGENTS, enabledCliAgents, type AgentConfig } from '@shared/types'
 import type { FileSessionMeta } from '@shared/ipc'
-import { handoffFocusToCli } from '../lib/cliFocusHandoff'
 import { findNeighborPane, focusedCliPaneId, measureCliPaneRects } from '../lib/cliPaneNavigate'
-import { focusAgentPane, resolveUiFocusScope } from '../lib/uiFocus'
-import { splitCliAndFocusPicker } from '../lib/sessionSplit'
+import { resolveUiFocusScope } from '../lib/uiFocus'
 import { useSessionStore } from '../state/sessionStore'
-import {
-  appColumnFilePath,
-  appColumnFocusFromContext,
-  commentCardsForAppItem,
-  resolveAppColumnContext
-} from '../lib/appColumnContext'
-import { resolveComposerContextFile } from '../state/sessionQueue'
-import { CLI_SURFACE_KEY, useWorkspaceStore } from '../state/workspaceStore'
 import { SessionHistoryPopover } from './SessionHistoryPopover'
-import { TerminalPanel } from './TerminalPanel'
 import { ToolsPanel } from './ToolsPanel'
 import { Composer, ComposerContext } from './Composer'
 import { Transcript } from './Transcript'
@@ -34,32 +17,23 @@ import { SearchStrip } from './SearchStrip'
 import { PlanOverlay } from './PlanOverlay'
 import { GoalBanner } from './GoalBanner'
 import { ErrorBanner } from './ErrorBanner'
-import { AgentInstallPanel } from './AgentInstallPanel'
-import { teardownInlineTerminal } from './InlineTerminal'
-import { Button, EmptyState } from './ui'
+import { Button } from './ui'
 import { ShellLeadingControls } from './ShellLeadingControls'
 import { SwarmSplitView } from './SwarmSplitView'
 import { collectSwarmLeaves, swarmLeaf, swarmRootId } from '@shared/swarmLayout'
-import {
-  clearAgentBinaryCache,
-  getAgentBinaryCache,
-  markAgentBinaryMissing,
-  markAgentBinaryReady
-} from '../lib/agentBinaryCache'
-import { refreshAgentInstallStatus } from '../lib/agentInstallStatus'
 import { useConversationFileDrop } from '../lib/useConversationFileDrop'
 import { parkTerminal } from '../lib/terminalRegistry'
 import { useT } from '../i18n/useT'
-import { workspaceChromeLabel } from '../lib/format'
 import { matchingKeyBindingId, prettyAccelerator, resolveKeyBindings } from '@shared/keyBindings'
 import { PLATFORM } from '../lib/platform'
 import { useShowShellLeading } from '../lib/sidebarLayout'
 import { isCompanionSessionShell } from '../lib/windowKind'
+import { useWorkspaceStore } from '../state/workspaceStore'
 
 /**
  * - `main`: full session surface (sidebar → open conversation)
- * - `workspace`: agent column inside WorkspaceView (same dual-mode switcher)
- * - `preview-edit`: file-preview agent drawer — same agent switcher as main
+ * - `workspace`: agent column inside WorkspaceView
+ * - `preview-edit`: file-preview agent drawer
  */
 type SessionDetailVariant = 'main' | 'workspace' | 'preview-edit'
 
@@ -83,16 +57,8 @@ export type FileSessionChromeProps = {
   trail?: ReactNode
 }
 
-/** CLI host gate: no dedicated "checking" UI — resolve silently or restore. */
-type AgentProbe = 'idle' | 'missing' | 'installing' | 'ready' | 'rechecking'
-
 /**
- * Hybrid product model:
- *
- * - **vav** (default): built-in agent — transcript + tools + composer
- * - **Claude Code / Codex / Grok / …**: CLI terminal host — multi-split PTY
- *   Sessions are parked per agent (not destroyed on switch). CLI mode always
- *   paints the terminal optimistically; install panel only after spawn fails.
+ * Session surface: transcript + tools + composer, with optional GUI swarm split.
  */
 export function SessionDetail({
   variant = 'main',
@@ -128,10 +94,7 @@ export function SessionDetail({
   const isKeyProblem = !!errorBanner && /401|API Key/i.test(errorBanner)
   const isQuotaProblem = errorBannerKind === 'quota'
 
-  // VAV chat vs CLI Screen is solely cliMode. agentBinaryName only tracks the
-  // focused pane's CLI type for install/prompt handoff — not surface identity.
   const agentKey = conversation?.agentBinaryName ?? null
-  const cliMode = useWorkspaceStore((s) => !!s.workspaces[activeId]?.cliMode)
   const swarmEnabled = useSessionStore((s) => s.settings.swarmModeEnabled === true)
   const conversations = useSessionStore((s) => s.conversations)
   const swarmRoot = conversation
@@ -142,229 +105,8 @@ export function SessionDetail({
     (swarmRoot ? swarmLeaf(swarmRoot) : null)
   const swarmLeaves = collectSwarmLeaves(swarmLayout)
   const swarmMulti = swarmEnabled && swarmLeaves.length > 1
-  const isVavMode = !cliMode || !swarmEnabled
   const threadSplit = swarmEnabled === true
   const showAgentSwitcher = true
-
-  const agents = enabledCliAgents(settings.cliAgents)
-  const activeAgent: AgentConfig | null =
-    agentKey && agentKey !== 'vav' && agentKey !== '__cli__'
-      ? (agents.find((a) => a.id === agentKey) ?? {
-          id: agentKey,
-          name: agentKey,
-          binaryPath: agentKey,
-          defaultArgs: [],
-          envVars: {},
-          enabled: true
-        })
-      : null
-
-  const [probe, setProbe] = useState<AgentProbe>('idle')
-  const probeGen = useRef(0)
-  const [installTabId, setInstallTabId] = useState<string | null>(null)
-  const installTabRef = useRef<string | null>(null)
-
-  /**
-   * Ambient launch context (long form) for agents that accept system-prompt
-   * files. Prompt paste uses a brief form + composer draft via handoffFocusToCli.
-   */
-  const buildLaunchContext = useCallback((): string | null => {
-    const store = useSessionStore.getState()
-    const appContext = resolveAppColumnContext(store)
-    const object = appContext?.objectId
-      ? store.conversations.find((row) => row.id === appContext.objectId)
-      : undefined
-    const focused =
-      appColumnFilePath(appContext, object) ||
-      resolveComposerContextFile(store.contextFiles, activeId)
-    const cards =
-      appContext?.level === 'selected'
-        ? commentCardsForAppItem(store.commentCards[activeId] ?? [], appContext.path)
-        : []
-    return buildWorkspaceFocusContext({
-      focusedPath: focused,
-      cards,
-      appFocus: appColumnFocusFromContext(appContext, object),
-      style: 'ambient'
-    })
-  }, [activeId])
-
-  const activateHost = useCallback(
-    async (
-      agentId: string,
-      withLaunchContext: boolean
-    ): Promise<'restored' | 'created' | 'missing'> => {
-      const launch = withLaunchContext ? buildLaunchContext() : null
-      const result = await useWorkspaceStore
-        .getState()
-        .activateAgentHost(activeId, agentId, 80, 24, launch)
-      if (result === 'created' || result === 'restored') {
-        // Brief focus + vav composer draft → TUI input (no auto-submit).
-        handoffFocusToCli(activeId, agentId, result)
-      }
-      return result
-    },
-    [activeId, buildLaunchContext]
-  )
-
-  const agentCandidates = useCallback((agent: AgentConfig): string[] => {
-    const builtin = DEFAULT_CLI_AGENTS.find((a) => a.id === agent.id)
-    return [
-      ...new Set(
-        [
-          agent.binaryPath,
-          ...(agent.binaryCandidates ?? []),
-          builtin?.binaryPath,
-          ...(builtin?.binaryCandidates ?? [])
-        ].filter((c): c is string => typeof c === 'string' && c.trim().length > 0)
-      )
-    ]
-  }, [])
-
-  const hasLiveAgentSession = useCallback(
-    (agentId: string): boolean => {
-      const ws = useWorkspaceStore.getState().workspaces[activeId]
-      if (!ws) return false
-      const host = ws.agentHostSessions[agentId]
-      if (!host?.layout || host.tabs.length === 0) return false
-      return host.tabs.some((t) => t.agentId === agentId)
-    },
-    [activeId]
-  )
-
-  /**
-   * Optimistic activate: paint the terminal host immediately, spawn/restore,
-   * and only fall back to the install panel if the binary is truly missing.
-   * PATH resolve is not a gate — it was causing install-flash + slow load.
-   */
-  const checkAndActivate = useCallback(
-    async (agent: AgentConfig, options?: { force?: boolean }): Promise<void> => {
-      const gen = ++probeGen.current
-      const force = options?.force === true
-      const candidates = agentCandidates(agent)
-      const ws = useWorkspaceStore.getState()
-
-      // 1) Parked / live PTY — surface host synchronously, then attach (no PATH probe).
-      if (!force && hasLiveAgentSession(agent.id)) {
-        setProbe('ready')
-        ws.focusAgentHost(activeId, agent.id)
-        const result = await activateHost(agent.id, false)
-        if (gen !== probeGen.current) return
-        if (result === 'missing') {
-          markAgentBinaryMissing(agent.id)
-          setProbe('missing')
-        } else {
-          const cached = getAgentBinaryCache(agent.id)
-          markAgentBinaryReady(
-            agent.id,
-            cached?.status === 'ready'
-              ? cached.path
-              : agent.binaryPath || candidates[0] || agent.id
-          )
-        }
-        return
-      }
-
-      if (force) {
-        clearAgentBinaryCache(agent.id)
-      }
-
-      // 2) Optimistic UI: terminal surface first (spawn is the source of truth).
-      // Never gate on resolveBinary — install only after AGENT_NOT_FOUND.
-      setProbe('ready')
-      const result = await activateHost(agent.id, true)
-      if (gen !== probeGen.current) return
-
-      if (result === 'created' || result === 'restored') {
-        const cached = getAgentBinaryCache(agent.id)
-        const path =
-          cached?.status === 'ready'
-            ? cached.path
-            : agent.binaryPath || candidates[0] || agent.id
-        markAgentBinaryReady(agent.id, path)
-        setProbe('ready')
-        return
-      }
-
-      if (result === 'missing') {
-        // Optional resolve for install panel hints (which binary name failed).
-        if (force && window.vav.agents?.resolveBinary) {
-          try {
-            const path = await window.vav.agents.resolveBinary(candidates, true)
-            if (gen !== probeGen.current) return
-            if (path) {
-              markAgentBinaryReady(agent.id, path)
-              setProbe('ready')
-              const retry = await activateHost(agent.id, true)
-              if (gen !== probeGen.current) return
-              if (retry === 'created' || retry === 'restored') return
-            }
-          } catch {
-            // fall through to install
-          }
-        }
-        markAgentBinaryMissing(agent.id)
-        setProbe('missing')
-        // Stay on CLI Screen when already there (install gate paints in-screen).
-        // Never park→sync cliMode false here — that raced hydrate and bounced
-        // detached opens back to VAV.
-        const slice = useWorkspaceStore.getState().workspaces[activeId]
-        if (!slice?.cliMode) {
-          useWorkspaceStore.getState().parkAgentHost(activeId)
-        }
-      }
-    },
-    [activeId, activateHost, agentCandidates, hasLiveAgentSession]
-  )
-
-  // Screen mode is owned by workspace.cliMode (hydrated from main layouts).
-  //
-  // Do NOT park when cliMode is false: false means either "user chose VAV" or
-  // "hydrate not finished yet". Auto-parking on false was racing openDetached /
-  // session switch and writing cliMode=false into main, so double-click open
-  // always bounced CLI sessions back to VAV.
-  //
-  // Only assert CLI surface once cliMode is already true (user or hydrate).
-  useLayoutEffect(() => {
-    if (!activeId) return
-    if (isVavMode) {
-      setProbe('idle')
-      return
-    }
-    // Companion owns enter/exit while this session is detached.
-    if (detachedElsewhere) return
-    setProbe('ready')
-    useWorkspaceStore.getState().enterCliMode(activeId)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeId, isVavMode, detachedElsewhere])
-
-  // Swarm off: leave Screen if a session still has cliMode from last time.
-  useEffect(() => {
-    if (!activeId || swarmEnabled) return
-    if (useWorkspaceStore.getState().workspaces[activeId]?.cliMode) {
-      useWorkspaceStore.getState().exitCliMode(activeId)
-    }
-  }, [activeId, swarmEnabled])
-
-  // Each time Swarm is shown or the window is focused, re-probe PATH so a
-  // newly installed CLI appears (and un-grays) without restarting.
-  useEffect(() => {
-    if (isVavMode || detachedElsewhere) return
-    const scan = (): void => {
-      void refreshAgentInstallStatus({ force: false, discover: true })
-    }
-    scan()
-    const onFocus = (): void => scan()
-    const onVisible = (): void => {
-      if (document.visibilityState === 'visible') scan()
-    }
-    window.addEventListener('focus', onFocus)
-    document.addEventListener('visibilitychange', onVisible)
-    return () => {
-      window.removeEventListener('focus', onFocus)
-      document.removeEventListener('visibilitychange', onVisible)
-    }
-  }, [isVavMode, detachedElsewhere, activeId])
 
   useEffect(() => {
     if (!swarmMulti) return
@@ -382,11 +124,9 @@ export function SessionDetail({
     [settings.keyBindings]
   )
 
-  // CLI surface: remappable split + spatial pane focus (defaults ⌘D / ⌘⇧D / ⌘⇧←↑↓→).
-  // Swarm-on Thread uses the same chords to mint sibling agent sessions.
-  // Plain ⌘←/→ stays with the editor / PTY (line start/end).
+  // Swarm-on Thread uses remappable split + spatial pane focus (defaults ⌘D / ⌘⇧D / ⌘⇧←↑↓→).
   useEffect(() => {
-    if (!threadSplit && isVavMode) return
+    if (!threadSplit) return
     const onKey = (event: KeyboardEvent): void => {
       const hit = matchingKeyBindingId(event, bindings, PLATFORM)
       const paneDir =
@@ -399,7 +139,7 @@ export function SessionDetail({
               : hit === 'focusPaneDown'
                 ? 'down'
                 : null
-      if (paneDir && threadSplit && swarmMulti) {
+      if (paneDir && swarmMulti) {
         const panes = measureCliPaneRects(document.querySelector('.session-swarm-split'))
         if (panes.length >= 2) {
           const focused = focusedCliPaneId(document.querySelector('.session-swarm-split'))
@@ -417,163 +157,21 @@ export function SessionDetail({
           }
         }
       }
-      if (paneDir) {
-        if (threadSplit) return
-        const host =
-          useWorkspaceStore.getState().workspaces[activeId]?.agentHostSessions[
-            CLI_SURFACE_KEY
-          ]
-        if (!host || host.tabs.length < 2) return
-        const panes = measureCliPaneRects()
-        if (panes.length < 2) return
-        // Prefer the pane that actually owns DOM focus (narrow vertical agent
-        // lists often leave activeTabId stale after ←/→ inside the picker).
-        const focused = focusedCliPaneId()
-        const from =
-          (focused && panes.some((p) => p.tabId === focused) ? focused : null) ||
-          (host.activeTabId && panes.some((p) => p.tabId === host.activeTabId)
-            ? host.activeTabId
-            : null) ||
-          panes[0]?.tabId ||
-          ''
-        if (!from) return
-        const next = findNeighborPane(from, paneDir, panes)
-        // Always consume ⌘⇧+arrow in multi-pane Swarm so the picker list does
-        // not treat it as in-list navigation when no geometric neighbor exists.
-        event.preventDefault()
-        event.stopPropagation()
-        if (!next || next === from) return
-        useWorkspaceStore.getState().selectAgentTab(activeId, next)
-        focusAgentPane(activeId, next)
-        return
-      }
+      if (paneDir) return
 
       if (hit !== 'splitPaneRight' && hit !== 'splitPaneDown') return
       const live = resolveUiFocusScope(document.activeElement)
       if (live === 'bash') return
       event.preventDefault()
       const axis = hit === 'splitPaneDown' ? 'column' : 'row'
-      if (threadSplit) void useSessionStore.getState().splitSwarmPane(axis)
-      else splitCliAndFocusPicker(activeId, axis)
+      void useSessionStore.getState().splitSwarmPane(axis)
     }
-    // Capture so remapped pane chords reach us before xterm treats them as motion.
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
-  }, [activeId, previewEdit, isVavMode, threadSplit, swarmMulti, bindings])
-
-  // Install-inline PTY — hooks must stay above every early return (Rules of Hooks).
-  const teardownInstallPty = useCallback((): void => {
-    const tabId = installTabRef.current
-    installTabRef.current = null
-    setInstallTabId(null)
-    if (!tabId) return
-    teardownInlineTerminal(activeId, tabId)
-  }, [activeId])
-
-  const cancelInstall = useCallback((): void => {
-    teardownInstallPty()
-    setProbe('missing')
-  }, [teardownInstallPty])
-
-  useEffect(() => () => teardownInstallPty(), [teardownInstallPty])
-
-  const runInstallInShell = useCallback(async (): Promise<void> => {
-    if (!activeAgent?.installCommand) return
-    teardownInstallPty()
-
-    const ws = useWorkspaceStore.getState()
-    const slice = ws.workspaces[activeId]
-    const appSettings = await window.vav.settings.get()
-    const metas = await window.vav.conversations.list()
-    const meta = metas.find((c) => c.id === activeId)
-    let cwd =
-      (slice?.root && slice.root !== '~' ? slice.root : null) ??
-      (meta?.workingDirectory && meta.workingDirectory !== '~' ? meta.workingDirectory : null) ??
-      (appSettings.defaultWorkingDirectory?.trim() || null)
-    if (!cwd) {
-      const boot = await window.vav.bootstrap()
-      cwd = boot.home || boot.tmp || '/'
-    }
-
-    const cmd = activeAgent.installCommand.trim()
-    let tabId: string
-    try {
-      tabId = await window.vav.pty.create(activeId, cwd, 100, 28)
-    } catch {
-      setProbe('missing')
-      return
-    }
-    installTabRef.current = tabId
-    setInstallTabId(tabId)
-    setProbe('installing')
-
-    window.setTimeout(() => {
-      window.vav.pty.write(tabId, `${cmd}\r`)
-    }, 280)
-  }, [activeAgent, activeId, teardownInstallPty])
-
-  const finishInstallAndRecheck = useCallback(async (): Promise<void> => {
-    if (!activeAgent) return
-    teardownInstallPty()
-    await checkAndActivate(activeAgent, { force: true })
-  }, [activeAgent, checkAndActivate, teardownInstallPty])
-
-  /**
-   * While the install shell is open, poll login PATH for the agent binary.
-   * When it appears (install finished / user PATH updated), activate automatically —
-   * no manual “done — recheck” confirm.
-   */
-  useEffect(() => {
-    if (probe !== 'installing' || !activeAgent || !installTabId) return
-    let cancelled = false
-    let timer = 0
-    const candidates = agentCandidates(activeAgent)
-
-    const tick = async (): Promise<void> => {
-      if (cancelled) return
-      // Prefer a quick recheck right after the foreground install process exits.
-      try {
-        const busy = await window.vav.pty.isBusy(installTabId)
-        if (cancelled) return
-        if (!busy) {
-          const path = window.vav.agents?.resolveBinary
-            ? await window.vav.agents.resolveBinary(candidates, true)
-            : null
-          if (cancelled) return
-          if (path) {
-            await finishInstallAndRecheck()
-            return
-          }
-        } else {
-          // Still installing — also try resolve periodically (some installers
-          // leave a parent shell busy while the binary is already on PATH).
-          const path = window.vav.agents?.resolveBinary
-            ? await window.vav.agents.resolveBinary(candidates, true)
-            : null
-          if (cancelled) return
-          if (path) {
-            await finishInstallAndRecheck()
-            return
-          }
-        }
-      } catch {
-        // ignore transient probe failures
-      }
-      if (cancelled) return
-      timer = window.setTimeout(() => void tick(), 1600)
-    }
-
-    // Give the install command a moment to start before first probe.
-    timer = window.setTimeout(() => void tick(), 1200)
-    return () => {
-      cancelled = true
-      window.clearTimeout(timer)
-    }
-  }, [probe, activeAgent, installTabId, agentCandidates, finishInstallAndRecheck])
+  }, [activeId, previewEdit, threadSplit, swarmMulti, bindings])
 
   // Companion window owns PTY geometry. Soft-park main's xterm (detach DOM,
-  // keep buffer + live sink) so reclaim is instant when the companion closes —
-  // never dispose/respawn (Herdr detach semantics). Hook must stay above returns.
+  // keep buffer + live sink) so reclaim is instant when the companion closes.
   useEffect(() => {
     if (!detachedElsewhere || !activeId) return
     const ws = useWorkspaceStore.getState().workspaces[activeId]
@@ -584,32 +182,18 @@ export function SessionDetail({
     }
   }, [detachedElsewhere, activeId])
 
-  // Find only covers the built-in chat transcript — not xterm / CLI agents.
-  // Drop a leftover strip when switching to a Coding/Bash agent host.
-  useEffect(() => {
-    if (!isVavMode && useSessionStore.getState().search.open) {
-      useSessionStore.getState().closeSearch()
-    }
-  }, [isVavMode])
-
-  // Main / workspace: when the list is not a docked left column, park toggle +
-  // new-session ahead of the agent select (no separate window titlebar).
   const shellLeading = useShowShellLeading()
   const showShellLeading = (variant === 'main' || variant === 'workspace') && shellLeading
 
-  // File-preview: session chrome only in vav (CLI keeps a separate session bar).
-  // Workspace: always fold sessions into this row (vav + CLI).
   const chromeSession =
-    variant === 'workspace' || (previewEdit && isVavMode)
-      ? (fileSessionChrome ?? null)
-      : null
+    variant === 'workspace' || previewEdit ? (fileSessionChrome ?? null) : null
 
   const chrome =
     showAgentSwitcher && !hideChrome ? (
       <AgentModeChrome
         conversationId={activeId}
         agentBinaryName={agentKey}
-        showSearch={isVavMode || swarmMulti}
+        showSearch
         showShellLeading={showShellLeading}
         fileSessionChrome={chromeSession}
         onClose={
@@ -620,14 +204,8 @@ export function SessionDetail({
       />
     ) : null
 
-  // Install only on hard failure / explicit install flow — never for idle/ready.
-  const showInstallGate =
-    !!activeAgent &&
-    (probe === 'missing' || probe === 'installing' || probe === 'rechecking')
-
   const shellClass = [
     previewEdit ? 'preview-edit-session' : 'detail',
-    !isVavMode ? 'terminal-host-session' : '',
     swarmMulti ? 'is-swarm-multi' : '',
     variant === 'workspace' ? 'session-detail-workspace' : ''
   ]
@@ -636,19 +214,12 @@ export function SessionDetail({
 
   const streamClass = previewEdit ? 'preview-edit-stream' : 'detail-stream'
   const toolsVariant = previewEdit ? 'preview-edit' : 'main'
-  const swarmVisible = !isVavMode && !detachedElsewhere && !showInstallGate
 
-  // Whole-surface file drop → attachments (chat surface only; Swarm panes
-  // bind their own so files land in the hovered pane's conversation).
   const { dropActive, dropHandlers } = useConversationFileDrop(
     activeId,
-    isVavMode && !archived && !swarmMulti && !detachedElsewhere
+    !archived && !swarmMulti && !detachedElsewhere
   )
 
-  /*
-   * Thread and Swarm stay mounted. Surfaces park with visibility (not
-   * display:none) so the transcript render tree survives the flip.
-   */
   return (
     <main className={shellClass} data-testid="session-detail" {...dropHandlers}>
       {dropActive && (
@@ -688,7 +259,7 @@ export function SessionDetail({
         />
       )}
 
-      {!previewEdit && pending && pending.count > 0 && isVavMode && (
+      {!previewEdit && pending && pending.count > 0 && (
         <div className="banner review-pending">
           <span>{t('review.pendingBanner', { n: pending.count })}</span>
           <span className="spacer" />
@@ -712,80 +283,20 @@ export function SessionDetail({
           <SwarmSplitView rootId={swarmRoot} layout={swarmLayout} compact />
         </>
       ) : (
-      <div className="session-surfaces">
-      <div
-        className={`${streamClass}${!isVavMode ? ' is-surface-parked' : ''}`}
-        data-search={searchOpen}
-        aria-hidden={!isVavMode}
-      >
-        {searchOpen && isVavMode && <SearchStrip />}
-        {!previewEdit && <GoalBanner />}
-        {!previewEdit && <PlanOverlay />}
-        <Transcript logId="transcript" />
-        {!archived && <ComposerContext conversationId={activeId} />}
-      </div>
-
-      <div
-        className={`terminal-host-main terminal-host-stream${
-          isVavMode ? ' is-surface-parked' : ''
-        }`}
-        aria-hidden={isVavMode}
-      >
-        {detachedElsewhere ? (
-          <div className="detached-session-park">
-            <EmptyState title={t('session.detachedTitle')} description={t('session.detachedDesc')}>
-              <div className="detached-session-park-actions">
-                <Button
-                  label={t('session.detachedTakeBack')}
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => void window.vav.window.closeDetachedSession(activeId)}
-                />
-                <Button
-                  label={t('session.detachedFocus')}
-                  variant="primary"
-                  size="sm"
-                  onClick={() => void window.vav.window.openSession(activeId)}
-                />
-              </div>
-            </EmptyState>
+        <div className="session-surfaces">
+          <div className={streamClass} data-search={searchOpen}>
+            {searchOpen && <SearchStrip />}
+            {!previewEdit && <GoalBanner />}
+            {!previewEdit && <PlanOverlay />}
+            <Transcript logId="transcript" />
+            {!archived && <ComposerContext conversationId={activeId} />}
           </div>
-        ) : null}
-        {showInstallGate && activeAgent && !detachedElsewhere ? (
-          <AgentInstallPanel
-            agent={activeAgent}
-            conversationId={activeId}
-            rechecking={probe === 'rechecking'}
-            installing={probe === 'installing'}
-            installTabId={installTabId}
-            onRecheck={() => {
-              teardownInstallPty()
-              void checkAndActivate(activeAgent, { force: true })
-            }}
-            onInstallInShell={() => void runInstallInShell()}
-            onCancelInstall={cancelInstall}
-            onOpenDocs={() => {
-              if (activeAgent.installDocsUrl) {
-                window.open(activeAgent.installDocsUrl, '_blank', 'noopener,noreferrer')
-              }
-            }}
-          />
-        ) : null}
-        {/* Keep agent xterms mounted across Thread↔Swarm and install overlays. */}
-        <div
-          className={`terminal-host-agent-keep${
-            detachedElsewhere || showInstallGate ? ' is-surface-parked' : ''
-          }`}
-        >
-          <TerminalPanel visible={swarmVisible} surface="agent" />
         </div>
-      </div>
-      </div>
       )}
 
       <div
         className={`dock${previewEdit ? ' preview-edit-dock' : ''}${
-          !isVavMode || swarmMulti ? ' dock-tools-only' : ''
+          swarmMulti ? ' dock-tools-only' : ''
         }`}
       >
         {swarmMulti ? null : archived ? (
@@ -800,13 +311,7 @@ export function SessionDetail({
             />
           </div>
         ) : (
-          <div
-            className={!isVavMode ? 'is-surface-parked' : undefined}
-            aria-hidden={!isVavMode}
-            inert={!isVavMode ? true : undefined}
-          >
-            <Composer conversationId={activeId} />
-          </div>
+          <Composer conversationId={activeId} />
         )}
         <ToolsPanel variant={toolsVariant} />
       </div>
@@ -815,21 +320,15 @@ export function SessionDetail({
 }
 
 /**
- * Agent chrome: VAV built-in | structured CLI host | raw Terminal screen.
- * Structured hosts share Transcript/Composer with VAV; Terminal is the PTY UI.
+ * Agent chrome: VAV built-in | structured CLI host.
  */
 export function AgentModeChrome({
-  conversationId,
+  conversationId: _conversationId,
   agentBinaryName: _agentBinaryName,
-  /** Transcript find only — hide for raw terminal hosts (no chat stream). */
   showSearch = true,
-  /** Sidebar collapsed / floating: toggle + new ahead of the agent select. */
   showShellLeading = false,
-  /** Single-file vav: session name / history / new in this same chrome row. */
   fileSessionChrome = null,
-  /** Isolated window: Reveal in List, pinned with history / search. */
   trail = null,
-  /** Isolated window: new session in this window (⌘N). */
   showNewSession = false,
   onClose
 }: {
@@ -845,39 +344,20 @@ export function AgentModeChrome({
   onClose?: () => void
 }): React.JSX.Element {
   const t = useT()
-  const cliMode = useWorkspaceStore((s) => !!s.workspaces[conversationId]?.cliMode)
   const keyBindings = useSessionStore((s) => s.settings.keyBindings)
   const bindings = resolveKeyBindings(keyBindings)
-  const swarmEnabled = useSessionStore((s) => s.settings.swarmModeEnabled === true)
-  const isTerminal = swarmEnabled && cliMode
-  const isChat = !isTerminal
   void _agentBinaryName
 
   const searchOpen = useSessionStore((s) => s.search.open)
   const openSearch = useSessionStore((s) => s.openSearch)
   const closeSearch = useSessionStore((s) => s.closeSearch)
-  const conversation = useSessionStore((s) =>
-    s.conversations.find((c) => c.id === conversationId)
-  )
-  const tmp = useSessionStore((s) => s.tmp)
-  const home = useSessionStore((s) => s.home)
-  const hosts = useSessionStore((s) => s.hosts)
-  const workdir = conversation?.workingDirectory ?? null
-  const hostName = hosts.find((h) => h.id === conversation?.machineId)?.name
-  const workspacePath = workspaceChromeLabel(
-    workdir,
-    tmp,
-    home,
-    conversation?.machineId,
-    hostName
-  )
   const fs = fileSessionChrome
 
-  const showFileSessionChrome = !!(fs && isChat && fs.sessions.length > 0)
+  const showFileSessionChrome = !!(fs && fs.sessions.length > 0)
   const trailing = fs?.trail ?? trail
   const showTrailing =
     showFileSessionChrome ||
-    (showSearch && isChat) ||
+    showSearch ||
     showNewSession ||
     !!trailing ||
     !!onClose
@@ -890,14 +370,6 @@ export function AgentModeChrome({
         {showShellLeading ? (
           <div className="agent-mode-shell-leading">
             <ShellLeadingControls />
-          </div>
-        ) : null}
-
-        {swarmEnabled && isTerminal ? (
-          <div className="agent-mode-swarm-toggle">
-            <span className="agent-mode-workspace-name" title={workdir ?? workspacePath}>
-              {workspacePath}
-            </span>
           </div>
         ) : null}
 
@@ -943,7 +415,7 @@ export function AgentModeChrome({
               />
             ) : null}
 
-            {showSearch && isChat ? (
+            {showSearch ? (
               <Button
                 icon={<Search size={14} />}
                 variant="ghost"

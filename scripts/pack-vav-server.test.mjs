@@ -24,32 +24,20 @@ test('pack-vav-server writes electron-free bins that print a pairing URI', async
   assert.equal(packed.status, 0, packed.stderr || packed.stdout)
 
   const serverJs = join(dir, 'vav-server.js')
-  const boardJs = join(dir, 'vav-board.js')
-  const tuiJs = join(dir, 'vav-tui.js')
   assert.ok(existsSync(serverJs))
-  assert.ok(existsSync(boardJs))
-  assert.ok(existsSync(tuiJs))
+  assert.ok(!existsSync(join(dir, 'vav-board.js')))
+  assert.ok(!existsSync(join(dir, 'vav-tui.js')))
 
   const server = readFileSync(serverJs, 'utf8')
-  const board = readFileSync(boardJs, 'utf8')
-  const tui = readFileSync(tuiJs, 'utf8')
   assert.ok(server.startsWith('#!/usr/bin/env node'))
-  assert.ok(board.startsWith('#!/usr/bin/env node'))
-  assert.ok(tui.startsWith('#!/usr/bin/env node'))
-  for (const code of [server, board, tui]) {
-    assert.ok(!code.includes('from "electron"') && !code.includes("from 'electron'"))
-  }
+  assert.ok(!server.includes('from "electron"') && !server.includes("from 'electron'"))
 
   const pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8'))
   const rootPkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
   assert.equal(pkg.version, rootPkg.version)
   assert.deepEqual(pkg.bin, {
     'vav-server': 'vav-server.js',
-    vavd: 'vav-server.js',
-    'vav-board': 'vav-board.js',
-    vavc: 'vav-board.js',
-    'vav-tui': 'vav-tui.js',
-    vavcli: 'vav-tui.js'
+    vavd: 'vav-server.js'
   })
   assert.ok(!pkg.dependencies?.electron)
 

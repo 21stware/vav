@@ -8,7 +8,6 @@ import {
   handleContextClose,
   installUiFocusTracking
 } from './uiFocus'
-import { requestCliSurface } from './cliSurfaceSwitch'
 import { attachPickedFiles, attachScreenshot } from './composerAttach'
 
 /** Ensure the session list is visible when switching archive / file-session modes. */
@@ -76,21 +75,6 @@ export function handleMenuCommand(command: MenuCommand): void {
     case 'switch-workdir':
       store.openWorkspaceSwitcher()
       break
-    case 'switch-cli-mode': {
-      if (store.settings.swarmModeEnabled !== true) break
-      const id = store.activeId
-      if (!id) break
-      if (store.search.open) store.closeSearch()
-      requestCliSurface(id, true)
-      break
-    }
-    case 'switch-vav-mode': {
-      if (store.settings.swarmModeEnabled !== true) break
-      const id = store.activeId
-      if (!id) break
-      requestCliSurface(id, false)
-      break
-    }
     case 'switch-model':
       store.openModelPicker()
       break

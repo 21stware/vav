@@ -63,8 +63,6 @@ import {
   type ProviderAccountViewPayload,
   type RemoteFolderPickResult,
   type RemoteFolderViewPayload,
-  type SwarmHistoryResumeEvent,
-  type SwarmHistoryViewPayload,
   type TokenUsageViewPayload
 } from '@shared/ipc'
 import {
@@ -95,7 +93,6 @@ import {
   shouldBlockLidSleep,
   type KeepAwakeStatus
 } from '@shared/sleepBlocker'
-import { createSwarmFinishAlert } from '@main/sound/swarmFinishAlert'
 import { RemoteControlService } from '@main/remote/RemoteControlService'
 import { DaemonAttachService } from '@main/daemon/DaemonAttachService'
 import { createAccountsCatalog } from '@main/accounts/daemonCatalog'
@@ -190,7 +187,6 @@ import {
 import { groupAccountsByVendor, isLlmVendorId, vendorById, vendorIdFromEndpoint } from '@shared/llmVendors'
 import { VavPackService } from '@main/store/VavPackService'
 import { FileSessionStore } from '@main/store/FileSessionStore'
-import { SwarmHistoryStore } from '@main/store/SwarmHistoryStore'
 import { FileService } from '@main/fs/FileService'
 import { installTrustedIpcGuard } from '@main/ipc/ipcTrust'
 import { registerVcsIpc } from '@main/ipc/registerVcsIpc'
@@ -242,7 +238,6 @@ import { registerRuntimeIpc } from '@main/ipc/registerRuntimeIpc'
 import { registerPtyCreateIpc } from '@main/ipc/registerPtyCreateIpc'
 import { hostDisplayName as hostDisplayNameOf } from '@main/window/hostDisplay'
 import { providerAccountViewOf } from '@main/window/providerAccountView'
-import { findSwarmHistoryItem as findItemInSwarmHistory } from '@main/window/swarmHistoryFind'
 import { machineIdFromRendererUrl } from '@main/window/machineFromUrl'
 import { collectPreferredModelHosts, contextWindowForModelId, conversationModelHealPatch } from '@main/agent/modelContext'
 import { activeTurnStatusFromPhase, awaitingNotifyKind, awaitingNotifyTitle, turnCompleteNotifyAction } from '@main/agent/agentEventNotify'
@@ -390,9 +385,6 @@ import { installDevParentWatchdog, pauseDevParentWatchdog } from '@main/devParen
 import { currentDisplaysLookAsleep } from '@main/window/displaySleep'
 import { AgentRuntime } from '@main/agent/AgentRuntime'
 import { CliAgentHost } from '@main/agent/CliAgentHost'
-import { createSwarmSessionService } from '@main/agent/swarmSession'
-import { hostSessionHasConversation } from '@main/agent/hostSessionStore'
-import { buildSwarmHistoryView } from '@main/agent/swarmHistoryView'
 import {
   getModelCatalogSnapshot,
   listHostModels,
@@ -457,7 +449,6 @@ import { fetchClaudeAccountQuota } from '@main/quota/claudeUsage'
 import { fetchCodexAccountQuota } from '@main/quota/codexUsage'
 import { fetchCursorAccountQuota } from '@main/quota/cursorUsage'
 import { fetchGrokAccountQuota } from '@main/quota/grokUsage'
-import { fetchOpencodeAccountQuota } from '@main/quota/opencodeUsage'
 import { apiBalanceUrl, hostCanShowApiBalance } from '@shared/apiBalance'
 import {
   cachedApiBalance,
@@ -480,13 +471,6 @@ import {
   mergeNamespacedQuotaWindows,
   selectQuotaWindows
 } from '@shared/quotaWindows'
-import { nativeSessionId } from '@shared/cliPaneBinding'
-import {
-  buildSwarmHistoryMenuEntries,
-  parseSwarmHistoryId,
-  shouldKeepClosedSwarmHistoryRecord,
-  swarmSessionKey
-} from '@shared/cliSessionHistory'
 import {
   AGENT_TRAY_QUIET_MS,
   collapseTrayActivity,
@@ -707,18 +691,6 @@ const logStore = new LogStore({
   durableDays: () => settingsStore.get().logRetentionDays
 })
 setAppLogger(createAppLogger(logStore))
-const swarmHistoryStore = new SwarmHistoryStore(
-  join(app.getPath('userData'), 'swarm-session-history.json')
-)
-const liveAgentPanes = {
-  list: (): { conversationId: string; tabId: string; agentId: string }[] => []
-}
-const swarmSession = createSwarmSessionService({
-  conversations: conversationStore,
-  history: swarmHistoryStore,
-  publish: () => publishConversations(),
-  listLivePanes: () => liveAgentPanes.list()
-})
 // resolveNewWorkdir is a function declaration below (hoisted) — mint Temporary Workspaces on import.
 const vavPackService = new VavPackService(conversationStore, () => resolveNewWorkdir())
 const fileSessionStore = new FileSessionStore()
@@ -759,7 +731,6 @@ workingCopyService.onCopyChanged = (realPath) => {
 }
 // Wired after construction — retrieval is defined below; assigned once created.
 
-let swarmFinishAlert: ReturnType<typeof createSwarmFinishAlert> | null = null
 let syncPtyPortForwards = (): void => {}
 
 const ptyManager = new PtyManager(
@@ -769,7 +740,6 @@ const ptyManager = new PtyManager(
   },
   (tabId, conversationId) => {
     sendToWorkspaceWindows(IPC.ptyExit, tabId, conversationId)
-    swarmFinishAlert?.noteGone(tabId)
   },
   // Workspace windows re-hydrate tab maps from main — no per-renderer PTY ownership.
   (conversationId) => {
@@ -782,20 +752,6 @@ const ptyManager = new PtyManager(
     sendToWorkspaceWindows(IPC.ptyStatus, { tabId, conversationId, status }, conversationId)
     syncSleepBlocker()
     handlePtyStatusForTray(tabId, conversationId, status)
-    if (status === 'exited') {
-      swarmFinishAlert?.noteGone(tabId)
-      return
-    }
-    const target = ptyManager.cliAgentWatchTarget(tabId)
-    if (!target) return
-    swarmFinishAlert?.noteStatus({
-      tabId,
-      conversationId,
-      agentId: target.agentId,
-      status,
-      createdAt: target.createdAt,
-      lastDataAt: target.lastDataAt
-    })
   },
   (conversationId) =>
     workspaceHostForConversation(hostRegistry, conversationStore.get(conversationId)?.machineId).pty,
@@ -811,15 +767,6 @@ const ptyManager = new PtyManager(
     return daemonAttach.whichCached(hostId, candidates)
   }
 )
-liveAgentPanes.list = () =>
-  ptyManager
-    .listCliAgentSessions()
-    .filter((session): session is typeof session & { agentId: string } => !!session.agentId)
-    .map((session) => ({
-      conversationId: session.conversationId,
-      tabId: session.id,
-      agentId: session.agentId
-    }))
 
 /** Conversation ids with a live or paused turn — counted on the tray badge. */
 const activeTurns = new Map<string, 'running' | 'paused'>()
@@ -1009,16 +956,6 @@ notifications.setHostServices({
   },
   setDefault: (id) => applyDefaultMachine(id)
 })
-swarmFinishAlert = createSwarmFinishAlert(
-  (conversationId) => {
-    const conversation = conversationStore.get(conversationId)
-    const title = conversation?.title ?? t('window.sessionFallback')
-    notifications.alertUser('turn-complete', conversationId, title, t('notify.turnComplete'))
-  },
-  {
-    isForeground: (conversationId) => notifications.isConversationForeground(conversationId)
-  }
-)
 
 /** Compact path for tray labels: `/Users/me/repo/vav` → `~/repo/vav`. */
 function trayDirLabel(workingDirectory: string | null | undefined): string {
@@ -1054,13 +991,7 @@ function trayPaneFromConversation(
 function agentSessionTitle(session: PtySessionMeta): string {
   const conversation = conversationStore.get(session.conversationId)
   const binding = conversationStore.getCliPaneBindings(session.conversationId)[session.id]
-  const sessionId = nativeSessionId(binding?.cursor)
-  const named =
-    sessionId && session.agentId
-      ? swarmHistoryStore.get(swarmSessionKey(session.agentId, sessionId))?.name?.trim()
-      : null
   return pickAgentSessionTitle({
-    swarmName: named,
     bindingTitle: binding?.title,
     conversationTitle: conversation?.title,
     sessionTitle: session.title,
@@ -1069,7 +1000,6 @@ function agentSessionTitle(session: PtySessionMeta): string {
 }
 
 function trayPaneFromAgentSession(session: PtySessionMeta): TrayPane | null {
-  if (session.agentId) swarmSession.adoptPane(session.conversationId, session.id, session.agentId)
   return trayPaneFromConversation(session.conversationId, 'agent', {
     tabId: session.id,
     paneTitle: session.agentId ? trayAgentLabel(session.agentId) : 'CLI',
@@ -1575,8 +1505,7 @@ const quotaService = new QuotaService({
     claude: fetchClaudeAccountQuota,
     codex: fetchCodexAccountQuota,
     cursor: fetchCursorAccountQuota,
-    grok: fetchGrokAccountQuota,
-    opencode: fetchOpencodeAccountQuota
+    grok: fetchGrokAccountQuota
   },
   identityOf: async (host) => {
     const info = await readHostAccountInfo(host)
@@ -1988,7 +1917,6 @@ function configureRemote(message: RemoteConfigure): 'ok' | 'not-found' | 'archiv
       conversationStore.updateMeta(id, {
         accountId: accountIdForSession(conversation.workingDirectory ?? null, nextHost)
       })
-      swarmSession.syncHostCursor(id, nextHost)
       coerceConversationModel(id)
       if (nextHost) promoteEphemeralConversation(id)
     }
@@ -4125,7 +4053,6 @@ function disposeEphemeralIfEmpty(conversationId: string): boolean {
     for (const id of removed) {
       agent.disposeConversation(id)
       cliHost.dispose(id)
-      swarmSession.clearForConversation(id)
       ptyManager.killForConversation(id)
       fileService.unwatch(id)
     }
@@ -4335,14 +4262,10 @@ async function openDetachedWindow(
   if (existing && !existing.isDestroyed()) {
     sessionOpenMark('open:reuse-focus', conversationId)
     raiseDetachedWindow(existing)
-    // Restore the surface the session was on (CLI Agents vs VAV composer).
-    // Always forcing focus-composer left CLI mode visually stuck / unfocused.
-    const listed = ptyManager.listForConversation(conversationId)
-    const surface: 'vav' | 'cli' = listed.layouts.cliMode === true ? 'cli' : 'vav'
     safeSend(existing.webContents, IPC.cliOpen, {
       conversationId,
       toast: null,
-      surface
+      surface: 'vav'
     })
     return existing
   }
@@ -5975,245 +5898,6 @@ function chooseRemoteFolderFromPicker(sender: Electron.WebContents, path: unknow
   settleRemoteFolder(typeof path === 'string' && path.trim() ? path : null)
 }
 
-type SwarmHistoryAnchor = { x: number; y: number; width: number; height: number }
-
-let swarmHistoryConversationId: string | null = null
-
-function pruneBlankSwarmHistory(conversationId: string): void {
-  for (const record of swarmHistoryStore.forConversation(conversationId)) {
-    const sessionId = nativeSessionId(record.cursor)
-    const hasConversation = !!(
-      sessionId &&
-      hostSessionHasConversation(record.agentId, sessionId, record.workingDirectory || '~')
-    )
-    if (
-      shouldKeepClosedSwarmHistoryRecord({
-        name: record.name,
-        title: record.title,
-        hasConversation
-      })
-    ) {
-      continue
-    }
-    swarmHistoryStore.remove(record.key)
-  }
-}
-
-function currentSwarmHistoryPayload(
-  conversationId = swarmHistoryConversationId
-): SwarmHistoryViewPayload | null {
-  const id = conversationId?.trim()
-  if (!id || id === '_') return null
-  try {
-    pruneBlankSwarmHistory(id)
-    const settings = settingsStore.get()
-    const agentName = (agentId: string): string => {
-      const fromSettings = settings.cliAgents?.find((a) => a.id === agentId)
-      if (fromSettings?.name) return fromSettings.name
-      return agentId
-    }
-    const live = ptyManager.listCliAgentSessions().map((session) => ({
-      conversationId: session.conversationId,
-      tabId: session.id,
-      agentId: session.agentId || '',
-      title: session.title,
-      createdAt: session.createdAt
-    }))
-    return buildSwarmHistoryView({
-      conversationId: id,
-      conversations: conversationStore.all(),
-      history: swarmHistoryStore,
-      live,
-      agentName,
-      dirLabel: trayDirLabel,
-      untitled: t('agents.sessionUntitled'),
-      theme: settings.theme,
-      locale: currentLocale(),
-      hasConversation: (agentId, sessionId, cwd) =>
-        isStructuredCliHost(agentId) && hostSessionHasConversation(agentId, sessionId, cwd)
-    })
-  } catch (err) {
-    console.error('[swarm-history] payload failed', err)
-    return null
-  }
-}
-
-function findSwarmHistoryItem(
-  itemId: string,
-  conversationId = swarmHistoryConversationId
-): SwarmHistoryViewPayload['groups'][number]['items'][number] | null {
-  return findItemInSwarmHistory(currentSwarmHistoryPayload(conversationId)?.groups, itemId)
-}
-
-function popupSwarmHistoryMenuAtAnchor(
-  parent: BrowserWindow,
-  template: Electron.MenuItemConstructorOptions[],
-  anchor?: SwarmHistoryAnchor
-): void {
-  const opts: Electron.PopupOptions = { window: parent }
-  if (anchor && Number.isFinite(anchor.x) && Number.isFinite(anchor.y)) {
-    opts.x = Math.round(anchor.x)
-    opts.y = Math.round(anchor.y + Math.max(0, anchor.height))
-  }
-  // Same defer as popupNativeMenu — a menu opened on mouseup is dismissed immediately.
-  setTimeout(() => {
-    if (parent.isDestroyed()) return
-    try {
-      Menu.buildFromTemplate(template).popup(opts)
-    } catch (err) {
-      console.error('[swarm-history] popup failed', err)
-    }
-  }, 0)
-}
-
-function swarmHistoryMenuTemplate(
-  conversationId: string,
-  sender: Electron.WebContents
-): Electron.MenuItemConstructorOptions[] {
-  const payload = currentSwarmHistoryPayload(conversationId)
-  const groups = payload?.groups ?? []
-  const count = groups.reduce((n, group) => n + group.items.length, 0)
-  const entries = buildSwarmHistoryMenuEntries({
-    header: t('agents.sessionHistoryCount', { count }),
-    emptyLabel: t('agents.sessionHistoryEmptyTitle'),
-    groups: groups.map((group) => ({
-      dirLabel: group.dirLabel,
-      items: group.items.map((item) => ({
-        id: item.id,
-        label: item.label
-      }))
-    }))
-  })
-  return entries.map((entry) => {
-    if (entry.kind === 'separator') return { type: 'separator' as const }
-    if (entry.kind === 'header' || entry.kind === 'dir' || entry.kind === 'empty') {
-      return { label: entry.label, enabled: false }
-    }
-    return {
-      label: entry.label,
-      submenu: [
-        {
-          label: t('agents.sessionHistoryTakeBack'),
-          click: () => selectSwarmHistoryItem(entry.id, sender, conversationId)
-        },
-        {
-          label: t('agents.sessionHistoryRemove'),
-          click: () => {
-            void confirmDeleteSwarmHistoryItem(entry.id, sender, conversationId)
-          }
-        }
-      ]
-    }
-  })
-}
-
-function popupSwarmHistoryMenu(
-  sender: Electron.WebContents,
-  conversationId: string,
-  anchor?: SwarmHistoryAnchor
-): void {
-  const id = conversationId.trim()
-  if (!id) return
-  const parent = BrowserWindow.fromWebContents(sender) ?? mainWindow
-  if (!parent || parent.isDestroyed()) return
-  swarmHistoryConversationId = id
-  hideTokenUsageWindow()
-  hideProviderAccountWindow()
-  popupSwarmHistoryMenuAtAnchor(parent, swarmHistoryMenuTemplate(id, sender), anchor)
-}
-
-function selectSwarmHistoryItem(
-  itemId: string,
-  sender: Electron.WebContents,
-  conversationId = swarmHistoryConversationId
-): void {
-  const item = findSwarmHistoryItem(itemId, conversationId)
-  if (!item) return
-  if (item.live && item.tabId) {
-    focusRunningSession({
-      conversationId: item.conversationId,
-      surface: 'cli',
-      tabId: item.tabId,
-      agentId: item.agentId
-    })
-    return
-  }
-  if (!item.cursor || !item.agentId) return
-  const parent = BrowserWindow.fromWebContents(sender) ?? mainWindow
-  if (!parent || parent.isDestroyed()) return
-  const targetId = conversationId && conversationId !== '_' ? conversationId : item.conversationId
-  const payload: SwarmHistoryResumeEvent = {
-    conversationId: targetId,
-    agentId: item.agentId,
-    cursor: item.cursor,
-    title: item.title
-  }
-  safeSend(parent.webContents, IPC.swarmHistoryResume, payload)
-}
-
-async function confirmDeleteSwarmHistoryItem(
-  itemId: string,
-  sender: Electron.WebContents,
-  conversationId: string
-): Promise<void> {
-  const item = findSwarmHistoryItem(itemId, conversationId)
-  if (!item) return
-  const parent = BrowserWindow.fromWebContents(sender) ?? mainWindow
-  const first = dialogConfirmOptions(
-    {
-      title: t('agents.sessionHistoryDeleteTitle'),
-      message: t('agents.sessionHistoryDeleteBody', { name: item.label }),
-      confirmLabel: t('common.delete'),
-      destructive: true
-    },
-    { confirm: t('common.delete'), cancel: t('common.cancel') }
-  )
-  const firstResult = await showParentedMessageBox(
-    parent && !parent.isDestroyed() ? parent : null,
-    first
-  )
-  if (firstResult.response !== 0) return
-
-  const second = dialogConfirmOptions(
-    {
-      title: t('agents.sessionHistoryDeleteAgainTitle'),
-      message: t('agents.sessionHistoryDeleteAgainBody'),
-      confirmLabel: t('common.delete'),
-      destructive: true
-    },
-    { confirm: t('common.delete'), cancel: t('common.cancel') }
-  )
-  const secondResult = await showParentedMessageBox(
-    parent && !parent.isDestroyed() ? parent : null,
-    second
-  )
-  if (secondResult.response !== 0) return
-
-  deleteSwarmHistoryRecord(itemId, conversationId)
-}
-
-function deleteSwarmHistoryRecord(itemId: string, conversationId: string): void {
-  const parsed = parseSwarmHistoryId(itemId)
-  if (!parsed || parsed.kind !== 'session') return
-  const key = swarmSessionKey(parsed.agentId, parsed.sessionId)
-  swarmHistoryStore.remove(key)
-
-  const liveTabs = new Set(
-    ptyManager
-      .listCliAgentSessions()
-      .filter((session) => session.conversationId === conversationId)
-      .map((session) => session.id)
-  )
-  const bindings = conversationStore.getCliPaneBindings(conversationId)
-  for (const [tabId, binding] of Object.entries(bindings)) {
-    if (liveTabs.has(tabId)) continue
-    if (binding.agentId !== parsed.agentId) continue
-    if (nativeSessionId(binding.cursor) !== parsed.sessionId) continue
-    conversationStore.deleteCliPaneBinding(conversationId, tabId)
-  }
-  publishConversations()
-  refreshTraySessions()
-}
 
 /** Debounce: menu accelerator + globalShortcut can both fire when vav is focused. */
 let lastDetachedSessionAt = 0
@@ -7109,7 +6793,6 @@ function applyWorkingDirectory(
   agent.setWorkingDirectory(id, path)
   if (prev !== path) {
     cliHost.setWorkingDirectory(id, path, prev)
-    swarmSession.clearForConversation(id)
   }
   fileService.watchRoot(id, path)
   rememberWorkdir(path, machineId)
@@ -8268,7 +7951,7 @@ return c as text`
     disposeAgent: (id) => agent.disposeConversation(id),
     disposeCli: (id) => cliHost.dispose(id),
     clearChangeSets: (id) => changeSetStore.clearConversation(id),
-    syncHostCursor: (id, host) => swarmSession.syncHostCursor(id, host),
+    syncHostCursor: () => {},
     coerceModel: (id) => {
       coerceConversationModel(id)
     },
@@ -8292,7 +7975,6 @@ return c as text`
       clearUnseenForConversation(id)
       agent.disposeConversation(id)
       cliHost.dispose(id)
-      swarmSession.clearForConversation(id)
       ptyManager.killForConversation(id)
       fileService.unwatch(id)
       notifications.acknowledgeConversation(id)
@@ -8582,27 +8264,12 @@ return c as text`
   })
   registerPluginIpc(ipcMain, pluginService, fileService, () => daemonAttach.localShellClient() ?? null)
   registerVcsIpc(ipcMain, {
-    cloudflare: () => ({
-      token: secretStore.get('cloudflare') ?? null,
-      accountId: settingsStore.get().cloudflareAccountId || null
-    }),
-    supabase: () => ({
-      token: secretStore.get('supabase') ?? null,
-      projectRef: settingsStore.get().supabaseProjectRef || null
-    }),
     remote: () => daemonAttach.localShellClient() ?? null
   })
-  registerConnectorIpc(
-    ipcMain,
-    connectorRegistry,
-    () => ({
-      token: secretStore.get('vercel') ?? null
-    }),
-    {
-      broadcastSettings: () => broadcast(IPC.settingsChanged, currentSettings()),
-      remote: () => daemonAttach.localShellClient() ?? null
-    }
-  )
+  registerConnectorIpc(ipcMain, connectorRegistry, {
+    broadcastSettings: () => broadcast(IPC.settingsChanged, currentSettings()),
+    remote: () => daemonAttach.localShellClient() ?? null
+  })
   registerTimerIpc(
     ipcMain,
     timerStore,
@@ -8688,7 +8355,6 @@ return c as text`
       for (const id of ids) {
         agent.disposeConversation(id)
         cliHost.dispose(id)
-        swarmSession.clearForConversation(id)
         ptyManager.killForConversation(id)
         fileService.unwatch(id)
       }
@@ -8757,14 +8423,12 @@ return c as text`
     promoteEphemeral: promoteEphemeralConversation,
     shell: () => settingsStore.get().shell,
     willAttach: (conversationId, launch) => ptyManager.willAttachCreate(conversationId, launch),
-    prepareLaunch: (conversationId, tabId, agentId, args, resume) =>
-      swarmSession.prepareLaunch(conversationId, tabId, agentId, args, resume),
+    prepareLaunch: async (_conversationId, _tabId, _agentId, args) => ({ args }),
     create: (conversationId, shell, cwd, cols, rows, launch) =>
       ptyManager.create(conversationId, shell, cwd, cols, rows, launch),
-    afterSpawn: (conversationId, tabId, agentId) =>
-      swarmSession.afterSpawn(conversationId, tabId, agentId)
+    afterSpawn: () => {}
   })
-  registerPtyIoIpc(ipcMain, ptyManager, swarmSession, (listed) => {
+  registerPtyIoIpc(ipcMain, ptyManager, { forgetPane: () => {} }, (listed) => {
     const raw = listed as PtyListResult
     return {
       ...raw,
@@ -8826,7 +8490,6 @@ return c as text`
     openRemoteFolder: openRemoteFolderWindow,
     remoteFolderView: currentRemoteFolderPayload,
     chooseRemoteFolder: chooseRemoteFolderFromPicker,
-    openSwarmHistory: popupSwarmHistoryMenu,
     relaunch: () => {
       app.relaunch()
       app.exit(0)
@@ -9223,9 +8886,6 @@ if (singleInstance) {
     appLog().system(LOG_EVENT.systemBoot, 'App ready', {
       data: { version: app.getVersion() }
     })
-    swarmHistoryStore.load()
-    swarmSession.adoptRecordedBindings()
-    swarmSession.refreshTitles()
     if (shouldRestoreInProcessPty(process.env, process.argv, { packaged: app.isPackaged })) {
       ptyManager.restorePersisted({
         persistPath: join(app.getPath('userData'), 'pty-sessions.json'),

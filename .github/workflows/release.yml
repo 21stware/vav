@@ -184,7 +184,7 @@ jobs:
           if-no-files-found: error
 
   sidecars:
-    name: vav-server + Chrome extension
+    name: vav-server sidecar
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -198,7 +198,7 @@ jobs:
 
       - run: npm ci
 
-      - name: Pack vav-server tarball and Chrome extension zip
+      - name: Pack vav-server tarball
         run: node scripts/pack-release-sidecars.mjs --out release-sidecars
 
       - uses: actions/upload-artifact@v4
@@ -241,13 +241,7 @@ jobs:
           In-app updates use the NSIS installer + `latest.yml` feed.
 
           ## Headless daemon
-          `npx @21stware/vav-server` or the `21stware-vav-server-*.tgz` asset on this release. Pair from VAV → Connect, VAV Remote, the web UI, or the Chrome extension.
-
-          ## Chrome extension
-          Download `vav-chrome-extension-*.zip`, unzip, and load the folder as an unpacked extension (`chrome://extensions` → Developer mode).
-
-          ## iOS (VAV Remote)
-          Not built by this workflow. Archive `packages/vav-ios/VAVRemote` from Xcode on a Mac (current marketing version is in the Xcode project) and upload to TestFlight / App Store Connect.
+          `npx @21stware/vav-server` or the `21stware-vav-server-*.tgz` asset on this release. Pair from VAV → Connect, or open the local web UI.
           EOF
 
       - name: Publish release

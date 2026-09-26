@@ -23,7 +23,7 @@ export const OAUTH_CREATE_AGENTS = ['grok', 'cursor'] as const
 const OAUTH_CREATE_SET = new Set<string>(OAUTH_CREATE_AGENTS)
 
 /** CLI logins we sync into Settings → Accounts (includes quota-only hosts). */
-export const OAUTH_SYNC_AGENTS = ['grok', 'cursor', 'claude', 'codex', 'opencode'] as const
+export const OAUTH_SYNC_AGENTS = ['grok', 'cursor', 'claude', 'codex'] as const
 const OAUTH_SYNC_SET = new Set<string>(OAUTH_SYNC_AGENTS)
 
 export function isOAuthSyncAgent(agentId: string): boolean {
@@ -40,11 +40,8 @@ const OAUTH_DOMAIN: Record<string, string> = {
   cursor: 'cursor.com',
   grok: 'x.ai',
   codex: 'openai.com',
-  pi: 'pi.dev',
   devin: 'devin.ai',
-  antigravity: 'antigravity.google',
   kiro: 'kiro.dev',
-  opencode: 'opencode.ai',
   cline: 'cline.bot'
 }
 

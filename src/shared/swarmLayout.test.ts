@@ -11,7 +11,8 @@ import {
   sanitizeSwarmLayout,
   splitSwarmLeaf,
   swarmLeaf,
-  swarmRootId
+  swarmRootId,
+  longEdgeSplitAxis
 } from './swarmLayout.ts'
 
 describe('swarmLayout', () => {
@@ -87,5 +88,11 @@ describe('swarmLayout', () => {
       { id: 'x' }
     ]
     assert.deepEqual(expandRemovedSwarmIds(rows, ['p']).sort(), ['a', 'b', 'p'])
+  })
+
+  it('splits along the long edge', () => {
+    assert.equal(longEdgeSplitAxis(800, 400), 'row')
+    assert.equal(longEdgeSplitAxis(400, 800), 'column')
+    assert.equal(longEdgeSplitAxis(500, 500), 'row')
   })
 })

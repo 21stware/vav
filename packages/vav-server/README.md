@@ -7,22 +7,14 @@ npx @21stware/vav-server
 # or
 npm i -g @21stware/vav-server && vav-server
 # or the 21stware-vav-server-*.tgz on each GitHub Release
-# then, from another terminal:
-vav-board status
-vav-board session create --cwd .
-vav-tui -p "hello"
-# `vav send "hello"` still works (alias of vav-board send)
 ```
 
 Prints a pairing URI. Use it from:
 
-- VAV desktop → Connect, or launch the app with `VAV_SERVER_URI` / `--vav-server-uri` so it opens as a vav-server UI. `VAV_SERVER_SPAWN=1` / `--with-vav-server` starts this daemon as a child and pairs automatically.
-- VAV Remote (iOS)
+- VAV desktop → Connect, or launch the app with `VAV_SERVER_URI` / `--vav-server-uri` so it opens as a vav-server UI. Packaged builds and `npm run dev` spawn this daemon as a child and pair automatically.
 - the local web UI (`http://127.0.0.1:4752`) — discovers and pairs on loopback
-- the Chrome extension side panel — same automatic discovery
-- `vav-board` (herdr-style control: session / workspace / agent / file / pane / host) and `vav-tui` (Claude Code-style print / JSON / RPC / interactive + slash commands). Also `npm run vav-board` / `npm run vav-tui` in this repo. They read `VAV_SERVER_URI`, `~/.vav-server`, or loopback `/discover`.
 
-All of those are the same control-plane client (`hello.role=phone`). Turns run in this process.
+Turns run in this process.
 
 ## Flags
 
@@ -38,11 +30,4 @@ vav-server — headless VAV
   --api-key <key>     VAV provider key (or VAV_API_KEY)
   --api-endpoint <url> provider root (or VAV_API_ENDPOINT)
   --no-announce       skip LAN multicast
-  --no-web            disable the web UI
 ```
-
-Requires Node 22+. `node-pty` is installed as a dependency so spawned shells work on the host OS.
-
-## License
-
-Same as VAV: [PolyForm Noncommercial 1.0.0](https://github.com/21stware/vav/blob/main/LICENSE). Commercial use needs a license from 21stware.

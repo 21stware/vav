@@ -209,22 +209,6 @@ export function parseDevinAuthStatusText(text: string): HostAccountInfo {
   return accountInfo('oauth', { accountId: email, plan: plan || null })
 }
 
-/** OpenCode `auth.json`: any stored key means signed in; email only if present. */
-export function parseOpencodeAuthFile(payload: unknown): HostAccountInfo {
-  const rec = asAccountRecord(payload)
-  if (!rec) return emptyAccount()
-  let hasKey = false
-  let email = emailFromUnknown(rec)
-  for (const value of Object.values(rec)) {
-    const entry = asAccountRecord(value)
-    if (!entry) continue
-    if (typeof entry.key === 'string' && entry.key.trim()) hasKey = true
-    email ??= emailFromUnknown(entry)
-  }
-  if (!hasKey && !email) return emptyAccount()
-  return accountInfo('api-key', { accountId: email })
-}
-
 /** Claude context fill: input + cache write + cache read (t3code / Agent SDK). */
 export function claudeContextUsed(usage: {
   inputTokens?: number | null

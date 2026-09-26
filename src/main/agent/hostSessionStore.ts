@@ -1,5 +1,4 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
-import { createRequire } from 'node:module'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { CliHostKind } from '../../shared/cliHost'
@@ -36,7 +35,6 @@ export function readHostSessionTitle(
     if (agentId === 'claude') return readClaudeTitle(home, cwd, id)
     if (agentId === 'codex') return readCodexTitle(home, id)
     if (agentId === 'cursor') return readCursorTitle(home, id)
-    if (agentId === 'opencode') return readOpencodeTitle(home, id)
   } catch {
     return null
   }
@@ -58,7 +56,6 @@ export function hostSessionHasConversation(
     if (agentId === 'claude') return claudeHasConversation(home, cwd, id)
     if (agentId === 'codex') return readCodexTitle(home, id) != null
     if (agentId === 'cursor') return cursorHasConversation(home, id)
-    if (agentId === 'opencode') return readOpencodeTitle(home, id) != null
   } catch {
     return false
   }
@@ -90,7 +87,6 @@ export function hostSessionExists(
       // Swarm TUI resume uses `~/.cursor/chats`, not ACP session folders.
       return findCursorChatMeta(home, id) != null
     }
-    if (agentId === 'opencode') return readOpencodeTitle(home, id) != null
   } catch {
     return false
   }
@@ -143,7 +139,6 @@ export function listHostSessions(
     if (agentId === 'claude') return listClaude(home, cwd, afterMs, exclude)
     if (agentId === 'codex') return listCodex(home, cwd, afterMs, exclude)
     if (agentId === 'cursor') return listCursor(home, cwd, afterMs, exclude)
-    if (agentId === 'opencode') return listOpencode(home, cwd, afterMs, exclude)
   } catch {
     return []
   }
@@ -405,108 +400,8 @@ function listCursor(
   return sortNewest([...byId.values()])
 }
 
-function readOpencodeTitle(home: string, sessionId: string): string | null {
-  const rows = queryOpencode(
-    home,
-    'SELECT title, slug FROM session WHERE id = ? LIMIT 1',
-    [sessionId]
-  )
-  const row = rows[0]
-  if (!row) return null
-  return cleanOpencodeTitle(asString(row.title), asString(row.slug))
-}
-
-function listOpencode(
-  home: string,
-  cwd: string,
-  afterMs: number,
-  exclude: Set<string>
-): HostSessionLookup[] {
-  const wanted = normalizeCwd(cwd)
-  const rows = queryOpencode(
-    home,
-    `SELECT id, title, slug, directory, time_created, time_updated
-     FROM session
-     WHERE parent_id IS NULL
-       AND (time_archived IS NULL OR time_archived = 0)`,
-    []
-  )
-  const out: HostSessionLookup[] = []
-  for (const row of rows) {
-    const id = asString(row.id)
-    if (!id || exclude.has(id)) continue
-    const dir = asString(row.directory)
-    if (!dir || normalizeCwd(dir) !== wanted) continue
-    const created = num(row.time_created)
-    const updated = num(row.time_updated)
-    const stamp = Math.max(created ?? 0, updated ?? 0)
-    if (stamp < afterMs) continue
-    out.push({
-      id,
-      title: cleanOpencodeTitle(asString(row.title), asString(row.slug)),
-      updatedAt: stamp
-    })
-  }
-  return sortNewest(out)
-}
-
 function sortNewest(rows: HostSessionLookup[]): HostSessionLookup[] {
   return rows.sort((a, b) => b.updatedAt - a.updatedAt)
-}
-
-function cleanOpencodeTitle(title: string | null, slug: string | null): string | null {
-  const cleaned = cleanTitle(title)
-  if (!cleaned) return null
-  if (slug && cleaned === slug) return null
-  return cleaned
-}
-
-function opencodeDbPaths(home: string): string[] {
-  const paths: string[] = []
-  if (home === homedir()) {
-    const xdg = process.env.XDG_DATA_HOME?.trim()
-    if (xdg) paths.push(join(xdg, 'opencode', 'opencode.db'))
-  }
-  paths.push(join(home, '.local', 'share', 'opencode', 'opencode.db'))
-  paths.push(join(home, '.opencode', 'opencode.db'))
-  return [...new Set(paths)].filter((p) => existsSync(p))
-}
-
-function queryOpencode(home: string, sql: string, params: unknown[]): Record<string, unknown>[] {
-  const DatabaseSync = loadDatabaseSync()
-  if (!DatabaseSync) return []
-  const out: Record<string, unknown>[] = []
-  for (const dbPath of opencodeDbPaths(home)) {
-    try {
-      const db = new DatabaseSync(dbPath, { readOnly: true })
-      try {
-        const rows = db.prepare(sql).all(...params)
-        if (Array.isArray(rows)) out.push(...(rows as Record<string, unknown>[]))
-      } finally {
-        db.close()
-      }
-    } catch {
-      /* locked / unexpected schema */
-    }
-  }
-  return out
-}
-
-type SqliteDatabase = {
-  prepare: (sql: string) => { all: (...params: unknown[]) => unknown }
-  close: () => void
-}
-
-function loadDatabaseSync(): (new (path: string, opts?: { readOnly?: boolean }) => SqliteDatabase) | null {
-  try {
-    const req = createRequire(import.meta.url)
-    const mod = req('node:sqlite') as {
-      DatabaseSync?: new (path: string, opts?: { readOnly?: boolean }) => SqliteDatabase
-    }
-    return mod.DatabaseSync ?? null
-  } catch {
-    return null
-  }
 }
 
 function num(value: unknown): number | null {

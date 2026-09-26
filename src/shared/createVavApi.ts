@@ -364,16 +364,6 @@ export function createVavApi(adapter: VavIpcAdapter): VavApi {
       invoke(IPC.gitStashDrop, cwd, index, conversationId)
   },
 
-  cloudflare: {
-    status: (cwd: string, query?: import('@shared/cloudflare').CloudflareStatusQuery) =>
-      invoke(IPC.cloudflareStatus, cwd, query)
-  },
-
-  supabase: {
-    status: (cwd: string, query?: import('@shared/supabase').SupabaseStatusQuery) =>
-      invoke(IPC.supabaseStatus, cwd, query)
-  },
-
   plugins: {
     list: (host) => invoke(IPC.pluginsList, host),
     setEnabled: (host, pluginId, enabled) =>
@@ -401,11 +391,6 @@ export function createVavApi(adapter: VavIpcAdapter): VavApi {
     authStatus: () => invoke(IPC.connectorsAuthStatus),
     beginLogin: (id) => invoke(IPC.connectorsBeginLogin, id),
     cancelLogin: (id) => invoke(IPC.connectorsCancelLogin, id)
-  },
-
-  vercel: {
-    status: (cwd: string, query?: import('@shared/vercel').VercelStatusQuery) =>
-      invoke(IPC.vercelStatus, cwd, query)
   },
 
   timers: {
