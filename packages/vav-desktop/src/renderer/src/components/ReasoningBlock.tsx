@@ -26,6 +26,7 @@ export function ReasoningBlock({
 }): React.JSX.Element {
   const t = useT()
   const [open, setOpen] = useState(false)
+  const [bodyReady, setBodyReady] = useState(false)
   const canToggle = text.trim().length > 0
   const stick = follow || live
 
@@ -54,7 +55,12 @@ export function ReasoningBlock({
         aria-expanded={canToggle ? open : undefined}
         title={canToggle ? (open ? t('common.collapse') : t('common.expand')) : undefined}
         onClick={() => {
-          if (canToggle) setOpen((value) => !value)
+          if (!canToggle) return
+          setOpen((value) => {
+            const next = !value
+            if (next) setBodyReady(true)
+            return next
+          })
         }}
       >
         {canToggle ? (
@@ -66,13 +72,15 @@ export function ReasoningBlock({
       </button>
       {canToggle ? (
         <div className="tool-detail" aria-hidden={!open}>
-          <div className="tool-detail-inner">
-            <ThinkingViewport follow={stick}>
-              <div className="reasoning-body">
-                <MarkdownView source={text} cached={!live} />
-              </div>
-            </ThinkingViewport>
-          </div>
+          {bodyReady ? (
+            <div className="tool-detail-inner">
+              <ThinkingViewport follow={stick}>
+                <div className="reasoning-body">
+                  <MarkdownView source={text} cached={!live} />
+                </div>
+              </ThinkingViewport>
+            </div>
+          ) : null}
         </div>
       ) : null}
     </div>

@@ -1,3 +1,4 @@
+import { extractCiteKeys } from '@shared/mdMarks'
 import { coalesceStreamChunk, foldSnapshotText } from '@shared/streamCoalesce'
 import { isUserAskTool, type MessageBlock, type ToolCallBlock } from '@shared/types'
 
@@ -220,6 +221,20 @@ export function previewProcessText(source: string, max = 72): string {
     .find(Boolean)
   if (!line) return ''
   return line.length <= max ? line : `${line.slice(0, max - 1)}…`
+}
+
+/** Cite chips on tools inside a thinking well — hoisted so a collapsed well can still be found. */
+export function processCiteKeys(
+  items: IndexedBlock[],
+  resolveTool?: (index: number) => ToolCallBlock | null
+): string {
+  const keys: string[] = []
+  for (const item of items) {
+    const block = resolveTool?.(item.index) ?? (item.block.kind === 'toolCall' ? item.block : null)
+    if (!block || block.kind !== 'toolCall') continue
+    keys.push(...extractCiteKeys(block.output || ''))
+  }
+  return [...new Set(keys)].join(' ')
 }
 
 /** Sum sealed reasoning durations on the process trail. */

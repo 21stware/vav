@@ -7,6 +7,7 @@ import {
   isHollowToolCard,
   isVisibleAssistantBlock,
   previewProcessText,
+  processCiteKeys,
   processThoughtMs,
   segmentAssistantTurn,
   splitAssistantProcess,
@@ -453,6 +454,21 @@ describe('previewProcessText', () => {
   it('takes the first prose line and strips markup', () => {
     assert.equal(previewProcessText('# Hello\n\nMore.'), 'Hello')
     assert.equal(previewProcessText('Let me search.'), 'Let me search.')
+  })
+})
+
+describe('processCiteKeys', () => {
+  it('hoists cite chips from tool output on the process trail', () => {
+    assert.equal(
+      processCiteKeys([
+        { index: 0, block: think('plan') },
+        {
+          index: 1,
+          block: { ...tool('x'), output: 'See [web:1] and [doc:note].' }
+        }
+      ]),
+      'web:1 doc:note'
+    )
   })
 })
 

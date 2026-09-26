@@ -54,6 +54,7 @@ export function ThinkingViewport({
 
     paint(true)
     el.addEventListener('scroll', onScroll, { passive: true })
+    // Children sit in a stable content node; ResizeObserver sees growth.
     const content = el.firstElementChild
     const observer = new ResizeObserver(() => paint(true))
     observer.observe(el)
@@ -62,7 +63,7 @@ export function ThinkingViewport({
       el.removeEventListener('scroll', onScroll)
       observer.disconnect()
     }
-  }, [follow, children])
+  }, [follow])
 
   const classes = [
     'thinking-viewport',

@@ -4,6 +4,8 @@ User-facing changes by release. Unreleased work lives at the top until the next 
 
 ## Unreleased
 
+Opening a long conversation no longer re-parses every collapsed thinking well, and sealed turns keep `content-visibility: auto` until a well is actually expanded.
+
 Desktop and vav-server are the only products. iOS, Android, the Chrome extension, `vav-board`, and `vav-tui` are gone. The loopback web UI stays with vav-server (`src/web-ui`). Settings → Command Line installs `vav` and `vav-server` only.
 
 Cloudflare, Supabase, and Vercel Files-tray panels are gone. Connector login in Settings and the agent `connector` tool stay.

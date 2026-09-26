@@ -6186,9 +6186,12 @@ kbd {
  * The thinking well hangs 16px into the reading gutter. content-visibility
  * always paints a containment box, so that overhang is sliced off the left,
  * and a skipped turn can stay locked to its intrinsic size — the finished
- * answer then never paints. Turns that host a well opt out.
+ * answer then never paints. Only an *open* well needs the opt-out; a
+ * collapsed process used to match via a still-mounted viewport and disabled
+ * the skip for almost every agent turn.
  */
-.message-turn.assistant:has(.thinking-viewport) {
+.message-turn.assistant:has(.thinking-process.expanded),
+.message-turn.assistant:has(.reasoning-call.expanded) {
   content-visibility: visible;
 }
 

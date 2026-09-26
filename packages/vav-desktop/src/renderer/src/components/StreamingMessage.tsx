@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from 'react'
 import type { MessageBlock } from '@shared/types'
 import {
+  processCiteKeys,
   processThoughtMs,
   segmentAssistantTurn,
   type AssistantSegment,
@@ -51,6 +52,10 @@ export function StreamingMessage({ conversationId }: { conversationId: string })
       steps={items.length}
       durationMs={processThoughtMs(items)}
       follow={streaming}
+      citeKeys={processCiteKeys(items, (index) => {
+        const block = snapshot.blocks[index]
+        return block?.kind === 'tool' ? block.block : null
+      })}
     >
       <ThinkingSteps
         items={items}

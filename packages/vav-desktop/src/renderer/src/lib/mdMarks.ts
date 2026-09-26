@@ -112,28 +112,44 @@ export function revealCitation(fromEl: HTMLElement, kind: 'web' | 'doc', id: str
     kind === 'web'
       ? '[data-tool="web_search"]'
       : '[data-tool="doc_search"], [data-tool="doc_fetch"]'
-  const cards = [...turn.querySelectorAll<HTMLElement>(selector)]
   const key = `${kind}:${id}`
-  const match =
-    cards.find((card) =>
-      (card.getAttribute('data-cite-keys') || '').split(/\s+/).includes(key)
-    ) ?? cards.at(-1)
-  if (!match) return
+  const findCard = (): HTMLElement | undefined => {
+    const cards = [...turn.querySelectorAll<HTMLElement>(selector)]
+    return (
+      cards.find((card) =>
+        (card.getAttribute('data-cite-keys') || '').split(/\s+/).includes(key)
+      ) ?? cards.at(-1)
+    )
+  }
 
-  const process = match.closest('.thinking-process')
-  const group = match.closest('.tool-call-group')
+  let match = findCard()
+  const process =
+    match?.closest('.thinking-process') ??
+    [...turn.querySelectorAll<HTMLElement>('.thinking-process')].find((el) =>
+      (el.getAttribute('data-cite-keys') || '').split(/\s+/).includes(key)
+    ) ??
+    null
+  const group = match?.closest('.tool-call-group') ?? null
+  if (!match && !process) return
+
   const wasClosed =
     (process != null && !process.classList.contains('expanded')) ||
     (group != null && !group.classList.contains('expanded')) ||
-    !match.classList.contains('expanded')
+    (match != null && !match.classList.contains('expanded')) ||
+    match == null
   process?.dispatchEvent(new CustomEvent(EXPAND_PROCESS_EVENT))
   group?.dispatchEvent(new CustomEvent(EXPAND_PROCESS_EVENT))
-  match.dispatchEvent(new CustomEvent(REVEAL_CITE_EVENT, { detail: { kind, id } }))
+  match?.dispatchEvent(new CustomEvent(REVEAL_CITE_EVENT, { detail: { kind, id } }))
 
   window.setTimeout(
     () => {
+      const card = findCard() ?? match
+      if (!card) return
+      if (card !== match) {
+        card.dispatchEvent(new CustomEvent(REVEAL_CITE_EVENT, { detail: { kind, id } }))
+      }
       const hit =
-        match.querySelector<HTMLElement>(`[data-cite-anchor="${CSS.escape(key)}"]`) ?? match
+        card.querySelector<HTMLElement>(`[data-cite-anchor="${CSS.escape(key)}"]`) ?? card
       hit.scrollIntoView({ block: 'center' })
       hit.classList.add('cite-flash')
       window.setTimeout(() => hit.classList.remove('cite-flash'), 1500)

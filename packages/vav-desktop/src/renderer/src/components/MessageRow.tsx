@@ -25,7 +25,7 @@ import { InlineChangeReview } from './InlineChangeReview'
 import { MarkdownView } from './MarkdownView'
 import { ThinkingProcess } from './ThinkingProcess'
 import { ThinkingSteps } from './ThinkingSteps'
-import { processThoughtMs, segmentAssistantTurn } from '../lib/assistantProcess'
+import { processCiteKeys, processThoughtMs, segmentAssistantTurn } from '../lib/assistantProcess'
 
 import { ToolCallGroup } from './ToolCallGroup'
 import { ToolCard } from './ToolCard'
@@ -468,6 +468,7 @@ export const MessageRow = memo(function MessageRow({
                 key={`think-${segment.items[0]?.index ?? 0}`}
                 steps={segment.items.length}
                 durationMs={processThoughtMs(segment.items)}
+                citeKeys={processCiteKeys(segment.items)}
               >
                 <ThinkingSteps items={segment.items} />
               </ThinkingProcess>

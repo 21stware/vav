@@ -13,24 +13,33 @@ export function ThinkingProcess({
   steps,
   durationMs,
   follow = false,
+  citeKeys,
   children
 }: {
   steps: number
   durationMs?: number
   /** Stick the well to the newest step while the turn is still streaming. */
   follow?: boolean
+  /** Hoisted from nested tool output so a collapsed well can still be found. */
+  citeKeys?: string
   children: ReactNode
 }): React.JSX.Element {
   const t = useT()
   const rootRef = useRef<HTMLDivElement>(null)
   const [open, setOpen] = useState(follow)
+  const [bodyReady, setBodyReady] = useState(follow)
   useEffect(() => {
-    if (follow) setOpen(true)
+    if (!follow) return
+    setOpen(true)
+    setBodyReady(true)
   }, [follow])
   useEffect(() => {
     const el = rootRef.current
     if (!el) return
-    const onExpand = (): void => setOpen(true)
+    const onExpand = (): void => {
+      setBodyReady(true)
+      setOpen(true)
+    }
     el.addEventListener(EXPAND_PROCESS_EVENT, onExpand)
     return () => el.removeEventListener(EXPAND_PROCESS_EVENT, onExpand)
   }, [])
@@ -46,23 +55,32 @@ export function ThinkingProcess({
       ref={rootRef}
       className={`tool-call thinking-process${open ? ' expanded' : ''}`}
       data-testid="thinking-process"
+      data-cite-keys={citeKeys || undefined}
     >
       <button
         type="button"
         className="tool-row"
         aria-expanded={open}
         title={open ? t('common.collapse') : t('common.expand')}
-        onClick={() => setOpen((value) => !value)}
+        onClick={() => {
+          setOpen((value) => {
+            const next = !value
+            if (next) setBodyReady(true)
+            return next
+          })
+        }}
       >
         <ChevronRight className="tool-chevron" size={11} />
         <span className={`tool-name${follow ? ' stream-status-shimmer' : ''}`}>{summary}</span>
       </button>
       <div className="tool-detail" aria-hidden={!open}>
-        <div className="tool-detail-inner">
-          <ThinkingViewport follow={follow}>
-            <div className="thinking-process-body">{children}</div>
-          </ThinkingViewport>
-        </div>
+        {bodyReady ? (
+          <div className="tool-detail-inner">
+            <ThinkingViewport follow={follow}>
+              <div className="thinking-process-body">{children}</div>
+            </ThinkingViewport>
+          </div>
+        ) : null}
       </div>
     </div>
   )
