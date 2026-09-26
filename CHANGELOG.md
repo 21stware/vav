@@ -4,7 +4,7 @@ User-facing changes by release. Unreleased work lives at the top until the next 
 
 ## Unreleased
 
-Opening a long conversation no longer re-parses every collapsed thinking well, and sealed turns keep `content-visibility: auto` until a well is actually expanded.
+## 1.32.7
 
 Desktop and vav-server are the only products. iOS, Android, the Chrome extension, `vav-board`, and `vav-tui` are gone. The loopback web UI stays with vav-server (`src/web-ui`). Settings → Command Line installs `vav` and `vav-server` only.
 
@@ -15,6 +15,8 @@ OpenCode, Pi, and Antigravity CLI hosts are gone. Claude Code, Codex, and ACP ho
 CLI Swarm (raw vendor TUI in a session pane) is gone. Conversation split panes stay.
 
 Packaged builds and `npm run dev` still spawn one vav-server. The in-process host is test-only (`VAV_E2E` / `VAV_SNAPSHOT`). DuckDB stays bundled.
+
+Opening a long conversation no longer re-parses every collapsed thinking well, and sealed turns keep `content-visibility: auto` until a well is actually expanded.
 
 ## 1.32.6
 
