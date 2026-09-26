@@ -531,6 +531,13 @@ export function Transcript({
     return out
   }, [messages, boundary, showCompactLog, activeCompaction])
 
+  const firstUserMessageId = useMemo(() => {
+    for (const item of items) {
+      if (item.kind === 'message' && item.message.role === 'user') return item.message.id
+    }
+    return null
+  }, [items])
+
   void heightEpoch
   const virtualize = items.length > VIRTUALIZE_AFTER
   const range = useMemo(() => {
@@ -617,6 +624,7 @@ export function Transcript({
           branchIndex={branch?.index ?? 0}
           branchCount={branch?.targets.length ?? 1}
           busy={turnRunning}
+          showRoundRule={message.role === 'user' && message.id !== firstUserMessageId}
           onStepBranch={onStepBranch}
           onRegenerate={archived ? undefined : regenerate}
           onEdit={archived ? undefined : editUserMessage}

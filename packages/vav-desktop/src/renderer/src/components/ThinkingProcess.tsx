@@ -23,7 +23,10 @@ export function ThinkingProcess({
 }): React.JSX.Element {
   const t = useT()
   const rootRef = useRef<HTMLDivElement>(null)
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useState(follow)
+  useEffect(() => {
+    if (follow) setOpen(true)
+  }, [follow])
   useEffect(() => {
     const el = rootRef.current
     if (!el) return

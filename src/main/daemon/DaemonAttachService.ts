@@ -132,6 +132,8 @@ type AttachOpts = {
    * phone tunnel secret so QR and the copy line stay the same URI.
    */
   onAdvertisedPairingRotated?: (pairing: string) => void
+  /** First listen port (Dev uses 4770 so release can keep 4750). Falls back to ephemeral. */
+  preferredListenPort?: number
 }
 
 export class DaemonAttachService {
@@ -813,7 +815,7 @@ export class DaemonAttachService {
     if (this.server && this.listenPort) return
     const server = this.ensureServer()
     void server
-      .listen(DAEMON_DEFAULT_PORT, DAEMON_LAN_BIND)
+      .listen(this.opts.preferredListenPort ?? DAEMON_DEFAULT_PORT, DAEMON_LAN_BIND)
       .catch(() => server.listen(0, DAEMON_LAN_BIND))
       .then((port) => {
         this.listenPort = port

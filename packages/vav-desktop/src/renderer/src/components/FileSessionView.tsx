@@ -21,8 +21,8 @@ import { useShowShellLeading } from '../lib/sidebarLayout'
 import { startCapturedPointerDrag } from '../lib/capturedPointerDrag'
 import { reportFileSessionAgentOpen } from '../lib/useWindowMinSize'
 import { Button, EmptyState } from './ui'
-import { SessionDetail } from './SessionDetail'
 import { ShellLeadingControls } from './ShellLeadingControls'
+import { warmSessionDetail } from '../lib/apps/warmAppViews'
 
 const FileViewer = lazy(() => import('./FileViewer').then((m) => ({ default: m.FileViewer })))
 
@@ -70,6 +70,7 @@ export function FileSessionView({
   agentWidthRef.current = agentWidth
 
   const workspaceAgentId = useSessionStore(workspaceAgentConversationIdFrom)
+  const SessionDetail = warmSessionDetail.use(!hideAgent)
   const showFileList = useSessionStore((s) => s.showFileList)
   const fileHistory = useFileSessionHistory(fileId, conversationId, resolved?.path ?? null)
   const shellLeadingNeeded = useShowShellLeading()
@@ -232,7 +233,9 @@ export function FileSessionView({
             onPointerDown={startResize}
           />
           {/* Context agent for this file — same instance as FileViewer history. */}
-          <SessionDetail variant="preview-edit" fileSessionChrome={fileHistory} />
+          {SessionDetail ? (
+            <SessionDetail variant="preview-edit" fileSessionChrome={fileHistory} />
+          ) : null}
         </div>
       </aside>
       )}

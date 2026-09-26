@@ -2,11 +2,15 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import {
   VAV_SERVER_WEB_DEFAULT_PORT,
+  VAV_SERVER_WEB_DEV_PORT,
+  VAV_SERVER_WEB_DEV_SCAN_LAST,
   VAV_SERVER_WEB_SCAN_LAST,
   buildDiscoverPayload,
   isLocalPairingHost,
   isLoopbackAddress,
   isPrivateLanAddress,
+  preferredWebPort,
+  resolveVavRuntimeChannel,
   webScanPorts
 } from './vavDiscover.ts'
 
@@ -71,6 +75,32 @@ describe('vavDiscover', () => {
     assert.ok(ports.includes(VAV_SERVER_WEB_SCAN_LAST))
     assert.ok(ports.includes(4800))
     assert.ok(!ports.includes(-1))
+    assert.ok(!ports.includes(VAV_SERVER_WEB_DEV_PORT))
     assert.equal(ports[0], 4800)
+  })
+
+  it('keeps the Dev web range off the release scan', () => {
+    const release = webScanPorts([], 'release')
+    assert.ok(release.includes(VAV_SERVER_WEB_DEFAULT_PORT))
+    assert.ok(!release.includes(VAV_SERVER_WEB_DEV_PORT))
+    const dev = webScanPorts([VAV_SERVER_WEB_DEV_PORT])
+    assert.ok(dev.includes(VAV_SERVER_WEB_DEV_PORT))
+    assert.ok(dev.includes(VAV_SERVER_WEB_DEV_SCAN_LAST))
+    assert.ok(!dev.includes(VAV_SERVER_WEB_DEFAULT_PORT))
+    assert.equal(preferredWebPort('dev'), VAV_SERVER_WEB_DEV_PORT)
+  })
+
+  it('resolves the Dev channel from Electron / VAV_HOME, not the release tree', () => {
+    assert.equal(resolveVavRuntimeChannel({}), 'release')
+    assert.equal(resolveVavRuntimeChannel({ VAV_RUNTIME_CHANNEL: 'dev' }), 'dev')
+    assert.equal(resolveVavRuntimeChannel({ ELECTRON_IS_DEV: '1' }), 'dev')
+    assert.equal(
+      resolveVavRuntimeChannel({ VAV_HOME: '/Users/me/Library/Application Support/vav-dev' }),
+      'dev'
+    )
+    assert.equal(
+      resolveVavRuntimeChannel({ VAV_HOME: '/Users/me/Library/Application Support/vav' }),
+      'release'
+    )
   })
 })

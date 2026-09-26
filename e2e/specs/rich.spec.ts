@@ -16,6 +16,11 @@ test('rich seed paints branch, subtask, cancelled, approval, and request', async
       'branch B conclusion'
     )
 
+    const group = page.locator('[data-testid="tool-call-group"]').first()
+    await expect(group).toBeVisible()
+    if (!(await group.getAttribute('class'))?.includes('expanded')) {
+      await group.locator(':scope > .tool-row').click()
+    }
     await expect(page.locator('[data-testid="tool-card"][data-tool="task"]')).toBeVisible()
     await expect(page.locator('[data-testid="task-children"]')).toBeVisible()
     await expect(page.locator('[data-testid="tool-card"][data-tool="web_search"]')).toBeVisible()

@@ -35,9 +35,15 @@ describe('web preview scenes', () => {
 
   it('seeds a two-turn transcript on the chat fixture', () => {
     const conversation = previewConversation()
-    assert.equal(conversation.messages.length, 2)
+    assert.equal(conversation.messages.length, 4)
     assert.equal(conversation.messages[0]?.role, 'user')
     assert.equal(conversation.messages[1]?.role, 'assistant')
-    assert.equal(conversation.activeLeafId, conversation.messages[1]?.id)
+    assert.equal(conversation.messages[2]?.role, 'user')
+    assert.equal(conversation.messages[3]?.role, 'assistant')
+    assert.equal(conversation.activeLeafId, conversation.messages[3]?.id)
+    const kinds = conversation.messages[1]?.blocks.map((block) =>
+      block.kind === 'toolCall' ? block.tool : block.kind
+    )
+    assert.deepEqual(kinds, ['reasoning', 'fs_read', 'reasoning', 'fs_write', 'text'])
   })
 })

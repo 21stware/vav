@@ -20,6 +20,12 @@ test('seeded assistant turn paints tools, plan, error, and ask', async () => {
     if (!(await process.getAttribute('class'))?.includes('expanded')) {
       await process.locator(':scope > .tool-row').click()
     }
+    const group = page.locator('[data-testid="tool-call-group"]').first()
+    await expect(group).toBeVisible()
+    await expect(group).toContainText('Call 2 tools')
+    if (!(await group.getAttribute('class'))?.includes('expanded')) {
+      await group.locator(':scope > .tool-row').click()
+    }
     await expect(page.locator('[data-testid="tool-card"][data-tool="fs_read"]')).toBeVisible()
     await expect(page.locator('[data-testid="tool-card"][data-tool="fs_write"]')).toBeVisible()
     await expect(page.locator('[data-testid="plan-doc"]')).toBeVisible()

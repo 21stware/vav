@@ -6,6 +6,7 @@ import { promisify } from 'node:util'
 import {
   FILE_ASSOCIATION_FORMATS,
   formatIdForExtension,
+  formatUtis,
   type FileAssociationFormat
 } from '../../shared/fileAssociationFormats.ts'
 
@@ -113,11 +114,18 @@ export class FileAssociationService {
   }
 
   async listStatus(): Promise<FileAssociationStatus[]> {
-    const out: FileAssociationStatus[] = []
-    for (const format of FILE_ASSOCIATION_FORMATS) {
-      out.push(await this.statusFor(format))
+    await this.ensureHelperIfMac()
+    return Promise.all(FILE_ASSOCIATION_FORMATS.map((format) => this.statusFor(format)))
+  }
+
+  /** Compile once up front so parallel status probes don't race `swiftc`. */
+  private async ensureHelperIfMac(): Promise<void> {
+    if (!IS_MAC) return
+    try {
+      await this.ensureHelper()
+    } catch {
+      // statusForMac falls back to an empty status per format.
     }
-    return out
   }
 
   async statusFor(format: FileAssociationFormat): Promise<FileAssociationStatus> {
@@ -138,11 +146,13 @@ export class FileAssociationService {
     if (!format) throw new Error(`Unknown format: ${formatId}`)
 
     if (IS_MAC) {
-      const current = await this.getDefaultMac(format.uti)
-      if (current.bundleId && current.bundleId !== VAV_BUNDLE_ID) {
-        this.rememberPrevious(format.uti, current.bundleId)
+      for (const uti of formatUtis(format)) {
+        const current = await this.getDefaultMac(uti)
+        if (current.bundleId && current.bundleId !== VAV_BUNDLE_ID) {
+          this.rememberPrevious(uti, current.bundleId)
+        }
+        await this.runHelper(uti, 'set', VAV_BUNDLE_ID)
       }
-      await this.runHelper(format.uti, 'set', VAV_BUNDLE_ID)
       return this.statusFor(format)
     }
 
@@ -161,9 +171,9 @@ export class FileAssociationService {
     if (!format) throw new Error(`Unknown format: ${formatId}`)
 
     if (IS_MAC) {
-      const previous = this.loadPrevious()[format.uti]
-      if (previous) {
-        await this.runHelper(format.uti, 'set', previous)
+      const previous = this.loadPrevious()
+      for (const uti of formatUtis(format)) {
+        if (previous[uti]) await this.runHelper(uti, 'set', previous[uti])
       }
       return this.statusFor(format)
     }

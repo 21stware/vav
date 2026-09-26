@@ -61,25 +61,26 @@ export function CodeBlockCanvas({
   const onNearEndRef = useRef(onNearEnd)
   onNearEndRef.current = onNearEnd
 
-  // Measure line-height from a real line box (must match CSS --code-line-height).
-  // Runs every render rather than on a dep list: type zoom changes the line box
-  // without touching the text, and virtual scroll math built on a stale pitch
-  // paints blank bands.
   useLayoutEffect(() => {
     const el = containerRef.current
     if (!el) return
-    const probe = el.querySelector<HTMLElement>('.preview-code-line')
-    const measured = probe ? probe.getBoundingClientRect().height : 0
-    let next = measured
-    if (!(next > 0)) {
-      const cs = getComputedStyle(el)
-      const fontSize = parseFloat(cs.fontSize) || 12
-      const lh = parseFloat(cs.lineHeight)
-      next = Number.isFinite(lh) && lh > 0 ? lh : fontSize * 1.55
+    const measure = (): void => {
+      const probe = el.querySelector<HTMLElement>('.preview-code-line')
+      const measured = probe ? probe.getBoundingClientRect().height : 0
+      let next = measured
+      if (!(next > 0)) {
+        const cs = getComputedStyle(el)
+        const fontSize = parseFloat(cs.fontSize) || 12
+        const lh = parseFloat(cs.lineHeight)
+        next = Number.isFinite(lh) && lh > 0 ? lh : fontSize * 1.55
+      }
+      setLinePx((prev) => (Math.abs(next - prev) < 0.5 ? prev : next))
     }
-    if (Math.abs(next - linePx) < 0.5) return
-    setLinePx(next)
-  })
+    measure()
+    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : null
+    ro?.observe(el)
+    return () => ro?.disconnect()
+  }, [path, text])
 
   useEffect(() => {
     const el = containerRef.current

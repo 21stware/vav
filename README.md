@@ -87,6 +87,8 @@ npm install
 npm run dev         # auto-fetches bundled officecli into resources/bin/ if missing
 ```
 
+Dev writes to `vav-dev` and binds `:4772` (web) / `:4770` (daemon) so it can sit beside `/Applications/VAV.app` (`vav`, `:4752` / `:4750`). Chrome still discovers the release range.
+
 `officecli` (Office OOXML CLI) is vendored at build time (~32 MB) via `npm run fetch:officecli` and shipped in the app `Resources/bin` so the agent can create/edit `.docx`/`.xlsx`/`.pptx` without a system install.
 
 Package (native modules mean you only build for the platform you’re on):

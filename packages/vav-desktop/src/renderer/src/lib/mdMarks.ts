@@ -121,10 +121,13 @@ export function revealCitation(fromEl: HTMLElement, kind: 'web' | 'doc', id: str
   if (!match) return
 
   const process = match.closest('.thinking-process')
+  const group = match.closest('.tool-call-group')
   const wasClosed =
     (process != null && !process.classList.contains('expanded')) ||
+    (group != null && !group.classList.contains('expanded')) ||
     !match.classList.contains('expanded')
   process?.dispatchEvent(new CustomEvent(EXPAND_PROCESS_EVENT))
+  group?.dispatchEvent(new CustomEvent(EXPAND_PROCESS_EVENT))
   match.dispatchEvent(new CustomEvent(REVEAL_CITE_EVENT, { detail: { kind, id } }))
 
   window.setTimeout(

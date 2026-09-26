@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Check, Loader2, Plus } from 'lucide-react'
 import type { FileAssociationStatus } from '@shared/ipc'
+import { FILE_ASSOCIATION_CATEGORIES, formatById } from '@shared/fileAssociationFormats'
 import { FileTypeIcon } from '../FileTypeIcon'
 import { useSessionStore } from '../../state/sessionStore'
 import { useT } from '../../i18n/useT'
@@ -199,19 +200,28 @@ export function FileAssociationsSettings(): React.JSX.Element {
         <>
           <div className="assoc-section-title">{t('assoc.p1Heading')}</div>
           <p className="muted tiny">{t('assoc.p1Hint')}</p>
-          <div className="assoc-list">
-            {p1.map((row) => (
-              <AssociationRow
-                key={row.id}
-                row={row}
-                busy={busyId === row.id}
-                unsetLabel={t('assoc.unset')}
-                setLabel={t('assoc.setAsDefault')}
-                onSet={() => confirmSet(row)}
-                onUnset={() => confirmUnset(row)}
-              />
-            ))}
-          </div>
+          {FILE_ASSOCIATION_CATEGORIES.map((category) => {
+            const group = p1.filter((row) => formatById(row.id)?.category === category)
+            if (group.length === 0) return null
+            return (
+              <div key={category} className="assoc-group">
+                <div className="assoc-group-title">{t(`assoc.category.${category}`)}</div>
+                <div className="assoc-list">
+                  {group.map((row) => (
+                    <AssociationRow
+                      key={row.id}
+                      row={row}
+                      busy={busyId === row.id}
+                      unsetLabel={t('assoc.unset')}
+                      setLabel={t('assoc.setAsDefault')}
+                      onSet={() => confirmSet(row)}
+                      onUnset={() => confirmUnset(row)}
+                    />
+                  ))}
+                </div>
+              </div>
+            )
+          })}
         </>
       )}
     </div>
@@ -235,7 +245,7 @@ function AssociationRow({
 }): React.JSX.Element {
   return (
     <div className="assoc-row">
-      <FileTypeIcon id={row.id} size={20} />
+      <FileTypeIcon id={row.id} size={32} />
       <div className="assoc-row-meta">
         <div className="assoc-row-label" title={row.label}>
           {row.label}

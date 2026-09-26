@@ -13,7 +13,7 @@ import { useSessionStore } from '../state/sessionStore'
 import { Database } from 'lucide-react'
 import { EmptyState } from './ui'
 import { countFact, ObjectFacts, ObjectMasthead, timeFact } from './ObjectFacts'
-import { SessionDetail } from './SessionDetail'
+import { warmSessionDetail } from '../lib/apps/warmAppViews'
 import { ShellLeadingControls } from './ShellLeadingControls'
 import { SqliteView } from './SqliteView'
 
@@ -54,6 +54,7 @@ export function DataFileWorkspace({
   const shellLeadingNeeded = useShowShellLeading()
   const showShellLeading = !hideAgent && shellLeadingNeeded
   const shellLeading = showShellLeading ? <ShellLeadingControls /> : null
+  const SessionDetail = warmSessionDetail.use(!hideAgent)
   const label = basename(path) || path
   const conversation = useSessionStore((s) =>
     s.conversations.find((row) => row.id === conversationId)
@@ -248,7 +249,7 @@ export function DataFileWorkspace({
             onPointerDown={startResize}
             onDoubleClick={() => setAgentOpen((value) => !value)}
           />
-          <SessionDetail variant="preview-edit" />
+          {SessionDetail ? <SessionDetail variant="preview-edit" /> : null}
         </div>
       </aside>
       )}

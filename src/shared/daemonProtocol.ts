@@ -61,6 +61,8 @@ import type { WorkspaceHostInfo } from './workspaceHost.ts'
 
 export const DAEMON_PROTO_VERSION = 1
 export const DAEMON_DEFAULT_PORT = 4750
+/** Dev listen — release keeps 4750 so the two apps can sit side by side. */
+export const DAEMON_DEV_PORT = 4770
 export const DAEMON_ANNOUNCE_PORT = 4751
 export const DAEMON_MULTICAST = '239.255.47.50'
 /** Cap a single inbound frame (base64 file bodies). */

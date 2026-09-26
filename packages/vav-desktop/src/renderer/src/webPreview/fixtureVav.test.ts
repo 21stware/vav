@@ -17,7 +17,7 @@ describe('web preview fixture vav', () => {
     assert.equal(data.hosts[0]?.id, LOCAL_MACHINE_ID)
     const conversation = await vav.conversations.get(WEB_PREVIEW_CHAT_ID)
     assert.ok(conversation)
-    assert.equal(conversation.messages.length, 2)
+    assert.equal(conversation.messages.length, 4)
     const agent = await vav.agent.status(WEB_PREVIEW_CHAT_ID)
     assert.equal(agent.phase, 'idle')
   })

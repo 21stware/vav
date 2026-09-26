@@ -65,7 +65,8 @@ describe('Chrome extension discover', () => {
       hub: plane.hub,
       secret: () => SECRET,
       name: 'discover-host',
-      version: 'test'
+      version: 'test',
+      hasKey: () => true
     })
     const decoy = createServer((_req, res) => {
       res.writeHead(200, { 'content-type': 'application/json' })

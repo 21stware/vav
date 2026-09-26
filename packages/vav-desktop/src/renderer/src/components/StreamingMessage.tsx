@@ -14,6 +14,8 @@ import { handleMarkdownOverlayDoubleClick, MarkdownView } from './MarkdownView'
 import { ReasoningBlock } from './ReasoningBlock'
 import { StreamStatus } from './StreamStatus'
 import { ThinkingProcess } from './ThinkingProcess'
+import { ThinkingSteps } from './ThinkingSteps'
+import { ToolCallGroup } from './ToolCallGroup'
 import { ToolCard } from './ToolCard'
 
 function streamAsMessage(block: StreamBlock): MessageBlock {
@@ -50,18 +52,14 @@ export function StreamingMessage({ conversationId }: { conversationId: string })
       durationMs={processThoughtMs(items)}
       follow={streaming}
     >
-      {items.map((item, offset) => {
-        const block = item.block
-        if (block.kind !== 'reasoning') return null
-        return (
-          <ReasoningBlock
-            key={`r${item.index}`}
-            text={block.text}
-            flat
-            live={streaming && offset === items.length - 1}
-          />
-        )
-      })}
+      <ThinkingSteps
+        items={items}
+        live={streaming}
+        resolveTool={(index) => {
+          const block = snapshot.blocks[index]
+          return block?.kind === 'tool' ? block.block : null
+        }}
+      />
     </ThinkingProcess>
   )
 
@@ -93,6 +91,22 @@ export function StreamingMessage({ conversationId }: { conversationId: string })
     if (segment.kind === 'thinking') {
       const streaming = live && index === segments.length - 1
       return renderThinking(segment.items, streaming)
+    }
+    if (segment.kind === 'tools') {
+      const grouped = segment.items
+        .map((item) => {
+          const block = snapshot.blocks[item.index]
+          return block?.kind === 'tool' ? block.block : null
+        })
+        .filter((block): block is NonNullable<typeof block> => block != null)
+      const first = grouped[0]
+      if (!first) return null
+      return (
+        <ToolCallGroup
+          key={`tools-${first.id}-${grouped[grouped.length - 1]?.id ?? first.id}`}
+          blocks={grouped}
+        />
+      )
     }
     return renderItem(segment.item)
   }

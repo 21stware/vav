@@ -14,7 +14,7 @@ import { useSessionStore } from '../state/sessionStore'
 import { useDbSessionHistory } from '../lib/useBoundSessionHistory'
 import { Button, EmptyState } from './ui'
 import { countFact, ObjectFacts, ObjectMasthead, timeFact } from './ObjectFacts'
-import { SessionDetail } from './SessionDetail'
+import { warmSessionDetail } from '../lib/apps/warmAppViews'
 import { ShellLeadingControls } from './ShellLeadingControls'
 import { SqliteView } from './SqliteView'
 import { DbConnectEditor } from './DbConnectEditor'
@@ -67,6 +67,7 @@ export function DbWorkspace({
   const shellLeadingNeeded = useShowShellLeading()
   const showShellLeading = !hideAgent && shellLeadingNeeded
   const shellLeading = showShellLeading ? <ShellLeadingControls /> : null
+  const SessionDetail = warmSessionDetail.use(!hideAgent)
 
   useEffect(() => {
     reportFileSessionAgentOpen(agentOpen, agentWidth)
@@ -331,7 +332,9 @@ export function DbWorkspace({
             onPointerDown={startResize}
             onDoubleClick={() => setAgentOpen((value) => !value)}
           />
-          <SessionDetail variant="preview-edit" fileSessionChrome={dbHistory} />
+          {SessionDetail ? (
+            <SessionDetail variant="preview-edit" fileSessionChrome={dbHistory} />
+          ) : null}
         </div>
       </aside>
       )}

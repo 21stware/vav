@@ -47,7 +47,7 @@ const stampFile = join(root, 'build/.electron-brand-stamp')
 function loadFileTypeManifest() {
   const manifestPath = join(root, 'build/file-icons/manifest.json')
   if (!existsSync(manifestPath)) {
-    throw new Error(`Missing ${manifestPath} — run python3 scripts/generate-file-type-icons.py first`)
+    throw new Error(`Missing ${manifestPath} — run npm run brand:file-icons first`)
   }
   return JSON.parse(readFileSync(manifestPath, 'utf8'))
 }
@@ -73,7 +73,7 @@ function currentStamp() {
     ? execSync(`stat -f %m "${fileIconsManifest}"`).toString().trim()
     : '0'
   // Bump the trailing token when Info.plist shape changes (e.g. document types).
-  return `${version}:${iconMtime}:${iconDarkMtime}:${fileIconsMtime}:${BUNDLE_ID}:dock-name-VAV-Dev:local-net-1:no-auto-term-1:file-type-icons-1`
+  return `${version}:${iconMtime}:${iconDarkMtime}:${fileIconsMtime}:${BUNDLE_ID}:dock-name-VAV-Dev:local-net-1:no-auto-term-1:file-type-icons-2`
 }
 
 function isBranded() {
@@ -155,20 +155,50 @@ function patchInfoPlist(plistPath) {
       )
     })
     plistBuddy(plistPath, `Add :CFBundleDocumentTypes:${index}:LSItemContentTypes array`)
-    plistBuddy(
-      plistPath,
-      `Add :CFBundleDocumentTypes:${index}:LSItemContentTypes:0 string ${entry.uti}`
-    )
+    ;(entry.utis ?? [entry.uti]).forEach((uti, utiIndex) => {
+      plistBuddy(
+        plistPath,
+        `Add :CFBundleDocumentTypes:${index}:LSItemContentTypes:${utiIndex} string ${uti}`
+      )
+    })
   })
   const catchAll = types.length
   plistBuddy(plistPath, `Add :CFBundleDocumentTypes:${catchAll} dict`)
   plistBuddy(plistPath, `Add :CFBundleDocumentTypes:${catchAll}:CFBundleTypeName string Item`)
   plistBuddy(plistPath, `Add :CFBundleDocumentTypes:${catchAll}:CFBundleTypeRole string Viewer`)
   plistBuddy(plistPath, `Add :CFBundleDocumentTypes:${catchAll}:LSHandlerRank string Alternate`)
+  plistBuddy(plistPath, `Add :CFBundleDocumentTypes:${catchAll}:CFBundleTypeIconFile string generic.icns`)
   plistBuddy(plistPath, `Add :CFBundleDocumentTypes:${catchAll}:LSItemContentTypes array`)
   plistBuddy(plistPath, `Add :CFBundleDocumentTypes:${catchAll}:LSItemContentTypes:0 string public.item`)
   plistBuddy(plistPath, `Add :CFBundleDocumentTypes:${catchAll}:LSItemContentTypes:1 string public.folder`)
   plistBuddy(plistPath, `Add :CFBundleDocumentTypes:${catchAll}:LSItemContentTypes:2 string public.data`)
+
+  // Types macOS doesn't declare (ipynb, SQLite, DuckDB, …) need an import so
+  // Launch Services can map their extensions to the UTI we register above.
+  try {
+    plistBuddy(plistPath, 'Delete :UTImportedTypeDeclarations')
+  } catch {
+    // Absent — fine.
+  }
+  plistBuddy(plistPath, 'Add :UTImportedTypeDeclarations array')
+  types
+    .filter((entry) => entry.importConformsTo)
+    .forEach((entry, index) => {
+      const base = `:UTImportedTypeDeclarations:${index}`
+      plistBuddy(plistPath, `Add ${base} dict`)
+      plistBuddy(plistPath, `Add ${base}:UTTypeIdentifier string ${entry.uti}`)
+      plistBuddy(plistPath, `Add ${base}:UTTypeDescription string "${entry.label}"`)
+      plistBuddy(plistPath, `Add ${base}:UTTypeIconFile string ${entry.icon}.icns`)
+      plistBuddy(plistPath, `Add ${base}:UTTypeConformsTo array`)
+      entry.importConformsTo.forEach((uti, i) => {
+        plistBuddy(plistPath, `Add ${base}:UTTypeConformsTo:${i} string ${uti}`)
+      })
+      plistBuddy(plistPath, `Add ${base}:UTTypeTagSpecification dict`)
+      plistBuddy(plistPath, `Add ${base}:UTTypeTagSpecification:public.filename-extension array`)
+      entry.extensions.forEach((ext, i) => {
+        plistBuddy(plistPath, `Add ${base}:UTTypeTagSpecification:public.filename-extension:${i} string ${ext}`)
+      })
+    })
 
   const localNet =
     'VAV pairs with other computers and phones on your local network to open folders and run agents.'

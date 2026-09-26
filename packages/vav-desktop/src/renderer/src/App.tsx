@@ -17,7 +17,7 @@ import { Sidebar } from './components/Sidebar'
 import { SessionDetail } from './components/SessionDetail'
 import { PipView } from './components/PipView'
 import { useTerminalAppearance } from './lib/useTerminalAppearance'
-import { ApplicationsPanel } from './components/ApplicationsPanel'
+import { createWarmComponent } from './lib/warmComponent'
 import { WorkbenchHome } from './components/WorkbenchHome'
 import { AppToast } from './components/AppToast'
 import { RemoteFolderPicker } from './components/RemoteFolderPicker'
@@ -341,9 +341,14 @@ function HomeSlot(): React.JSX.Element | null {
   return <WorkbenchHome />
 }
 
+const warmApplicationsPanel = createWarmComponent(() =>
+  import('./components/ApplicationsPanel').then((m) => m.ApplicationsPanel)
+)
+
 function ApplicationsSlot(): React.JSX.Element | null {
   const t = useT()
   const visible = useSessionStore((s) => s.applicationsVisible)
+  const ApplicationsPanel = warmApplicationsPanel.use(visible)
   const [applicationsWidth, setApplicationsWidth] = useState(loadApplicationsWidth)
   const columnRef = useRef<HTMLDivElement>(null)
 
@@ -408,7 +413,7 @@ function ApplicationsSlot(): React.JSX.Element | null {
         onPointerDown={startApplicationsResize}
         onDoubleClick={resetApplicationsWidth}
       />
-      <ApplicationsPanel />
+      {visible && ApplicationsPanel ? <ApplicationsPanel /> : null}
     </div>
   )
 }

@@ -6226,11 +6226,15 @@ kbd {
   color: var(--text);
 }
 
-/* The prompt is the head of a log entry, not a chat bubble: same column and
-   same left edge as everything else. */
+/* Text-only wash — hugs the prompt, not the chips / actions / full column. */
 .message.user {
-  align-self: stretch;
+  --message-user-fill: color-mix(in srgb, var(--text) 5.5%, var(--bg-content));
+  align-self: flex-start;
+  width: fit-content;
   max-width: 100%;
+  padding: 7px 11px;
+  border-radius: var(--radius);
+  background: var(--message-user-fill);
   color: var(--text);
   font-weight: 500;
   font-size: 14px;
@@ -6242,6 +6246,7 @@ kbd {
 
 .message.user.is-collapsed {
   display: -webkit-box;
+  width: 100%;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 4;
   overflow: hidden;
@@ -6290,8 +6295,18 @@ kbd {
     background: color-mix(in srgb, var(--warning) 42%, transparent);
   }
   100% {
-    background: transparent;
+    background: var(--message-user-fill, transparent);
   }
+}
+
+/* Hairline between rounds — sits on later user turns so virtualization
+   does not drop the rule when the previous assistant is unmounted. */
+.message-turn.user.has-round-rule::before {
+  content: '';
+  display: block;
+  height: 1px;
+  margin: 6px 0 14px;
+  background: var(--border);
 }
 
 /* User message context stack — mirrors composer chips/cards after send. */
@@ -8075,8 +8090,8 @@ mark {
 
 .message.user.editing {
   display: flex;
-  width: calc(100% + 14px);
-  max-width: none;
+  width: 100%;
+  max-width: 100%;
 }
 
 .message-editor {
@@ -8687,10 +8702,61 @@ button.tool-row {
   margin: 5px 8px 3px;
 }
 
-.thinking-process-body {
+.thinking-process-body,
+.tool-call-group-body {
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+.tool-row .tool-group-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool-call-group > .tool-detail {
+  overflow: hidden;
+}
+
+.tool-call-group.expanded > .tool-detail > .tool-detail-inner > .tool-call-group-body {
+  margin: 2px 0 4px;
+}
+
+.tool-call-group-body > .tool-call > .tool-row {
+  padding-left: 4px;
+  padding-right: 6px;
+}
+
+.tool-stagger-unit {
+  display: inline-block;
+}
+
+.tool-group-label[data-stagger] .tool-stagger-unit {
+  animation: tool-stagger-in 220ms var(--ease-out) backwards;
+}
+
+@keyframes tool-stagger-in {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tool-group-label[data-stagger] .tool-stagger-unit {
+    animation: none;
+  }
+}
+
+:root[data-reduce-motion='true'] .tool-group-label[data-stagger] .tool-stagger-unit {
+  animation: none;
 }
 
 /*
@@ -8721,7 +8787,8 @@ button.tool-row {
   margin: 4px 0 8px;
 }
 
-.thinking-process-body > .tool-call {
+.thinking-process-body > .tool-call,
+.tool-call-group-body > .tool-call {
   margin: 0;
 }
 

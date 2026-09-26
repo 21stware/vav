@@ -1,5 +1,5 @@
 import { coalesceStreamChunk, foldSnapshotText } from '@shared/streamCoalesce'
-import type { MessageBlock, ToolCallBlock } from '@shared/types'
+import { isUserAskTool, type MessageBlock, type ToolCallBlock } from '@shared/types'
 
 export interface IndexedBlock {
   block: MessageBlock
@@ -57,6 +57,25 @@ export type AssistantSegment =
   | { kind: 'thinking'; items: IndexedBlock[] }
   | { kind: 'text'; item: IndexedBlock }
   | { kind: 'tool'; item: IndexedBlock }
+  | { kind: 'tools'; items: IndexedBlock[] }
+
+/**
+ * Line-style tool cards that can pack into one "Call n tools" row.
+ * Interactive / approval / plan-doc cards stay standalone so the user can act.
+ */
+export function isGroupableToolBlock(block: MessageBlock): block is ToolCallBlock {
+  if (block.kind !== 'toolCall') return false
+  if (block.tool === 'plan' || isHollowToolCard(block)) return false
+  if (block.tool === 'plan_doc') return false
+  if (isUserAskTool(block.tool)) return false
+  if (block.status === 'pending' && (block.choices?.length ?? 0) > 0) return false
+  return true
+}
+
+export function assistantSegmentItems(segment: AssistantSegment): IndexedBlock[] {
+  if (segment.kind === 'thinking' || segment.kind === 'tools') return segment.items
+  return [segment.item]
+}
 
 function visibleAssistantItems(blocks: MessageBlock[]): IndexedBlock[] {
   const visible: IndexedBlock[] = []
@@ -68,32 +87,43 @@ function visibleAssistantItems(blocks: MessageBlock[]): IndexedBlock[] {
 }
 
 /**
- * Keep thinking, tools, and answer text in stream order.
+ * Keep thinking and answer text in stream order.
  *
- * Models often interleave reasoning with prose (think → answer → think →
- * more answer). Folding every think into one well at the top reprints that
- * trail out of order and hides the body that landed between thoughts.
+ * Reasoning and the line-style tools that happen during it share one well —
+ * think → tool → think should not open a new thinking block. Answer prose
+ * still splits the trail so a mid-reply thought does not jump above earlier
+ * body text. Interactive / approval cards stay outside the well.
  */
 export function segmentAssistantTurn(blocks: MessageBlock[]): AssistantSegment[] {
   const out: AssistantSegment[] = []
-  let thinking: IndexedBlock[] = []
+  let process: IndexedBlock[] = []
 
-  const flushThinking = (): void => {
-    if (thinking.length === 0) return
-    out.push({ kind: 'thinking', items: prepareProcessSteps(thinking) })
-    thinking = []
+  const flushProcess = (): void => {
+    if (process.length === 0) return
+    const hasThink = process.some((item) => item.block.kind === 'reasoning')
+    if (hasThink) {
+      out.push({ kind: 'thinking', items: prepareProcessSteps(process) })
+    } else if (process.length === 1) {
+      out.push({ kind: 'tool', item: process[0]! })
+    } else {
+      out.push({ kind: 'tools', items: process })
+    }
+    process = []
   }
 
   for (const item of visibleAssistantItems(blocks)) {
-    if (item.block.kind === 'reasoning') {
-      thinking.push(item)
+    if (item.block.kind === 'reasoning' || isGroupableToolBlock(item.block)) {
+      process.push(item)
       continue
     }
-    flushThinking()
-    if (item.block.kind === 'toolCall') out.push({ kind: 'tool', item })
-    else if (item.block.kind === 'text') out.push({ kind: 'text', item })
+    flushProcess()
+    // Remaining visible blocks are answer text or a standalone card
+    // (ask / plan-doc / approval). `isGroupableToolBlock` is a type
+    // predicate, so a failed check already excluded `toolCall` here.
+    if (item.block.kind === 'text') out.push({ kind: 'text', item })
+    else out.push({ kind: 'tool', item })
   }
-  flushThinking()
+  flushProcess()
   return out
 }
 
@@ -111,7 +141,7 @@ export function splitAssistantProcess(blocks: MessageBlock[]): {
   const conclusion: IndexedBlock[] = []
   for (const segment of segments) {
     if (segment.kind === 'thinking') process.push(...segment.items)
-    else conclusion.push(segment.item)
+    else conclusion.push(...assistantSegmentItems(segment))
   }
   if (process.length === 0 || conclusion.length === 0) {
     return { process: [], conclusion: visibleAssistantItems(blocks) }

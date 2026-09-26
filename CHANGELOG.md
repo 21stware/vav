@@ -4,6 +4,16 @@ User-facing changes by release. Unreleased work lives at the top until the next 
 
 ## Unreleased
 
+## 1.32.6
+
+`npm run dev` no longer shares the release app’s loopback ports or state dirs: web is `:4772–4782`, the daemon listen is `:4770`, and pairing / `VAV_HOME` stay under `vav-dev` so `/Applications/VAV.app` can keep `:4752` and `~/Library/Application Support/vav`.
+
+User prompts sit on a light text wash; later rounds in the log are split by a hairline.
+
+App column lists and previews load on demand: hidden modes stay unmounted, opening a file or note pulls its canvas only when you open it, and switching away drops the idle viewer.
+
+Redesigned file-type icons: a white folded page with a pictogram and the real extension on a label band (DOCX, IPYNB, SWIFT…), a solid colour tile at 16px, and the same artwork in Settings and file trees. VAV now claims 55 formats — every image, audio, video, SQLite / DuckDB / Parquet file it previews, plus Go, Rust, Java, Kotlin, C/C++, C#, Ruby, PHP, shell, CSS, XML, TOML, SQL, INI and logs — and anything else it opens gets a VAV document icon instead of the app tile. TypeScript and JavaScript are separate formats; Jupyter, SQLite, DuckDB, Parquet and MKV declare their types so "Set as Default" sticks, and headers switch along with sources.
+
 ## 1.32.5
 
 Deleting a note, analysis, storage item, or schedule asks for that object — not a “session” — and a deleted note is removed from disk instead of leaving an empty host behind.

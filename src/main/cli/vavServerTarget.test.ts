@@ -72,6 +72,24 @@ describe('vavServerTarget', () => {
     const dirs = defaultStateDirs({ VAV_SERVER_STATE: '/tmp/custom-vav-server', HOME: '/Users/demo' }, '/Users/demo')
     assert.equal(dirs[0], '/tmp/custom-vav-server')
     assert.ok(dirs.includes(join('/Users/demo', '.vav-server')))
+    assert.ok(dirs.some((dir) => dir.endsWith(`${join('vav', 'vav-server')}`)))
+    assert.ok(!dirs.some((dir) => dir.includes('vav-dev')))
+  })
+
+  it('keeps Dev state dirs off the release tree', () => {
+    const home = '/Users/demo'
+    const vavHomeDir = join(home, 'Library', 'Application Support', 'vav-dev')
+    const dirs = defaultStateDirs(
+      {
+        VAV_RUNTIME_CHANNEL: 'dev',
+        VAV_HOME: vavHomeDir,
+        HOME: home
+      },
+      home
+    )
+    assert.ok(dirs.includes(join(vavHomeDir, 'servers', 'default')))
+    assert.ok(!dirs.includes(join(home, '.vav-server')))
+    assert.ok(!dirs.some((dir) => /(^|\/)vav\/vav-server$/.test(dir.replace(/\\/g, '/'))))
   })
 
   it('skips flag values when collecting positionals', () => {

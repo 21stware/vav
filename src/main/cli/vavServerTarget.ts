@@ -9,11 +9,14 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { DAEMON_DEFAULT_PORT, parseDaemonPairing } from '../../shared/daemonProtocol.ts'
 import {
+  preferredWebPort,
+  resolveVavRuntimeChannel,
   VAV_DISCOVER_APP,
   VAV_DISCOVER_PATH,
   VAV_WEB_SOCKET_PATH,
   webScanPorts,
-  type VavDiscoverInfo
+  type VavDiscoverInfo,
+  type VavRuntimeChannel
 } from '../../shared/vavDiscover.ts'
 import { probeListenAlive, readListenState } from '../daemon/listenState.ts'
 import { vavHome } from '../plugins/pluginPaths.ts'
@@ -91,30 +94,35 @@ export function secretFromState(dir: string): string | null {
   }
 }
 
-/** Candidate state dirs: flag, env, ~/.vav-server, packaged-app spawn dir. */
+function desktopSupportDirs(
+  channel: VavRuntimeChannel,
+  env: NodeJS.ProcessEnv,
+  home: string
+): string[] {
+  const name = channel === 'dev' ? 'vav-dev' : 'vav'
+  const appData = env.HOME || home
+  if (process.platform === 'darwin') {
+    return [join(appData, 'Library', 'Application Support', name)]
+  }
+  if (process.platform === 'win32') {
+    return [join(env.APPDATA || join(appData, 'AppData', 'Roaming'), name)]
+  }
+  return [join(appData, '.config', name)]
+}
+
+/** Candidate state dirs: flag, env, then only this channel's desktop tree. */
 export function defaultStateDirs(env: NodeJS.ProcessEnv = process.env, home = homedir()): string[] {
+  const channel = resolveVavRuntimeChannel(env)
   const out: string[] = []
   const add = (dir: string | undefined): void => {
     const trimmed = dir?.trim()
     if (trimmed && !out.includes(trimmed)) out.push(trimmed)
   }
   add(env.VAV_SERVER_STATE)
-  add(join(vavHome(home), 'servers', 'default'))
-  add(join(home, '.vav-server'))
-  const appData = env.HOME || home
-  const supportDirs =
-    process.platform === 'darwin'
-      ? [
-          join(appData, 'Library', 'Application Support', 'vav'),
-          join(appData, 'Library', 'Application Support', 'vav-dev')
-        ]
-      : process.platform === 'win32'
-        ? [
-            join(env.APPDATA || join(appData, 'AppData', 'Roaming'), 'vav'),
-            join(env.APPDATA || join(appData, 'AppData', 'Roaming'), 'vav-dev')
-          ]
-        : [join(appData, '.config', 'vav'), join(appData, '.config', 'vav-dev')]
-  for (const support of supportDirs) {
+  add(join(env.VAV_HOME?.trim() || vavHome(home), 'servers', 'default'))
+  // Legacy `~/.vav-server` is the release CLI profile — Dev never reads it.
+  if (channel === 'release' && !env.VAV_HOME?.trim()) add(join(home, '.vav-server'))
+  for (const support of desktopSupportDirs(channel, env, home)) {
     add(join(support, 'vav-server'))
     const relocated = readAppPathOverrides(support).appDataDir?.trim()
     if (relocated) add(join(relocated, 'vav-server'))
@@ -173,8 +181,12 @@ export async function resolveStateTarget(
 export async function discoverLoopbackVavServer(
   env: NodeJS.ProcessEnv = process.env
 ): Promise<VavServerTarget | null> {
+  const channel = resolveVavRuntimeChannel(env)
   const hint = env.VAV_SERVER_WEB_PORT ? [Number(env.VAV_SERVER_WEB_PORT)] : []
-  const ports = webScanPorts(hint.filter((n) => Number.isInteger(n) && n > 0))
+  const ports = webScanPorts(
+    [...hint, preferredWebPort(channel)].filter((n) => Number.isInteger(n) && n > 0),
+    channel
+  )
   const origins = ports.flatMap((port) => [`http://127.0.0.1:${port}`, `http://localhost:${port}`])
   for (const origin of origins) {
     const info = await probeDiscover(origin)

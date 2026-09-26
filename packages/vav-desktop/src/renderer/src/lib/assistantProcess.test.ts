@@ -3,6 +3,7 @@ import { describe, it } from 'node:test'
 import type { MessageBlock } from '@shared/types'
 import {
   hasToolResult,
+  isGroupableToolBlock,
   isHollowToolCard,
   isVisibleAssistantBlock,
   previewProcessText,
@@ -296,11 +297,83 @@ describe('segmentAssistantTurn', () => {
     )
   })
 
+  it('keeps tools that ran during thinking inside one well', () => {
+    const segments = segmentAssistantTurn([
+      think('plan'),
+      tool('a'),
+      think('next'),
+      tool('b'),
+      text('Gold is up.')
+    ])
+    assert.deepEqual(
+      segments.map((segment) => segment.kind),
+      ['thinking', 'text']
+    )
+    assert.deepEqual(
+      segments[0]?.kind === 'thinking'
+        ? segments[0].items.map((item) => item.block.kind)
+        : [],
+      ['reasoning', 'toolCall', 'reasoning', 'toolCall']
+    )
+  })
+
   it('leaves tools in place between think and answer', () => {
     const segments = segmentAssistantTurn([think('plan'), tool('a'), text('Gold is up.')])
     assert.deepEqual(
       segments.map((segment) => segment.kind),
-      ['thinking', 'tool', 'text']
+      ['thinking', 'text']
+    )
+    assert.deepEqual(
+      segments[0]?.kind === 'thinking'
+        ? segments[0].items.map((item) => item.block.kind)
+        : [],
+      ['reasoning', 'toolCall']
+    )
+  })
+
+  it('packs consecutive line-style tools into one group', () => {
+    const segments = segmentAssistantTurn([tool('a'), tool('b'), text('Gold is up.')])
+    assert.deepEqual(
+      segments.map((segment) => segment.kind),
+      ['tools', 'text']
+    )
+    assert.equal(segments[0]?.kind === 'tools' ? segments[0].items.length : 0, 2)
+  })
+
+  it('does not pack tools split by narration', () => {
+    const segments = segmentAssistantTurn([tool('a'), text('Next.'), tool('b')])
+    assert.deepEqual(
+      segments.map((segment) => segment.kind),
+      ['tool', 'text', 'tool']
+    )
+  })
+
+  it('leaves ask and approval cards outside the group', () => {
+    const ask: MessageBlock = {
+      kind: 'toolCall',
+      id: 'ask',
+      tool: 'ask_user_question',
+      summary: 'Pick one',
+      input: '{}',
+      output: '',
+      status: 'pending'
+    }
+    const approval: MessageBlock = {
+      kind: 'toolCall',
+      id: 'gate',
+      tool: 'fs_write',
+      summary: 'Write',
+      input: '{}',
+      output: '',
+      status: 'pending',
+      choices: ['Approve', 'Deny']
+    }
+    assert.equal(isGroupableToolBlock(ask), false)
+    assert.equal(isGroupableToolBlock(approval), false)
+    const segments = segmentAssistantTurn([tool('a'), tool('b'), ask, approval])
+    assert.deepEqual(
+      segments.map((segment) => segment.kind),
+      ['tools', 'tool', 'tool']
     )
   })
 
@@ -333,11 +406,11 @@ describe('splitLiveAssistantProcess', () => {
     ])
     assert.deepEqual(
       split.process.map((item) => item.block.kind),
-      ['reasoning']
+      ['reasoning', 'toolCall']
     )
     assert.deepEqual(
       split.live.map((item) => item.block.kind),
-      ['toolCall', 'text']
+      ['text']
     )
   })
 
@@ -350,11 +423,11 @@ describe('splitLiveAssistantProcess', () => {
     ])
     assert.deepEqual(
       split.process.map((item) => item.block.kind),
-      ['reasoning']
+      ['reasoning', 'toolCall']
     )
     assert.deepEqual(
       split.live.map((item) => item.block.kind),
-      ['toolCall', 'text', 'toolCall']
+      ['text', 'toolCall']
     )
   })
 

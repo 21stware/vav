@@ -254,8 +254,14 @@ export function pinUserDataPath(): void {
       /* cache path is best-effort */
     }
     const configured = expandUserPath(overrides.appDataDir ?? '')
-    if (configured && !process.env.VAV_HOME?.trim()) {
-      process.env.VAV_HOME = configured
+    if (!process.env.VAV_HOME?.trim()) {
+      // Dev always pins VAV_HOME to its userData so CLI / plugins / ~/.vav
+      // lookups never touch the release app. Release only pins a custom folder.
+      if (isDevRuntime()) process.env.VAV_HOME = target
+      else if (configured) process.env.VAV_HOME = configured
+    }
+    if (isDevRuntime() && !process.env.VAV_RUNTIME_CHANNEL?.trim()) {
+      process.env.VAV_RUNTIME_CHANNEL = 'dev'
     }
   } catch (err) {
     console.error('[brand] pinUserDataPath failed', err)

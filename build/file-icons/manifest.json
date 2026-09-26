@@ -8,10 +8,47 @@
       "mdx"
     ],
     "uti": "net.daringfireball.markdown",
+    "utis": [
+      "net.daringfireball.markdown"
+    ],
     "tier": "p0",
+    "category": "text",
     "badge": "MD",
-    "color": "#5C4FA3",
+    "color": "#2B2838",
     "icon": "markdown"
+  },
+  {
+    "id": "plaintext",
+    "label": "Plain Text",
+    "extensions": [
+      "txt",
+      "text"
+    ],
+    "uti": "public.plain-text",
+    "utis": [
+      "public.plain-text"
+    ],
+    "tier": "p0",
+    "category": "text",
+    "badge": "TXT",
+    "color": "#686872",
+    "icon": "plaintext"
+  },
+  {
+    "id": "log",
+    "label": "Log File",
+    "extensions": [
+      "log"
+    ],
+    "uti": "com.apple.log",
+    "utis": [
+      "com.apple.log"
+    ],
+    "tier": "p1",
+    "category": "text",
+    "badge": "LOG",
+    "color": "#7A6852",
+    "icon": "log"
   },
   {
     "id": "html",
@@ -22,34 +59,317 @@
       "xhtml"
     ],
     "uti": "public.html",
+    "utis": [
+      "public.html"
+    ],
     "tier": "p0",
+    "category": "code",
     "badge": "HTML",
-    "color": "#C0562A",
+    "color": "#D0461E",
     "icon": "html"
   },
   {
-    "id": "plaintext",
-    "label": "Plain Text",
+    "id": "typescript",
+    "label": "TypeScript",
     "extensions": [
-      "txt",
-      "text"
+      "ts",
+      "tsx",
+      "mts",
+      "cts"
     ],
-    "uti": "public.plain-text",
+    "uti": "com.microsoft.typescript",
+    "utis": [
+      "com.microsoft.typescript"
+    ],
+    "importConformsTo": [
+      "public.source-code",
+      "public.plain-text"
+    ],
     "tier": "p0",
-    "badge": "TXT",
-    "color": "#5A5A62",
-    "icon": "plaintext"
+    "category": "code",
+    "badge": "TS",
+    "color": "#2F74C0",
+    "icon": "typescript"
+  },
+  {
+    "id": "javascript",
+    "label": "JavaScript",
+    "extensions": [
+      "js",
+      "jsx",
+      "mjs",
+      "cjs"
+    ],
+    "uti": "com.netscape.javascript-source",
+    "utis": [
+      "com.netscape.javascript-source"
+    ],
+    "tier": "p0",
+    "category": "code",
+    "badge": "JS",
+    "color": "#F2D340",
+    "icon": "javascript"
+  },
+  {
+    "id": "python",
+    "label": "Python Source",
+    "extensions": [
+      "py",
+      "pyi",
+      "pyw"
+    ],
+    "uti": "public.python-script",
+    "utis": [
+      "public.python-script"
+    ],
+    "tier": "p0",
+    "category": "code",
+    "badge": "PY",
+    "color": "#2C5A85",
+    "icon": "python"
+  },
+  {
+    "id": "swift",
+    "label": "Swift Source",
+    "extensions": [
+      "swift"
+    ],
+    "uti": "public.swift-source",
+    "utis": [
+      "public.swift-source"
+    ],
+    "tier": "p0",
+    "category": "code",
+    "badge": "SWIFT",
+    "color": "#E4502E",
+    "icon": "swift"
+  },
+  {
+    "id": "css",
+    "label": "Stylesheet",
+    "extensions": [
+      "css",
+      "scss",
+      "sass",
+      "less"
+    ],
+    "uti": "public.css",
+    "utis": [
+      "public.css"
+    ],
+    "tier": "p1",
+    "category": "code",
+    "badge": "CSS",
+    "color": "#6B3FB4",
+    "icon": "css"
+  },
+  {
+    "id": "xml",
+    "label": "XML",
+    "extensions": [
+      "xml",
+      "xsl",
+      "xslt"
+    ],
+    "uti": "public.xml",
+    "utis": [
+      "public.xml"
+    ],
+    "tier": "p1",
+    "category": "code",
+    "badge": "XML",
+    "color": "#8C5A1C",
+    "icon": "xml"
+  },
+  {
+    "id": "go",
+    "label": "Go Source",
+    "extensions": [
+      "go"
+    ],
+    "uti": "org.golang.go-script",
+    "utis": [
+      "org.golang.go-script"
+    ],
+    "tier": "p1",
+    "category": "code",
+    "badge": "GO",
+    "color": "#00809C",
+    "icon": "go"
+  },
+  {
+    "id": "rust",
+    "label": "Rust Source",
+    "extensions": [
+      "rs"
+    ],
+    "uti": "org.rust-lang.rust-script",
+    "utis": [
+      "org.rust-lang.rust-script"
+    ],
+    "tier": "p1",
+    "category": "code",
+    "badge": "RS",
+    "color": "#B4410F",
+    "icon": "rust"
+  },
+  {
+    "id": "java",
+    "label": "Java Source",
+    "extensions": [
+      "java"
+    ],
+    "uti": "com.sun.java-source",
+    "utis": [
+      "com.sun.java-source"
+    ],
+    "tier": "p1",
+    "category": "code",
+    "badge": "JAVA",
+    "color": "#8A4B2B",
+    "icon": "java"
+  },
+  {
+    "id": "kotlin",
+    "label": "Kotlin Source",
+    "extensions": [
+      "kt",
+      "kts"
+    ],
+    "uti": "org.kotlinlang.source",
+    "utis": [
+      "org.kotlinlang.source"
+    ],
+    "tier": "p1",
+    "category": "code",
+    "badge": "KT",
+    "color": "#7650F0",
+    "icon": "kotlin"
+  },
+  {
+    "id": "c",
+    "label": "C Source",
+    "extensions": [
+      "c",
+      "h"
+    ],
+    "uti": "public.c-source",
+    "utis": [
+      "public.c-source",
+      "public.c-header"
+    ],
+    "tier": "p1",
+    "category": "code",
+    "badge": "C",
+    "color": "#52679E",
+    "icon": "c"
+  },
+  {
+    "id": "cpp",
+    "label": "C++ Source",
+    "extensions": [
+      "cc",
+      "cpp",
+      "cxx",
+      "hpp",
+      "hh"
+    ],
+    "uti": "public.c-plus-plus-source",
+    "utis": [
+      "public.c-plus-plus-source",
+      "public.c-plus-plus-header"
+    ],
+    "tier": "p1",
+    "category": "code",
+    "badge": "C++",
+    "color": "#00599C",
+    "icon": "cpp"
+  },
+  {
+    "id": "csharp",
+    "label": "C# Source",
+    "extensions": [
+      "cs"
+    ],
+    "uti": "com.microsoft.c-sharp",
+    "utis": [
+      "com.microsoft.c-sharp"
+    ],
+    "tier": "p1",
+    "category": "code",
+    "badge": "C#",
+    "color": "#68217A",
+    "icon": "csharp"
+  },
+  {
+    "id": "ruby",
+    "label": "Ruby Script",
+    "extensions": [
+      "rb"
+    ],
+    "uti": "public.ruby-script",
+    "utis": [
+      "public.ruby-script"
+    ],
+    "tier": "p1",
+    "category": "code",
+    "badge": "RB",
+    "color": "#A81D48",
+    "icon": "ruby"
+  },
+  {
+    "id": "php",
+    "label": "PHP Script",
+    "extensions": [
+      "php"
+    ],
+    "uti": "public.php-script",
+    "utis": [
+      "public.php-script"
+    ],
+    "tier": "p1",
+    "category": "code",
+    "badge": "PHP",
+    "color": "#5E63A0",
+    "icon": "php"
+  },
+  {
+    "id": "shell",
+    "label": "Shell Script",
+    "extensions": [
+      "sh",
+      "bash",
+      "zsh",
+      "fish"
+    ],
+    "uti": "public.shell-script",
+    "utis": [
+      "public.shell-script",
+      "public.bash-script",
+      "public.zsh-script"
+    ],
+    "tier": "p1",
+    "category": "code",
+    "badge": "SH",
+    "color": "#2E3B34",
+    "icon": "shell"
   },
   {
     "id": "json",
     "label": "JSON",
     "extensions": [
-      "json"
+      "json",
+      "jsonc",
+      "json5"
     ],
     "uti": "public.json",
+    "utis": [
+      "public.json"
+    ],
     "tier": "p0",
+    "category": "data",
     "badge": "JSON",
-    "color": "#B07A12",
+    "color": "#A76800",
     "icon": "json"
   },
   {
@@ -60,9 +380,13 @@
       "yml"
     ],
     "uti": "public.yaml",
+    "utis": [
+      "public.yaml"
+    ],
     "tier": "p0",
+    "category": "data",
     "badge": "YAML",
-    "color": "#8A5A72",
+    "color": "#9A3C7E",
     "icon": "yaml"
   },
   {
@@ -73,9 +397,14 @@
       "tsv"
     ],
     "uti": "public.comma-separated-values-text",
+    "utis": [
+      "public.comma-separated-values-text",
+      "public.tab-separated-values-text"
+    ],
     "tier": "p0",
+    "category": "data",
     "badge": "CSV",
-    "color": "#2F6B48",
+    "color": "#2A7A57",
     "icon": "csv"
   },
   {
@@ -85,51 +414,462 @@
       "ipynb"
     ],
     "uti": "org.jupyter.ipynb",
+    "utis": [
+      "org.jupyter.ipynb"
+    ],
+    "importConformsTo": [
+      "public.json"
+    ],
     "tier": "p0",
-    "badge": "NB",
-    "color": "#C4781A",
+    "category": "data",
+    "badge": "IPYNB",
+    "color": "#C95F0A",
     "icon": "notebook"
   },
   {
-    "id": "swift",
-    "label": "Swift Source",
+    "id": "toml",
+    "label": "TOML",
     "extensions": [
-      "swift"
+      "toml"
     ],
-    "uti": "public.swift-source",
-    "tier": "p0",
-    "badge": "SW",
-    "color": "#E04B3A",
-    "icon": "swift"
+    "uti": "public.toml",
+    "utis": [
+      "public.toml"
+    ],
+    "tier": "p1",
+    "category": "data",
+    "badge": "TOML",
+    "color": "#8E4A2E",
+    "icon": "toml"
   },
   {
-    "id": "python",
-    "label": "Python Source",
+    "id": "config",
+    "label": "Config File",
     "extensions": [
-      "py"
+      "ini",
+      "cfg",
+      "conf"
     ],
-    "uti": "public.python-script",
-    "tier": "p0",
-    "badge": "PY",
-    "color": "#2F5A8A",
-    "icon": "python"
+    "uti": "com.microsoft.ini",
+    "utis": [
+      "com.microsoft.ini"
+    ],
+    "tier": "p1",
+    "category": "data",
+    "badge": "INI",
+    "color": "#56606E",
+    "icon": "config"
   },
   {
-    "id": "javascript",
-    "label": "TypeScript / JavaScript",
+    "id": "sql",
+    "label": "SQL",
     "extensions": [
-      "ts",
-      "tsx",
-      "js",
-      "jsx",
-      "mjs",
-      "cjs"
+      "sql"
     ],
-    "uti": "com.netscape.javascript-source",
-    "tier": "p0",
-    "badge": "TS",
-    "color": "#1E6B72",
-    "icon": "javascript"
+    "uti": "org.iso.sql",
+    "utis": [
+      "org.iso.sql"
+    ],
+    "tier": "p1",
+    "category": "data",
+    "badge": "SQL",
+    "color": "#1F7185",
+    "icon": "sql"
+  },
+  {
+    "id": "sqlite",
+    "label": "SQLite Database",
+    "extensions": [
+      "db",
+      "sqlite",
+      "sqlite3",
+      "db3"
+    ],
+    "uti": "org.sqlite.sqlite3",
+    "utis": [
+      "org.sqlite.sqlite3"
+    ],
+    "importConformsTo": [
+      "public.data",
+      "public.database"
+    ],
+    "tier": "p1",
+    "category": "data",
+    "badge": "DB",
+    "color": "#1E5A94",
+    "icon": "sqlite"
+  },
+  {
+    "id": "duckdb",
+    "label": "DuckDB Database",
+    "extensions": [
+      "duckdb"
+    ],
+    "uti": "org.duckdb.database",
+    "utis": [
+      "org.duckdb.database"
+    ],
+    "importConformsTo": [
+      "public.data",
+      "public.database"
+    ],
+    "tier": "p1",
+    "category": "data",
+    "badge": "DUCK",
+    "color": "#F1C232",
+    "icon": "duckdb"
+  },
+  {
+    "id": "parquet",
+    "label": "Parquet",
+    "extensions": [
+      "parquet"
+    ],
+    "uti": "org.apache.parquet",
+    "utis": [
+      "org.apache.parquet"
+    ],
+    "importConformsTo": [
+      "public.data"
+    ],
+    "tier": "p1",
+    "category": "data",
+    "badge": "PARQ",
+    "color": "#4E6F2C",
+    "icon": "parquet"
+  },
+  {
+    "id": "png",
+    "label": "PNG Image",
+    "extensions": [
+      "png"
+    ],
+    "uti": "public.png",
+    "utis": [
+      "public.png"
+    ],
+    "tier": "p1",
+    "category": "media",
+    "badge": "PNG",
+    "color": "#0E8483",
+    "icon": "png"
+  },
+  {
+    "id": "jpeg",
+    "label": "JPEG Image",
+    "extensions": [
+      "jpg",
+      "jpeg"
+    ],
+    "uti": "public.jpeg",
+    "utis": [
+      "public.jpeg"
+    ],
+    "tier": "p1",
+    "category": "media",
+    "badge": "JPG",
+    "color": "#15719F",
+    "icon": "jpeg"
+  },
+  {
+    "id": "gif",
+    "label": "GIF Image",
+    "extensions": [
+      "gif"
+    ],
+    "uti": "com.compuserve.gif",
+    "utis": [
+      "com.compuserve.gif"
+    ],
+    "tier": "p1",
+    "category": "media",
+    "badge": "GIF",
+    "color": "#0D8661",
+    "icon": "gif"
+  },
+  {
+    "id": "webp",
+    "label": "WebP Image",
+    "extensions": [
+      "webp"
+    ],
+    "uti": "org.webmproject.webp",
+    "utis": [
+      "org.webmproject.webp"
+    ],
+    "tier": "p1",
+    "category": "media",
+    "badge": "WEBP",
+    "color": "#28739C",
+    "icon": "webp"
+  },
+  {
+    "id": "avif",
+    "label": "AVIF Image",
+    "extensions": [
+      "avif"
+    ],
+    "uti": "public.avif",
+    "utis": [
+      "public.avif"
+    ],
+    "tier": "p1",
+    "category": "media",
+    "badge": "AVIF",
+    "color": "#1B6E7A",
+    "icon": "avif"
+  },
+  {
+    "id": "heic",
+    "label": "HEIC Image",
+    "extensions": [
+      "heic",
+      "heif",
+      "hif"
+    ],
+    "uti": "public.heic",
+    "utis": [
+      "public.heic",
+      "public.heif"
+    ],
+    "tier": "p1",
+    "category": "media",
+    "badge": "HEIC",
+    "color": "#7A4A98",
+    "icon": "heic"
+  },
+  {
+    "id": "tiff",
+    "label": "TIFF Image",
+    "extensions": [
+      "tif",
+      "tiff"
+    ],
+    "uti": "public.tiff",
+    "utis": [
+      "public.tiff"
+    ],
+    "tier": "p1",
+    "category": "media",
+    "badge": "TIFF",
+    "color": "#4A6A86",
+    "icon": "tiff"
+  },
+  {
+    "id": "bmp",
+    "label": "BMP Image",
+    "extensions": [
+      "bmp"
+    ],
+    "uti": "com.microsoft.bmp",
+    "utis": [
+      "com.microsoft.bmp"
+    ],
+    "tier": "p1",
+    "category": "media",
+    "badge": "BMP",
+    "color": "#3F6F6A",
+    "icon": "bmp"
+  },
+  {
+    "id": "ico",
+    "label": "Icon Image",
+    "extensions": [
+      "ico"
+    ],
+    "uti": "com.microsoft.ico",
+    "utis": [
+      "com.microsoft.ico"
+    ],
+    "tier": "p1",
+    "category": "media",
+    "badge": "ICO",
+    "color": "#5B6A2E",
+    "icon": "ico"
+  },
+  {
+    "id": "svg",
+    "label": "SVG Image",
+    "extensions": [
+      "svg"
+    ],
+    "uti": "public.svg-image",
+    "utis": [
+      "public.svg-image"
+    ],
+    "tier": "p1",
+    "category": "media",
+    "badge": "SVG",
+    "color": "#D2691A",
+    "icon": "svg"
+  },
+  {
+    "id": "mp3",
+    "label": "MP3 Audio",
+    "extensions": [
+      "mp3"
+    ],
+    "uti": "public.mp3",
+    "utis": [
+      "public.mp3"
+    ],
+    "tier": "p1",
+    "category": "media",
+    "badge": "MP3",
+    "color": "#C2185B",
+    "icon": "mp3"
+  },
+  {
+    "id": "wav",
+    "label": "WAV Audio",
+    "extensions": [
+      "wav"
+    ],
+    "uti": "com.microsoft.waveform-audio",
+    "utis": [
+      "com.microsoft.waveform-audio"
+    ],
+    "tier": "p1",
+    "category": "media",
+    "badge": "WAV",
+    "color": "#A3246E",
+    "icon": "wav"
+  },
+  {
+    "id": "m4a",
+    "label": "AAC Audio",
+    "extensions": [
+      "m4a",
+      "aac"
+    ],
+    "uti": "com.apple.m4a-audio",
+    "utis": [
+      "com.apple.m4a-audio",
+      "public.aac-audio"
+    ],
+    "tier": "p1",
+    "category": "media",
+    "badge": "M4A",
+    "color": "#B8335A",
+    "icon": "m4a"
+  },
+  {
+    "id": "flac",
+    "label": "FLAC Audio",
+    "extensions": [
+      "flac"
+    ],
+    "uti": "org.xiph.flac",
+    "utis": [
+      "org.xiph.flac"
+    ],
+    "tier": "p1",
+    "category": "media",
+    "badge": "FLAC",
+    "color": "#8A2C8A",
+    "icon": "flac"
+  },
+  {
+    "id": "ogg",
+    "label": "Ogg Audio",
+    "extensions": [
+      "ogg",
+      "opus"
+    ],
+    "uti": "org.xiph.ogg-audio",
+    "utis": [
+      "org.xiph.ogg-audio"
+    ],
+    "tier": "p1",
+    "category": "media",
+    "badge": "OGG",
+    "color": "#95305F",
+    "icon": "ogg"
+  },
+  {
+    "id": "mp4",
+    "label": "MP4 Video",
+    "extensions": [
+      "mp4",
+      "m4v"
+    ],
+    "uti": "public.mpeg-4",
+    "utis": [
+      "public.mpeg-4",
+      "com.apple.m4v-video"
+    ],
+    "tier": "p1",
+    "category": "media",
+    "badge": "MP4",
+    "color": "#5A3CC0",
+    "icon": "mp4"
+  },
+  {
+    "id": "mov",
+    "label": "QuickTime Movie",
+    "extensions": [
+      "mov"
+    ],
+    "uti": "com.apple.quicktime-movie",
+    "utis": [
+      "com.apple.quicktime-movie"
+    ],
+    "tier": "p1",
+    "category": "media",
+    "badge": "MOV",
+    "color": "#4337A6",
+    "icon": "mov"
+  },
+  {
+    "id": "webm",
+    "label": "WebM Video",
+    "extensions": [
+      "webm"
+    ],
+    "uti": "org.webmproject.webm",
+    "utis": [
+      "org.webmproject.webm"
+    ],
+    "tier": "p1",
+    "category": "media",
+    "badge": "WEBM",
+    "color": "#3B55B8",
+    "icon": "webm"
+  },
+  {
+    "id": "mkv",
+    "label": "Matroska Video",
+    "extensions": [
+      "mkv"
+    ],
+    "uti": "org.matroska.mkv",
+    "utis": [
+      "org.matroska.mkv"
+    ],
+    "importConformsTo": [
+      "public.movie"
+    ],
+    "tier": "p1",
+    "category": "media",
+    "badge": "MKV",
+    "color": "#5B30A0",
+    "icon": "mkv"
+  },
+  {
+    "id": "avi",
+    "label": "AVI Video",
+    "extensions": [
+      "avi"
+    ],
+    "uti": "public.avi",
+    "utis": [
+      "public.avi"
+    ],
+    "tier": "p1",
+    "category": "media",
+    "badge": "AVI",
+    "color": "#6A3E96",
+    "icon": "avi"
   },
   {
     "id": "pdf",
@@ -138,9 +878,13 @@
       "pdf"
     ],
     "uti": "com.adobe.pdf",
+    "utis": [
+      "com.adobe.pdf"
+    ],
     "tier": "p1",
+    "category": "office",
     "badge": "PDF",
-    "color": "#B03A3A",
+    "color": "#CF3A2E",
     "icon": "pdf"
   },
   {
@@ -150,21 +894,31 @@
       "docx"
     ],
     "uti": "org.openxmlformats.wordprocessingml.document",
+    "utis": [
+      "org.openxmlformats.wordprocessingml.document"
+    ],
     "tier": "p1",
-    "badge": "DOC",
-    "color": "#2A5280",
+    "category": "office",
+    "badge": "DOCX",
+    "color": "#2B579A",
     "icon": "docx"
   },
   {
     "id": "xlsx",
     "label": "Excel Spreadsheet",
     "extensions": [
-      "xlsx"
+      "xlsx",
+      "xls"
     ],
     "uti": "org.openxmlformats.spreadsheetml.sheet",
+    "utis": [
+      "org.openxmlformats.spreadsheetml.sheet",
+      "com.microsoft.excel.xls"
+    ],
     "tier": "p1",
-    "badge": "XLS",
-    "color": "#2A6B4A",
+    "category": "office",
+    "badge": "XLSX",
+    "color": "#217346",
     "icon": "xlsx"
   },
   {
@@ -174,23 +928,14 @@
       "pptx"
     ],
     "uti": "org.openxmlformats.presentationml.presentation",
-    "tier": "p1",
-    "badge": "PPT",
-    "color": "#C04A28",
-    "icon": "pptx"
-  },
-  {
-    "id": "heic",
-    "label": "HEIC Image",
-    "extensions": [
-      "heic",
-      "heif"
+    "utis": [
+      "org.openxmlformats.presentationml.presentation"
     ],
-    "uti": "public.heic",
     "tier": "p1",
-    "badge": "HEIC",
-    "color": "#7A4A78",
-    "icon": "heic"
+    "category": "office",
+    "badge": "PPTX",
+    "color": "#C43E1C",
+    "icon": "pptx"
   },
   {
     "id": "zip",
@@ -199,9 +944,14 @@
       "zip"
     ],
     "uti": "com.pkware.zip-archive",
+    "utis": [
+      "com.pkware.zip-archive",
+      "public.zip-archive"
+    ],
     "tier": "p1",
+    "category": "office",
     "badge": "ZIP",
-    "color": "#6A5344",
+    "color": "#7A5A3C",
     "icon": "zip"
   }
 ]

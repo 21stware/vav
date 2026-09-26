@@ -28,7 +28,8 @@ import {
 } from './AppObjectListToolbar'
 import { AppEmptyState } from './AppEmptyState'
 import { Button, EmptyState } from './ui'
-import { MachineFilesBrowser } from './filesPanel/MachineFilesBrowser'
+import { fileSessionListKey } from '../lib/apps/appColumnLoad'
+import { warmMachineFilesBrowser } from '../lib/apps/warmAppViews'
 
 export function FileRecentsPanel({
   embedded = false,
@@ -40,19 +41,13 @@ export function FileRecentsPanel({
   const t = useT()
   const source = useSessionStore((s) => s.filesSource)
   const windowMachineId = normalizeMachineId(useSessionStore((s) => s.windowMachineId))
-  const fileSessionKey = useSessionStore((s) =>
-    s.conversations
-      .filter((c) => c.fileId)
-      .map((c) => `${c.id}:${c.updatedAt}`)
-      .join('|')
-  )
+  const fileSessionKey = useSessionStore((s) => fileSessionListKey(s.conversations))
   const shellLeading = useShowShellLeading()
   const showShellLeading = !embedded && shellLeading
   const listRef = useRef<HTMLDivElement>(null)
   const [rows, setRows] = useState<FileSessionListEntry[]>([])
   const [loading, setLoading] = useState(true)
   const list = useAppObjectList()
-  const conversations = useSessionStore((s) => s.conversations)
   const { menuFor, requestDelete } = useAppObjectConversationMenu()
   const visibleRows = useMemo(
     () =>
@@ -90,6 +85,7 @@ export function FileRecentsPanel({
 
   const deleteRows = useCallback(
     (ids: string[]) => {
+      const conversations = useSessionStore.getState().conversations
       const known = ids.filter((id) => conversations.some((item) => item.id === id))
       if (known.length) requestDelete(known)
       for (const id of ids) {
@@ -101,7 +97,7 @@ export function FileRecentsPanel({
         })
       }
     },
-    [conversations, refresh, requestDelete, visibleRows]
+    [refresh, requestDelete, visibleRows]
   )
 
   useAppObjectListKeys({
@@ -140,6 +136,7 @@ export function FileRecentsPanel({
   }, [onOpenDetail, refresh])
 
   const browseIcloud = source === 'icloud' && Boolean(icloud?.available && icloud.path)
+  const MachineFilesBrowser = warmMachineFilesBrowser.use(source === 'thisMac' || browseIcloud)
 
   return (
     <main
@@ -191,18 +188,30 @@ export function FileRecentsPanel({
       />
       <div className="storage-source-body">
       {source === 'thisMac' ? (
+        MachineFilesBrowser ? (
         <MachineFilesBrowser
           key={`mac:${windowMachineId}`}
           persistKey={`mac:${windowMachineId}`}
           onFileOpened={onOpenDetail}
         />
+        ) : (
+          <div className="muted tiny" style={{ padding: 16 }}>
+            {t('common.loading')}
+          </div>
+        )
       ) : browseIcloud ? (
+        MachineFilesBrowser ? (
         <MachineFilesBrowser
           key={`icloud:${windowMachineId}:${icloud!.path}`}
           root={icloud!.path!}
           persistKey={`icloud:${windowMachineId}`}
           onFileOpened={onOpenDetail}
         />
+        ) : (
+          <div className="muted tiny" style={{ padding: 16 }}>
+            {t('common.loading')}
+          </div>
+        )
       ) : source === 'icloud' && icloud === null ? (
         <div className="muted tiny" style={{ padding: 16 }}>
           {t('common.loading')}
@@ -289,8 +298,9 @@ export function FileRecentsPanel({
                                 selectedIds
                               )
                               if (collapse) select(row.sessionId)
+                              const listed = useSessionStore.getState().conversations
                               const targets = ids
-                                .map((id) => conversations.find((item) => item.id === id))
+                                .map((id) => listed.find((item) => item.id === id))
                                 .filter((item): item is NonNullable<typeof item> => !!item)
                               if (ids.length > 1 && targets.length !== ids.length) {
                                 void showMenu(

@@ -65,12 +65,60 @@ export function previewConversation(now = 1_700_000_000_000): Conversation {
     '把侧栏会话列表的密度再收一点，标题不要换行。',
     now - 60_000
   )
-  const assistant = textMessage(
-    'preview-asst-1',
-    user.id,
+  const assistant: ChatMessage = {
+    id: 'preview-asst-1',
+    parentId: user.id,
+    role: 'assistant',
+    content: '侧栏行高已经压到 28px，标题单行截断。Web preview 用的是夹具会话，不是 Electron preload。',
+    createdAt: now - 30_000,
+    blocks: [
+      {
+        kind: 'reasoning',
+        text: '先看侧栏行高和标题换行是怎么算的。',
+        durationMs: 1_400
+      },
+      {
+        kind: 'toolCall',
+        id: 'preview-read',
+        tool: 'fs_read',
+        summary: 'src/sidebar.tsx',
+        input: JSON.stringify({ path: 'src/sidebar.tsx' }),
+        output: 'export function Sidebar() {\n  return null\n}\n',
+        status: 'completed'
+      },
+      {
+        kind: 'reasoning',
+        text: '行高可以再压，标题改成单行截断。',
+        durationMs: 800
+      },
+      {
+        kind: 'toolCall',
+        id: 'preview-write',
+        tool: 'fs_write',
+        summary: 'src/sidebar.tsx',
+        input: JSON.stringify({ path: 'src/sidebar.tsx', contents: '' }),
+        output: 'wrote src/sidebar.tsx',
+        status: 'completed'
+      },
+      {
+        kind: 'text',
+        text: '侧栏行高已经压到 28px，标题单行截断。Web preview 用的是夹具会话，不是 Electron preload。'
+      }
+    ]
+  }
+  const user2 = textMessage(
+    'preview-user-2',
+    assistant.id,
+    'user',
+    '空会话的标题栏也收一下，别和内容抢空间。',
+    now - 20_000
+  )
+  const assistant2 = textMessage(
+    'preview-asst-2',
+    user2.id,
     'assistant',
-    '侧栏行高已经压到 28px，标题单行截断。Web preview 用的是夹具会话，不是 Electron preload。',
-    now - 30_000
+    '空会话标题栏加了 drag spacer，画布不再从 overlay 按钮上抢窗口拖拽。',
+    now - 8_000
   )
   return {
     ...meta({
@@ -80,8 +128,8 @@ export function previewConversation(now = 1_700_000_000_000): Conversation {
       createdAt: now - 120_000,
       updatedAt: now
     }),
-    messages: [user, assistant],
-    activeLeafId: assistant.id,
+    messages: [user, assistant, user2, assistant2],
+    activeLeafId: assistant2.id,
     tokenHistory: [],
     cacheCreatedAt: null,
     cacheExpiresAt: null,

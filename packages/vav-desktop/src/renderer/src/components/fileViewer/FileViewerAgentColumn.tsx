@@ -1,6 +1,5 @@
 import { Suspense, lazy, type RefObject } from 'react'
 import { Clock, Plus } from 'lucide-react'
-import type { ConversationMeta } from '@shared/types'
 import type { FileSessionMeta } from '@shared/ipc'
 import { startCapturedPointerDrag } from '../../lib/capturedPointerDrag'
 import { clampPanelWidth, persistPanelWidth } from '../../lib/fileViewerHelpers'
@@ -18,7 +17,6 @@ export function FileViewerAgentColumn({
   panelWidth,
   panelWidthRef,
   setPanelWidth,
-  conversations,
   agentConversationId,
   embedded,
   sessionTitle,
@@ -35,7 +33,6 @@ export function FileViewerAgentColumn({
   panelWidth: number
   panelWidthRef: { current: number }
   setPanelWidth: (width: number) => void
-  conversations: ConversationMeta[]
   agentConversationId: string | null
   embedded: boolean
   sessionTitle: string
@@ -50,8 +47,12 @@ export function FileViewerAgentColumn({
   ensureFileSession: () => Promise<string | undefined | null>
 }): React.JSX.Element {
   const t = useT()
-  const agentMeta = conversations.find((c) => c.id === agentConversationId)
-  const agentIsVav = !agentMeta?.agentBinaryName || agentMeta.agentBinaryName === 'vav'
+  const agentBinaryName = useSessionStore((s) =>
+    agentConversationId
+      ? (s.conversations.find((row) => row.id === agentConversationId)?.agentBinaryName ?? null)
+      : null
+  )
+  const agentIsVav = !agentBinaryName || agentBinaryName === 'vav'
   const showSeparateSessionBar = !embedded && (!agentConversationId || !agentIsVav)
   const fileChrome: FileSessionChromeProps | null =
     agentConversationId && agentIsVav

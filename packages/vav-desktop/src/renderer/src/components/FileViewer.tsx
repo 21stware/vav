@@ -187,7 +187,11 @@ export function FileViewer({
     const id = contextConversationId ?? agentConversationId ?? parentConversationId ?? null
     return id ? (s.commentCards[id] ?? EMPTY_COMMENT_CARDS) : EMPTY_COMMENT_CARDS
   })
-  const conversations = useSessionStore((s) => s.conversations)
+  const conversationTitle = useSessionStore((s) => {
+    const id = contextConversationId ?? agentConversationId ?? parentConversationId ?? null
+    if (!id) return null
+    return s.conversations.find((row) => row.id === id)?.title ?? null
+  })
   const showDialog = useSessionStore((s) => s.showDialog)
   const showToast = useSessionStore((s) => s.showToast)
   const filePathRef = useRef(filePath)
@@ -1057,10 +1061,9 @@ export function FileViewer({
 
   // Keep session title in sync with store renames / auto-title.
   useEffect(() => {
-    if (!agentConversationId) return
-    const meta = conversations.find((c) => c.id === agentConversationId)
-    if (meta?.title) setSessionTitle(meta.title)
-  }, [conversations, agentConversationId])
+    if (!agentConversationId || !conversationTitle) return
+    setSessionTitle(conversationTitle)
+  }, [agentConversationId, conversationTitle])
 
   // Composer / Transcript key off store.activeId — keep it glued to the file
   // session so Enter-to-send and draft state match the panel (not a stale
@@ -1929,7 +1932,6 @@ export function FileViewer({
         panelWidth={panelWidth}
         panelWidthRef={panelWidthRef}
         setPanelWidth={setPanelWidth}
-        conversations={conversations}
         agentConversationId={agentConversationId}
         embedded={embedded}
         sessionTitle={sessionTitle}

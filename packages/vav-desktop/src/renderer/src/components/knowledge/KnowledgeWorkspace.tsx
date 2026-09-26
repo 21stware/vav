@@ -7,12 +7,13 @@ import { useShowShellLeading } from '../../lib/sidebarLayout'
 import { startCapturedPointerDrag } from '../../lib/capturedPointerDrag'
 import { reportFileSessionAgentOpen } from '../../lib/useWindowMinSize'
 import { syncWorkspaceAgentFocusedPath } from '../../lib/workspaceAgentContext'
+import { warmSessionDetail } from '../../lib/apps/warmAppViews'
 import { useSessionStore } from '../../state/sessionStore'
 import { Button, EmptyState } from '../ui'
 import { countFact, ObjectFacts, timeFact } from '../ObjectFacts'
-import { SessionDetail } from '../SessionDetail'
 import { ShellLeadingControls } from '../ShellLeadingControls'
 import { KnowledgeNoteEditor } from './KnowledgeNoteEditor'
+import { useKnowledgeHost } from './useKnowledgeHost'
 import { basename } from '../../lib/path'
 
 const AGENT_MIN = FILE_SESSION_AGENT_MIN_WIDTH
@@ -29,45 +30,7 @@ function loadAgentWidth(): number {
   return AGENT_DEFAULT
 }
 
-export function useKnowledgeHost(conversationId: string | null | undefined): KnowledgeHost | null {
-  const hostId = useSessionStore((s) =>
-    conversationId
-      ? (s.conversations.find((row) => row.id === conversationId)?.knowledgeHostId ?? null)
-      : null
-  )
-  const [host, setHost] = useState<KnowledgeHost | null>(null)
-
-  const load = useCallback(async (): Promise<void> => {
-    if (!window.vav?.knowledge || !conversationId) {
-      setHost(null)
-      return
-    }
-    const next = hostId
-      ? await window.vav.knowledge.get(hostId)
-      : await window.vav.knowledge.getForConversation(conversationId)
-    setHost(next ?? null)
-  }, [conversationId, hostId])
-
-  useEffect(() => {
-    void load()
-    if (!conversationId) return
-    return window.vav.knowledge?.onChanged(() => {
-      void load()
-    })
-  }, [conversationId, load])
-
-  useEffect(() => {
-    return window.vav?.agent?.onEvent((event) => {
-      if (event.type !== 'knowledge-draft' || !event.title) return
-      setHost((prev) => {
-        if (!prev || prev.id !== event.hostId || prev.title === event.title) return prev
-        return { ...prev, title: event.title! }
-      })
-    })
-  }, [])
-
-  return host
-}
+export { useKnowledgeHost } from './useKnowledgeHost'
 
 export function KnowledgeHostActions({ host }: { host: KnowledgeHost }): React.JSX.Element | null {
   const t = useT()
@@ -101,6 +64,7 @@ export function KnowledgeWorkspace({
   const shellLeadingNeeded = useShowShellLeading()
   const showShellLeading = !hideAgent && shellLeadingNeeded
   const shellLeading = showShellLeading ? <ShellLeadingControls /> : null
+  const SessionDetail = warmSessionDetail.use(!hideAgent)
 
   useEffect(() => {
     reportFileSessionAgentOpen(agentOpen, agentWidth)
@@ -214,7 +178,7 @@ export function KnowledgeWorkspace({
             onPointerDown={startResize}
             onDoubleClick={() => setAgentOpen((value) => !value)}
           />
-          <SessionDetail variant="preview-edit" />
+          {SessionDetail ? <SessionDetail variant="preview-edit" /> : null}
         </div>
       </aside>
       )}

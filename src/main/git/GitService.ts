@@ -602,7 +602,13 @@ export async function checkoutGitBranch(
         await git(ready.abs, ['checkout', short], { conversationId })
         return { ok: true, data: { branch: short } }
       }
-      await git(ready.abs, ['checkout', '--track', branch], { conversationId })
+      try {
+        await git(ready.abs, ['checkout', '--track', branch], { conversationId })
+      } catch {
+        // A remote-tracking ref without a configured remote (or a Git that
+        // refuses `--track` on it) still needs a local branch of the same name.
+        await git(ready.abs, ['checkout', '-B', short, branch], { conversationId })
+      }
       return { ok: true, data: { branch: short } }
     }
     await git(ready.abs, ['checkout', branch], { conversationId })

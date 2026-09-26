@@ -117,7 +117,11 @@ export function createFaaaaastController(host: FaaaaastHost): {
       // ignore
     }
     try {
-      win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
+      // The default process-type transform hides every app window (main included).
+      win.setVisibleOnAllWorkspaces(true, {
+        visibleOnFullScreen: true,
+        skipTransformProcessType: true
+      })
     } catch {
       // ignore
     }

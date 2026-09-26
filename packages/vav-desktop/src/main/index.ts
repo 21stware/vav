@@ -112,6 +112,8 @@ import {
 import { resolveVavServerPairing, resolveVavServerSpawn, shouldRestoreInProcessPty } from '@main/daemon/vavServerClientLaunch'
 import { spawnLocalVavServer } from '@main/daemon/vavServerSpawn'
 import { startDesktopWebBridge } from '@main/daemon/desktopWebBridge'
+import { preferredWebPort, resolveVavRuntimeChannel } from '@shared/vavDiscover'
+import { DAEMON_DEFAULT_PORT, DAEMON_DEV_PORT } from '@shared/daemonProtocol'
 import { loopbackVavServerShell } from '@main/daemon/vavServerShellPairing'
 import { openTailcatDial } from '@main/daemon/tailcatDial'
 import { pluginHostKind } from '@shared/plugins'
@@ -2149,6 +2151,7 @@ const remoteControl = new RemoteControlService({
 const daemonAttach = new DaemonAttachService({
   userData: app.getPath('userData'),
   registry: hostRegistry,
+  preferredListenPort: isDevRuntime() ? DAEMON_DEV_PORT : DAEMON_DEFAULT_PORT,
   secret: (): string => remoteControl.pairingSecret(),
   appVersion: app.getVersion(),
   enabled: () => settingsStore.get().remoteControlEnabled === true,
@@ -9345,7 +9348,7 @@ if (singleInstance) {
               : {})
           },
           noWeb: false,
-          webPort: 4752,
+          webPort: preferredWebPort(resolveVavRuntimeChannel()),
           webListen: '127.0.0.1'
         })
         stopSpawnedVavServer = spawned.stop
@@ -9362,7 +9365,8 @@ if (singleInstance) {
           secret: () => remoteControl.pairingSecret(),
           name: app.getName() || 'VAV',
           version: app.getVersion(),
-          hasKey: () => Boolean(secretStore.has('api') || activeVavCredentials().apiKey)
+          hasKey: () => Boolean(secretStore.has('api') || activeVavCredentials().apiKey),
+          port: preferredWebPort(resolveVavRuntimeChannel())
         })
         if (web) stopDesktopWeb = web.close
       } catch (err) {

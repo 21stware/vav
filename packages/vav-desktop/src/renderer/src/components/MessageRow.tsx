@@ -13,7 +13,7 @@ import {
   Trash2,
   Undo2
 } from 'lucide-react'
-import type { ChatMessage, PreviewRef, TextBlock } from '@shared/types'
+import type { ChatMessage, PreviewRef, TextBlock, ToolCallBlock } from '@shared/types'
 import { AttachmentTile } from './ComposerAttachments'
 import { PathRichText } from './PathRichText'
 import { markdownToPlainText } from '@shared/markdownPlain'
@@ -23,10 +23,11 @@ import { useSessionStore } from '../state/sessionStore'
 import { useT } from '../i18n/useT'
 import { InlineChangeReview } from './InlineChangeReview'
 import { MarkdownView } from './MarkdownView'
-import { ReasoningBlock } from './ReasoningBlock'
 import { ThinkingProcess } from './ThinkingProcess'
+import { ThinkingSteps } from './ThinkingSteps'
 import { processThoughtMs, segmentAssistantTurn } from '../lib/assistantProcess'
 
+import { ToolCallGroup } from './ToolCallGroup'
 import { ToolCard } from './ToolCard'
 import { Button } from './ui'
 
@@ -86,6 +87,8 @@ interface MessageRowProps {
   branchCount?: number
   /** A turn is in flight: retrying or editing now would collide with it. */
   busy?: boolean
+  /** Later user turns: hairline above this round. */
+  showRoundRule?: boolean
   onStepBranch?: (key: string, step: number) => void
   onRegenerate?: (messageId: string) => void
   onEdit?: (messageId: string, text: string) => void
@@ -206,6 +209,7 @@ export const MessageRow = memo(function MessageRow({
   branchIndex = 0,
   branchCount = 1,
   busy,
+  showRoundRule,
   onStepBranch,
   onRegenerate,
   onEdit,
@@ -350,6 +354,7 @@ export const MessageRow = memo(function MessageRow({
       return (
         <UserEditor
           initial={message.content}
+          showRoundRule={showRoundRule}
           onCancel={() => setEditing(false)}
           onSubmit={(text) => {
             setEditing(false)
@@ -366,7 +371,11 @@ export const MessageRow = memo(function MessageRow({
     const hasBody = body.trim().length > 0
 
     return (
-      <div className="message-turn user" data-testid="message-user" onContextMenu={onContextMenu}>
+      <div
+        className={`message-turn user${showRoundRule ? ' has-round-rule' : ''}`}
+        data-testid="message-user"
+        onContextMenu={onContextMenu}
+      >
         <div className="message-role">{t('message.roleYou')}</div>
         <div className="message-group user">
           <UserMessageContext
@@ -460,12 +469,21 @@ export const MessageRow = memo(function MessageRow({
                 steps={segment.items.length}
                 durationMs={processThoughtMs(segment.items)}
               >
-                {segment.items.map((item) => {
-                  const { block, index } = item
-                  if (block.kind !== 'reasoning') return null
-                  return <ReasoningBlock key={`r${index}`} text={block.text} flat />
-                })}
+                <ThinkingSteps items={segment.items} />
               </ThinkingProcess>
+            )
+          }
+          if (segment.kind === 'tools') {
+            const grouped = segment.items
+              .map((item) => item.block)
+              .filter((block): block is ToolCallBlock => block.kind === 'toolCall')
+            const first = grouped[0]
+            if (!first) return null
+            return (
+              <ToolCallGroup
+                key={`tools-${first.id}-${grouped[grouped.length - 1]?.id ?? first.id}`}
+                blocks={grouped}
+              />
             )
           }
           const { block, index } = segment.item
@@ -772,10 +790,12 @@ export function BranchPager({
 
 function UserEditor({
   initial,
+  showRoundRule,
   onSubmit,
   onCancel
 }: {
   initial: string
+  showRoundRule?: boolean
   onSubmit: (text: string) => void
   onCancel: () => void
 }): React.JSX.Element {
@@ -805,7 +825,7 @@ function UserEditor({
   }
 
   return (
-    <div className="message-turn user">
+    <div className={`message-turn user${showRoundRule ? ' has-round-rule' : ''}`}>
       <div className="message-role">You</div>
       <div className="message-group user">
         <div className="message user editing">
