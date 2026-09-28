@@ -20,6 +20,7 @@ import {
   type AutoUpdatePolicy,
   type UpdateCheckReason
 } from '@shared/updatePolicy'
+import { activeEdition, editionGenericUpdateFeed } from '@shared/edition'
 import {
   GITHUB_UPDATE_REPO,
   githubLatestReleaseApiUrl,
@@ -82,10 +83,13 @@ export class UpdateService {
   private launchTimer: ReturnType<typeof setTimeout> | null = null
   /** Packaged feed: GitHub first, gh-proxy after a China-side failure. */
   private usingProxyFeed = false
+  /** CN bake: generic feed on vavapp.art; fallback still uses GitHub / gh-proxy. */
+  private usingEditionFeed = false
 
   constructor() {
     if (!app.isPackaged) return
     clearOrphanedMacShipIt()
+    this.applyEditionFeed()
     autoUpdater.autoDownload = false
     // Never install on quit. This is what made the old `auto` policy restart the
     // app unexpectedly; installing is always an explicit Restart click now.
@@ -273,7 +277,7 @@ export class UpdateService {
     try {
       return await this.readElectronUpdater()
     } catch (err) {
-      console.warn('[updates] GitHub feed failed, retrying via gh-proxy', err)
+      console.warn('[updates] primary feed failed, retrying via gh-proxy', err)
       try {
         this.applyProxyFeed()
         return await this.readElectronUpdater()
@@ -284,8 +288,19 @@ export class UpdateService {
     }
   }
 
+  private applyEditionFeed(): void {
+    const feed = editionGenericUpdateFeed()
+    if (!feed || this.usingEditionFeed) return
+    autoUpdater.setFeedURL({
+      provider: 'generic',
+      url: feed
+    })
+    this.usingEditionFeed = true
+  }
+
   private applyProxyFeed(): void {
     if (this.usingProxyFeed) return
+    if (!activeEdition().githubProxy) return
     autoUpdater.setFeedURL({
       provider: 'generic',
       url: githubProxyGenericFeedUrl()

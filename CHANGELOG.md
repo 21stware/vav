@@ -4,6 +4,12 @@ User-facing changes by release. Unreleased work lives at the top until the next 
 
 ## Unreleased
 
+## 1.32.8
+
+Mainland remote WAN pairing uses the filed relay `derp.vavapp.art`. Already-paired hosts that pinned `derp.vavapp.com` keep working through that alias.
+
+Distribution faces (`edition/global.json`, `edition/cn.json`) bake site, update feed, and locale defaults. Every binary still includes the mainland DERP. A China bake can check `https://vavapp.art/releases` after that feed is mirrored.
+
 ## 1.32.7
 
 Desktop and vav-server are the only products. iOS, Android, the Chrome extension, `vav-board`, and `vav-tui` are gone. The loopback web UI stays with vav-server (`src/web-ui`). Settings → Command Line installs `vav` and `vav-server` only.

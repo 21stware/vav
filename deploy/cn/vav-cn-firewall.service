@@ -1,0 +1,12 @@
+[Unit]
+Description=Drop public access to derper HTTP
+Before=derper.service
+After=network-pre.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash -c "/usr/sbin/iptables -C INPUT -p tcp --dport 3340 ! -i lo -j DROP || /usr/sbin/iptables -I INPUT -p tcp --dport 3340 ! -i lo -j DROP"
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

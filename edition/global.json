@@ -1,0 +1,8 @@
+{
+  "id": "global",
+  "site": "https://vavapp.com",
+  "updateFeed": "github",
+  "githubProxy": true,
+  "defaultLocale": null,
+  "legal": {}
+}
