@@ -441,7 +441,7 @@ export function createFixtureVav(options?: {
 
 const PREVIEW_STYLES = `
 html[data-web-preview] , html[data-web-preview] body, html[data-web-preview] #root {
-  background: var(--preview-shell-bg, #121213) !important;
+  background: var(--preview-shell-bg, #0f0f10) !important;
 }
 .vav-web-preview-badge {
   position: fixed;
@@ -513,8 +513,8 @@ export function applyWebPreviewDocument(
     (root.dataset.theme !== 'light' &&
       typeof matchMedia === 'function' &&
       matchMedia('(prefers-color-scheme: dark)').matches)
-  root.style.setProperty('--preview-shell-bg', dark ? '#121213' : '#ececee')
-  root.style.background = dark ? '#121213' : '#ececee'
+  root.style.setProperty('--preview-shell-bg', dark ? '#0f0f10' : '#e7e7ea')
+  root.style.background = dark ? '#0f0f10' : '#e7e7ea'
   const title = live ? 'vav (live observe)' : 'vav (web preview)'
   if (doc.title && !doc.title.includes('web preview') && !doc.title.includes('live observe')) {
     doc.title = title

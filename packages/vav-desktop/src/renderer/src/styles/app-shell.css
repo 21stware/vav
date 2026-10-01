@@ -42,12 +42,17 @@
   --tone-list: #3a3a42;
   --tone-web: #0f766e;
 
-  --bg-window: #ececee;
-  --bg-content: #fcfcfc;
+  /*
+   * Surface ramp. The window wash sits a full step below the content plate so
+   * the plate reads as paper lifted off a desk — the depth comes from value,
+   * not from rules. Raised is pure white: cards, popovers and the composer.
+   */
+  --bg-window: #e7e7ea;
+  --bg-content: #fcfcfd;
   --bg-raised: #ffffff;
-  --bg-sunken: #f2f2f4;
+  --bg-sunken: #f1f1f4;
   --bg-hover: rgba(20, 20, 28, 0.05);
-  --bg-selected: #e2e2e6;
+  --bg-selected: #dfdfe4;
   /* Live bash (when matching theme) / swarm / CLI agents share the Thread plate. */
   --bg-terminal: var(--bg-content);
 
@@ -56,13 +61,15 @@
   --text-tertiary: #8a8a94;
   --text-inverse: #fbfbfc;
 
-  --border: rgba(20, 20, 28, 0.09);
-  --border-strong: rgba(20, 20, 28, 0.16);
+  --border: rgba(20, 20, 28, 0.08);
+  --border-strong: rgba(20, 20, 28, 0.15);
+  /* Hairline highlight along the top edge of a lifted surface (dark only). */
+  --edge-highlight: rgba(255, 255, 255, 0);
 
   --radius-sm: 6px;
   --radius: 10px;
-  --radius-lg: 14px;
-  --radius-xl: 18px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
 
   /*
    * Stable document measures. Paper/slides keep a fixed width between min and
@@ -84,12 +91,28 @@
   --md-doc-size: 15px;
   --md-doc-lh: 1.68;
 
-  --shadow-sheet: 0 24px 64px rgba(20, 20, 28, 0.26), 0 2px 8px rgba(20, 20, 28, 0.12);
-  --shadow-card: 0 1px 2px rgba(20, 20, 28, 0.07);
-  --shadow-raised: 0 1px 3px rgba(20, 20, 28, 0.09), 0 4px 14px rgba(20, 20, 28, 0.06);
+  /*
+   * Elevation. Every shadow is two layers: a tight contact shadow that seats
+   * the surface and a wide, low-alpha ambient that lifts it. Negative spread
+   * keeps the ambient from bleeding past the edges as a grey halo.
+   */
+  --shadow-sheet: 0 24px 64px rgba(20, 20, 28, 0.24), 0 2px 8px rgba(20, 20, 28, 0.1);
+  --shadow-card: 0 1px 2px rgba(20, 20, 28, 0.06), 0 0 0 0.5px rgba(20, 20, 28, 0.03);
+  --shadow-raised: 0 1px 2px rgba(20, 20, 28, 0.06), 0 6px 20px -6px rgba(20, 20, 28, 0.14);
+  /* The agent plate / app card on the window wash. */
+  --shadow-plate: 0 1px 2px rgba(20, 20, 28, 0.04), 0 10px 30px -18px rgba(20, 20, 28, 0.18);
+  /* Composer and other surfaces that float over the plate. */
+  --shadow-float: 0 1px 2px rgba(20, 20, 28, 0.05), 0 12px 32px -14px rgba(20, 20, 28, 0.18);
   --ring-accent: 0 0 0 3px var(--accent-soft);
-  --surface-pattern-opacity: 0.16;
-  --surface-pattern-band: 108px;
+  /*
+   * Surface wash (Appearance → texture). The band is the tall head of the
+   * plate the tile is allowed to live in; the fade inside it runs the ink
+   * out well before the composer. Presets raise `--surface-pattern-opacity`.
+   */
+  --surface-pattern-opacity: 0.3;
+  --surface-pattern-band: clamp(300px, 46vh, 640px);
+  /* Soft accent atmosphere under the tile, strongest at the very top. */
+  --surface-pattern-veil: var(--accent-veil);
 
   --toolbar-height: 42px;
   --row-height: 34px;
@@ -178,12 +201,13 @@
   --tone-list: #c8c8d0;
   --tone-web: #5eead4;
 
-  --bg-window: #121213;
-  --bg-content: #1b1b1d;
-  --bg-raised: #242427;
-  --bg-sunken: #161617;
+  /* Deeper well behind the plate; the plate itself stays a warm charcoal. */
+  --bg-window: #0f0f10;
+  --bg-content: #1a1a1c;
+  --bg-raised: #232326;
+  --bg-sunken: #141415;
   --bg-hover: rgba(255, 255, 255, 0.055);
-  --bg-selected: #2f2f33;
+  --bg-selected: #2e2e33;
   --bg-terminal: var(--bg-content);
 
   --text: #efeff1;
@@ -191,12 +215,22 @@
   --text-tertiary: #73737b;
   --text-inverse: #17171a;
 
-  --border: rgba(255, 255, 255, 0.07);
-  --border-strong: rgba(255, 255, 255, 0.14);
+  --border: rgba(255, 255, 255, 0.075);
+  --border-strong: rgba(255, 255, 255, 0.15);
+  --edge-highlight: rgba(255, 255, 255, 0.045);
 
+  /* Dark shadows are mostly contact; the lift comes from the edge highlight. */
   --shadow-sheet: 0 24px 64px rgba(0, 0, 0, 0.62), 0 2px 8px rgba(0, 0, 0, 0.45);
-  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.32);
-  --shadow-raised: 0 1px 3px rgba(0, 0, 0, 0.38), 0 6px 18px rgba(0, 0, 0, 0.26);
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.32), inset 0 1px 0 var(--edge-highlight);
+  --shadow-raised:
+    0 1px 3px rgba(0, 0, 0, 0.38), 0 8px 24px -8px rgba(0, 0, 0, 0.45),
+    inset 0 1px 0 var(--edge-highlight);
+  --shadow-plate:
+    0 1px 2px rgba(0, 0, 0, 0.3), 0 12px 32px -18px rgba(0, 0, 0, 0.6),
+    inset 0 1px 0 var(--edge-highlight);
+  --shadow-float:
+    0 1px 2px rgba(0, 0, 0, 0.35), 0 14px 36px -14px rgba(0, 0, 0, 0.6),
+    inset 0 1px 0 var(--edge-highlight);
 }
 
 /*
@@ -317,13 +351,13 @@ body,
   /* Opaque fill under the shell so a resize frame where the compositor lags
      still shows `--bg-window`, not a transparent hole into the native layer.
      Fallback hex covers the gap before :root tokens resolve (dark-mode flash). */
-  background: var(--bg-window, #121213);
+  background: var(--bg-window, #0f0f10);
 }
 
 html[data-theme='light'],
 html[data-theme='light'] body,
 html[data-theme='light'] #root {
-  background: var(--bg-window, #ececee);
+  background: var(--bg-window, #e7e7ea);
 }
 
 html[data-theme='light'] {
@@ -336,11 +370,11 @@ html[data-theme='dark'] {
 
 /* Detached ⌘⇧↵ session: keep the shell wash while messages hydrate. */
 .session-window-booting {
-  background: var(--bg-window, #121213);
+  background: var(--bg-window, #0f0f10);
 }
 
 html[data-theme='light'] .session-window-booting {
-  background: var(--bg-window, #ececee);
+  background: var(--bg-window, #e7e7ea);
 }
 
 body {
@@ -384,19 +418,20 @@ select {
 }
 
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
 }
 ::-webkit-scrollbar-thumb {
-  background: var(--border-strong);
-  border-radius: 3px;
-  border: 1px solid transparent;
+  background: color-mix(in srgb, var(--text) 16%, transparent);
+  border-radius: 8px;
+  border: 2px solid transparent;
   background-clip: content-box;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--text-tertiary);
+  background: color-mix(in srgb, var(--text) 30%, transparent);
   background-clip: content-box;
 }
+
 ::-webkit-scrollbar-track {
   background: transparent;
 }
@@ -1297,7 +1332,7 @@ html[data-summoning] .workbench-home-stage > * {
   border-radius: var(--radius-lg);
   background: var(--bg-content);
   border: 1px solid var(--border);
-  box-shadow: var(--shadow-card);
+  box-shadow: var(--shadow-plate);
   overflow: hidden;
 }
 
@@ -1382,6 +1417,7 @@ html[data-summoning] .workbench-home-stage > * {
 .applications-tab[data-active='true'] {
   color: var(--accent-text, var(--accent));
   background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 8%, transparent);
 }
 
 .applications-body {
@@ -2527,6 +2563,7 @@ html[data-summoning] .workbench-home-stage > * {
 .sidebar-nav-item[data-active='true'] {
   color: var(--accent-text, var(--accent));
   background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 8%, transparent);
 }
 
 .sidebar-nav-new-session[data-active='true'] {
@@ -3366,11 +3403,17 @@ html[data-summoning] .workbench-home-stage > * {
 }
 
 .btn.primary {
-  background: var(--accent);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--accent) 90%, #fff) 0%,
+    var(--accent) 100%
+  );
   border-color: transparent;
   color: var(--accent-fg);
   font-weight: 500;
-  box-shadow: 0 1px 2px color-mix(in srgb, var(--accent) 40%, transparent);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.14),
+    0 1px 2px color-mix(in srgb, var(--accent) 40%, transparent);
 }
 
 .btn.primary:hover:not(:disabled) {
@@ -3559,10 +3602,13 @@ button.chip:active {
   width: 100%;
   height: 28px;
   padding: 0 10px;
-  border-radius: var(--radius-sm);
+  border-radius: calc(var(--radius-sm) + 1px);
   border: 0;
-  background: var(--bg-sunken);
-  box-shadow: inset 0 0 0 1px var(--border);
+  /* A white field seated into the plate: hairline edge + a whisper of inner shadow. */
+  background: var(--bg-raised);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--border-strong) 85%, transparent),
+    inset 0 1px 2px rgba(20, 20, 28, 0.04);
   outline: none;
   user-select: text;
   transition:
@@ -3570,7 +3616,15 @@ button.chip:active {
     box-shadow var(--dur-hover) ease;
 }
 
-.text-field:focus {
+:root[data-theme='dark'] .text-field {
+  background: var(--bg-sunken);
+  box-shadow:
+    inset 0 0 0 1px var(--border),
+    inset 0 1px 2px rgba(0, 0, 0, 0.25);
+}
+
+.text-field:focus,
+:root[data-theme='dark'] .text-field:focus {
   background: var(--bg-raised);
   box-shadow:
     inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent),
@@ -3603,8 +3657,9 @@ button.chip:active {
 .segmented {
   display: inline-flex;
   padding: 2px;
-  border-radius: var(--radius-sm);
+  border-radius: calc(var(--radius-sm) + 1px);
   background: var(--bg-sunken);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 60%, transparent);
 }
 
 .segmented button {
@@ -3645,7 +3700,7 @@ button.chip:active {
 
 .segmented button.active {
   background: var(--bg-raised);
-  box-shadow: var(--shadow-card);
+  box-shadow: var(--shadow-card), 0 0 0 0.5px var(--border);
   color: var(--text);
   font-weight: 500;
 }
@@ -3656,13 +3711,21 @@ button.chip:active {
   height: 23px;
   border-radius: 12px;
   border: none;
-  background: var(--border-strong);
+  background: color-mix(in srgb, var(--text) 14%, transparent);
+  box-shadow: inset 0 1px 2px rgba(20, 20, 28, 0.08);
   cursor: default;
-  transition: background var(--dur-pop) ease;
+  transition:
+    background var(--dur-pop) ease,
+    box-shadow var(--dur-pop) ease;
 }
 
 .toggle.on {
-  background: var(--accent);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--accent) 88%, #fff) 0%,
+    var(--accent) 100%
+  );
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16);
 }
 
 .toggle::after {
@@ -3674,7 +3737,9 @@ button.chip:active {
   height: 19px;
   border-radius: 50%;
   background: #fff;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.2),
+    0 0 0 0.5px rgba(0, 0, 0, 0.06);
   transition: transform var(--dur-pop) var(--ease-out);
 }
 
@@ -3966,10 +4031,15 @@ kbd {
 }
 
 /* Caret is enough — no web-style accent focus ring (same as .search-strip). */
-.sidebar-search-field .text-field,
+.sidebar-search-field .text-field {
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--text) 4%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 80%, transparent);
+}
+
 .sidebar-search-field .text-field:focus {
-  background: transparent;
-  box-shadow: inset 0 0 0 1px var(--border);
+  background: color-mix(in srgb, var(--text) 6.5%, transparent);
+  box-shadow: inset 0 0 0 1px var(--border-strong);
 }
 
 .sidebar-body {
@@ -4295,6 +4365,7 @@ kbd {
 .conv-row.selected {
   background: var(--accent-soft);
   color: var(--text);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 8%, transparent);
 }
 
 .conv-row.multi {
@@ -4559,7 +4630,8 @@ kbd {
   background: var(--bg-content);
   border-radius: var(--radius-lg);
   border: 1px solid var(--border);
-  box-shadow: none;
+  /* Paper lifted off the window wash: contact + a wide, faint ambient. */
+  box-shadow: var(--shadow-plate);
 }
 
 .applications-panel .detail,
@@ -4574,9 +4646,43 @@ kbd {
 /*
  * Surface wash: agent plate, settings, and the app-column wash behind the
  * rounded card (not sidebar, not document preview, not inside the app).
- * ::before tiles the ink; ::after fades that ink into the plate so the
- * texture is strong at the top and gone before the composer.
+ *
+ * Three layers, all inside `--surface-pattern-band` at the head of the plate:
+ *   plate background  — a soft accent veil, strongest at the very top
+ *   ::before          — the tile, dyed `--surface-pattern-ink`
+ *   ::after           — a long fade that runs the ink out into the plate
+ * The band is viewport-relative, so a tall window gets a taller head and the
+ * overlay chrome plate (same origin) lines up tile for tile.
  */
+:root {
+  --surface-pattern-ink: var(--surface-pattern-color, var(--accent));
+  --surface-pattern-alpha: var(--surface-pattern-opacity, 0.3);
+  /* Ease-out fade: holds near full strength through the first quarter, then lets go. */
+  --surface-pattern-fade: linear-gradient(
+    180deg,
+    transparent 0%,
+    color-mix(in srgb, var(--bg-content) 10%, transparent) 18%,
+    color-mix(in srgb, var(--bg-content) 42%, transparent) 46%,
+    color-mix(in srgb, var(--bg-content) 80%, transparent) 74%,
+    var(--bg-content) 100%
+  );
+  --surface-pattern-atmosphere: linear-gradient(
+    180deg,
+    var(--surface-pattern-veil) 0%,
+    color-mix(in srgb, var(--surface-pattern-veil) 45%, transparent) 40%,
+    transparent 100%
+  );
+}
+
+/* Light paper swallows a tinted wash: darker ink, a little more hold. */
+:root[data-theme='light'] {
+  --surface-pattern-ink: var(
+    --surface-pattern-color,
+    color-mix(in srgb, var(--accent) 40%, var(--text-secondary))
+  );
+  --surface-pattern-alpha: calc(var(--surface-pattern-opacity, 0.3) * 1.15);
+}
+
 .detail::before,
 .detail::after,
 .settings-main::before,
@@ -4596,14 +4702,26 @@ kbd {
   z-index: 1;
 }
 
+:root[data-surface-pattern]:not([data-surface-pattern='none']) .detail,
+:root[data-surface-pattern]:not([data-surface-pattern='none']) .settings-main,
+:root[data-surface-pattern]:not([data-surface-pattern='none']) .applications-column {
+  background-image: var(--surface-pattern-atmosphere);
+  background-repeat: no-repeat;
+  background-size: 100% var(--surface-pattern-band);
+}
+
 :root[data-surface-pattern]:not([data-surface-pattern='none']) .detail::before,
 :root[data-surface-pattern]:not([data-surface-pattern='none']) .settings-main::before,
-:root[data-surface-pattern]:not([data-surface-pattern='none']) .applications-column::before {
+:root[data-surface-pattern]:not([data-surface-pattern='none']) .applications-column::before,
+:root[data-surface-pattern]:not([data-surface-pattern='none']) .agent-mode-chrome.is-overlay-plate::before {
   content: '';
+  position: absolute;
   inset: 0 0 auto;
   height: var(--surface-pattern-band);
-  background-color: var(--surface-pattern-color, var(--accent));
-  opacity: var(--surface-pattern-opacity, 0.16);
+  z-index: 0;
+  pointer-events: none;
+  background-color: var(--surface-pattern-ink);
+  opacity: min(0.92, calc(var(--surface-pattern-alpha) * var(--surface-pattern-strength, 1)));
   -webkit-mask-image: var(--surface-pattern-url);
   mask-image: var(--surface-pattern-url);
   -webkit-mask-size: var(--surface-pattern-size);
@@ -4616,43 +4734,57 @@ kbd {
 
 :root[data-surface-pattern]:not([data-surface-pattern='none']) .detail::after,
 :root[data-surface-pattern]:not([data-surface-pattern='none']) .settings-main::after,
-:root[data-surface-pattern]:not([data-surface-pattern='none']) .applications-column::after {
+:root[data-surface-pattern]:not([data-surface-pattern='none']) .applications-column::after,
+:root[data-surface-pattern]:not([data-surface-pattern='none']) .agent-mode-chrome.is-overlay-plate::after {
   content: '';
+  position: absolute;
   inset: 0 0 auto;
   height: var(--surface-pattern-band);
-  background: linear-gradient(
-    180deg,
-    transparent 0%,
-    color-mix(in srgb, var(--bg-content) 45%, transparent) 42%,
-    var(--bg-content) 100%
-  );
-}
-
-/* Light paper swallows a tinted wash. Use darker ink + a bit more hold. */
-:root[data-theme='light'][data-surface-pattern]:not([data-surface-pattern='none']) .detail::before,
-:root[data-theme='light'][data-surface-pattern]:not([data-surface-pattern='none']) .settings-main::before,
-:root[data-theme='light'][data-surface-pattern]:not([data-surface-pattern='none']) .applications-column::before {
-  background-color: var(--surface-pattern-color, color-mix(in srgb, var(--accent) 38%, var(--text)));
-  opacity: calc(var(--surface-pattern-opacity, 0.16) * 1.65);
-}
-
-:root[data-theme='light'][data-surface-pattern]:not([data-surface-pattern='none']) .detail::after,
-:root[data-theme='light'][data-surface-pattern]:not([data-surface-pattern='none']) .settings-main::after,
-:root[data-theme='light'][data-surface-pattern]:not([data-surface-pattern='none']) .applications-column::after {
-  height: 132px;
-  background: linear-gradient(
-    180deg,
-    transparent 0%,
-    color-mix(in srgb, var(--bg-content) 28%, transparent) 55%,
-    var(--bg-content) 100%
-  );
+  z-index: 0;
+  pointer-events: none;
+  background: var(--surface-pattern-fade);
 }
 
 /* App interiors stay clean — the wash lives behind the rounded wrapper. */
+:root[data-surface-pattern]:not([data-surface-pattern='none']) .applications-panel .detail {
+  background-image: none;
+}
+
 :root[data-surface-pattern]:not([data-surface-pattern='none']) .applications-panel .detail::before,
-:root[data-surface-pattern]:not([data-surface-pattern='none']) .applications-panel .detail::after,
-:root[data-theme='light'][data-surface-pattern]:not([data-surface-pattern='none']) .applications-panel .detail::before,
-:root[data-theme='light'][data-surface-pattern]:not([data-surface-pattern='none']) .applications-panel .detail::after {
+:root[data-surface-pattern]:not([data-surface-pattern='none']) .applications-panel .detail::after {
+  content: none;
+}
+
+/*
+ * Agent overlay plate (thread chrome floating over the log) stays opaque so
+ * the log never shows through, but it used to paint flat --bg-content over
+ * the wash. It shares the .detail origin (top/left 0, full width), so
+ * repainting the same atmosphere + ink + fade here lines up tile for tile.
+ */
+.agent-mode-chrome.is-overlay-plate > .agent-mode-chrome-row {
+  position: relative;
+  z-index: 1;
+}
+
+/* Specificity must clear the `.app-shell … > .terminal-host-chrome` plate fill. */
+:root[data-surface-pattern]:not([data-surface-pattern='none'])
+  .app-shell
+  .detail
+  > .terminal-host-chrome.agent-mode-chrome.is-overlay-plate {
+  background-image: var(--surface-pattern-atmosphere);
+  background-repeat: no-repeat;
+  background-size: 100% var(--surface-pattern-band);
+}
+
+/* Live window resize: drop the masked tile (the costly layer); keep the flat fills. */
+:root[data-resizing='true'][data-surface-pattern] .detail::before,
+:root[data-resizing='true'][data-surface-pattern] .detail::after,
+:root[data-resizing='true'][data-surface-pattern] .settings-main::before,
+:root[data-resizing='true'][data-surface-pattern] .settings-main::after,
+:root[data-resizing='true'][data-surface-pattern] .applications-column::before,
+:root[data-resizing='true'][data-surface-pattern] .applications-column::after,
+:root[data-resizing='true'][data-surface-pattern] .agent-mode-chrome.is-overlay-plate::before,
+:root[data-resizing='true'][data-surface-pattern] .agent-mode-chrome.is-overlay-plate::after {
   content: none;
 }
 
@@ -6211,7 +6343,21 @@ kbd {
 }
 
 .message-turn.assistant .message-role {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   color: var(--accent-text);
+}
+
+/* A small accent mark seats the agent's turns in the log at a glance. */
+.message-turn.assistant .message-role::before {
+  content: '';
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
 .message-collapse-toggle {
@@ -6231,13 +6377,19 @@ kbd {
 
 /* Text-only wash — hugs the prompt, not the chips / actions / full column. */
 .message.user {
-  --message-user-fill: color-mix(in srgb, var(--text) 5.5%, var(--bg-content));
+  /* Accent-tinted paper (grey under the mono tint) with a hairline edge, so
+     the prompt reads as a card laid on the plate rather than a stain on it. */
+  --message-user-fill: color-mix(in srgb, var(--accent) 7%, var(--bg-raised));
+  --message-user-edge: color-mix(in srgb, var(--accent) 12%, var(--border));
   align-self: flex-start;
   width: fit-content;
   max-width: 100%;
-  padding: 7px 11px;
-  border-radius: var(--radius);
+  padding: 8px 12px;
+  border-radius: calc(var(--radius) + 2px);
   background: var(--message-user-fill);
+  box-shadow:
+    inset 0 0 0 1px var(--message-user-edge),
+    0 1px 2px color-mix(in srgb, var(--text) 3%, transparent);
   color: var(--text);
   font-weight: 500;
   font-size: 14px;
@@ -6309,7 +6461,14 @@ kbd {
   display: block;
   height: 1px;
   margin: 6px 0 14px;
-  background: var(--border);
+  /* Rule fades out at both ends so rounds read as sections, not table rows. */
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--border-strong) 12%,
+    var(--border-strong) 88%,
+    transparent 100%
+  );
 }
 
 /* User message context stack — mirrors composer chips/cards after send. */

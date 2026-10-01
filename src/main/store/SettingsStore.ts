@@ -9,12 +9,14 @@ import {
   parseSidebarVisibleCategories,
   VAV_DEFAULT_MODEL_ID,
   SURFACE_PATTERNS,
+  SURFACE_PATTERN_STRENGTHS,
   mergeBuiltinDefaultArgs,
   type AgentConfig,
   type AppSettings,
   type ColorTint,
   type DisplayCurrency,
-  type SurfacePattern
+  type SurfacePattern,
+  type SurfacePatternStrength
 } from '@shared/types'
 import { coerceShell, platformDefaults, type Platform } from '@shared/platform'
 import { normalizeAccentHex } from '@shared/colorTints'
@@ -254,6 +256,9 @@ export class SettingsStore {
     if (s.bashBackground !== 'dark' && s.bashBackground !== 'theme') s.bashBackground = 'theme'
     if (!SURFACE_PATTERNS.includes(s.surfacePattern as SurfacePattern)) {
       s.surfacePattern = DEFAULT_SETTINGS.surfacePattern
+    }
+    if (!SURFACE_PATTERN_STRENGTHS.includes(s.surfacePatternStrength as SurfacePatternStrength)) {
+      s.surfacePatternStrength = DEFAULT_SETTINGS.surfacePatternStrength
     }
     if (typeof s.customSurfacePatternUrl !== 'string') s.customSurfacePatternUrl = ''
     // Runtime-only (vav-local / leftover data URLs) — never keep a payload here.

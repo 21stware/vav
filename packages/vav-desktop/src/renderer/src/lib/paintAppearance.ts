@@ -7,7 +7,11 @@ import { TINT_ACCENT, normalizeAccentHex, type FixedColorTint } from '@shared/co
 import { appearanceForMachine, type AppearanceSettingsPick } from '@shared/machineAppearance'
 import { COLOR_TINTS, type AppSettings, type ColorTint, type SurfacePattern } from '@shared/types'
 import { LOCAL_MACHINE_ID } from '@shared/workspaceHost'
-import { customSurfaceTile, surfacePatternPreset } from './surfacePatterns'
+import {
+  customSurfaceTile,
+  surfacePatternPreset,
+  surfacePatternStrengthScale
+} from './surfacePatterns'
 
 const SYSTEM_TINT_VARS = [
   '--accent',
@@ -163,11 +167,13 @@ function accentTintVars(
       g: 18 + accent.g * 0.22,
       b: 19 + accent.b * 0.22
     }
+    // Same steps as the mono dark ramp in app-shell.css (window → content → raised),
+    // each nudged 4% toward the tint so a hue reads without the plate going muddy.
     const mix = (baseVal: number, accVal: number) => Math.round(baseVal * 0.96 + accVal * 0.04)
-    const window = { r: mix(18, bgBase.r), g: mix(18, bgBase.g), b: mix(19, bgBase.b) }
-    const sunken = { r: mix(22, bgBase.r), g: mix(22, bgBase.g), b: mix(23, bgBase.b) }
-    const content = { r: mix(27, bgBase.r), g: mix(27, bgBase.g), b: mix(29, bgBase.b) }
-    const raised = { r: mix(36, bgBase.r), g: mix(36, bgBase.g), b: mix(39, bgBase.b) }
+    const window = { r: mix(15, bgBase.r), g: mix(15, bgBase.g), b: mix(16, bgBase.b) }
+    const sunken = { r: mix(20, bgBase.r), g: mix(20, bgBase.g), b: mix(21, bgBase.b) }
+    const content = { r: mix(26, bgBase.r), g: mix(26, bgBase.g), b: mix(28, bgBase.b) }
+    const raised = { r: mix(35, bgBase.r), g: mix(35, bgBase.g), b: mix(38, bgBase.b) }
     const accentHex = toHex(accent)
     const textHex = toHex(text)
     return {
@@ -199,15 +205,17 @@ function accentTintVars(
     : base
   const hover = darken(accent, 0.1)
   const text = darken(accent, 0.08)
+  // Light ramp mirrors the mono tokens: the window wash sits a full step below
+  // the plate (≈ #e7e7ea vs #fcfcfd) so the plate lifts, with a faint cast.
   const washBase = hslToRgb({
     h: (hsl.h + 20) % 360,
     s: Math.max(0.05, hsl.s * 0.3),
-    l: 0.96
+    l: 0.925
   })
-  const wash = lighten(washBase, 0.1)
-  const selected = darken(washBase, 0.08)
-  const sunken = darken(washBase, 0.02)
-  const content = lighten(washBase, 0.6)
+  const wash = washBase
+  const selected = darken(washBase, 0.07)
+  const sunken = lighten(washBase, 0.45)
+  const content = lighten(washBase, 0.85)
   const accentHex = toHex(accent)
   const textHex = toHex(text)
   return {
@@ -258,7 +266,10 @@ export function resolvePaintTheme(
 
 export function paintDocumentLook(opts: {
   settings: AppearanceSettingsPick &
-    Pick<AppSettings, 'codeFont' | 'fontSize' | 'reduceMotion' | 'windowVibrancyEnabled'>
+    Pick<
+      AppSettings,
+      'codeFont' | 'fontSize' | 'reduceMotion' | 'windowVibrancyEnabled' | 'surfacePatternStrength'
+    >
   osDark: boolean
   systemAccent?: string
   machineId?: string
@@ -305,10 +316,15 @@ export function paintDocumentLook(opts: {
     root.style.setProperty('--surface-pattern-url', `url("${preset.url}")`)
     root.style.setProperty('--surface-pattern-size', preset.size)
     root.style.setProperty('--surface-pattern-opacity', String(preset.opacity))
+    root.style.setProperty(
+      '--surface-pattern-strength',
+      String(surfacePatternStrengthScale(opts.settings.surfacePatternStrength))
+    )
   } else {
     root.style.removeProperty('--surface-pattern-url')
     root.style.removeProperty('--surface-pattern-size')
     root.style.removeProperty('--surface-pattern-opacity')
+    root.style.removeProperty('--surface-pattern-strength')
   }
 
   return theme

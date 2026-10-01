@@ -4,8 +4,9 @@
  */
 import type { BrowserWindow } from 'electron'
 
-export const WINDOW_BG_DARK = '#121213'
-export const WINDOW_BG_LIGHT = '#ececee'
+/** Keep in sync with `--bg-window` in renderer/src/styles/app-shell.css. */
+export const WINDOW_BG_DARK = '#0f0f10'
+export const WINDOW_BG_LIGHT = '#e7e7ea'
 
 export function windowBackgroundColor(dark: boolean, alpha = ''): string {
   return (dark ? WINDOW_BG_DARK : WINDOW_BG_LIGHT) + alpha

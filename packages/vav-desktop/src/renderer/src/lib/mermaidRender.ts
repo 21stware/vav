@@ -125,7 +125,7 @@ function beautifulOptions(theme: DiagramTheme): {
 } {
   const dark = theme === 'dark'
   return {
-    bg: cssToken('--bg-content', dark ? '#1b1b1d' : '#fcfcfc'),
+    bg: cssToken('--bg-content', dark ? '#1a1a1c' : '#fcfcfd'),
     fg: cssToken('--text', dark ? '#efeff1' : '#141416'),
     muted: cssToken('--text-secondary', dark ? '#a2a2a9' : '#5c5c66'),
     surface: cssToken('--bg-raised', dark ? '#242427' : '#ffffff'),

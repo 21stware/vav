@@ -842,6 +842,16 @@ export const SURFACE_PATTERNS: readonly SurfacePattern[] = [
   'custom'
 ] as const
 /**
+ * How much ink the surface texture lays down. `normal` is the preset peak;
+ * `soft` is roughly half, `bold` about one and a half times.
+ */
+export type SurfacePatternStrength = 'soft' | 'normal' | 'bold'
+export const SURFACE_PATTERN_STRENGTHS: readonly SurfacePatternStrength[] = [
+  'soft',
+  'normal',
+  'bold'
+] as const
+/**
  * Accent / surface tint.
  * - `system` (default): follow the OS accent colour (macOS / Windows).
  * - `mono`: black–white chrome.
@@ -1135,6 +1145,11 @@ export interface AppSettings {
    */
   surfacePattern: SurfacePattern
   /**
+   * Texture ink strength. Global (not per machine): a user who finds a tile
+   * loud wants it quieter everywhere, not on one host.
+   */
+  surfacePatternStrength: SurfacePatternStrength
+  /**
    * Runtime `vav-local://` URL of the user tile. Injected by main from
    * `userData/surface-pattern.png` — never persisted as a data URL.
    */
@@ -1370,6 +1385,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   customAccentColor: '',
   machineAppearances: {},
   surfacePattern: 'none',
+  surfacePatternStrength: 'normal',
   customSurfacePatternUrl: '',
   customSurfacePatternSize: '',
   swarmModeEnabled: true,
