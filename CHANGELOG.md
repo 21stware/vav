@@ -4,6 +4,8 @@ User-facing changes by release. Unreleased work lives at the top until the next 
 
 ## Unreleased
 
+## 1.32.9
+
 Surface textures are now a real part of the room: the tile runs down the top ~46% of the agent plate, settings, and the app-column wash (not a 108px strip), lays down about twice the ink, and sits on a soft accent glow before fading into the plate. Every built-in tile was redrawn denser and a touch bolder; the texture ink follows the accent, so a blue tint gives a blue grain. Settings → Appearance gains a **Texture Strength** control (Soft / Normal / Bold).
 
 The theme itself is deeper: the window wash sits a full step below the content plate, the plate and app card cast a soft two-layer shadow, the composer is a raised white (or charcoal) card that floats over the log, user prompts are accent-tinted cards with a hairline edge, solid accent buttons carry a slight sheen, and dark mode gets a hairline top highlight on lifted surfaces. Corner radii step up to 16/20px. Tinted (system / custom / preset) light and dark ramps follow the same steps as the mono ramp; first-paint window fills (#e7e7ea / #0f0f10) match.
