@@ -1836,7 +1836,6 @@ export function installPhoneVav(transport: PhoneTransport): PhoneVavHandle {
       desiredSettingsView: async () => desiredSettings,
       openSession: async () => undefined,
       revealInList: async () => undefined,
-      setPictureInPicture: async () => undefined,
       closeDetachedSession: async () => undefined,
       newDetachedSession: async () => undefined,
       newSessionHere: async () => undefined,

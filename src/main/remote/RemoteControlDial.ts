@@ -23,6 +23,9 @@ import { drainJsonLines, REMOTE_MAX_LINE_BYTES } from '../../shared/remoteContro
 const CONNECT_TIMEOUT_MS = 4_000
 /** Tunnel + a large `sessions` snapshot can exceed a LAN-sized 400ms probe. */
 export const CONTROL_PLANE_WELCOME_MS = 8_000
+/** Same idea as the daemon heartbeat: catch half-open sockets after sleep. */
+const CONTROL_HEARTBEAT_MS = 15_000
+const CONTROL_HEARTBEAT_DEAD_MS = 45_000
 
 export class RemoteControlDial {
   private socket: Socket | null = null
@@ -31,6 +34,10 @@ export class RemoteControlDial {
   private readonly listeners = new Set<(state: RemoteControlSessionState, message: RemoteServerMessage) => void>()
   private readonly closeListeners = new Set<() => void>()
   ready = false
+  private lastInbound = 0
+  /** Bumped on every inbound chunk; probes compare it (ms clocks tie). */
+  private inboundSeq = 0
+  private heartbeat: ReturnType<typeof setInterval> | null = null
 
   snapshot(): RemoteControlSessionState {
     return this.state
@@ -77,6 +84,7 @@ export class RemoteControlDial {
     socket.setEncoding('utf8')
     socket.on('data', (chunk: string) => this.ingest(chunk))
     const closed = (): void => {
+      if (this.socket === socket) this.stopHeartbeat()
       const wasReady = this.ready
       this.ready = false
       if (this.socket === socket) this.socket = null
@@ -95,6 +103,7 @@ export class RemoteControlDial {
     }
     this.ready = welcomed.welcomed
     if (!this.ready) throw new Error('control plane did not welcome')
+    this.startHeartbeat(socket)
     return welcomed
   }
 
@@ -319,7 +328,46 @@ export class RemoteControlDial {
     }
   }
 
+  /** Ping and wait for any reply; closes the plane on silence. */
+  async probe(timeoutMs = 5_000): Promise<boolean> {
+    const socket = this.socket
+    if (!this.ready || !socket || socket.destroyed) return false
+    const seq = this.inboundSeq
+    this.write({ type: 'ping' })
+    const started = Date.now()
+    while (Date.now() - started < timeoutMs) {
+      if (this.socket !== socket || socket.destroyed) return false
+      if (this.inboundSeq !== seq) return true
+      await new Promise((resolve) => setTimeout(resolve, 100))
+    }
+    if (this.socket === socket) this.close()
+    return false
+  }
+
+  private startHeartbeat(socket: Socket): void {
+    this.stopHeartbeat()
+    this.lastInbound = Date.now()
+    this.heartbeat = setInterval(() => {
+      if (this.socket !== socket || socket.destroyed) {
+        this.stopHeartbeat()
+        return
+      }
+      if (Date.now() - this.lastInbound > CONTROL_HEARTBEAT_DEAD_MS) {
+        this.close()
+        return
+      }
+      this.write({ type: 'ping' })
+    }, CONTROL_HEARTBEAT_MS)
+    this.heartbeat.unref?.()
+  }
+
+  private stopHeartbeat(): void {
+    if (this.heartbeat) clearInterval(this.heartbeat)
+    this.heartbeat = null
+  }
+
   close(): void {
+    this.stopHeartbeat()
     const wasReady = this.ready
     this.ready = false
     this.buffer = ''
@@ -340,6 +388,8 @@ export class RemoteControlDial {
   }
 
   private ingest(chunk: string): void {
+    this.lastInbound = Date.now()
+    this.inboundSeq += 1
     this.buffer += chunk
     if (this.buffer.length > REMOTE_MAX_LINE_BYTES) {
       this.close()

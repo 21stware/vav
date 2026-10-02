@@ -431,7 +431,6 @@ select {
   background: color-mix(in srgb, var(--text) 30%, transparent);
   background-clip: content-box;
 }
-
 ::-webkit-scrollbar-track {
   background: transparent;
 }
@@ -525,10 +524,6 @@ html[data-resizing='true'] .body-split {
 html[data-resizing='true'] .sidebar-column,
 html[data-resizing='true'] .app-shell .body-split > .sidebar:not(.floating) {
   background: var(--bg-window);
-}
-
-html[data-resizing='true'] .workbench-home {
-  background: var(--bg-content);
 }
 
 /* The panel itself is already opaque — no repaint guard needed on the column. */
@@ -656,9 +651,11 @@ label,
   margin: calc(var(--chrome-gutter) + 10px) var(--sidebar-rail-inset) 8px;
   padding: 6px 0;
   border-radius: 999px;
-  background: var(--bg-sunken);
+  /* Lifted like the composer card, not sunken: over the textured wash a
+     darker capsule read as a hole punched in the plate. */
+  background: var(--bg-raised);
   border: 0.5px solid var(--border);
-  box-shadow: none;
+  box-shadow: var(--shadow-float);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
   -webkit-app-region: no-drag;
@@ -812,474 +809,6 @@ label,
 
 .applications-column[hidden] {
   display: none !important;
-}
-
-.workbench-home {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  flex: 1 1 0%;
-  min-width: 0;
-  max-width: 100%;
-  min-height: 0;
-  align-self: stretch;
-  background: var(--bg-content);
-  box-shadow: inset 0.5px 0 0 var(--border);
-}
-
-.workbench-home[hidden] {
-  display: none !important;
-}
-
-.workbench-home-chrome {
-  display: flex;
-  align-items: center;
-  flex: 0 0 auto;
-  height: var(--toolbar-height);
-  min-height: var(--toolbar-height);
-  padding: 0 12px;
-  box-sizing: border-box;
-  -webkit-app-region: drag;
-}
-
-.workbench-home-chrome > .spacer {
-  align-self: stretch;
-  flex: 1 1 auto;
-  min-width: 12px;
-  -webkit-app-region: drag;
-}
-
-.workbench-home-chrome button,
-.workbench-home-chrome .btn {
-  -webkit-app-region: no-drag;
-}
-
-.workbench-home-body {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow: auto;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding: 36px 32px 48px;
-  box-sizing: border-box;
-}
-
-.workbench-home[data-empty='true'] .workbench-home-body {
-  padding-top: 28px;
-  padding-bottom: 28px;
-  -webkit-app-region: no-drag;
-}
-
-.workbench-home[data-empty='true'] .workbench-home-stage {
-  -webkit-app-region: no-drag;
-}
-
-.workbench-home[data-empty='true'] .workbench-home-body::before,
-.workbench-home[data-empty='true'] .workbench-home-body::after {
-  content: '';
-  align-self: stretch;
-  min-height: 0;
-  pointer-events: none;
-}
-
-.workbench-home[data-empty='true'] .workbench-home-body::before {
-  flex: 0.48 1 0;
-}
-
-.workbench-home[data-empty='true'] .workbench-home-body::after {
-  flex: 0.52 1 0;
-}
-
-.workbench-home-stage {
-  width: min(640px, 100%);
-  flex: 0 0 auto;
-}
-
-/* Sections build up in a short cascade — hero first, sessions last. */
-.workbench-home-stage > * {
-  animation: empty-in 320ms var(--ease-out) both;
-}
-
-.workbench-home-stage > *:nth-child(2) {
-  animation-delay: 50ms;
-}
-
-.workbench-home-stage > *:nth-child(3) {
-  animation-delay: 100ms;
-}
-
-.workbench-home-stage > *:nth-child(4) {
-  animation-delay: 150ms;
-}
-
-:root[data-reduce-motion='true'] .workbench-home-stage > *,
-html[data-summoning] .workbench-home-stage > * {
-  animation: none;
-}
-
-.workbench-home-hero {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  text-align: center;
-  margin: 0 0 36px;
-  color: var(--text);
-}
-
-.workbench-home-mark {
-  position: relative;
-  display: grid;
-  place-items: center;
-  width: 64px;
-  height: 64px;
-  margin-bottom: 14px;
-  color: var(--text);
-}
-
-/* A breath of accent behind the mark — the hero's only colour field. */
-.workbench-home-mark::before {
-  content: '';
-  position: absolute;
-  inset: -30px;
-  border-radius: 50%;
-  background: radial-gradient(50% 50% at 50% 50%, var(--accent-soft), transparent 72%);
-  pointer-events: none;
-}
-
-.workbench-home-mark .agent-brand-mark {
-  background: transparent;
-  box-shadow: none;
-}
-
-/* Ground the glyph plate so it reads as an object, not a pasted bitmap. */
-.workbench-home-mark .agent-brand-mark img {
-  filter: drop-shadow(0 5px 14px rgba(20, 20, 28, 0.16));
-}
-
-:root[data-theme='dark'] .workbench-home-mark .agent-brand-mark img {
-  filter: drop-shadow(0 5px 14px rgba(0, 0, 0, 0.5));
-}
-
-.workbench-home-user {
-  margin: 2px 0 0;
-  max-width: 22em;
-  color: var(--text-secondary);
-  font-size: 13px;
-  font-weight: 500;
-  letter-spacing: -0.015em;
-  line-height: 1.35;
-}
-
-.workbench-home-hero .workbench-home-stats {
-  margin-top: 22px;
-}
-
-.workbench-home-stats {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
-  width: 100%;
-}
-
-@media (max-width: 520px) {
-  .workbench-home-stats {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
-.workbench-home-stat {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 4px;
-  min-height: 86px;
-  padding: 11px 12px 10px;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--bg-raised);
-  box-shadow: var(--shadow-card);
-  color: var(--text);
-  text-align: left;
-  cursor: pointer;
-  transition:
-    border-color var(--dur-hover) ease,
-    box-shadow var(--dur-hover) ease,
-    transform var(--dur-press) var(--ease-out);
-}
-
-@media (hover: hover) and (pointer: fine) {
-  .workbench-home-stat:hover {
-    border-color: var(--border-strong);
-    box-shadow: var(--shadow-raised);
-    transform: translateY(-1px);
-  }
-}
-
-.workbench-home-stat:active {
-  transform: scale(0.97);
-  box-shadow: var(--shadow-card);
-}
-
-.workbench-home-stat-label {
-  color: var(--text-tertiary);
-  font-size: 11px;
-  font-weight: 550;
-  letter-spacing: -0.01em;
-}
-
-.workbench-home-stat-value {
-  font-size: 19px;
-  font-weight: 620;
-  letter-spacing: -0.03em;
-  line-height: 1.15;
-  font-variant-numeric: tabular-nums;
-}
-
-.workbench-home-stat-meta {
-  color: var(--text-tertiary);
-  font-size: 11px;
-  letter-spacing: -0.01em;
-}
-
-.workbench-home-stat-bar {
-  display: block;
-  width: 100%;
-  height: 3px;
-  margin-top: auto;
-  border-radius: 999px;
-  background: var(--bg-sunken);
-  overflow: hidden;
-}
-
-.workbench-home-stat-bar-fill {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-  background: var(--accent);
-}
-
-.workbench-home-stat[data-exhausted='true'] .workbench-home-stat-bar-fill {
-  background: var(--danger);
-}
-
-.workbench-home-spark {
-  display: flex;
-  align-items: flex-end;
-  gap: 2px;
-  width: 100%;
-  height: 18px;
-  margin-top: auto;
-}
-
-.workbench-home-spark-bar {
-  flex: 1 1 0;
-  min-width: 0;
-  border-radius: 1.5px;
-  background: color-mix(in srgb, var(--accent) 72%, var(--text));
-  opacity: 0.55;
-}
-
-.workbench-home-title {
-  margin: 0;
-  font-size: 24px;
-  font-weight: 680;
-  letter-spacing: -0.045em;
-  line-height: 1.1;
-}
-
-.workbench-home-desc {
-  margin: 8px 0 0;
-  max-width: 22em;
-  color: var(--text-secondary);
-  font-size: 13px;
-  line-height: 1.5;
-}
-
-.workbench-home-nav {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
-  gap: 8px;
-}
-
-.workbench-home-nav-item {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 12px;
-  min-height: 84px;
-  padding: 12px 12px 11px;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--bg-raised);
-  box-shadow: var(--shadow-card);
-  color: var(--text);
-  text-align: left;
-  cursor: pointer;
-  transition:
-    border-color var(--dur-hover) ease,
-    box-shadow var(--dur-hover) ease,
-    transform var(--dur-press) var(--ease-out);
-}
-
-/* Icon well: a soft inset tile so the glyph sits in material, not on it. */
-.workbench-home-nav-icon {
-  display: grid;
-  place-items: center;
-  width: 28px;
-  height: 28px;
-  border-radius: 8px;
-  background: linear-gradient(180deg, var(--bg-content), var(--bg-sunken));
-  box-shadow: inset 0 0 0 1px var(--border);
-  color: var(--text-secondary);
-  transition:
-    background var(--dur-hover) ease,
-    color var(--dur-hover) ease;
-}
-
-.workbench-home-nav-item.is-primary .workbench-home-nav-icon {
-  background: var(--accent);
-  box-shadow: none;
-  color: var(--accent-fg);
-}
-
-.workbench-home-nav-item > span:last-child {
-  font-size: 13px;
-  font-weight: 550;
-  letter-spacing: -0.015em;
-}
-
-@media (hover: hover) and (pointer: fine) {
-  .workbench-home-nav-item:hover {
-    border-color: var(--border-strong);
-    box-shadow: var(--shadow-raised);
-    transform: translateY(-1px);
-  }
-
-  .workbench-home-nav-item:hover .workbench-home-nav-icon {
-    color: var(--text);
-  }
-
-  .workbench-home-nav-item.is-primary:hover .workbench-home-nav-icon {
-    background: var(--accent-hover);
-    color: var(--accent-fg);
-  }
-}
-
-.workbench-home-nav-item:active {
-  transform: scale(0.97);
-  box-shadow: var(--shadow-card);
-}
-
-.workbench-home-composer {
-  margin-top: 40px;
-  margin-bottom: 40px;
-  width: 100%;
-}
-
-.workbench-home-composer .composer,
-.workbench-home-composer .composer-context {
-  width: 100%;
-  max-width: none;
-  padding: 0;
-}
-
-.workbench-home-composer .composer-workspace-btn {
-  max-width: 160px;
-}
-
-.workbench-home-composer .composer-workspace-btn .session-run-level {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.workbench-home-sessions {
-  margin-top: 0;
-}
-
-.workbench-home-sessions-empty {
-  margin: 0;
-  padding: 8px 10px;
-  color: var(--text-tertiary);
-  font-size: 13px;
-}
-
-.workbench-home-sessions-title {
-  margin: 0 0 8px;
-  padding: 0 10px;
-  color: var(--text-secondary);
-  font-size: 12px;
-  font-weight: 550;
-  letter-spacing: -0.01em;
-}
-
-.workbench-home-session-list {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.workbench-home-session {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  min-height: 36px;
-  padding: 6px 10px 6px 8px;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--text);
-  text-align: left;
-  cursor: pointer;
-  transition:
-    background var(--dur-hover) ease,
-    transform var(--dur-press) var(--ease-out);
-}
-
-@media (hover: hover) and (pointer: fine) {
-  .workbench-home-session:hover {
-    background: var(--bg-hover);
-  }
-}
-
-.workbench-home-session:active {
-  transform: scale(0.97);
-}
-
-.workbench-home-session-icon {
-  flex: 0 0 auto;
-  display: grid;
-  place-items: center;
-  width: 22px;
-  height: 22px;
-  border-radius: 6px;
-  background: linear-gradient(180deg, var(--bg-raised), var(--bg-sunken));
-  box-shadow: inset 0 0 0 1px var(--border);
-  color: var(--text-tertiary);
-  transition: color var(--dur-hover) ease;
-}
-
-.workbench-home-session:hover .workbench-home-session-icon {
-  color: var(--text-secondary);
-}
-
-.workbench-home-session-title {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 13px;
-  font-weight: 500;
-}
-
-.workbench-home-session-meta {
-  flex: 0 0 auto;
-  color: var(--text-tertiary);
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
 }
 
 .applications-column > .applications-panel {
@@ -2641,18 +2170,21 @@ html[data-summoning] .workbench-home-stage > * {
   }
 }
 
-:root[data-platform='darwin'][data-vibrancy='true'] .sidebar-column.is-rail,
-:root[data-platform='darwin'][data-vibrancy='true'] .workbench-home {
-  background: var(--bg-content) !important;
+:root[data-platform='darwin'][data-vibrancy='true'] .sidebar-column.is-rail {
+  /* Color only — the shorthand wiped the surface-wash gradient and left a
+     visible tint seam against the plate. */
+  background-color: var(--bg-content) !important;
 }
 
 /* App column shares the agent plate — not glass — so the card gutters match. */
 :root[data-platform='darwin'][data-vibrancy='true'] .applications-column {
-  background: var(--bg-content) !important;
+  /* Color only: the shorthand wiped the surface wash (seam at the card gutter). */
+  background-color: var(--bg-content) !important;
 }
 
 :root[data-theme='light'][data-platform='darwin'][data-vibrancy='true'] .applications-column {
-  background: var(--bg-content) !important;
+  /* Color only: the shorthand wiped the surface wash (seam at the card gutter). */
+  background-color: var(--bg-content) !important;
 }
 
 :root[data-platform='darwin'][data-vibrancy='false'] html,
@@ -2666,18 +2198,21 @@ html[data-summoning] .workbench-home-stage > * {
   background: var(--bg-window) !important;
 }
 
-:root[data-platform='darwin'][data-vibrancy='false'] .sidebar-column.is-rail,
-:root[data-platform='darwin'][data-vibrancy='false'] .workbench-home {
-  background: var(--bg-content) !important;
+:root[data-platform='darwin'][data-vibrancy='false'] .sidebar-column.is-rail {
+  /* Color only — the shorthand wiped the surface-wash gradient and left a
+     visible tint seam against the plate. */
+  background-color: var(--bg-content) !important;
 }
 
 :root[data-platform='darwin'][data-vibrancy='false'] .applications-column {
-  background: var(--bg-content) !important;
+  /* Color only: the shorthand wiped the surface wash (seam at the card gutter). */
+  background-color: var(--bg-content) !important;
 }
 
 /* Settings content pane stays opaque so forms sit on cardboard, not glass. */
 :root[data-platform='darwin'][data-vibrancy='false'] .settings-main {
-  background: var(--bg-content) !important;
+  /* Color only: the shorthand wiped the surface wash (seam at the card gutter). */
+  background-color: var(--bg-content) !important;
 }
 
 .app-shell .detail,
@@ -2768,23 +2303,6 @@ html[data-summoning] .workbench-home-stage > * {
   -webkit-app-region: drag;
 }
 
-.app-shell[data-chrome-lead='flush']:not(:has(.agent-column:not([hidden]))):not(
-    :has(.applications-column:not([hidden]))
-  )
-  .workbench-home-chrome,
-.app-shell[data-chrome-lead='rail']:not(:has(.agent-column:not([hidden]))):not(
-    :has(.applications-column:not([hidden]))
-  )
-  .workbench-home-chrome {
-  padding-left: var(--chrome-lead-content);
-  -webkit-app-region: drag;
-}
-
-.app-shell.is-sidebar-rail .workbench-home {
-  padding-top: 0;
-  box-shadow: none;
-}
-
 .app-shell.panel-flush-top .terminal-host-chrome button,
 .app-shell.panel-flush-top .terminal-host-chrome label,
 .app-shell.panel-flush-top .terminal-host-chrome select,
@@ -2826,11 +2344,7 @@ html[data-summoning] .workbench-home-stage > * {
 .app-shell[data-chrome-lead='flush'] .file-viewer-header select,
 .app-shell[data-chrome-lead='flush'] .file-viewer-header .btn,
 .app-shell[data-chrome-lead='flush'] .workspace-preview-chrome button,
-.app-shell[data-chrome-lead='flush'] .workspace-preview-chrome .btn,
-.app-shell[data-chrome-lead='flush'] .workbench-home-chrome button,
-.app-shell[data-chrome-lead='flush'] .workbench-home-chrome .btn,
-.app-shell.is-sidebar-rail .workbench-home-chrome button,
-.app-shell.is-sidebar-rail .workbench-home-chrome .btn {
+.app-shell[data-chrome-lead='flush'] .workspace-preview-chrome .btn {
   -webkit-app-region: no-drag;
 }
 
@@ -3130,79 +2644,6 @@ html[data-summoning] .workbench-home-stage > * {
   color: var(--text);
   text-decoration: underline;
   text-underline-offset: 3px;
-}
-
-.session-window.pip-window {
-  overflow: hidden;
-}
-
-.pip-window .pip-body {
-  position: relative;
-  flex: 1 1 auto;
-  min-height: 0;
-  padding-top: var(--session-titlebar-h);
-  overflow: auto;
-  overscroll-behavior: contain;
-  box-sizing: border-box;
-}
-
-.pip-window .pip-body > .empty-state {
-  min-height: calc(100% - 8px);
-  padding: 24px 16px;
-}
-
-.pip-window > .dock.pip-dock {
-  flex: 0 0 auto;
-  z-index: 4;
-  background: var(--bg-window);
-}
-
-.pip-task-list {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 4px 8px 12px;
-}
-
-.pip-task-group-label {
-  padding: 8px 8px 4px;
-  color: var(--text-tertiary);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-}
-
-.pip-task {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-
-.pip-task-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  height: 32px;
-  margin: 0;
-  padding: 0 8px;
-  border: 0;
-  border-radius: 7px;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-}
-
-.pip-task-title {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 13px;
-  font-weight: 500;
-  line-height: 1.2;
 }
 
 /* Drop the main-window “card” chrome so content is flush with the title bar. */
@@ -4742,6 +4183,48 @@ kbd {
   height: var(--surface-pattern-band);
   z-index: 0;
   pointer-events: none;
+  background: var(--surface-pattern-fade);
+}
+
+/*
+ * Collapsed sidebar strip: it sits on the agent plate's left edge, so it has
+ * to carry the same wash — a flat strip next to the textured plate drew a hard
+ * vertical seam. The tile is shifted by the strip width so it meets the
+ * plate's tile at the boundary with no phase jump.
+ */
+:root[data-surface-pattern]:not([data-surface-pattern='none']) .sidebar-column.is-rail {
+  background-color: var(--bg-content);
+  background-image: var(--surface-pattern-atmosphere);
+  background-repeat: no-repeat;
+  background-size: 100% var(--surface-pattern-band);
+}
+
+:root[data-surface-pattern]:not([data-surface-pattern='none']) .sidebar-column.is-rail::before,
+:root[data-surface-pattern]:not([data-surface-pattern='none']) .sidebar-column.is-rail::after {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto;
+  height: var(--surface-pattern-band);
+  z-index: 0;
+  pointer-events: none;
+}
+
+:root[data-surface-pattern]:not([data-surface-pattern='none']) .sidebar-column.is-rail::before {
+  background-color: var(--surface-pattern-ink);
+  opacity: min(0.92, calc(var(--surface-pattern-alpha) * var(--surface-pattern-strength, 1)));
+  -webkit-mask-image: var(--surface-pattern-url);
+  mask-image: var(--surface-pattern-url);
+  -webkit-mask-size: var(--surface-pattern-size);
+  mask-size: var(--surface-pattern-size);
+  -webkit-mask-repeat: repeat;
+  mask-repeat: repeat;
+  -webkit-mask-position: var(--sidebar-rail-reserved) 0;
+  mask-position: var(--sidebar-rail-reserved) 0;
+  -webkit-mask-source-type: alpha;
+  mask-mode: alpha;
+}
+
+:root[data-surface-pattern]:not([data-surface-pattern='none']) .sidebar-column.is-rail::after {
   background: var(--surface-pattern-fade);
 }
 
@@ -9098,7 +8581,6 @@ button.tool-row {
   color: var(--text-tertiary);
 }
 
-
 /* Transcript shell card — always a dark plate (not the live PTY wash). */
 .detail-terminal {
   background: #101012;
@@ -12732,13 +12214,14 @@ button.tool-row {
   display: flex;
   align-items: center;
   gap: 8px;
-  /* Chip ~24px + 4px air above/below (border-box). */
-  height: 32px;
+  /* Chip ~24px + 4px air above, 6px below so the strip doesn't sit on the
+     window edge (border-box). */
+  height: 34px;
   width: min(100%, var(--reading-max));
   max-width: var(--reading-max);
   margin-left: auto;
   margin-right: auto;
-  padding: 4px var(--composer-gutter);
+  padding: 4px var(--composer-gutter) 6px;
   box-sizing: border-box;
   flex: 0 0 auto;
   align-self: center;
@@ -12772,6 +12255,19 @@ button.tool-row {
 .workdir-chip {
   min-width: 0;
   flex: 1 1 auto;
+}
+
+/* The prompt is a raised white card now; a filled grey pill under it reads as
+   a second, competing surface. Idle path chip is a ghost like New / the trail
+   icons, so the whole strip is one quiet line of chrome below the card. */
+.workdir-chip .chip:not(.active):not(.danger) {
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.workdir-chip .chip:not(.active):not(.danger):hover {
+  background: var(--bg-hover);
+  color: var(--text);
 }
 
 .tools-artifact-count {
@@ -15565,4 +15061,130 @@ button.tool-row {
 .file-columns:has(> .file-column:only-child > .empty-state) > .file-column {
   width: 100%;
   max-width: none;
+}
+
+/* ==========================================================================
+   App column — side peek (wide column) and list Manage mode
+   ========================================================================== */
+
+/* Single click previews beside the list; double click opens the full layer. */
+.applications-split[data-pane='split'] {
+  flex-direction: row;
+}
+
+.applications-split[data-pane='split'] > .applications-object-list {
+  flex: 0 0 clamp(320px, 44%, 560px);
+  width: clamp(320px, 44%, 560px);
+}
+
+.applications-split[data-pane='split'] > .applications-object-detail.is-peek {
+  flex: 1 1 auto;
+  min-width: 0;
+  box-shadow: inset 0.5px 0 0 var(--border);
+}
+
+.applications-split[data-pane='split'] .knowledge-folder-rail {
+  flex-basis: 136px;
+  width: 136px;
+}
+
+/* Manage: rows grow a checkbox and toggle on click. */
+.applications-panel[data-managing='true'] .applications-object-row,
+.applications-panel[data-managing='true'] .inline-review-file-row {
+  position: relative;
+  padding-left: 34px;
+}
+
+.applications-panel[data-managing='true'] .applications-object-row::before,
+.applications-panel[data-managing='true'] .inline-review-file-row::before {
+  content: '';
+  position: absolute;
+  left: 11px;
+  top: 50%;
+  width: 14px;
+  height: 14px;
+  margin-top: -7px;
+  box-sizing: border-box;
+  border-radius: 4px;
+  border: 1.5px solid color-mix(in srgb, var(--text) 32%, transparent);
+  background: transparent;
+  pointer-events: none;
+}
+
+.applications-panel[data-managing='true'] .applications-object-row[data-selected='true']::before,
+.applications-panel[data-managing='true'] .inline-review-file-row[data-selected='true']::before {
+  border-color: var(--accent);
+  background:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14'%3E%3Cpath d='M3.5 7.2l2.3 2.3 4.7-4.9' fill='none' stroke='white' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
+      center / 12px no-repeat,
+    var(--accent);
+}
+
+/* Focus ring is not a selection while managing. */
+.applications-panel[data-managing='true']
+  .applications-object-row[data-active='true']:not([data-selected='true']):not(.multi) {
+  background: transparent;
+}
+
+.applications-manage-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 32px;
+  padding: 2px 10px 4px;
+  box-sizing: border-box;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.applications-manage-bar > .spacer {
+  flex: 1 1 auto;
+}
+
+.applications-manage-count {
+  font-variant-numeric: tabular-nums;
+  margin-right: 4px;
+}
+
+.applications-manage-bar .btn.is-destructive:not(:disabled) {
+  color: var(--danger, #d14343);
+}
+
+/* New-session empty: what Home used to say, as one quiet line. */
+.empty-workbench-facts {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: baseline;
+  gap: 2px 0;
+  margin-top: 10px;
+  max-width: min(420px, 100%);
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+.empty-workbench-fact-wrap {
+  display: inline-flex;
+  align-items: baseline;
+}
+
+.empty-workbench-fact-sep {
+  padding: 0 6px;
+  opacity: 0.7;
+}
+
+.empty-workbench-fact {
+  border: 0;
+  padding: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.empty-workbench-fact:hover {
+  color: var(--text-secondary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }

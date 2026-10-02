@@ -337,11 +337,14 @@ export interface FileSessionsDeleteResult extends FileSessionsState {
   removed: string[]
 }
 
+/** Live disk status for a file-session path. `directory` is browsable in Storage. */
+export type FilePathStatus = 'ok' | 'file_missing' | 'dir_missing' | 'directory'
+
 /** One row in the sidebar “Show file sessions” list. */
 export interface FileSessionListEntry {
   fileId: string
   path: string
-  pathStatus: 'ok' | 'file_missing' | 'dir_missing'
+  pathStatus: FilePathStatus
   sessionId: string
   title: string
   createdAt: number
@@ -1711,11 +1714,6 @@ export interface VavApi {
      */
     revealInList(conversationId: string): Promise<void>
     /**
-     * Shrink (or restore) the main window as a picture-in-picture shell.
-     * Main owns bounds / always-on-top; the renderer switches layout.
-     */
-    setPictureInPicture(enabled: boolean): Promise<void>
-    /**
      * Close the companion window for this conversation so the main shell can
      * host the live terminal again (“Take it back”).
      */
@@ -2425,7 +2423,6 @@ export const IPC = {
   windowE2eDismissMenu: 'vav:window:e2e-dismiss-menu',
   windowOpenSession: 'vav:window:open-session',
   windowRevealInList: 'vav:window:reveal-in-list',
-  windowSetPictureInPicture: 'vav:window:set-picture-in-picture',
   windowCloseDetached: 'vav:window:close-detached',
   windowNewDetached: 'vav:window:new-detached',
   windowNewSessionHere: 'vav:window:new-session-here',

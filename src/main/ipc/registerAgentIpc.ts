@@ -123,9 +123,17 @@ export function registerAgentIpc(
   })
   ipcMain.handle(
     IPC.agentAnswerSecrets,
-    (_event, id: string, toolCallId: string, payload: SecretAnswerPayload) => {
+    async (_event, id: string, toolCallId: string, payload: SecretAnswerPayload) => {
       const granted = payload?.declined ? 0 : Object.keys(payload?.values ?? {}).length
       logUserAnswer(id, toolCallId, granted)
+      // Turns run on the vav-server control plane, so the parked
+      // `request_for_secret` lives there — not in this process's runtime.
+      // Same JSON reply the phone sends; the host's AgentRuntime.answer parses it.
+      const declined = !payload || payload.declined === true || granted === 0
+      const answer = JSON.stringify(
+        declined ? { declined: true } : { declined: false, values: payload.values }
+      )
+      if (await runtimes.tryRemoteAnswer?.(id, toolCallId, answer)) return true
       return runtimes.answerSecretsBuiltin(id, toolCallId, payload ?? { declined: true })
     }
   )

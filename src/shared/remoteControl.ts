@@ -131,6 +131,13 @@ export type RemoteHello = {
    * on this control-plane protocol. Same tailcat pipe, different layer.
    */
   role?: 'phone' | 'daemon'
+  /**
+   * Stable controller id (machineId) and the grant it already holds. A daemon
+   * hello over tailcat used to drop these, so the host keyed the grant by
+   * device name — two Macs with the same name evicted each other's pairing.
+   */
+  clientId?: string
+  grantId?: string
 }
 
 export type RemoteSendImage = {
@@ -660,9 +667,19 @@ export function parseClientMessage(value: unknown): RemoteClientMessage | null {
       if (typeof raw.proto !== 'number') return null
       const device = typeof raw.device === 'string' ? raw.device : undefined
       const role = raw.role === 'daemon' || raw.role === 'phone' ? raw.role : undefined
-      return role
-        ? { type: 'hello', proto: raw.proto, auth: raw.auth, device, role }
-        : { type: 'hello', proto: raw.proto, auth: raw.auth, device }
+      const clientId =
+        typeof raw.clientId === 'string' && raw.clientId.trim() ? raw.clientId.trim().slice(0, 128) : undefined
+      const grantId =
+        typeof raw.grantId === 'string' && raw.grantId.trim() ? raw.grantId.trim().slice(0, 128) : undefined
+      return {
+        type: 'hello',
+        proto: raw.proto,
+        auth: raw.auth,
+        device,
+        ...(role ? { role } : {}),
+        ...(clientId ? { clientId } : {}),
+        ...(grantId ? { grantId } : {})
+      }
     }
     case 'send': {
       if (typeof raw.conversationId !== 'string' || raw.conversationId.length === 0) return null

@@ -170,9 +170,13 @@ export function seedEmptyConversationPatch<C extends { id: string }, M>(
     conversations: state.conversations.some((c) => c.id === meta.id)
       ? state.conversations
       : [meta, ...state.conversations],
-    messages: { ...state.messages, [meta.id]: [] as M },
+    // A turn event for this id can beat the create reply (send right after
+    // create, a scheduled run). Seeding [] over it dropped the first prompt.
+    messages:
+      meta.id in state.messages ? state.messages : { ...state.messages, [meta.id]: [] as M },
     messagesHydrated: { ...state.messagesHydrated, [meta.id]: true },
-    activeLeaf: { ...state.activeLeaf, [meta.id]: null }
+    activeLeaf:
+      meta.id in state.activeLeaf ? state.activeLeaf : { ...state.activeLeaf, [meta.id]: null }
   }
 }
 

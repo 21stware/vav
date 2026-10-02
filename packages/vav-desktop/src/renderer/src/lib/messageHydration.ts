@@ -24,6 +24,55 @@ export function mergeHydratedMessages(
   return order.map((id) => byId.get(id)!)
 }
 
+/**
+ * Resync after a turn: main's copy is the sealed one, so it wins on id
+ * collision (a stale partial in the renderer must not mask the final reply).
+ * Renderer-only rows (not yet persisted) are kept; a richer local
+ * `changeSetId` survives a disk row that omits it.
+ */
+export function mergeResyncedMessages(
+  disk: ChatMessage[],
+  live: ChatMessage[] | undefined
+): ChatMessage[] {
+  if (!live?.length) return disk
+  const diskIds = new Set(disk.map((message) => message.id))
+  const liveById = new Map(live.map((message) => [message.id, message]))
+  const merged = disk.map((message) => {
+    const local = liveById.get(message.id)
+    if (local?.changeSetId && !message.changeSetId) {
+      return { ...message, changeSetId: local.changeSetId }
+    }
+    return message
+  })
+  for (const message of live) if (!diskIds.has(message.id)) merged.push(message)
+  return merged
+}
+
+/** Apply {@link mergeResyncedMessages} and advance the leaf only down the same branch. */
+export function conversationResyncPatch(
+  state: {
+    messages: Record<string, ChatMessage[]>
+    messagesHydrated: Record<string, boolean>
+    activeLeaf: Record<string, string | null>
+  },
+  id: string,
+  conversation: { messages: ChatMessage[]; activeLeafId: string | null }
+): {
+  messages: Record<string, ChatMessage[]>
+  messagesHydrated: Record<string, boolean>
+  activeLeaf: Record<string, string | null>
+} {
+  const merged = mergeResyncedMessages(conversation.messages, state.messages[id])
+  return {
+    messages: { ...state.messages, [id]: merged },
+    messagesHydrated: { ...state.messagesHydrated, [id]: true },
+    activeLeaf: {
+      ...state.activeLeaf,
+      [id]: preferredActiveLeaf(merged, state.activeLeaf[id], conversation.activeLeafId)
+    }
+  }
+}
+
 export function nextHydrationGeneration(gens: Map<string, number>, id: string): number {
   const next = (gens.get(id) ?? 0) + 1
   gens.set(id, next)

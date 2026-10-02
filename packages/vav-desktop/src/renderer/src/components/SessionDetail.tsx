@@ -182,22 +182,30 @@ export function SessionDetail({
     }
   }, [detachedElsewhere, activeId])
 
+  const applicationsVisible = useSessionStore((s) => s.applicationsVisible)
   const shellLeading = useShowShellLeading()
   const showShellLeading = (variant === 'main' || variant === 'workspace') && shellLeading
 
   const chromeSession =
     variant === 'workspace' || previewEdit ? (fileSessionChrome ?? null) : null
 
+  // Thread surfaces float the chrome over the log (CSS overlay plate). Electron
+  // resolves -webkit-app-region in DOM order, so an overlay rendered *before*
+  // the log loses its drag strip to any later no-drag box underneath it
+  // (empty-session canvas, transcript buttons). Paint it last instead.
+  const chromeOverlay = !previewEdit && !(swarmMulti && swarmLayout)
   const chrome =
     showAgentSwitcher && !hideChrome ? (
       <AgentModeChrome
+        overlay={chromeOverlay}
         conversationId={activeId}
         agentBinaryName={agentKey}
         showSearch
         showShellLeading={showShellLeading}
         fileSessionChrome={chromeSession}
         onClose={
-          variant === 'main' && !isCompanionSessionShell()
+          // Closing the agent with the app column hidden would leave nothing.
+          variant === 'main' && !isCompanionSessionShell() && applicationsVisible
             ? () => useSessionStore.getState().setAgentVisible(false)
             : undefined
         }
@@ -227,7 +235,7 @@ export function SessionDetail({
           <div className="session-drop-hint">{t('composer.dropFiles')}</div>
         </div>
       )}
-      {chrome}
+      {chromeOverlay ? null : chrome}
       {errorBanner && (
         <ErrorBanner
           message={errorBanner}
@@ -315,6 +323,7 @@ export function SessionDetail({
         )}
         <ToolsPanel variant={toolsVariant} />
       </div>
+      {chromeOverlay ? chrome : null}
     </main>
   )
 }
@@ -330,6 +339,7 @@ export function AgentModeChrome({
   fileSessionChrome = null,
   trail = null,
   showNewSession = false,
+  overlay = false,
   onClose
 }: {
   conversationId: string
@@ -339,6 +349,8 @@ export function AgentModeChrome({
   fileSessionChrome?: FileSessionChromeProps | null
   trail?: ReactNode
   showNewSession?: boolean
+  /** Floats over the thread log — repaint the surface wash on the plate. */
+  overlay?: boolean
   /** Unused: split actions moved to the empty-area context menu. */
   hideSplit?: boolean
   onClose?: () => void
@@ -364,7 +376,7 @@ export function AgentModeChrome({
 
   return (
     <div
-      className={`terminal-host-chrome agent-mode-chrome${showFileSessionChrome ? ' has-file-session' : ''}${showShellLeading ? ' has-shell-leading' : ''}`}
+      className={`terminal-host-chrome agent-mode-chrome${overlay ? ' is-overlay-plate' : ''}${showFileSessionChrome ? ' has-file-session' : ''}${showShellLeading ? ' has-shell-leading' : ''}`}
     >
       <div className="agent-mode-chrome-row" id="sessionBar">
         {showShellLeading ? (

@@ -654,7 +654,14 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     const nextEntries = error ? [] : listing.entries
 
     // Root gone → drop from recent/pinned so the switcher never offers a dead path.
-    if (error === 'ENOENT' && live.root && path === live.root) {
+    // Only a real ENOENT — "not found" also matches host / conversation lookup
+    // failures (offline daemon, unknown session), which used to forget folders.
+    if (
+      error === 'ENOENT' &&
+      /ENOENT|no such file/i.test(listing.error ?? '') &&
+      live.root &&
+      path === live.root
+    ) {
       void (async () => {
         try {
           const { useSessionStore } = await import('./sessionStore')

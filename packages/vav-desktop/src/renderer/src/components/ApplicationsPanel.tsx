@@ -27,7 +27,7 @@ import {
   readAppFolderDrag
 } from '@shared/appFolders'
 import { isDbSession, isKnowledgeSession, isTimerDefinition } from '@shared/sessionKind'
-import { isLocalMachine, listedServices, normalizeMachineId } from '@shared/workspaceHost'
+import { conversationOnMachine, isLocalMachine, listedServices, normalizeMachineId } from '@shared/workspaceHost'
 import { useSessionStore } from '../state/sessionStore'
 import { useT } from '../i18n/useT'
 import { absoluteTime, relativeTime } from '../lib/format'
@@ -35,7 +35,14 @@ import { basename } from '../lib/path'
 import { countWritingUnits } from '../lib/writingStats'
 import { openPickedFileSessions } from '../lib/openFileSession'
 import { conversationForAppMode } from '../lib/appColumnObject'
-import { appColumnSurface, appObjectListKey, dataRowsNeedingSchema, knowledgeNoteIdsForPreview } from '../lib/apps/appColumnLoad'
+import { appCanPeek } from '../lib/applicationsWidth'
+import {
+  appColumnSurface,
+  appObjectListKey,
+  appObjectsOnMachine,
+  dataRowsNeedingSchema,
+  knowledgeNoteIdsForPreview
+} from '../lib/apps/appColumnLoad'
 import {
   prefetchAppModeSurfaces,
   warmDataFileWorkspace,
@@ -77,6 +84,7 @@ import { nextConversationSelection } from '../state/sessionListMerge'
 import { showMenu, type MenuItem } from '../lib/nativeMenu'
 import {
   AppObjectListToolbar,
+  folderMoveMenuItems,
   useAppObjectList,
   useAppObjectListKeys,
   useAppObjectListSelection
@@ -103,6 +111,21 @@ export function ApplicationsPanel(): React.JSX.Element {
   const detailOpen = useSessionStore((s) => s.applicationsDetailOpen)
   const setApplicationsDetailOpen = useSessionStore((s) => s.setApplicationsDetailOpen)
   const [storagePath, setStoragePath] = useState<string | null>(null)
+  const managing = useSessionStore((s) => s.appListManage)
+  const panelRef = useRef<HTMLElement>(null)
+  const [wide, setWide] = useState(false)
+
+  useEffect(() => {
+    const node = panelRef.current
+    if (!node) return
+    const apply = (width: number): void => setWide(appCanPeek(width))
+    apply(node.getBoundingClientRect().width)
+    const observer = new ResizeObserver((entries) => {
+      apply(entries[0]?.contentRect.width ?? 0)
+    })
+    observer.observe(node)
+    return () => observer.disconnect()
+  }, [])
 
   useEffect(() => {
     setFilePreviewHost(true)
@@ -125,6 +148,7 @@ export function ApplicationsPanel(): React.JSX.Element {
   const openDetail = (): void => setApplicationsDetailOpen(true)
 
   const showingDetail = detailOpen && hasDetail
+  const peeking = wide && !managing && !showingDetail && hasDetail
   const trailing = showingDetail ? (
     mode === 'devices' && deviceId ? <DevicesDetailActions selectedId={deviceId} /> : null
   ) : plugin ? (
@@ -135,17 +159,19 @@ export function ApplicationsPanel(): React.JSX.Element {
 
   return (
     <aside
+      ref={panelRef}
       className="applications-panel app-panel"
       data-testid="applications-panel"
       data-app={mode}
-      data-pane={showingDetail ? 'detail' : 'list'}
+      data-pane={showingDetail ? 'detail' : peeking ? 'split' : 'list'}
+      data-managing={managing ? 'true' : 'false'}
     >
       <AppColumnFocusSync
         mode={mode}
         conversationId={conversation?.id ?? null}
         previewPath={previewPath}
         storagePath={storagePath}
-        showingDetail={showingDetail}
+        showingDetail={showingDetail || peeking}
       />
       <AppModeTabs trailing={trailing} canBack={showingDetail} />
       <div className="applications-main">
@@ -155,6 +181,7 @@ export function ApplicationsPanel(): React.JSX.Element {
           previewPath={previewPath}
           onStoragePath={setStoragePath}
           onOpenDetail={openDetail}
+          canPeek={wide && !managing}
           deviceId={deviceId}
           onSelectDevice={setDeviceId}
           onOpenDevice={(id) => {
@@ -178,6 +205,7 @@ function AppModePane({
   previewPath,
   onStoragePath,
   onOpenDetail,
+  canPeek,
   deviceId,
   onSelectDevice,
   onOpenDevice
@@ -187,6 +215,7 @@ function AppModePane({
   previewPath: string | null
   onStoragePath: (path: string | null) => void
   onOpenDetail: () => void
+  canPeek: boolean
   deviceId: string | null
   onSelectDevice: (id: string | null) => void
   onOpenDevice: (id: string) => void
@@ -198,7 +227,7 @@ function AppModePane({
     ? plugin.hasDetail({ conversation, filePreviewOpen: modeId === 'storage' && filePreviewOpen })
     : modeId === 'devices' && deviceId !== null
   const showingDetail = detailOpen && hasDetail
-  const surface = appColumnSurface(showingDetail)
+  const surface = appColumnSurface(showingDetail, canPeek && hasDetail)
 
   return (
     <div
@@ -211,9 +240,9 @@ function AppModePane({
         data-has-detail={hasDetail ? 'true' : 'false'}
         data-pane={surface}
       >
-        {surface === 'list' ? (
+        {surface !== 'detail' ? (
           <div className="applications-object-list" data-testid="applications-object-list">
-            {plugin ? <plugin.List onOpenDetail={onOpenDetail} /> : null}
+            {plugin ? <plugin.List onOpenDetail={onOpenDetail} canPeek={canPeek} /> : null}
             {modeId === 'devices' ? (
               <DevicesObjectList
                 selectedId={deviceId}
@@ -222,8 +251,12 @@ function AppModePane({
               />
             ) : null}
           </div>
-        ) : (
-          <div className="applications-object-detail" data-testid="applications-object-detail">
+        ) : null}
+        {surface !== 'list' ? (
+          <div
+            className={`applications-object-detail${surface === 'split' ? ' is-peek' : ''}`}
+            data-testid={surface === 'split' ? 'applications-object-peek' : 'applications-object-detail'}
+          >
             {plugin ? (
               <plugin.Detail
                 conversation={conversation}
@@ -236,7 +269,7 @@ function AppModePane({
               <DevicesObjectDetail selectedId={deviceId} />
             ) : null}
           </div>
-        )}
+        ) : null}
       </div>
     </div>
   )
@@ -263,7 +296,7 @@ function ScheduledActions({ onOpenDetail }: AppColumnListProps): React.JSX.Eleme
   )
 }
 
-function StorageActions({ onOpenDetail }: AppColumnListProps): React.JSX.Element | null {
+function StorageActions(_props: AppColumnListProps): React.JSX.Element | null {
   const t = useT()
   const filesSource = useSessionStore((s) => s.filesSource)
   const windowMachineId = normalizeMachineId(useSessionStore((s) => s.windowMachineId))
@@ -276,11 +309,8 @@ function StorageActions({ onOpenDetail }: AppColumnListProps): React.JSX.Element
       icon={<FolderOpen size={14} strokeWidth={2} aria-hidden />}
       title={t('sidebar.openAFile')}
       label={t('sidebar.openAFile')}
-      onClick={() => {
-        void openPickedFileSessions().then((opened) => {
-          if (opened) onOpenDetail()
-        })
-      }}
+      // Opening a file session already shows its full layer.
+      onClick={() => void openPickedFileSessions()}
     />
   )
 }
@@ -364,8 +394,8 @@ function KnowledgeActions({ onOpenDetail }: AppColumnListProps): React.JSX.Eleme
   )
 }
 
-function StorageList({ onOpenDetail }: AppColumnListProps): React.JSX.Element {
-  return <FileRecentsPanel embedded onOpenDetail={onOpenDetail} />
+function StorageList({ onOpenDetail, canPeek }: AppColumnListProps): React.JSX.Element {
+  return <FileRecentsPanel embedded onOpenDetail={onOpenDetail} canPeek={canPeek} />
 }
 
 function DataList({ onOpenDetail: _onOpenDetail }: AppColumnListProps): React.JSX.Element {
@@ -528,14 +558,30 @@ function listClockTitle(createdLabel: string, created: number, updatedLabel: str
     .join('\n')
 }
 
+/**
+ * Facts survive list remounts (detail ↔ list). Re-opening every data file
+ * through DuckDB / re-reading every note on each Back was the main list cost.
+ */
+const dataCountsCache: Record<string, { tables: number; rows: number }> = {}
+const noteFaceCache = new Map<string, { words: number; preview: string }>()
+
 function DataObjectList(): React.JSX.Element {
   const t = useT()
   const listRef = useRef<HTMLDivElement>(null)
   const sourceKey = useSessionStore((s) =>
-    appObjectListKey(s.conversations, (row) => isDbSession(row) && !row.archived)
+    appObjectListKey(
+      s.conversations,
+      (row) =>
+        isDbSession(row) && !row.archived && conversationOnMachine(row, s.windowMachineId)
+    )
   )
   const source = useMemo(
-    () => useSessionStore.getState().conversations.filter((row) => isDbSession(row) && !row.archived),
+    () =>
+      appObjectsOnMachine(
+        useSessionStore.getState().conversations,
+        useSessionStore.getState().windowMachineId,
+        (row) => isDbSession(row) && !row.archived
+      ),
     [sourceKey]
   )
   const library = coerceAppLibraries(useSessionStore((s) => s.settings.appLibraries)).data
@@ -543,7 +589,9 @@ function DataObjectList(): React.JSX.Element {
   const filedFolder = filedAppFolderId(selectedFolder)
   const [renamingFolderId, setRenamingFolderId] = useState<string | null>(null)
   const dbSchemas = useSessionStore((s) => s.dbSchemas)
-  const [counts, setCounts] = useState<Record<string, { tables: number; rows: number }>>({})
+  const [counts, setCounts] = useState<Record<string, { tables: number; rows: number }>>(() => ({
+    ...dataCountsCache
+  }))
   const openAppObject = useSessionStore((s) => s.openAppObject)
   const createDbConversation = useSessionStore((s) => s.createDbConversation)
   const createDataFromFile = useSessionStore((s) => s.createDataFromFile)
@@ -621,7 +669,9 @@ function DataObjectList(): React.JSX.Element {
       setCounts((prev) => {
         const next = { ...prev }
         for (const pair of pairs) {
-          if (pair) next[pair[0]] = pair[1]
+          if (!pair) continue
+          next[pair[0]] = pair[1]
+          dataCountsCache[pair[0]] = pair[1]
         }
         return next
       })
@@ -630,7 +680,7 @@ function DataObjectList(): React.JSX.Element {
       alive = false
     }
   }, [visibleSchemaKey])
-  const { focusedId, selectedIds, select, selectAll, rowClass, selectionMods } =
+  const { focusedId, selectedIds, select, selectAll, rowClass, selectionMods, managing } =
     useAppObjectListSelection(orderedIds)
   const onMove = useCallback((id: string, range: boolean) => select(id, { shiftKey: range }), [select])
   useAppObjectListKeys({
@@ -685,6 +735,16 @@ function DataObjectList(): React.JSX.Element {
           onSortChange={list.setSort}
           askKind="Data"
           testIdPrefix="data-list"
+          manage={{
+            orderedIds,
+            onDelete: requestDelete,
+            menu: (ids) => [
+              ...folderMoveMenuItems(t, library.folders, (folderId) =>
+                moveAppFolderObjects('data', ids, folderId)
+              ),
+              ...menuFor(rows.filter((row) => ids.includes(row.id)))
+            ]
+          }}
         />
       ) : null}
       <div className="applications-object-body">
@@ -742,6 +802,7 @@ function DataObjectList(): React.JSX.Element {
                   {...appObjectPointerHandlers({
                     onSelect: (event) => select(row.id, event),
                     onOpen: () => openAppObject(row.id),
+                    managing,
                     onMenu: (event) => {
                       const { ids, collapse } = appObjectContextTargets(row.id, selectedIds)
                       if (collapse) select(row.id)
@@ -813,11 +874,19 @@ function KnowledgeObjectList(): React.JSX.Element {
   const t = useT()
   const listRef = useRef<HTMLDivElement>(null)
   const sourceKey = useSessionStore((s) =>
-    appObjectListKey(s.conversations, (row) => isKnowledgeSession(row) && !row.archived)
+    appObjectListKey(
+      s.conversations,
+      (row) =>
+        isKnowledgeSession(row) && !row.archived && conversationOnMachine(row, s.windowMachineId)
+    )
   )
   const source = useMemo(
     () =>
-      useSessionStore.getState().conversations.filter((row) => isKnowledgeSession(row) && !row.archived),
+      appObjectsOnMachine(
+        useSessionStore.getState().conversations,
+        useSessionStore.getState().windowMachineId,
+        (row) => isKnowledgeSession(row) && !row.archived
+      ),
     [sourceKey]
   )
   const openAppObject = useSessionStore((s) => s.openAppObject)
@@ -833,8 +902,14 @@ function KnowledgeObjectList(): React.JSX.Element {
   const [folders, setFolders] = useState<KnowledgeFolder[]>([])
   const [renamingFolderId, setRenamingFolderId] = useState<string | null>(null)
   const [noteFace, setNoteFace] = useState<Record<string, { words: number; preview: string }>>({})
+  const hostStamp = useMemo(() => {
+    const map = new Map<string, number>()
+    for (const host of hosts) map.set(host.id, host.updatedAt ?? 0)
+    return map
+  }, [hosts])
   const list = useAppObjectList()
 
+  const windowMachineId = normalizeMachineId(useSessionStore((s) => s.windowMachineId))
   useEffect(() => {
     let alive = true
     const load = async (): Promise<void> => {
@@ -850,7 +925,7 @@ function KnowledgeObjectList(): React.JSX.Element {
     return window.vav.knowledge?.onChanged(() => {
       void load()
     })
-  }, [])
+  }, [windowMachineId])
 
   useEffect(() => {
     if (selectedFolder === KNOWLEDGE_ALL_NOTES_ID) return
@@ -895,7 +970,18 @@ function KnowledgeObjectList(): React.JSX.Element {
   )
   const visibleNoteKey = visibleNoteIds.join('|')
   useEffect(() => {
-    const needed = visibleNoteIds.filter((id) => !(id in noteFace))
+    const faceKey = (id: string): string => `${id}:${hostStamp.get(id) ?? 0}`
+    const fromCache: Record<string, { words: number; preview: string }> = {}
+    const needed = visibleNoteIds.filter((id) => {
+      if (id in noteFace && noteFaceCache.has(faceKey(id))) return false
+      const hit = noteFaceCache.get(faceKey(id))
+      if (hit) {
+        fromCache[id] = hit
+        return false
+      }
+      return true
+    })
+    if (Object.keys(fromCache).length > 0) setNoteFace((prev) => ({ ...prev, ...fromCache }))
     if (needed.length === 0) return
     let alive = true
     void Promise.all(
@@ -912,7 +998,9 @@ function KnowledgeObjectList(): React.JSX.Element {
       setNoteFace((prev) => {
         const next = { ...prev }
         for (const [id, face] of pairs) {
-          if (face) next[id] = face
+          if (!face) continue
+          next[id] = face
+          noteFaceCache.set(faceKey(id), face)
         }
         return next
       })
@@ -920,7 +1008,7 @@ function KnowledgeObjectList(): React.JSX.Element {
     return () => {
       alive = false
     }
-  }, [visibleNoteKey])
+  }, [visibleNoteKey, hostStamp])
 
   const rows = useMemo(
     () =>
@@ -956,7 +1044,7 @@ function KnowledgeObjectList(): React.JSX.Element {
   }, [hostByConversation, source])
   const inFolderCount = filedFolder ? (folderCounts[filedFolder] ?? 0) : source.length
   const orderedIds = useMemo(() => rows.map((row) => row.id), [rows])
-  const { focusedId, selectedIds, select, selectAll, rowClass, selectionMods } =
+  const { focusedId, selectedIds, select, selectAll, rowClass, selectionMods, managing } =
     useAppObjectListSelection(orderedIds)
   const onMove = useCallback((id: string, range: boolean) => select(id, { shiftKey: range }), [select])
   useAppObjectListKeys({
@@ -1036,6 +1124,19 @@ function KnowledgeObjectList(): React.JSX.Element {
           onSortChange={list.setSort}
           askKind="Knowledge"
           testIdPrefix="knowledge-list"
+          manage={{
+            orderedIds,
+            onDelete: requestDelete,
+            menu: (ids) => [
+              ...folderMoveMenuItems(t, folders, (folderId) => {
+                const hostIds = ids
+                  .map((id) => hostByConversation.get(id)?.id)
+                  .filter((id): id is string => !!id)
+                void window.vav.knowledge?.move(hostIds, folderId)
+              }),
+              ...menuFor(rows.filter((row) => ids.includes(row.id)))
+            ]
+          }}
         />
       ) : null}
       <div className="applications-object-body">
@@ -1089,6 +1190,7 @@ function KnowledgeObjectList(): React.JSX.Element {
                     {...appObjectPointerHandlers({
                       onSelect: (event) => select(row.id, event),
                       onOpen: () => openAppObject(row.id),
+                      managing,
                       onMenu: (event) => {
                         const { ids, collapse } = appObjectContextTargets(row.id, selectedIds)
                         if (collapse) select(row.id)
@@ -1291,10 +1393,7 @@ function DevicesObjectList({
                               {
                                 label: t('sidebar.switchService'),
                                 onSelect: () => {
-                                  void (async () => {
-                                    await useSessionStore.getState().switchMachine(service.id)
-                                    await window.vav.hosts.show(service.id)
-                                  })()
+                                  void useSessionStore.getState().switchMachine(service.id)
                                 }
                               }
                             ]),
@@ -1357,10 +1456,7 @@ function DevicesDetailActions({ selectedId }: { selectedId: string }): React.JSX
 
   const switchService = (machineId: string): void => {
     if (machineId === windowMachineId) return
-    void (async () => {
-      await useSessionStore.getState().switchMachine(machineId)
-      await window.vav.hosts.show(machineId)
-    })()
+    void useSessionStore.getState().switchMachine(machineId)
   }
 
   return (

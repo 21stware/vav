@@ -42,11 +42,12 @@ function markLoading(dir: string): (current: string[]) => string[] {
 export function MachineFilesBrowser({
   root,
   persistKey,
-  onFileOpened
+  canPeek = false
 }: {
   root?: string
   persistKey?: string
-  onFileOpened?: () => void
+  /** Wide app column: a single click previews the file in the side panel. */
+  canPeek?: boolean
 } = {}): React.JSX.Element {
   const t = useT()
   const machineId = normalizeMachineId(useSessionStore((s) => s.windowMachineId))
@@ -233,15 +234,17 @@ export function MachineFilesBrowser({
           viewMode={viewMode}
           columnPath={columnPath}
           filter={filter}
-          onSelect={setSelected}
-          onToggleExpand={toggleExpand}
-          onEnterDir={toggleExpand}
-          onColumnPath={setColumnPath}
-          onOpenFile={(filePath) => {
-            void openFileSessionFromPath(filePath).then((opened) => {
-              if (opened) onFileOpened?.()
-            })
+          onSelect={(entry) => {
+            setSelected(entry)
+            if (canPeek && entry && !entry.isDirectory) {
+              void openFileSessionFromPath(entry.path, { peek: true })
+            }
           }}
+          onToggleExpand={toggleExpand}
+          onEnterDir={enterDir}
+          onColumnPath={setColumnPath}
+          // Opening an app object already shows its full layer.
+          onOpenFile={(filePath) => void openFileSessionFromPath(filePath)}
         />
       )}
     </div>

@@ -74,8 +74,6 @@ test('empty session hero plays logo and name empty-in on a new visit', async () 
     const { page } = harness
     await expect(page.locator('.empty-state-session')).toBeVisible()
 
-    await page.locator('[data-testid="home-page"]').click()
-    await expect(page.locator('[data-testid="workbench-home"]')).toBeVisible()
     await page.locator('[data-testid="new-session"]').click()
     await expect(page.locator('.empty-state-session')).toBeVisible()
 

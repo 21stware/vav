@@ -2751,7 +2751,9 @@
   width: min(100%, var(--reading-max));
   max-width: var(--reading-max);
   padding-top: 6px;
-  padding-bottom: 0;
+  /* The raised card's float shadow spills ~12px down; a few px of air keeps it
+     from landing on the path chip. tools-header still owns the rest. */
+  padding-bottom: 4px;
 }
 
 /*

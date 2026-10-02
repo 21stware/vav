@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { stat } from 'node:fs/promises'
+import type { FilePathStatus } from '@shared/ipc'
 import type { Conversation, ThinkingLevel } from '@shared/types'
 import { parseThinkingLevel } from '@shared/thinkingLevel'
 import { isFileSessionEligible } from '@shared/clipPath'
@@ -116,11 +117,11 @@ export class FileSessionStore {
   /** Path + live existence for the main shell file-session panel. */
   resolve(fileId: string): {
     path: string
-    pathStatus: 'ok' | 'file_missing' | 'dir_missing'
+    pathStatus: FilePathStatus
   } | null {
     const path = this.pathForFileId(fileId)
     if (!path) return null
-    return { path, pathStatus: pathExistence(path) }
+    return { path, pathStatus: filePathStatus(path) }
   }
 
   /**
@@ -199,6 +200,7 @@ export class FileSessionStore {
   }> {
     if (!this.conversations) throw new Error('FileSessionStore not bound')
     if (!isFileSessionEligible(path)) throw new Error('preview_only')
+    if (filePathStatus(path) === 'directory') throw new Error('directory')
     const identity = await this.resolveIdentity(path)
     let bundle = this.index.byId[identity.fileId]
     const level = parseThinkingLevel(thinkingLevel)
@@ -344,7 +346,7 @@ export class FileSessionStore {
   listAll(): {
     fileId: string
     path: string
-    pathStatus: 'ok' | 'file_missing' | 'dir_missing'
+    pathStatus: FilePathStatus
     sessionId: string
     title: string
     createdAt: number
@@ -357,7 +359,7 @@ export class FileSessionStore {
     const out: {
       fileId: string
       path: string
-      pathStatus: 'ok' | 'file_missing' | 'dir_missing'
+      pathStatus: FilePathStatus
       sessionId: string
       title: string
       createdAt: number
@@ -368,7 +370,7 @@ export class FileSessionStore {
     }[] = []
     for (const bundle of Object.values(this.index.byId)) {
       if (!isFileSessionEligible(bundle.path)) continue
-      const pathStatus = pathExistence(bundle.path)
+      const pathStatus = filePathStatus(bundle.path)
       for (const sessionId of bundle.sessionIds) {
         const c = this.conversations.get(sessionId)
         if (!c) continue
@@ -605,15 +607,14 @@ function dirnameSafe(path: string): string {
   return i > 0 ? path.slice(0, i) : path
 }
 
-function pathExistence(path: string): 'ok' | 'file_missing' | 'dir_missing' {
+export function filePathStatus(path: string): FilePathStatus {
   if (!path) return 'file_missing'
   try {
     const dir = dirnameSafe(path)
     if (dir && dir !== path && !existsSync(dir)) return 'dir_missing'
     if (!existsSync(path)) return 'file_missing'
-    // If path exists but is a directory, treat as missing file for preview.
     try {
-      if (statSync(path).isDirectory()) return 'file_missing'
+      if (statSync(path).isDirectory()) return 'directory'
     } catch {
       return 'file_missing'
     }

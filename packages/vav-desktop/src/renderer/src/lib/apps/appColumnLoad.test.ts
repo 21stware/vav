@@ -3,8 +3,10 @@ import { describe, it } from 'node:test'
 import {
   appColumnSurface,
   appObjectListKey,
+  appObjectsOnMachine,
   dataRowsNeedingSchema,
   fileSessionListKey,
+  fileSessionsOnMachine,
   knowledgeNoteIdsForPreview
 } from './appColumnLoad.ts'
 
@@ -12,6 +14,45 @@ describe('appColumnSurface', () => {
   it('mounts list or detail, never both', () => {
     assert.equal(appColumnSurface(false), 'list')
     assert.equal(appColumnSurface(true), 'detail')
+  })
+
+  it('peeks beside the list only when the full layer is closed', () => {
+    assert.equal(appColumnSurface(false, true), 'split')
+    assert.equal(appColumnSurface(true, true), 'detail')
+    assert.equal(appColumnSurface(false, false), 'list')
+  })
+})
+
+describe('appObjectsOnMachine', () => {
+  it('keeps objects tagged to the current device', () => {
+    assert.deepEqual(
+      appObjectsOnMachine(
+        [
+          { id: 'local-note', machineId: 'local' },
+          { id: 'remote-note', machineId: 'box' },
+          { id: 'implicit-local' }
+        ],
+        'local',
+        () => true
+      ).map((row) => row.id),
+      ['local-note', 'implicit-local']
+    )
+  })
+})
+
+describe('fileSessionsOnMachine', () => {
+  it('drops recents whose conversation lives on another device', () => {
+    assert.deepEqual(
+      fileSessionsOnMachine(
+        [{ sessionId: 'a' }, { sessionId: 'b' }, { sessionId: 'orphan' }],
+        [
+          { id: 'a', machineId: 'local' },
+          { id: 'b', machineId: 'box' }
+        ],
+        'local'
+      ).map((row) => row.sessionId),
+      ['a', 'orphan']
+    )
   })
 })
 

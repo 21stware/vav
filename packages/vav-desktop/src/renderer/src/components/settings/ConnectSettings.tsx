@@ -388,6 +388,13 @@ function IncomingControllers({ enabled }: { enabled: boolean }): React.JSX.Eleme
   const t = useT()
   const showDialog = useSessionStore((s) => s.showDialog)
   const [rows, setRows] = useState<IncomingController[]>([])
+  const [actionError, setActionError] = useState<string | null>(null)
+  const runAction = (action: () => Promise<void>): void => {
+    setActionError(null)
+    void action().catch((err: unknown) => {
+      setActionError(err instanceof Error ? err.message : String(err))
+    })
+  }
 
   useEffect(() => {
     let alive = true
@@ -428,7 +435,7 @@ function IncomingControllers({ enabled }: { enabled: boolean }): React.JSX.Eleme
       confirmLabel: t('machines.unpair'),
       destructive: true,
       onConfirm: () => {
-        void window.vav.hosts.unpairIncoming(row.id)
+        runAction(() => window.vav.hosts.unpairIncoming(row.id))
       }
     })
   }
@@ -444,6 +451,7 @@ function IncomingControllers({ enabled }: { enabled: boolean }): React.JSX.Eleme
           message={t('machines.incomingConflict', { count: String(onlineCount) })}
         />
       ) : null}
+      {actionError ? <InlineAlert kind="error" message={actionError} /> : null}
       {rows.length === 0 ? (
         <p className="connect-lede">{t('machines.incomingEmpty')}</p>
       ) : (
@@ -466,7 +474,7 @@ function IncomingControllers({ enabled }: { enabled: boolean }): React.JSX.Eleme
                       label={t('machines.disconnect')}
                       size="sm"
                       testId={`settings-incoming-disconnect-${row.id}`}
-                      onClick={() => void window.vav.hosts.disconnectIncoming(row.id)}
+                      onClick={() => runAction(() => window.vav.hosts.disconnectIncoming(row.id))}
                     />
                   ) : null}
                   <Button

@@ -9,8 +9,9 @@ import {
 } from 'react'
 import type { ChatMessage, LeafCompaction } from '@shared/types'
 import { compactionBoundaryIndex, compactionForLeaf } from '@shared/compaction'
-import { ROOT_LEAF, branchPoints } from '@shared/thread'
+import { branchPoints } from '@shared/thread'
 import { getProjection } from '../state/StreamProjection'
+import { placeBranchPagers } from '../lib/branchPagers'
 import { paintChromeSolid } from '../lib/chromeSolid'
 import { visitScene } from '../lib/emptyEntrance'
 import {
@@ -38,6 +39,7 @@ import { AgentBrandMark } from './AgentBrandMark'
 import { SessionWorkspaceChrome } from './SessionWorkspaceChrome'
 import { EmptyQuotaUsage } from './EmptyQuotaUsage'
 import { FirstRunChecklist } from './FirstRunChecklist'
+import { EmptyWorkbenchFacts } from './EmptyWorkbenchFacts'
 import { handleSessionSplitContextMenu } from '../lib/sessionSplit'
 import { useT } from '../i18n/useT'
 
@@ -467,6 +469,11 @@ export function Transcript({
    */
   const branches = useMemo(() => branchPoints(nodes ?? [], activeLeaf), [nodes, activeLeaf])
 
+  const { byMessage: pagerByMessage, pending: pendingPager } = useMemo(
+    () => placeBranchPagers(branches),
+    [branches]
+  )
+
   const onStepBranch = useCallback(
     (key: string, step: number) => {
       const point = branches.get(key)
@@ -490,7 +497,6 @@ export function Transcript({
     const el = scrollRef.current
     if (el) paintChromeSolid(el, el.scrollTop)
   }, [activeId, isEmpty])
-  const rootBranch = branches.get(ROOT_LEAF)
 
   // Manual compact is VAV-only; CLI hosts manage their own context.
   const activeCompaction = useMemo(
@@ -609,7 +615,7 @@ export function Transcript({
       )
     }
     const message = item.message
-    const branch = branches.get(message.id)
+    const branch = pagerByMessage.get(message.id)
     return (
       <div
         key={item.key}
@@ -621,8 +627,9 @@ export function Transcript({
           highlight={highlight && search.matchIds.includes(message.id) ? highlight : undefined}
           isCurrentMatch={message.id === currentMatchId}
           flash={flashMessageId === message.id ? flashTick : 0}
+          branchKey={branch?.key}
           branchIndex={branch?.index ?? 0}
-          branchCount={branch?.targets.length ?? 1}
+          branchCount={branch?.count ?? 1}
           busy={turnRunning}
           showRoundRule={message.role === 'user' && message.id !== firstUserMessageId}
           onStepBranch={onStepBranch}
@@ -655,6 +662,12 @@ export function Transcript({
     [rewindOffsets, view.top, view.height]
   )
   const showRewind = !isEmpty && shouldShowRewind(rewindTurns)
+
+  /**
+   * A reply kept on screen after Stop / an idle control-plane frame is only a
+   * stand-in. Once the thread ends on a sealed assistant row, that row wins.
+   */
+  const leafIsSealedReply = messages[messages.length - 1]?.role === 'assistant'
 
   const lastSealedAssistantOk = useMemo(() => {
     const last = messages[messages.length - 1]
@@ -738,27 +751,26 @@ export function Transcript({
                   />
                 ) : null}
                 {activeId ? <FirstRunChecklist conversationId={activeId} /> : null}
+                {needsVavKey ? null : <EmptyWorkbenchFacts />}
               </EmptyState>
             ))}
-
-          {/* Branches that start before the first prompt have no message to
-              hang off, so their pager sits at the top of the transcript. */}
-          {rootBranch && (
-            <div className="branch-pager-row">
-              <BranchPager
-                index={rootBranch.index}
-                count={rootBranch.targets.length}
-                pulseKey={branchSwap}
-                onStep={(step) => onStepBranch(ROOT_LEAF, step)}
-              />
-            </div>
-          )}
 
           {padTop > 0 ? <div style={{ height: padTop }} aria-hidden /> : null}
           {visibleItems.map(renderItem)}
           {padBottom > 0 ? <div style={{ height: padBottom }} aria-hidden /> : null}
 
-          <StreamingMessage conversationId={activeId} />
+          <StreamingMessage conversationId={activeId} hideSettled={leafIsSealedReply} />
+          {/* The branch being written (retry / fork) has no row yet. */}
+          {pendingPager && (
+            <div className="branch-pager-row">
+              <BranchPager
+                index={pendingPager.index}
+                count={pendingPager.count}
+                pulseKey={branchSwap}
+                onStep={(step) => onStepBranch(pendingPager.key, step)}
+              />
+            </div>
+          )}
           {!turnRunning && lastSealedAssistantOk ? (
             <div className="transcript-stream-status">
               <StreamStatus state="done" />

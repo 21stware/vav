@@ -5,9 +5,11 @@ import {
   conversationFullHydratePatch,
   conversationHydrationMetaPatch,
   conversationHydrationRefreshPatch,
+  conversationResyncPatch,
   conversationTokenCachePatch,
   isCurrentHydration,
   mergeHydratedMessages,
+  mergeResyncedMessages,
   nextHydrationGeneration,
   omitConversationCachePatch,
   omitKeys,
@@ -238,5 +240,27 @@ describe('conversation cache maps', () => {
       ['u0', 'u1']
     )
     assert.equal(next.activeLeaf.a, 'u1')
+  })
+})
+
+describe('resync after a turn', () => {
+  it('lets the sealed disk copy win and keeps renderer-only rows', () => {
+    const live = [msg('u1', 'q'), { ...msg('a1', 'partial', 'u1'), changeSetId: 'cs' }, msg('x', 'local')]
+    const disk = [msg('u1', 'q'), msg('a1', 'final answer', 'u1')]
+    const merged = mergeResyncedMessages(disk, live)
+    assert.deepEqual(merged.map((m) => m.id), ['u1', 'a1', 'x'])
+    assert.equal(merged[1]?.content, 'final answer')
+    assert.equal(merged[1]?.changeSetId, 'cs')
+  })
+
+  it('fills in a prompt the window missed and advances the leaf down the branch', () => {
+    const patch = conversationResyncPatch(
+      { messages: { c: [msg('a1', 'reply', 'u1')] }, messagesHydrated: {}, activeLeaf: { c: 'a1' } },
+      'c',
+      { messages: [msg('u1', 'q'), msg('a1', 'reply', 'u1')], activeLeafId: 'a1' }
+    )
+    assert.deepEqual(patch.messages.c?.map((m) => m.id), ['u1', 'a1'])
+    assert.equal(patch.activeLeaf.c, 'a1')
+    assert.equal(patch.messagesHydrated.c, true)
   })
 })

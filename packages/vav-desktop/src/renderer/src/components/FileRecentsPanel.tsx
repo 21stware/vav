@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ChevronDown, FileText, FileX, FolderOpen } from 'lucide-react'
+import { ChevronDown, FileText, FileX, Folder, FolderOpen } from 'lucide-react'
 import type { FileSessionListEntry } from '@shared/ipc'
 import { STORAGE_SOURCES, type StorageSource } from '@shared/storageSource'
 import { useSessionStore } from '../state/sessionStore'
@@ -28,15 +28,18 @@ import {
 } from './AppObjectListToolbar'
 import { AppEmptyState } from './AppEmptyState'
 import { Button, EmptyState } from './ui'
-import { fileSessionListKey } from '../lib/apps/appColumnLoad'
+import { fileSessionListKey, fileSessionsOnMachine } from '../lib/apps/appColumnLoad'
 import { warmMachineFilesBrowser } from '../lib/apps/warmAppViews'
 
 export function FileRecentsPanel({
   embedded = false,
-  onOpenDetail
+  onOpenDetail: _onOpenDetail,
+  canPeek = false
 }: {
   embedded?: boolean
   onOpenDetail?: () => void
+  /** Wide app column: a plain click previews the file in the side panel. */
+  canPeek?: boolean
 } = {}): React.JSX.Element {
   const t = useT()
   const source = useSessionStore((s) => s.filesSource)
@@ -60,14 +63,15 @@ export function FileRecentsPanel({
           updatedAt: row.updatedAt,
           createdAt: row.createdAt
         }),
-        include: (row) =>
-          list.filter === 'all' ||
-          (list.filter === 'available' ? row.pathStatus === 'ok' : row.pathStatus !== 'ok')
+        include: (row) => {
+          const available = row.pathStatus === 'ok' || row.pathStatus === 'directory'
+          return list.filter === 'all' || (list.filter === 'available' ? available : !available)
+        }
       }),
     [list.filter, list.query, list.sort, rows]
   )
   const orderedIds = useMemo(() => visibleRows.map((row) => row.sessionId), [visibleRows])
-  const { focusedId, selectedIds, select, selectAll, rowClass, selectionMods } =
+  const { focusedId, selectedIds, select, selectAll, rowClass, selectionMods, managing } =
     useAppObjectListSelection(orderedIds)
   const onMove = useCallback((id: string, range: boolean) => select(id, { shiftKey: range }), [select])
   const [icloud, setIcloud] = useState<{ path: string | null; available: boolean } | null>(null)
@@ -75,7 +79,15 @@ export function FileRecentsPanel({
   const refresh = useCallback(async (): Promise<void> => {
     try {
       const listed = await window.vav.fileSessions.listAll()
-      setRows(uniqueRecentFileRows(listed))
+      setRows(
+        uniqueRecentFileRows(
+          fileSessionsOnMachine(
+            listed,
+            useSessionStore.getState().conversations,
+            windowMachineId
+          )
+        )
+      )
     } catch {
       setRows([])
     } finally {
@@ -129,11 +141,9 @@ export function FileRecentsPanel({
   const canOpenLocal = source === 'recent' && isLocalMachine(windowMachineId)
   const openPicker = useCallback((): void => {
     void openPickedFileSessions().then((opened) => {
-      if (!opened) return
-      void refresh()
-      onOpenDetail?.()
+      if (opened) void refresh()
     })
-  }, [onOpenDetail, refresh])
+  }, [refresh])
 
   const browseIcloud = source === 'icloud' && Boolean(icloud?.available && icloud.path)
   const MachineFilesBrowser = warmMachineFilesBrowser.use(source === 'thisMac' || browseIcloud)
@@ -182,6 +192,17 @@ export function FileRecentsPanel({
         onSortChange={list.setSort}
         askKind="Storage"
         testIdPrefix="file-recents"
+        manage={{
+          orderedIds,
+          onDelete: deleteRows,
+          menu: (ids) => {
+            const listed = useSessionStore.getState().conversations
+            const targets = ids
+              .map((id) => listed.find((item) => item.id === id))
+              .filter((item): item is NonNullable<typeof item> => !!item)
+            return targets.length === ids.length ? menuFor(targets) : []
+          }
+        }}
         leading={<StorageSourceSelect />}
         searchFixed
         listControls={source === 'recent'}
@@ -192,7 +213,7 @@ export function FileRecentsPanel({
         <MachineFilesBrowser
           key={`mac:${windowMachineId}`}
           persistKey={`mac:${windowMachineId}`}
-          onFileOpened={onOpenDetail}
+          canPeek={canPeek}
         />
         ) : (
           <div className="muted tiny" style={{ padding: 16 }}>
@@ -205,7 +226,7 @@ export function FileRecentsPanel({
           key={`icloud:${windowMachineId}:${icloud!.path}`}
           root={icloud!.path!}
           persistKey={`icloud:${windowMachineId}`}
-          onFileOpened={onOpenDetail}
+          canPeek={canPeek}
         />
         ) : (
           <div className="muted tiny" style={{ padding: 16 }}>
@@ -255,6 +276,7 @@ export function FileRecentsPanel({
                 {visibleRows.map((row) => {
                   const name = basename(row.path) || row.path
                   const folder = basename(dirname(row.path)) || dirname(row.path)
+                  const isDirectory = row.pathStatus === 'directory'
                   const missing =
                     row.pathStatus === 'dir_missing'
                       ? t('sidebar.dirNotExist')
@@ -266,13 +288,17 @@ export function FileRecentsPanel({
                     : `${folder} · ${relativeTime(row.updatedAt)}`
                   const cross = storageCrossSurfaceItems(row.path)
                   const openRow = (): void => {
+                    if (isDirectory) {
+                      useSessionStore.getState().browseStoragePath(row.path)
+                      return
+                    }
                     select(row.sessionId)
+                    // selectConversation on the file session opens the full layer.
                     openExistingFileSession(
                       row.path,
                       row.sessionId,
                       fileSessionSelectHint(row)
                     )
-                    onOpenDetail?.()
                   }
                   return (
                     <li
@@ -290,8 +316,20 @@ export function FileRecentsPanel({
                           data-selected={selectedIds.includes(row.sessionId) ? 'true' : 'false'}
                           title={row.path}
                           {...appObjectPointerHandlers({
-                            onSelect: (event) => select(row.sessionId, event),
+                            onSelect: (event) => {
+                              select(row.sessionId, event)
+                              const plain =
+                                !event.metaKey && !event.ctrlKey && !event.shiftKey
+                              if (!canPeek || managing || !plain || isDirectory || missing) return
+                              openExistingFileSession(
+                                row.path,
+                                row.sessionId,
+                                fileSessionSelectHint(row),
+                                { peek: true }
+                              )
+                            },
                             onOpen: openRow,
+                            managing,
                             onMenu: (event) => {
                               const { ids, collapse } = appObjectContextTargets(
                                 row.sessionId,
@@ -341,7 +379,13 @@ export function FileRecentsPanel({
                             className={`applications-object-row-icon${missing ? ' is-missing' : ''}`}
                             aria-hidden
                           >
-                            {missing ? <FileX strokeWidth={1.8} /> : <FileText strokeWidth={1.8} />}
+                            {missing ? (
+                              <FileX strokeWidth={1.8} />
+                            ) : isDirectory ? (
+                              <Folder strokeWidth={1.8} />
+                            ) : (
+                              <FileText strokeWidth={1.8} />
+                            )}
                           </span>
                           <span className="inline-review-file-name">{name}</span>
                           <span className="inline-review-file-meta">{meta}</span>

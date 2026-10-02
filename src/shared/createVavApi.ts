@@ -549,8 +549,6 @@ export function createVavApi(adapter: VavIpcAdapter): VavApi {
       invoke(IPC.windowOpenSession, conversationId),
     revealInList: (conversationId: string) =>
       invoke(IPC.windowRevealInList, conversationId),
-    setPictureInPicture: (enabled: boolean) =>
-      invoke(IPC.windowSetPictureInPicture, enabled),
     closeDetachedSession: (conversationId: string) =>
       invoke(IPC.windowCloseDetached, conversationId),
     newDetachedSession: () => invoke(IPC.windowNewDetached),

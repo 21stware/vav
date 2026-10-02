@@ -12,15 +12,19 @@ import {
 } from './grants.ts'
 
 describe('grant store', () => {
-  it('issues a unique secret and replaces the same client', () => {
+  it('issues unique secrets per client and reuses the grant when the same client pairs again', () => {
     const store = createMemoryGrantStore()
     const first = store.issue({ clientId: 'laptop', name: 'Studio' })
+    const other = store.issue({ clientId: 'desk', name: 'Studio' })
+    assert.notEqual(first.secret, other.secret)
+    store.markKicked(first.id)
+    // Re-pair / LAN+tunnel race: both connections must end up holding a valid grant.
     const second = store.issue({ clientId: 'laptop', name: 'Studio 2' })
-    assert.notEqual(first.id, second.id)
-    assert.notEqual(first.secret, second.secret)
-    assert.equal(store.list().length, 1)
-    assert.equal(store.findById(first.id), null)
-    assert.equal(store.findBySecret(second.secret)?.name, 'Studio 2')
+    assert.equal(second.id, first.id)
+    assert.equal(second.secret, first.secret)
+    assert.equal(second.kicked, false)
+    assert.equal(store.list().length, 2)
+    assert.equal(store.findBySecret(first.secret)?.name, 'Studio 2')
   })
 
   it('finds by secret without treating names as identity', () => {
@@ -45,6 +49,38 @@ describe('grant store', () => {
     } finally {
       await rm(dir, { recursive: true, force: true })
     }
+  })
+
+  it('tombstones removed grants and persists them', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vav-grants-'))
+    try {
+      const store = createFileGrantStore(dir)
+      const gone = store.issue({ clientId: 'a', name: 'A' })
+      const kept = store.issue({ clientId: 'b', name: 'B' })
+      store.issue({ clientId: 'b', name: 'B again' })
+      store.remove(gone.id)
+      assert.equal(store.isRevoked(gone.id), true)
+      // Re-pair of the same client is not a revoke.
+      assert.equal(store.isRevoked(kept.id), false)
+      assert.equal(store.isRevoked(''), false)
+      const again = createFileGrantStore(dir)
+      assert.equal(again.isRevoked(gone.id), true)
+      assert.deepEqual(again.revokedIds(), [gone.id])
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('caps tombstones', () => {
+    const store = createMemoryGrantStore()
+    const first = store.issue({ clientId: 'c0', name: 'x' })
+    store.remove(first.id)
+    for (let i = 1; i <= 300; i += 1) {
+      const grant = store.issue({ clientId: `c${i}`, name: 'x' })
+      store.remove(grant.id)
+    }
+    assert.equal(store.revokedIds().length, 256)
+    assert.equal(store.isRevoked(first.id), false)
   })
 
   it('finds by client id and clears kicked on touch', () => {

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode, type RefObject } from 'react'
-import { ListFilter, MessageSquarePlus, Search, X } from 'lucide-react'
+import { ListChecks, ListFilter, MessageSquarePlus, MoreHorizontal, Search, Trash2, X } from 'lucide-react'
 import { appSearchPrompt, insertAgentPrompt } from '../lib/insertAgentPrompt'
 import type { MessageKey } from '@shared/i18n'
 import { useT } from '../i18n/useT'
@@ -35,11 +35,34 @@ export function useAppObjectListSelection(orderedIds: string[]) {
   const focusedId = useSessionStore((s) => s.focusedAppObjectId)
   const selectedIds = useSessionStore((s) => s.selectedAppObjectIds)
   const focusAppObject = useSessionStore((s) => s.focusAppObject)
+  const managing = useSessionStore((s) => s.appListManage)
 
   const select = (
     id: string,
     event?: { metaKey?: boolean; ctrlKey?: boolean; shiftKey?: boolean }
   ): void => {
+    if (managing && !event?.shiftKey) {
+      const state = useSessionStore.getState()
+      // Arrow keys hand a plain `{ shiftKey }` — move focus, keep the checks.
+      const fromPointer = !!event && 'button' in event
+      if (!fromPointer) {
+        useSessionStore.setState({ focusedAppObjectId: id })
+        return
+      }
+      // Manage: a click toggles the checkbox; the set may go empty.
+      const current = state.selectedAppObjectIds
+      const next = current.includes(id)
+        ? current.filter((existing) => existing !== id)
+        : [...current, id]
+      const mode = state.applicationsMode
+      useSessionStore.setState({
+        focusedAppObjectId: id,
+        selectedAppObjectIds: next,
+        focusedAppObjectByMode: { ...state.focusedAppObjectByMode, [mode]: id },
+        selectedAppObjectIdsByMode: { ...state.selectedAppObjectIdsByMode, [mode]: next }
+      })
+      return
+    }
     focusAppObject(id, {
       additive: !!(event?.metaKey || event?.ctrlKey),
       range: !!event?.shiftKey,
@@ -57,7 +80,112 @@ export function useAppObjectListSelection(orderedIds: string[]) {
   const rowClass = (id: string, base = 'applications-object-row'): string =>
     appObjectRowClassName(id, selectedIds, orderedIds, base)
 
-  return { focusedId, selectedIds, select, selectAll, rowClass, selectionMods }
+  return { focusedId, selectedIds, select, selectAll, rowClass, selectionMods, managing }
+}
+
+/** Bulk "Move to folder" submenu rows for app libraries (data / notes / schedules). */
+export function folderMoveMenuItems(
+  t: (key: MessageKey) => string,
+  folders: ReadonlyArray<{ id: string; name: string }>,
+  move: (folderId: string | null) => void
+): MenuItem[] {
+  if (folders.length === 0) return []
+  return [
+    { label: t('app.list.moveToFolder'), header: true },
+    ...folders.map((folder) => ({ label: folder.name, onSelect: () => move(folder.id) })),
+    { label: t('app.list.removeFromFolder'), onSelect: () => move(null) },
+    { label: '', divider: true }
+  ]
+}
+
+export type AppObjectManageOptions = {
+  /** Visible rows, in order — Select all / count are scoped to these. */
+  orderedIds: string[]
+  onDelete?: (ids: string[]) => void
+  /** Extra bulk actions (archive, move to folder…). */
+  menu?: (ids: string[]) => MenuItem[]
+}
+
+function AppObjectManageBar({
+  orderedIds,
+  onDelete,
+  menu,
+  testIdPrefix
+}: AppObjectManageOptions & { testIdPrefix: string }): React.JSX.Element {
+  const t = useT()
+  const selectedAll = useSessionStore((s) => s.selectedAppObjectIds)
+  const setAppListManage = useSessionStore((s) => s.setAppListManage)
+  const visible = new Set(orderedIds)
+  const picked = selectedAll.filter((id) => visible.has(id))
+  const allPicked = orderedIds.length > 0 && picked.length === orderedIds.length
+  const menuItems = picked.length > 0 && menu ? menu(picked) : []
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') return
+      const target = event.target as HTMLElement | null
+      if (target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA') return
+      setAppListManage(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [setAppListManage])
+
+  return (
+    <div className="applications-manage-bar" data-testid={`${testIdPrefix}-manage-bar`}>
+      <span className="applications-manage-count">
+        {t('app.list.selectedCount', { count: picked.length })}
+      </span>
+      <button
+        type="button"
+        className="btn ghost sm"
+        data-testid={`${testIdPrefix}-select-all`}
+        onClick={() => {
+          const state = useSessionStore.getState()
+          const keep = state.selectedAppObjectIds.filter((id) => !visible.has(id))
+          useSessionStore.setState({
+            selectedAppObjectIds: allPicked ? keep : [...keep, ...orderedIds]
+          })
+        }}
+      >
+        {allPicked ? t('app.list.selectNone') : t('app.list.selectAll')}
+      </button>
+      <span className="spacer" aria-hidden="true" />
+      {menuItems.length > 0 ? (
+        <button
+          type="button"
+          className="btn ghost icon-only sm"
+          data-testid={`${testIdPrefix}-manage-more`}
+          title={t('app.list.moreActions')}
+          aria-label={t('app.list.moreActions')}
+          onClick={(event) => void showMenu(menuItems, menuAnchor(event.currentTarget))}
+        >
+          <MoreHorizontal size={14} aria-hidden />
+        </button>
+      ) : null}
+      {onDelete ? (
+        <button
+          type="button"
+          className="btn ghost icon-only sm is-destructive"
+          data-testid={`${testIdPrefix}-manage-delete`}
+          disabled={picked.length === 0}
+          title={t('app.list.deleteSelected')}
+          aria-label={t('app.list.deleteSelected')}
+          onClick={() => onDelete(picked)}
+        >
+          <Trash2 size={14} aria-hidden />
+        </button>
+      ) : null}
+      <button
+        type="button"
+        className="btn ghost sm"
+        data-testid={`${testIdPrefix}-manage-done`}
+        onClick={() => setAppListManage(false)}
+      >
+        {t('common.done')}
+      </button>
+    </div>
+  )
 }
 
 export function useAppObjectListKeys(opts: {
@@ -109,7 +237,8 @@ export function AppObjectListToolbar({
   testIdPrefix = 'app-list',
   leading,
   searchFixed = false,
-  listControls = true
+  listControls = true,
+  manage
 }: {
   query: string
   onQueryChange: (query: string) => void
@@ -125,8 +254,12 @@ export function AppObjectListToolbar({
   leading?: ReactNode
   searchFixed?: boolean
   listControls?: boolean
+  /** Adds a Manage toggle; rows then multi-select and a bulk bar appears. */
+  manage?: AppObjectManageOptions
 }): React.JSX.Element {
   const t = useT()
+  const managing = useSessionStore((s) => s.appListManage)
+  const setAppListManage = useSessionStore((s) => s.setAppListManage)
   const searchRef = useRef<HTMLInputElement>(null)
   const defaultSort = sorts[0]?.id ?? 'updated'
   const menuActive = filter !== 'all' || sort !== defaultSort
@@ -151,6 +284,7 @@ export function AppObjectListToolbar({
   }
 
   return (
+    <>
     <div
       className={`sidebar-search applications-object-toolbar${searchFixed ? ' is-search-fixed' : ''}`}
       data-testid={`${testIdPrefix}-toolbar`}
@@ -223,8 +357,25 @@ export function AppObjectListToolbar({
       >
         <ListFilter size={14} aria-hidden />
       </button>
+      {manage ? (
+        <button
+          type="button"
+          className={`sidebar-list-menu${managing ? ' is-active' : ''}`}
+          data-testid={`${testIdPrefix}-manage`}
+          title={t('app.list.manage')}
+          aria-label={t('app.list.manage')}
+          aria-pressed={managing}
+          onClick={() => setAppListManage(!managing)}
+        >
+          <ListChecks size={14} aria-hidden />
+        </button>
+      ) : null}
       </>
       ) : null}
     </div>
+    {manage && managing && listControls ? (
+      <AppObjectManageBar {...manage} testIdPrefix={testIdPrefix} />
+    ) : null}
+    </>
   )
 }

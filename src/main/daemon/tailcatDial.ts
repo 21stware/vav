@@ -12,6 +12,8 @@ export type TailcatDialHandle = {
   host: string
   port: number
   close: () => void
+  /** False once the sidecar exited — its local port is then dead. */
+  alive: () => boolean
 }
 
 const DIAL_READY_MS = 45_000
@@ -34,6 +36,7 @@ export function openTailcatDial(token: string): Promise<TailcatDialHandle> {
     }
 
     let settled = false
+    let exited = false
     let stdout = ''
     const stderr: string[] = []
     const timer = setTimeout(() => {
@@ -63,6 +66,7 @@ export function openTailcatDial(token: string): Promise<TailcatDialHandle> {
           resolve({
             host: '127.0.0.1',
             port: event.port,
+            alive: () => !exited,
             close: () => {
               try {
                 child.stdin?.end()
@@ -81,6 +85,7 @@ export function openTailcatDial(token: string): Promise<TailcatDialHandle> {
     })
     child.on('error', (err) => fail(err))
     child.on('exit', (code) => {
+      exited = true
       if (settled) return
       const detail = stderr.join('').trim().split('\n').slice(-3).join('\n')
       fail(

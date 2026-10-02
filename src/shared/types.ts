@@ -1110,11 +1110,6 @@ export interface AppSettings {
    * New detached windows restore these dimensions.
    */
   detachedWindowSize?: { width: number; height: number }
-  /**
-   * Last-used picture-in-picture main-window size { width, height }.
-   * Entering PiP restores these dimensions in the display corner.
-   */
-  pipWindowSize?: { width: number; height: number }
   theme: ThemeMode
   /**
    * Tools-tray bash background. `dark` stays dark regardless of theme;

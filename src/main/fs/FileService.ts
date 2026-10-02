@@ -483,18 +483,28 @@ export class FileService {
 
   async inspect(path: string, conversationId?: string): Promise<FileInspectResult> {
     const name = basename(path)
+    // Sandbox: I/O against working copy when active; result.path stays logical.
+    const hostFs = this.fsFor(conversationId, path)
+    const io = this.forIo(path, conversationId)
+    // Classify folders before the grant check so Storage can open a directory
+    // that is not yet in the workspace / granted set. Ungranted *files* still deny.
+    try {
+      const probe = await hostFs.stat(io)
+      if (probe.isDirectory()) {
+        // Not a file preview — callers (Workspace) should not open FileViewer on dirs.
+        // Never label folders as binary (that surfaces "Open with default app" for workdirs).
+        return directoryInspectResult(path, name, probe.mtimeMs)
+      }
+    } catch {
+      // missing / unreadable — fall through to the access check
+    }
     const denied = this.accessError(path)
     if (denied) {
       return deniedInspectResult(path, name, denied)
     }
-    // Sandbox: I/O against working copy when active; result.path stays logical.
-    const hostFs = this.fsFor(conversationId, path)
-    const io = this.forIo(path, conversationId)
     try {
       const info = await hostFs.stat(io)
       if (info.isDirectory()) {
-        // Not a file preview — callers (Workspace) should not open FileViewer on dirs.
-        // Never label folders as binary (that surfaces "Open with default app" for workdirs).
         return directoryInspectResult(path, name, info.mtimeMs)
       }
 

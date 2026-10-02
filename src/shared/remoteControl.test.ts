@@ -58,6 +58,27 @@ describe('parseClientMessage', () => {
     })
   })
 
+  it('keeps the controller id and grant id on a daemon hello', () => {
+    const msg = parseClientMessage({
+      type: 'hello',
+      proto: 1,
+      auth: 's',
+      device: 'Mac',
+      role: 'daemon',
+      clientId: 'machine-1',
+      grantId: 'g-1'
+    })
+    assert.deepEqual(msg, {
+      type: 'hello',
+      proto: 1,
+      auth: 's',
+      device: 'Mac',
+      role: 'daemon',
+      clientId: 'machine-1',
+      grantId: 'g-1'
+    })
+  })
+
   it('rejects hello without auth or proto', () => {
     assert.equal(parseClientMessage({ type: 'hello', proto: 1 }), null)
     assert.equal(parseClientMessage({ type: 'hello', auth: 's' }), null)

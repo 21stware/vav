@@ -131,8 +131,10 @@ describe('DaemonAttachService', () => {
       assert.ok(storedGrant.hosts[0]?.grantId)
       assert.notEqual(storedGrant.hosts[0]?.secret, SECRET)
 
+      assert.ok(service.proxyDial('box-1'))
       await service.forget('box-1')
       assert.equal(registry.get('box-1'), undefined)
+      assert.equal(service.proxyDial('box-1'), null)
       const after = JSON.parse(await readFile(join(userData, 'paired-hosts.json'), 'utf8')) as {
         hosts: unknown[]
       }
@@ -964,6 +966,86 @@ describe('DaemonAttachService', () => {
         await new Promise((resolve) => setTimeout(resolve, 20))
       }
       assert.equal(server.incoming().some((row) => row.state === 'revoked'), true)
+    } finally {
+      service.dispose()
+      server.close()
+      await rm(disk, { recursive: true, force: true })
+      await rm(userData, { recursive: true, force: true })
+    }
+  })
+
+  it('drops the pairing when the grant was revoked while this side was offline', async () => {
+    const disk = await mkdtemp(join(tmpdir(), 'vav-box-'))
+    const userData = await mkdtemp(join(tmpdir(), 'vav-attach-'))
+    const { server, port } = await listenLoopback(disk)
+    const first = attach(userData)
+    const second = attach(userData, false, { reconnectDelayMs: () => 40 })
+    try {
+      const result = await first.service.pair(
+        encodeDaemonPairing({
+          v: DAEMON_PROTO_VERSION,
+          secret: SECRET,
+          machineId: 'ignored',
+          name: 'box',
+          host: '127.0.0.1',
+          port
+        })
+      )
+      assert.equal(result.ok, true)
+      const grantId = server.incoming()[0]?.id
+      assert.ok(grantId)
+      first.service.dispose()
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      assert.equal(server.unpairGrant(grantId), true)
+
+      second.service.restore()
+      const readHosts = async (): Promise<unknown[]> =>
+        (JSON.parse(await readFile(join(userData, 'paired-hosts.json'), 'utf8')) as { hosts: unknown[] }).hosts
+      const start = Date.now()
+      while ((await readHosts()).length > 0 && Date.now() - start < 3000) {
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      }
+      assert.equal((await readHosts()).length, 0)
+      assert.equal(second.registry.get('box-1'), undefined)
+    } finally {
+      first.service.dispose()
+      second.service.dispose()
+      server.close()
+      await rm(disk, { recursive: true, force: true })
+      await rm(userData, { recursive: true, force: true })
+    }
+  })
+
+  it('redials a host waiting in backoff as soon as wake() runs', async () => {
+    const disk = await mkdtemp(join(tmpdir(), 'vav-box-'))
+    const userData = await mkdtemp(join(tmpdir(), 'vav-attach-'))
+    const { server, port } = await listenLoopback(disk)
+    const { service, registry } = attach(userData, false, { reconnectDelayMs: () => 60_000 })
+    try {
+      const result = await service.pair(
+        encodeDaemonPairing({
+          v: DAEMON_PROTO_VERSION,
+          secret: SECRET,
+          machineId: 'ignored',
+          name: 'box',
+          host: '127.0.0.1',
+          port
+        })
+      )
+      assert.equal(result.ok, true)
+      server.close()
+      const offlineBy = Date.now()
+      while (registry.get('box-1')?.info.online !== false && Date.now() - offlineBy < 2000) {
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      }
+      assert.equal(registry.get('box-1')?.info.online, false)
+      await server.listen(port, '127.0.0.1')
+      service.wake()
+      const start = Date.now()
+      while (registry.get('box-1')?.info.online !== true && Date.now() - start < 3000) {
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      }
+      assert.equal(registry.get('box-1')?.info.online, true)
     } finally {
       service.dispose()
       server.close()

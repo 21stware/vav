@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs'
+import { readFileSync, writeFileSync, existsSync, mkdirSync, statSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import {
   BUILTIN_AGENT_IDS,
@@ -101,7 +101,7 @@ export class SettingsStore {
       parseWorkspaceRefList(this.settings.recentWorkspaceDirectories)
     )
     const beforePinned = this.settings.pinnedWorkspaceDirectories.join('\0')
-    this.clampToAllowedRanges()
+    this.clampToAllowedRanges({ pruneMissingFolders: true })
     if (
       serializeWorkspaceRefList(this.settings.recentWorkspaceDirectories) !== beforeRecent ||
       this.settings.pinnedWorkspaceDirectories.join('\0') !== beforePinned
@@ -229,7 +229,16 @@ export class SettingsStore {
     return this.settings
   }
 
-  private clampToAllowedRanges(): void {
+  /**
+   * `pruneMissingFolders` runs on boot only. Pruning on every update dropped
+   * folders whenever a drive / network share was unmounted, or a TCC-guarded
+   * folder (Desktop, Documents, iCloud) was briefly unreadable — the
+   * "recent working folders keep vanishing" bug. Opening a root that is
+   * really gone still forgets it (workspaceStore ENOENT path).
+   */
+  private clampToAllowedRanges(opts: { pruneMissingFolders?: boolean } = {}): void {
+    const keepFolder = (path: string): boolean =>
+      !opts.pruneMissingFolders || !folderDefinitelyGone(path)
     const s = this.settings
     s.commandTimeout = Math.min(600, Math.max(10, Math.round(s.commandTimeout / 10) * 10))
     s.webTimeoutMs = Math.min(
@@ -399,23 +408,6 @@ export class SettingsStore {
         )
       }
     }
-    if (s.pipWindowSize) {
-      if (
-        typeof s.pipWindowSize.width !== 'number' ||
-        typeof s.pipWindowSize.height !== 'number'
-      ) {
-        s.pipWindowSize = undefined
-      } else {
-        s.pipWindowSize.width = Math.min(
-          10_000,
-          Math.max(240, Math.round(s.pipWindowSize.width))
-        )
-        s.pipWindowSize.height = Math.min(
-          10_000,
-          Math.max(240, Math.round(s.pipWindowSize.height))
-        )
-      }
-    }
     // null / "vav" = no explicit default. Otherwise a CLI agent id or LLM vendor id.
     if (s.defaultAgentId === undefined) s.defaultAgentId = null
     if (s.defaultAgentId === 'vav') s.defaultAgentId = null
@@ -426,7 +418,7 @@ export class SettingsStore {
     // Drop local paths that no longer exist. Remote refs stay — this disk
     // cannot see the daemon's folders.
     s.recentWorkspaceDirectories = parseWorkspaceRefList(s.recentWorkspaceDirectories)
-      .filter((ref) => !isLocalMachine(ref.machineId) || existsSync(ref.path))
+      .filter((ref) => !isLocalMachine(ref.machineId) || keepFolder(ref.path))
       .slice(0, 10)
     if (!Array.isArray(s.recentAgentModels)) s.recentAgentModels = []
     else {
@@ -450,7 +442,7 @@ export class SettingsStore {
       ...new Set(
         s.pinnedWorkspaceDirectories.filter(
           (path): path is string =>
-            typeof path === 'string' && path.length > 0 && existsSync(path)
+            typeof path === 'string' && path.length > 0 && keepFolder(path)
         )
       )
     ]
@@ -560,7 +552,7 @@ export class SettingsStore {
     ) {
       return this.settings
     }
-    if (isLocalMachine(ref.machineId) && !existsSync(ref.path)) return this.settings
+    if (isLocalMachine(ref.machineId) && folderDefinitelyGone(ref.path)) return this.settings
     const next = [
       ref,
       ...this.settings.recentWorkspaceDirectories.filter((entry) => !sameWorkspaceRef(entry, ref))
@@ -796,4 +788,27 @@ function mergeBuiltinAgents(
   }
 
   return result
+}
+
+/**
+ * Only a real ENOENT / ENOTDIR counts as gone. EPERM / EACCES (macOS privacy
+ * prompts, sandboxed vav-server) and folders on an unmounted volume are kept.
+ */
+export function folderDefinitelyGone(path: string): boolean {
+  try {
+    statSync(path)
+    return false
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException)?.code
+    if (code !== 'ENOENT' && code !== 'ENOTDIR') return false
+    const volume = /^\/Volumes\/[^/]+/.exec(path)?.[0]
+    if (volume) {
+      try {
+        statSync(volume)
+      } catch {
+        return false
+      }
+    }
+    return true
+  }
 }

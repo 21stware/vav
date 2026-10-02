@@ -1,24 +1,55 @@
 import type { ChangeSet } from '@shared/changeSet.ts'
 import type { ChatMessage, ConversationMeta, TokenSnapshot, TurnErrorKind, TurnEvent } from '@shared/types.ts'
+import { newestLeafId } from '@shared/thread.ts'
 import { getProjection } from './StreamProjection.ts'
 import { clearPriorChangeReviews, upsert } from './sessionThread.ts'
 import { omitLiveUsage } from './sessionUsage.ts'
 import { AGENT_TAB_ID, useWorkspaceStore } from './workspaceStore.ts'
 import type { LiveUsage, TurnRuntime } from './sessionTypes.ts'
 
-/** Idle frame from the control plane: no body, synthetic id, turn succeeded. */
-function isUnsealedRemoteEnd(event: Extract<TurnEvent, { type: 'end' }>): boolean {
-  const message = event.message
-  const synthetic = message.id.startsWith('remote-end-') || message.id.startsWith('live-end-')
+/**
+ * Idle frame from the control plane / phone bridge. Its id is made up and its
+ * parent is null: it only says "the turn is over". Upserting it used to add a
+ * second root (an error or cancel bubble alone on screen, a branch pager above
+ * the first prompt, the real thread hidden behind it).
+ */
+export function isSyntheticEndMessage(message: { id: string }): boolean {
+  return message.id.startsWith('remote-end-') || message.id.startsWith('live-end-')
+}
+
+function isEmptyAssistant(message: ChatMessage): boolean {
   return (
-    synthetic &&
     message.blocks.length === 0 &&
     !message.content &&
     !message.changeSetId &&
-    !message.errorText &&
-    !event.cancelled &&
-    !event.error
+    !message.errorText
   )
+}
+
+/** Optimistic phone/web user bubble (`local-user-*`) — the bridge does not know the leaf. */
+function isOptimisticUser(message: ChatMessage): boolean {
+  return message.role === 'user' && message.id.startsWith('local-user-')
+}
+
+function leafOf(state: TurnApplyState, id: string): string | null {
+  const list = state.messages[id]
+  if (!list?.length) return null
+  const leaf = state.activeLeaf[id]
+  if (leaf && list.some((m) => m.id === leaf)) return leaf
+  return newestLeafId(list)
+}
+
+function parentMissing(state: TurnApplyState, id: string, message: ChatMessage): boolean {
+  const parentId = message.parentId
+  if (!parentId) return false
+  return !(state.messages[id] ?? []).some((m) => m.id === parentId)
+}
+
+/** The visible leaf already shows this error inline — no banner on top. */
+function leafCarriesError(state: TurnApplyState, id: string): boolean {
+  const leaf = leafOf(state, id)
+  const row = leaf ? state.messages[id]?.find((m) => m.id === leaf) : undefined
+  return Boolean(row && row.role === 'assistant' && row.errorText)
 }
 
 export const IDLE_TURN: TurnRuntime = {
@@ -88,6 +119,12 @@ export function applySessionTurnEvent(
     refreshConversations: () => void
     drainQueue: (id: string) => void
     openChangeReview: (changeSetId: string) => void
+    /**
+     * Re-read this conversation from main and merge it in. Used when the
+     * renderer's tree has a gap (a reply whose parent never arrived — e.g. a
+     * scheduled run that started before this window knew the session).
+     */
+    resyncMessages?: (id: string) => void
   }
 ): void {
   const { get, set } = ctx
@@ -117,20 +154,38 @@ export function applySessionTurnEvent(
       break
     }
 
-    case 'user':
+    case 'user': {
+      // A finished-but-unsealed reply must not linger under the next prompt.
+      if (projection.isSettled()) projection.end()
+      let missing = false
       set((state) => {
+        let message = event.message
+        // Hang the optimistic bubble off the thread instead of minting a root.
+        if (isOptimisticUser(message) && !message.parentId) {
+          const leaf = leafOf(state, id)
+          if (leaf) message = { ...message, parentId: leaf }
+        }
+        missing = parentMissing(state, id, message)
         const cleared = clearPriorChangeReviews(state, id)
         const baseMessages = cleared.messages ?? state.messages
+        // The real prompt replaces the optimistic one once it arrives.
+        const base = isOptimisticUser(message)
+          ? baseMessages[id]
+          : baseMessages[id]?.filter(
+              (row) => !(isOptimisticUser(row) && row.content === message.content)
+            )
         return {
           ...cleared,
           messages: {
             ...baseMessages,
-            [id]: upsert(baseMessages[id], event.message)
+            [id]: upsert(base, message)
           },
-          activeLeaf: { ...state.activeLeaf, [id]: event.message.id }
+          activeLeaf: { ...state.activeLeaf, [id]: message.id }
         }
       })
+      if (missing) ctx.resyncMessages?.(id)
       break
+    }
 
     case 'notice':
       set((state) => ({
@@ -242,13 +297,34 @@ export function applySessionTurnEvent(
       break
 
     case 'end': {
-      // Control-plane idle is an empty placeholder (`remote-end-*`). Clearing
-      // the projection here drops the reply the user just watched; the thread
-      // frame that follows is what seals it onto the leaf.
-      if (isUnsealedRemoteEnd(event)) {
+      // Nothing sealed to take over from the live view: a synthetic idle frame
+      // (`remote-end-*` / `live-end-*`), or Stop / a failure before anything was
+      // persisted. Keep what streamed on screen instead of blanking it, never
+      // insert the placeholder into the tree, and re-read main — the sealed
+      // copy is usually already there.
+      const synthetic = isSyntheticEndMessage(event.message)
+      if (synthetic || (isEmptyAssistant(event.message) && (event.cancelled || event.error))) {
+        projection.settle()
         patchTurn(set, id, IDLE_TURN)
+        set((state) => ({ liveUsage: omitLiveUsage(state.liveUsage, id) }))
+        if (synthetic) ctx.resyncMessages?.(id)
+        ctx.refreshConversations()
+        if (
+          event.error &&
+          !event.cancelled &&
+          event.errorKind !== 'cancelled' &&
+          !leafCarriesError(get(), id)
+        ) {
+          set({
+            errorBanner: event.error,
+            errorBannerKind: event.errorKind ?? 'generic',
+            errorBannerDetail: event.errorDetail || event.error
+          })
+        }
+        ctx.drainQueue(id)
         break
       }
+      const orphan = parentMissing(get(), id, event.message)
       projection.end()
       patchTurn(set, id, IDLE_TURN)
       set((state) => {
@@ -272,6 +348,7 @@ export function applySessionTurnEvent(
         }
       })
       ctx.refreshConversations()
+      if (orphan) ctx.resyncMessages?.(id)
       if (
         event.error &&
         !event.cancelled &&

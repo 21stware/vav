@@ -8,6 +8,28 @@ Surface textures are now a real part of the room: the tile runs down the top ~46
 
 The theme itself is deeper: the window wash sits a full step below the content plate, the plate and app card cast a soft two-layer shadow, the composer is a raised white (or charcoal) card that floats over the log, user prompts are accent-tinted cards with a hairline edge, solid accent buttons carry a slight sheen, and dark mode gets a hairline top highlight on lifted surfaces. Corner radii step up to 16/20px. Tinted (system / custom / preset) light and dark ramps follow the same steps as the mono ramp; first-paint window fills (#e7e7ea / #0f0f10) match.
 
+Recent working folders stop disappearing. Folder lists are no longer pruned on every settings change (an unplugged drive or a macOS privacy prompt used to wipe them), only a real "no such folder" forgets one, and windows always receive the merged desktop + vav-server list instead of a desktop-only copy.
+
+Home is gone. The new-session screen now carries a one-line summary — this week's tokens and how many notes, files, and schedules you have — each linking to its place.
+
+Clicking a file in Storage or This Mac previews it beside the list instead of jumping into the full view, and viewing a schedule no longer bumps its Updated time.
+
+Services stays fast after opening many files. Leaving a file in Storage now releases its folder watcher and cached tree, and the Notes / Analysis lists keep their word counts and table totals instead of re-reading every note and data file on each Back.
+
+A wide Services column previews the clicked note, analysis, schedule, or file beside the list; double-click still opens it full size. Lists gain a Manage button for checkbox multi-select with Select all, Move to folder, archive, and delete.
+
+The agent top bar drags the window again (including on an empty session), and the surface pattern now runs under it instead of being covered by a flat plate.
+
+Switching device now refreshes Services — notes, analysis, schedules, and files stay on the selected machine, and new app objects are created there.
+
+Picture in Picture is gone. The sidebar service menu no longer shrinks the window into a compact always-on-top task list.
+
+## 1.32.8
+
+Mainland remote WAN pairing uses the filed relay `derp.vavapp.art`. Already-paired hosts that pinned `derp.vavapp.com` keep working through that alias.
+
+Distribution faces (`edition/global.json`, `edition/cn.json`) bake site, update feed, and locale defaults. Every binary still includes the mainland DERP. A China bake can check `https://vavapp.art/releases` after that feed is mirrored.
+
 ## 1.32.7
 
 Desktop and vav-server are the only products. iOS, Android, the Chrome extension, `vav-board`, and `vav-tui` are gone. The loopback web UI stays with vav-server (`src/web-ui`). Settings → Command Line installs `vav` and `vav-server` only.

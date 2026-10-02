@@ -16,7 +16,6 @@ test('sidebar lists the session, groups by workspace, and archives stay reachabl
     await expect(page.getByText('E2E session')).toBeVisible()
     await expect(page.locator('[data-testid="sidebar"]')).toBeVisible()
     await expect(page.locator('[data-testid="sidebar-primary-nav"]')).toBeVisible()
-    await expect(page.locator('[data-testid="home-page"]')).toBeVisible()
     await expect(page.locator('[data-testid="new-session"]')).toBeVisible()
     await expect(page.locator('[data-testid="sidebar-history"]')).toBeHidden()
     await expect(page.locator('[data-testid="sidebar-services"]')).toBeVisible()
@@ -24,6 +23,8 @@ test('sidebar lists the session, groups by workspace, and archives stay reachabl
       'data-active',
       'true'
     )
+    await expect(page.locator('[data-testid="sidebar-new-note"]')).toBeVisible()
+    await expect(page.locator('[data-testid="sidebar-new-scheduled"]')).toBeVisible()
     await expect(page.locator('[data-testid="sidebar-primary-nav"] [data-testid="new-scheduled"]')).toHaveCount(0)
     await expect(page.locator('[data-testid="sidebar-connect"]')).toBeVisible()
     await expect(page.locator('[data-testid="app-column"]')).toBeVisible()
@@ -73,6 +74,8 @@ test('sidebar lists the session, groups by workspace, and archives stay reachabl
     await expect(page.locator('[data-testid="list-column"]')).toHaveAttribute('data-collapsed', 'true')
     await expect(page.locator('[data-testid="new-session"]')).toBeVisible()
     await expect(page.locator('[data-testid="sidebar-history"]')).toBeVisible()
+    await expect(page.locator('[data-testid="sidebar-new-note"]')).toBeVisible()
+    await expect(page.locator('[data-testid="sidebar-new-scheduled"]')).toBeVisible()
     await expect(page.locator('[data-testid="new-scheduled"]')).toBeVisible()
     await expect(page.locator('[data-testid="sidebar-search"]')).toBeHidden()
     await page.locator('[data-testid="sidebar-history"]').click()
@@ -138,38 +141,8 @@ test('new session is created and selected', async () => {
     await page.locator('[data-testid="new-session"]').click()
     await expect(page.locator('[data-testid="agent-column"]')).toBeVisible()
     await expect(page.locator('.empty-state-session')).toBeVisible()
-    await page.locator('[data-testid="close-agent"]').click()
-    await expect(page.locator('[data-testid="agent-column"]')).toBeHidden()
-    await expect(page.locator('[data-testid="workbench-home"]')).toBeVisible()
-    await expect(page.locator('[data-testid="workbench-home-insights"]')).toBeVisible()
-    await expect(page.locator('[data-testid="workbench-home-nav"]')).toBeVisible()
-    await expect(page.locator('[data-testid="workbench-home-composer"]')).toBeVisible()
-    await expect(page.locator('[data-testid="workbench-home"] [data-testid="composer-input"]')).toBeVisible()
-    await expect(page.locator('[data-testid="workbench-home"] [data-testid="composer-workspace"]')).toBeVisible()
-    await expect(page.locator('[data-testid="workbench-home-sessions"]')).toBeVisible()
-    await expect(page.locator('[data-testid="home-session-row"]').getByText('E2E session')).toBeVisible()
-  } finally {
-    await harness.dispose()
-  }
-})
-
-test('home page closes session and app columns', async () => {
-  const harness = await launchWorkbench()
-  try {
-    const { page } = harness
-    await expect(page.locator('[data-testid="agent-column"]')).toBeVisible()
-    await expect(page.locator('[data-testid="app-column"]')).toBeVisible()
-    await expect(page.locator('[data-testid="home-page"]')).toHaveAttribute('aria-pressed', 'false')
-    await page.locator('[data-testid="home-page"]').click()
-    await expect(page.locator('[data-testid="agent-column"]')).toBeHidden()
-    await expect(page.locator('[data-testid="app-column"]')).toBeHidden()
-    await expect(page.locator('[data-testid="workbench-home"]')).toBeVisible()
-    await expect(page.locator('[data-testid="workbench-home-insights"]')).toBeVisible()
-    await expect(page.locator('[data-testid="home-page"]')).toHaveAttribute('aria-pressed', 'true')
-    await expect(page.locator('[data-testid="sidebar-services"]')).toHaveAttribute(
-      'data-active',
-      'false'
-    )
+    // No Home page: with the app column closed the agent cannot close itself.
+    await expect(page.locator('[data-testid="close-agent"]')).toHaveCount(0)
   } finally {
     await harness.dispose()
   }

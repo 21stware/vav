@@ -40,10 +40,7 @@ export function SidebarServiceBar({
 
   const switchService = (machineId: string): void => {
     if (machineId === windowMachineId) return
-    void (async () => {
-      await useSessionStore.getState().switchMachine(machineId)
-      await window.vav.hosts.show(machineId)
-    })()
+    void useSessionStore.getState().switchMachine(machineId)
   }
 
   const openMenu = (anchor: HTMLElement): void => {
@@ -85,11 +82,6 @@ export function SidebarServiceBar({
         label: t('common.settingsEllipsis'),
         icon: lucideMenuIcon('settings'),
         onSelect: () => useSessionStore.getState().openSettings('appearance', undefined, current.id)
-      },
-      {
-        label: t('sidebar.pictureInPicture'),
-        icon: lucideMenuIcon('picture-in-picture'),
-        onSelect: () => void useSessionStore.getState().setPictureInPicture(true)
       }
     )
     void showMenu(items, menuAnchor(anchor))

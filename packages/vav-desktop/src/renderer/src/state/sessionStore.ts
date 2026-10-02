@@ -14,6 +14,7 @@ import type { SqliteDatabaseInfo } from '@shared/ipc'
 import type { StorageSource } from '@shared/storageSource'
 import type { ApplicationsMode } from './sessionTypes'
 import { nextApplicationsModePatch, type AppDetailByMode } from '../lib/appModeSwitch'
+import { appColumnFocusForMachine } from '../lib/appColumnObject'
 import { applicationsModeForConversation } from '../lib/applicationsWidth'
 import { appColumnFocusEqual } from '@shared/appColumnFocus'
 import {
@@ -131,11 +132,14 @@ import { compactionForLeaf } from '@shared/compaction'
 import { userBashTabsOnly } from '../lib/workspacePty'
 import { bashGroupChips } from '../lib/bashTabGroups'
 import { getProjection, disposeProjection } from './StreamProjection'
+import { preferredActiveLeaf } from '@shared/thread'
 import { useWorkspaceStore } from './workspaceStore'
 import {
   conversationHydrationRefreshPatch,
   conversationFullHydratePatch,
+  conversationResyncPatch,
   isCurrentHydration,
+  mergeHydratedMessages,
   nextHydrationGeneration,
   omitConversationCachePatch,
   omitKeys,
@@ -250,6 +254,9 @@ interface SessionState {
     options?: { additive?: boolean; range?: boolean; rangeIds?: string[] }
   ): void
   openAppObject(id: string): void
+  /** App-column list Manage mode: rows toggle into a multi-selection. */
+  appListManage: boolean
+  setAppListManage(on: boolean): void
   restoreWorkspaceAgent(): void
   toggleApplications(): void
   /** Center agent column. Closed from the agent chrome; New session / a row opens it. */
@@ -258,8 +265,6 @@ interface SessionState {
   toggleAgent(): void
   /** Mint a new agent conversation (or focus the current empty one). Isolated windows mint in place. */
   beginNewSession(): void
-  /** Close the session and app columns and show the workbench home. */
-  showHome(): void
   /** Selected table inside the active database session. Null = connection info. */
   activeDbTable: string | null
   /** Cached live-DB schema by connection id. */
@@ -494,6 +499,8 @@ interface SessionState {
       fileSession?: FileSessionSelectHint
       /** Database category: open this table, or null for connection info. */
       dbTable?: string | null
+      /** App objects: focus for the split side panel instead of opening the full layer. */
+      appPeek?: boolean
     }
   ): Promise<void>
   /**
@@ -749,9 +756,6 @@ interface SessionState {
 
   toggleSidebar(): void
   setSidebarVisible(visible: boolean): void
-  /** Compact always-on-top shell — running / done tasks with accordion composer. */
-  pictureInPicture: boolean
-  setPictureInPicture(enabled: boolean): Promise<void>
   setSidebarListMode(mode: SidebarListMode): void
   setFilesSource(source: StorageSource): void
   /** Leave the file canvas and show Recent files / This Mac again. */
@@ -798,6 +802,50 @@ const sessionToolsLayouts = loadSessionToolsMap()
 let workspaceSelectGen = 0
 const hydrationGen = new Map<string, number>()
 
+/** One in-flight resync per conversation; a second request re-runs once after it. */
+const resyncing = new Map<string, { again: boolean }>()
+
+/**
+ * Re-read a conversation from main and merge it (main wins on collision).
+ * Covers gaps the live event stream cannot: a turn that started before this
+ * window knew the session, or a control-plane idle frame whose sealed reply
+ * only reached main's store.
+ */
+function resyncConversationMessages(id: string): void {
+  const running = resyncing.get(id)
+  if (running) {
+    running.again = true
+    return
+  }
+  const slot = { again: false }
+  resyncing.set(id, slot)
+  void (async () => {
+    try {
+      do {
+        slot.again = false
+        const conversation = await window.vav.conversations.get(id)
+        if (!conversation) break
+        useSessionStore.setState((state) => {
+          // Mid-turn, main may hold a checkpoint of the reply being streamed;
+          // the live projection owns that one until `end`.
+          const leaf = state.activeLeaf[id]
+          const known = new Set((state.messages[id] ?? []).map((m) => m.id))
+          const disk = state.turns[id]?.isRunning
+            ? conversation.messages.filter(
+                (m) => known.has(m.id) || !(m.role === 'assistant' && m.parentId === leaf)
+              )
+            : conversation.messages
+          return conversationResyncPatch(state, id, { ...conversation, messages: disk })
+        })
+      } while (slot.again)
+    } catch {
+      /* best effort — the next turn event or switch rehydrates */
+    } finally {
+      resyncing.delete(id)
+    }
+  })()
+}
+
 function syncTimerDefinitionAgent(id: string): void {
   const row = useSessionStore.getState().conversations.find((item) => item.id === id)
   if (!isTimerDefinition(row ?? {}) || !row?.timerJobId || !window.vav?.timers?.updateJob) return
@@ -806,7 +854,6 @@ function syncTimerDefinitionAgent(id: string): void {
 
 export const useSessionStore = create<SessionState>((set, get) => ({
   sidebarVisible: globalLayout.sidebarVisible,
-  pictureInPicture: false,
   sidebarListMode: 'main',
   filesSource: 'recent',
   storageBrowsePath: null,
@@ -816,6 +863,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   focusedAppObjectId: null,
   selectedAppObjectIds: [],
   applicationsDetailOpen: false,
+  appListManage: false,
   applicationsDetailByMode: {},
   focusedAppObjectByMode: {},
   selectedAppObjectIdsByMode: {},
@@ -1138,21 +1186,26 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         compactions,
         ...meta
       } = full
-      set((state) =>
-        fileSessionHydrateOnDemandPatch(state, id, {
+      set((state) => {
+        // Turn events for this id may have landed while `get` was in flight
+        // (a scheduled run streams before the session is in the list). Merge,
+        // or the prompt that just arrived is overwritten by an older snapshot.
+        const merged = mergeHydratedMessages(messages, state.messages[id])
+        return fileSessionHydrateOnDemandPatch(state, id, {
           meta,
-          messages,
-          activeLeafId,
+          messages: merged,
+          activeLeafId: preferredActiveLeaf(merged, state.activeLeaf[id], activeLeafId),
           compactions,
           tokenHistory,
           cacheExpiresAt
         })
-      )
+      })
       void cacheCreatedAt
       target = meta
     }
     if (target && isAppObjectSession(target)) {
-      get().openAppObject(target.id)
+      if (options?.appPeek) get().focusAppObject(target.id)
+      else get().openAppObject(target.id)
       return
     }
     let nextSelection = nextConversationSelection({
@@ -2909,13 +2962,25 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   async switchMachine(machineId) {
     const id = normalizeMachineId(machineId)
     if (normalizeMachineId(get().windowMachineId) === id) return
-    const host = get().hosts.find((row) => row.id === id)
-    set({
-      windowMachineId: id,
-      ...(host?.home ? { home: host.home } : {}),
-      ...(host?.tmp ? { tmp: host.tmp } : {})
-    })
-    await syncActiveConversationToMachine()
+    if (switchingMachine === id) return
+    switchingMachine = id
+    try {
+      // Route host IPC (file sessions, settings) before the renderer flips
+      // windowMachineId, otherwise Services refresh still hits the old daemon.
+      if (window.vav?.hosts?.show) await window.vav.hosts.show(id)
+      const state = get()
+      if (normalizeMachineId(state.windowMachineId) === id) return
+      const host = state.hosts.find((row) => row.id === id)
+      set({
+        windowMachineId: id,
+        ...(host?.home ? { home: host.home } : {}),
+        ...(host?.tmp ? { tmp: host.tmp } : {}),
+        ...appColumnFocusForMachine(state, id)
+      })
+      await syncActiveConversationToMachine()
+    } finally {
+      if (switchingMachine === id) switchingMachine = null
+    }
   },
 
   async refreshApiKeyHint() {
@@ -3118,19 +3183,6 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     })
   },
 
-  async setPictureInPicture(enabled) {
-    if (get().pictureInPicture === enabled) return
-    const api = window.vav?.window?.setPictureInPicture
-    if (enabled) {
-      get().setToolsCollapsed(true)
-      set({ pictureInPicture: true })
-      if (typeof api === 'function') await api(true)
-      return
-    }
-    if (typeof api === 'function') await api(false)
-    set({ pictureInPicture: false })
-  },
-
   setSidebarListMode(mode) {
     set({ sidebarListMode: mode })
   },
@@ -3177,6 +3229,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     set({
       ...patch,
       applicationsVisible: true,
+      ...(same ? {} : { appListManage: false }),
       focusedAppObjectByMode,
       selectedAppObjectIdsByMode,
       focusedAppObjectId: same ? state.focusedAppObjectId : (focusedAppObjectByMode[mode] ?? null),
@@ -3242,6 +3295,25 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     get().restoreWorkspaceAgent()
   },
 
+  setAppListManage(on) {
+    if (get().appListManage === on) return
+    const { focusedAppObjectId, selectedAppObjectIds } = get()
+    set({
+      appListManage: on,
+      // Leaving Manage collapses back to the focused row.
+      ...(on
+        ? selectedAppObjectIds.length > 1
+          ? {}
+          : { selectedAppObjectIds: [] }
+        : {
+            selectedAppObjectIds:
+              focusedAppObjectId && selectedAppObjectIds.includes(focusedAppObjectId)
+                ? [focusedAppObjectId]
+                : []
+          })
+    })
+  },
+
   openAppObject(id) {
     get().focusAppObject(id)
     const mode = get().applicationsMode
@@ -3302,13 +3374,6 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       return
     }
     void get().createConversation({ openIn: 'here' })
-  },
-
-  showHome() {
-    const { agentVisible, applicationsVisible } = get()
-    if (!agentVisible && !applicationsVisible) return
-    set({ agentVisible: false, applicationsVisible: false })
-    if (agentVisible) saveGlobalLayout({ agentVisible: false })
   },
 
   showFileList() {
@@ -3575,6 +3640,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       drainQueue: (id) => {
         void get().drainMessageQueue(id)
       },
+      resyncMessages: (id) => resyncConversationMessages(id),
       openChangeReview: (changeSetId) => {
         void get().openChangeReview(changeSetId)
       }
@@ -3585,6 +3651,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 export { visibleMessages }
 
 let syncingMachine = false
+let switchingMachine: string | null = null
 
 /**
  * After the sidebar switches machines, show a session that actually lives

@@ -149,9 +149,14 @@ export function registerFileSessionsIpc(
     if (client) return rememberOpened(path, await client.request('fileSessions.open', { path }))
     if (remoteOnly()) return null
     const [model, approval, thinking] = defaults()
-    const opened = await store.open(path, model, approval, thinking)
-    notifyChanged()
-    return toFileSessionsState(opened.fileId, opened.activeSessionId, opened.sessions)
+    try {
+      const opened = await store.open(path, model, approval, thinking)
+      notifyChanged()
+      return toFileSessionsState(opened.fileId, opened.activeSessionId, opened.sessions)
+    } catch (err) {
+      if (err instanceof Error && err.message === 'directory') return null
+      throw err
+    }
   })
 
   ipcMain.handle(IPC.fileSessionsCreate, async (_event, path: string) => {

@@ -1,8 +1,6 @@
 import { useEffect, useState } from 'react'
 import {
   AGENT_MIN_WIDTH,
-  PIP_WINDOW_MIN_HEIGHT,
-  PIP_WINDOW_MIN_WIDTH,
   windowMinHeight,
   windowMinWidth,
   type WindowShellKind
@@ -19,7 +17,6 @@ export function reportFileSessionAgentOpen(_open: boolean | null, _width?: numbe
  * cannot be dragged smaller than the visible chrome actually occupies.
  */
 export function useWindowMinSize(): void {
-  const pictureInPicture = useSessionStore((s) => s.pictureInPicture)
   const shell: WindowShellKind = isCompanionSessionShell() ? 'session' : 'main'
   const sidebarVisible = useSessionStore((s) => s.sidebarVisible)
   const applicationsVisible = useSessionStore((s) => s.applicationsVisible)
@@ -40,27 +37,23 @@ export function useWindowMinSize(): void {
     return () => window.removeEventListener(SIDEBAR_WIDTH_CHANGED, onWidth)
   }, [])
 
-  const width = pictureInPicture
-    ? PIP_WINDOW_MIN_WIDTH
-    : windowMinWidth({
-        sidebarVisible: shell === 'main',
-        sidebarRail: shell === 'main' && !sidebarVisible,
-        sidebarWidth: sidebarVisible ? sidebarWidth : undefined,
-        agentVisible: shell === 'main' ? agentVisible : true,
-        agentMinWidth: AGENT_MIN_WIDTH,
-        previewVisible: shell === 'main' && applicationsVisible,
-        // Floor only — never the live column width. applyWindowMinSize grows the
-        // frame when it is below the floor; a live width then raises the floor
-        // again (window walks off-screen).
-        previewWidth: undefined,
-        shell
-      })
-  const height = pictureInPicture
-    ? PIP_WINDOW_MIN_HEIGHT
-    : windowMinHeight({
-        workbenchExpanded: !toolsCollapsed,
-        shell
-      })
+  const width = windowMinWidth({
+    sidebarVisible: shell === 'main',
+    sidebarRail: shell === 'main' && !sidebarVisible,
+    sidebarWidth: sidebarVisible ? sidebarWidth : undefined,
+    agentVisible: shell === 'main' ? agentVisible : true,
+    agentMinWidth: AGENT_MIN_WIDTH,
+    previewVisible: shell === 'main' && applicationsVisible,
+    // Floor only — never the live column width. applyWindowMinSize grows the
+    // frame when it is below the floor; a live width then raises the floor
+    // again (window walks off-screen).
+    previewWidth: undefined,
+    shell
+  })
+  const height = windowMinHeight({
+    workbenchExpanded: !toolsCollapsed,
+    shell
+  })
 
   useEffect(() => {
     const api = window.vav?.window?.setMinSize

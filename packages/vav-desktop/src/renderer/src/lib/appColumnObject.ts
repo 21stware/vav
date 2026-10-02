@@ -1,3 +1,4 @@
+import { conversationOnMachine } from '@shared/workspaceHost'
 import type { ApplicationsMode } from '../state/sessionTypes'
 import { applicationsModeForConversation } from './applicationsWidth'
 
@@ -6,6 +7,7 @@ export type AppColumnObjectRow = {
   fileId?: string | null
   sessionKind?: string | null
   timerRunId?: string | null
+  machineId?: string | null
 }
 
 export function focusedAppObjectIdForMode(
@@ -45,4 +47,47 @@ export function rememberVisitedAppMode(
   mode: ApplicationsMode
 ): ApplicationsMode[] | null {
   return visited.includes(mode) ? null : [...visited, mode]
+}
+
+/** Drop app-column focus that does not belong on the device just switched to. */
+export function appColumnFocusForMachine<T extends { id: string; machineId?: string | null }>(
+  state: {
+    conversations: readonly T[]
+    focusedAppObjectId: string | null
+    selectedAppObjectIds: readonly string[]
+    focusedAppObjectByMode: Partial<Record<ApplicationsMode, string | null>>
+    selectedAppObjectIdsByMode: Partial<Record<ApplicationsMode, string[]>>
+    applicationsDetailOpen: boolean
+  },
+  machineId: string
+): {
+  focusedAppObjectId: string | null
+  selectedAppObjectIds: string[]
+  focusedAppObjectByMode: Partial<Record<ApplicationsMode, string | null>>
+  selectedAppObjectIdsByMode: Partial<Record<ApplicationsMode, string[]>>
+  applicationsDetailOpen: boolean
+} {
+  const keepId = (id: string | null | undefined): string | null => {
+    if (!id) return null
+    const row = state.conversations.find((item) => item.id === id)
+    return row && conversationOnMachine(row, machineId) ? id : null
+  }
+  const focusedAppObjectId = keepId(state.focusedAppObjectId)
+  const selectedAppObjectIds = state.selectedAppObjectIds.filter((id) => keepId(id))
+  const focusedAppObjectByMode = Object.fromEntries(
+    Object.entries(state.focusedAppObjectByMode).map(([mode, id]) => [mode, keepId(id)])
+  ) as Partial<Record<ApplicationsMode, string | null>>
+  const selectedAppObjectIdsByMode = Object.fromEntries(
+    Object.entries(state.selectedAppObjectIdsByMode).map(([mode, ids]) => [
+      mode,
+      (ids ?? []).filter((id) => keepId(id))
+    ])
+  ) as Partial<Record<ApplicationsMode, string[]>>
+  return {
+    focusedAppObjectId,
+    selectedAppObjectIds,
+    focusedAppObjectByMode,
+    selectedAppObjectIdsByMode,
+    applicationsDetailOpen: focusedAppObjectId ? state.applicationsDetailOpen : false
+  }
 }

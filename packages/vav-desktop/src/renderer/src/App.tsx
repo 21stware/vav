@@ -15,10 +15,8 @@ import {
 import { installFsWatchBridge, installPtyBridge } from './state/workspaceStore'
 import { Sidebar } from './components/Sidebar'
 import { SessionDetail } from './components/SessionDetail'
-import { PipView } from './components/PipView'
 import { useTerminalAppearance } from './lib/useTerminalAppearance'
 import { createWarmComponent } from './lib/warmComponent'
-import { WorkbenchHome } from './components/WorkbenchHome'
 import { AppToast } from './components/AppToast'
 import { RemoteFolderPicker } from './components/RemoteFolderPicker'
 import { UpdateCorner } from './components/UpdateCorner'
@@ -190,7 +188,6 @@ export default function App(): React.JSX.Element {
 
   const floating = useSidebarFloatMode()
   const sidebarVisible = useSessionStore((s) => s.sidebarVisible)
-  const pictureInPicture = useSessionStore((s) => s.pictureInPicture)
   // Expanded docked list owns traffic-light chrome. Collapsed capsule and
   // narrow-window float leave the session header flush to the window top —
   // those chrome rows indent so they are not painted under the lights.
@@ -226,16 +223,6 @@ export default function App(): React.JSX.Element {
     return <div className="app-shell" />
   }
 
-  if (pictureInPicture) {
-    return (
-      <>
-        <PipView />
-        <AppToast />
-        <RemoteFolderPicker />
-      </>
-    )
-  }
-
   // Change review is inline in the transcript (not a full-screen takeover).
   return (
     <div
@@ -254,7 +241,6 @@ export default function App(): React.JSX.Element {
         />
         <AgentSlot />
         <ApplicationsSlot />
-        <HomeSlot />
       </div>
       {/* Expanded list hosts the chip; floating + hidden pins bottom-left. */}
       {floating && !sidebarVisible ? <UpdateCorner /> : null}
@@ -297,7 +283,8 @@ function CategoryEmpty({
 
 function AgentSlot(): React.JSX.Element {
   const t = useT()
-  const visible = useSessionStore((s) => s.agentVisible)
+  // No Home page: with the app column closed the agent is the window.
+  const visible = useSessionStore((s) => s.agentVisible || !s.applicationsVisible)
   const listMode = useSessionStore((s) => s.sidebarListMode)
   const hasActive = useSessionStore((s) => s.conversations.some((c) => c.id === s.activeId))
 
@@ -331,12 +318,6 @@ function Titlebar({
   )
 }
 
-function HomeSlot(): React.JSX.Element | null {
-  const agentVisible = useSessionStore((s) => s.agentVisible)
-  const applicationsVisible = useSessionStore((s) => s.applicationsVisible)
-  if (agentVisible || applicationsVisible) return null
-  return <WorkbenchHome />
-}
 
 const warmApplicationsPanel = createWarmComponent(() =>
   import('./components/ApplicationsPanel').then((m) => m.ApplicationsPanel)

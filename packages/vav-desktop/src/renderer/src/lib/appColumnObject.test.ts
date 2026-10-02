@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import {
+  appColumnFocusForMachine,
   conversationForAppMode,
   focusedAppObjectIdForMode,
   rememberVisitedAppMode
@@ -41,5 +42,31 @@ describe('rememberVisitedAppMode', () => {
   it('appends a first visit and no-ops repeats', () => {
     assert.deepEqual(rememberVisitedAppMode(['storage'], 'knowledge'), ['storage', 'knowledge'])
     assert.equal(rememberVisitedAppMode(['storage', 'knowledge'], 'storage'), null)
+  })
+})
+
+describe('appColumnFocusForMachine', () => {
+  it('clears focus that does not belong on the new device', () => {
+    const next = appColumnFocusForMachine(
+      {
+        conversations: [
+          { id: 'note-local', machineId: 'local' },
+          { id: 'note-box', machineId: 'box' }
+        ],
+        focusedAppObjectId: 'note-box',
+        selectedAppObjectIds: ['note-box', 'note-local'],
+        focusedAppObjectByMode: { knowledge: 'note-box', storage: 'note-local' },
+        selectedAppObjectIdsByMode: { knowledge: ['note-box'], storage: ['note-local'] },
+        applicationsDetailOpen: true
+      },
+      'local'
+    )
+    assert.deepEqual(next, {
+      focusedAppObjectId: null,
+      selectedAppObjectIds: ['note-local'],
+      focusedAppObjectByMode: { knowledge: null, storage: 'note-local' },
+      selectedAppObjectIdsByMode: { knowledge: [], storage: ['note-local'] },
+      applicationsDetailOpen: false
+    })
   })
 })

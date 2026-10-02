@@ -1,6 +1,9 @@
-import { History, LayoutGrid, Plus } from 'lucide-react'
+import { Clock, History, LayoutGrid, Plus, StickyNote } from 'lucide-react'
+import { KNOWLEDGE_ALL_NOTES_ID } from '@shared/knowledge'
 import { useSessionStore } from '../../state/sessionStore'
 import { useT } from '../../i18n/useT'
+import { assignCreatedAppObject } from '../../lib/appFolderLibrary'
+import { knowledgeFolderId } from '../../lib/knowledgeFolderSelection'
 import { menuAnchor, showMenu, type MenuItem } from '../../lib/nativeMenu'
 import { flattenSessionTitle, historyMenuConversations } from '../../lib/sidebarList'
 
@@ -10,6 +13,8 @@ export function SidebarNav(): React.JSX.Element {
   const showApplications = useSessionStore((s) => s.showApplications)
   const toggleApplications = useSessionStore((s) => s.toggleApplications)
   const beginNewSession = useSessionStore((s) => s.beginNewSession)
+  const createKnowledgeNote = useSessionStore((s) => s.createKnowledgeNote)
+  const createScheduledConversation = useSessionStore((s) => s.createScheduledConversation)
   const conversations = useSessionStore((s) => s.conversations)
   const activeId = useSessionStore((s) => s.activeId)
   const windowMachineId = useSessionStore((s) => s.windowMachineId)
@@ -70,6 +75,33 @@ export function SidebarNav(): React.JSX.Element {
       >
         <LayoutGrid size={14} aria-hidden />
         <span>{t('sidebar.services')}</span>
+      </button>
+      <button
+        type="button"
+        className="sidebar-nav-item"
+        data-testid="sidebar-new-note"
+        title={t('sidebar.newNote')}
+        onClick={() => {
+          const folderId = knowledgeFolderId()
+          void createKnowledgeNote(folderId === KNOWLEDGE_ALL_NOTES_ID ? null : folderId)
+        }}
+      >
+        <StickyNote size={14} aria-hidden />
+        <span>{t('sidebar.newNote')}</span>
+      </button>
+      <button
+        type="button"
+        className="sidebar-nav-item"
+        data-testid="sidebar-new-scheduled"
+        title={t('sidebar.newScheduled')}
+        onClick={() => {
+          void createScheduledConversation().then((id) => {
+            assignCreatedAppObject('scheduled', id)
+          })
+        }}
+      >
+        <Clock size={14} aria-hidden />
+        <span>{t('sidebar.newScheduled')}</span>
       </button>
     </nav>
   )
