@@ -14,6 +14,7 @@ export type LlmVendorId =
   | 'siliconflow'
   | 'bigmodel'
   | 'kimi'
+  | 'magpie'
   | 'custom'
 
 export interface LlmVendor {
@@ -21,7 +22,17 @@ export interface LlmVendor {
   name: string
   /** Official API root. Empty for Custom — the user fills it in. */
   endpoint: string
+  /**
+   * Loopback / gateway vendors that accept any bearer value.
+   * Prefills the key field and is written when the vendor is added.
+   */
+  defaultApiKey?: string
 }
+
+/** Magpie local gateway — OpenAI / Anthropic / Gemini on loopback. */
+export const MAGPIE_GATEWAY_PORT = 3425
+export const MAGPIE_DEFAULT_API_KEY = 'magpie'
+export const MAGPIE_ENDPOINT = `http://127.0.0.1:${MAGPIE_GATEWAY_PORT}/v1`
 
 export const LLM_VENDOR_CATALOGUE: readonly LlmVendor[] = [
   { id: 'deepseek', name: 'DeepSeek', endpoint: 'https://api.deepseek.com' },
@@ -33,7 +44,13 @@ export const LLM_VENDOR_CATALOGUE: readonly LlmVendor[] = [
   { id: 'together', name: 'Together', endpoint: 'https://api.together.xyz/v1' },
   { id: 'siliconflow', name: 'SiliconFlow', endpoint: 'https://api.siliconflow.cn/v1' },
   { id: 'bigmodel', name: 'Zhipu', endpoint: 'https://open.bigmodel.cn/api/paas/v4' },
-  { id: 'kimi', name: 'Kimi', endpoint: 'https://api.moonshot.cn/v1' }
+  { id: 'kimi', name: 'Kimi', endpoint: 'https://api.moonshot.cn/v1' },
+  {
+    id: 'magpie',
+    name: 'Magpie',
+    endpoint: MAGPIE_ENDPOINT,
+    defaultApiKey: MAGPIE_DEFAULT_API_KEY
+  }
 ]
 
 export const LLM_CUSTOM_VENDOR: LlmVendor = {
@@ -66,10 +83,28 @@ function endpointHost(endpoint: string | null | undefined): string | null {
   }
 }
 
+/** Magpie's loopback gateway (`127.0.0.1:3425`, `localhost`, `[::1]`). */
+export function isMagpieEndpoint(endpoint: string | null | undefined): boolean {
+  const raw = (endpoint ?? '').trim()
+  if (!raw) return false
+  try {
+    const url = new URL(raw)
+    const host = url.hostname.toLowerCase()
+    const loopback =
+      host === '127.0.0.1' || host === 'localhost' || host === '::1' || host === '[::1]'
+    if (!loopback) return false
+    const port = url.port || (url.protocol === 'https:' ? '443' : '80')
+    return port === String(MAGPIE_GATEWAY_PORT)
+  } catch {
+    return /(?:127\.0\.0\.1|localhost|\[::1\]):3425\b/i.test(raw)
+  }
+}
+
 function matchVendor(endpoint: string | null | undefined): LlmVendor | null {
   const host = (endpointHost(endpoint) ?? '').toLowerCase()
   const raw = (endpoint ?? '').toLowerCase()
   if (!host && !raw) return null
+  if (isMagpieEndpoint(endpoint)) return vendorById('magpie')
   if (host.includes('deepseek') || raw.includes('deepseek')) return vendorById('deepseek')
   if (host.includes('openrouter')) return vendorById('openrouter')
   if (host === 'api.x.ai' || host.endsWith('.x.ai') || raw.includes('api.x.ai')) {

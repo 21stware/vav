@@ -15,6 +15,7 @@ import togetherIcon from '../assets/vendors/together.svg'
 import xaiIcon from '../assets/vendors/xai.svg'
 import bigmodelIcon from '../assets/vendors/bigmodel.svg'
 import kimiIcon from '../assets/vendors/kimi.svg'
+import magpieIcon from '../assets/vendors/magpie.svg'
 // VAV: line graphic (wordmark), not the app-icon plate.
 import vavGlyph from '../assets/wordmark.png'
 import vavGlyphDark from '../assets/wordmark-dark.png'
@@ -38,7 +39,8 @@ export const AGENT_ICONS: Record<string, string> = {
   together: togetherIcon,
   siliconflow: siliconflowIcon,
   bigmodel: bigmodelIcon,
-  kimi: kimiIcon
+  kimi: kimiIcon,
+  magpie: magpieIcon
 }
 
 export const MONO_MARKS = new Set([
@@ -57,7 +59,8 @@ export const MONO_MARKS = new Set([
   'together',
   'siliconflow',
   'bigmodel',
-  'kimi'
+  'kimi',
+  'magpie'
 ])
 
 export { vavGlyph, vavGlyphDark }

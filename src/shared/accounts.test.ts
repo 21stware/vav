@@ -90,6 +90,7 @@ describe('accounts helpers', () => {
     assert.equal(endpointHostOf('https://api.deepseek.com/v1'), 'api.deepseek.com')
     assert.equal(apiProviderBrand('https://api.deepseek.com/anthropic'), 'DeepSeek')
     assert.equal(apiProviderBrand('https://openrouter.ai/api/v1'), 'OpenRouter')
+    assert.equal(apiProviderBrand('http://127.0.0.1:3425/v1'), 'Magpie')
     assert.equal(isGenericAccountIdentity('vav'), true)
     assert.equal(isGenericAccountIdentity('账户'), true)
     assert.equal(isGenericAccountIdentity('Account'), true)
@@ -144,6 +145,7 @@ describe('accounts helpers', () => {
         'siliconflow',
         'bigmodel',
         'kimi',
+        'magpie',
         'cursor'
       ]
     )

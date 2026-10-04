@@ -71,11 +71,15 @@ export function vavFallbackModels(
         return 'moonshot-v1-8k'
       case 'bigmodel':
         return 'glm-4'
+      case 'magpie':
+        // Catalogue is live `/v1/models` (`provider/model`). No shipped seed.
+        return ''
       default:
         return VAV_DEFAULT_MODEL_ID
     }
   })()
 
+  if (!id) return []
   return [{ id, label: prettyVavModelLabel(id), ...inferModalitiesFromId(id) }]
 }
 

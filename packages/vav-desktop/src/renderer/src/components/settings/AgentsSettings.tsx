@@ -651,8 +651,11 @@ export function AgentsSettings(): React.JSX.Element {
       endpoint: vendor.endpoint
     })
     setAccountGroupsLocal(page.groups ?? [])
-    if (vendor.id !== 'custom') {
-      await window.vav.accounts.updateVav(id, { alias: vendor.name })
+    if (vendor.id !== 'custom' || vendor.defaultApiKey) {
+      await window.vav.accounts.updateVav(id, {
+        ...(vendor.id !== 'custom' ? { alias: vendor.name } : {}),
+        ...(vendor.defaultApiKey ? { apiKey: vendor.defaultApiKey } : {})
+      })
     }
     await window.vav.accounts.setCurrent(id)
     persistListOrder(

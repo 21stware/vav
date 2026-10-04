@@ -1293,7 +1293,7 @@ export interface AppSettings {
   /**
    * Default chat host for new / quick-launch sessions.
    * `null` or `"vav"` = no explicit default (current VAV profile).
-   * A {@link CliHostKind} or LLM vendor id (`deepseek`, `openrouter`, `bigmodel`, `kimi`, …)
+   * A {@link CliHostKind} or LLM vendor id (`deepseek`, `openrouter`, `bigmodel`, `kimi`, `magpie`, …)
    * is set only when the user clicks Set as default.
    */
   defaultAgentId: string | null
