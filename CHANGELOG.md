@@ -4,6 +4,10 @@ User-facing changes by release. Unreleased work lives at the top until the next 
 
 ## Unreleased
 
+## 1.32.10
+
+Settings → Agents can add **Magpie** as a model provider. It talks to the local Magpie gateway at `http://127.0.0.1:3425/v1`, lists `provider/model` ids from `/v1/models`, and fills the loopback key for you.
+
 ## 1.32.9
 
 Surface textures are now a real part of the room: the tile runs down the top ~46% of the agent plate, settings, and the app-column wash (not a 108px strip), lays down about twice the ink, and sits on a soft accent glow before fading into the plate. Every built-in tile was redrawn denser and a touch bolder; the texture ink follows the accent, so a blue tint gives a blue grain. Settings → Appearance gains a **Texture Strength** control (Soft / Normal / Bold).
