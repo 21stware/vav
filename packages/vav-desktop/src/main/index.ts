@@ -8,6 +8,7 @@ import {
   ipcMain,
   type IpcMainInvokeEvent,
   Menu,
+  nativeImage,
   nativeTheme,
   powerMonitor,
   protocol,
@@ -2861,6 +2862,33 @@ function broadcast(channel: string, payload: unknown): void {
     if (window.isDestroyed()) continue
     safeSend(window.webContents, channel, payload)
   }
+}
+
+/** A real vav window (not a capture / faaaaast overlay) has key focus. */
+function isVavFrontmost(): boolean {
+  const focused = BrowserWindow.getFocusedWindow()
+  if (!focused || focused.isDestroyed()) return false
+  return !screenshotController?.isOverlay(focused) && !faaaaastController?.isOverlay(focused)
+}
+
+/** Background global-hotkey capture: annotate, then copy the PNG. */
+async function captureScreenshotToClipboard(): Promise<void> {
+  if (!screenshotController) return
+  const hideWindows = settingsStore.get().screenshotKeepWindowFront === false
+  const result = await screenshotController.start(
+    null,
+    hideWindows ? { hideWindows: true } : undefined
+  )
+  if (!result.ok) {
+    if (!result.cancelled) console.warn('[screenshot] background capture failed', result.error)
+    return
+  }
+  const image = nativeImage.createFromPath(result.path)
+  if (image.isEmpty()) {
+    console.warn('[screenshot] background capture unreadable', result.path)
+    return
+  }
+  clipboard.writeImage(image)
 }
 
 /** Debounce twin fires (menu accelerator + before-input, or key repeat). */
@@ -6428,9 +6456,15 @@ function registerGlobalHotkey(accelerator: string): boolean {
   try {
     const ok = globalShortcut.register(screenshotAccel, () => {
       console.log(`[hotkey] screenshot fired: ${screenshotAccel}`)
+      if (screenshotController?.isActive()) return
+      // vav in the background: capture without pulling it forward or touching
+      // the composer — the shot lands on the clipboard instead.
+      if (!isVavFrontmost()) {
+        void captureScreenshotToClipboard()
+        return
+      }
       // Route through the renderer menu command so confirm can attach to the
       // focused conversation. Calling start() here used to swallow the result.
-      if (screenshotController?.isActive()) return
       sendMenuCommand('screenshot')
     })
     if (!ok) {

@@ -188,7 +188,7 @@ function captureDisplays(
 
 export function createScreenshotController(host: ScreenshotHost): {
   start: (
-    event: IpcMainInvokeEvent,
+    event: IpcMainInvokeEvent | null,
     options?: CaptureScreenshotOptions
   ) => Promise<ScreenshotResult>
   ready: (event: Electron.IpcMainEvent) => void
@@ -548,7 +548,9 @@ export function createScreenshotController(host: ScreenshotHost): {
     async start(event, options): Promise<ScreenshotResult> {
       if (pending) return { ok: false, error: 'busy' }
       applyAppCursor('crosshair')
-      const requester = BrowserWindow.fromWebContents(event.sender)
+      // No event = global hotkey while vav is in the background: nothing to
+      // refocus afterwards, so the user stays in the app they were using.
+      const requester = event ? BrowserWindow.fromWebContents(event.sender) : null
       const hideWindows = options?.hideWindows === true
 
       return await new Promise<ScreenshotResult>((resolve) => {
