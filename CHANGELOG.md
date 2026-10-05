@@ -4,6 +4,16 @@ User-facing changes by release. Unreleased work lives at the top until the next 
 
 ## Unreleased
 
+## 1.32.11
+
+Factory **Droid** joins the CLI agents. It runs over ACP, resumes sessions, lists its live models, and picks up plugins and skills from `~/.factory`. Settings → Accounts can sign in to Droid through browser device pairing (and sign out), and shows the Factory Standard quota for the 5-hour, weekly, and monthly windows. A slow browser sign-in no longer times out the session that follows it.
+
+Pressing the screenshot shortcut while vav is in the background no longer pulls vav forward or drops the shot into the Prompt Composer. You still select and annotate as usual, and the result is copied to the clipboard. With vav in front, the screenshot attaches to the current conversation as before.
+
+Choosing a CLI agent's **Default** model sticks instead of snapping back to the previous model, and a freshly attached local vav-server no longer re-adds agents you removed.
+
+Settings in the vav-server web UI opens again instead of crashing on the Appearance pane.
+
 ## 1.32.10
 
 Settings → Agents can add **Magpie** as a model provider. It talks to the local Magpie gateway at `http://127.0.0.1:3425/v1`, lists `provider/model` ids from `/v1/models`, and fills the loopback key for you.
