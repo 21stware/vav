@@ -5,6 +5,7 @@ import {
   chatMessagesFromRemoteThread,
   conversationFromRemoteSession,
   conversationListPatchFromRemoteSession,
+  conversationPatchFromRemoteControls,
   desktopRemoteSessionApply,
   isSparseRemoteConversation,
   favoriteIdsFromRemoteSessions,
@@ -23,6 +24,25 @@ describe('remoteDesktop (phone → desktop session model)', () => {
     assert.equal(
       isSparseRemoteConversation({ model: 'grok-4.6', messages: [], tokensUsed: 0, tokenLimit: 0 }),
       false
+    )
+  })
+
+  it('applies a CLI host Default ("") from a controls frame', () => {
+    const controls = (agent: string, model: string) =>
+      ({ type: 'controls', conversationId: 's1', agent, model }) as unknown as Parameters<
+        typeof conversationPatchFromRemoteControls
+      >[0]
+    const existing = { model: 'claude-opus-4-8', cliHost: 'droid' as const, agentBinaryName: 'droid' }
+    assert.equal(conversationPatchFromRemoteControls(controls('droid', ''), existing).model, '')
+    assert.equal(
+      conversationPatchFromRemoteControls(controls('droid', 'auto'), existing).model,
+      'auto'
+    )
+    // VAV has no "CLI default"; an empty model keeps the known one.
+    assert.equal(
+      conversationPatchFromRemoteControls(controls('vav', ''), { ...existing, cliHost: null })
+        .model,
+      'claude-opus-4-8'
     )
   })
 

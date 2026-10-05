@@ -31,7 +31,11 @@ import type {
 import { conversationOnMachine, isLocalMachine, LOCAL_MACHINE_ID } from '@shared/workspaceHost'
 import { isWorkspaceSession } from '@shared/sessionKind'
 import { mergeAdoptedHostMessages } from '@shared/remoteControlApply'
-import { isSparseRemoteConversation, UNKNOWN_REMOTE_MODEL } from '@shared/remoteDesktop'
+import {
+  isSparseRemoteConversation,
+  remoteModelIsCliDefault,
+  UNKNOWN_REMOTE_MODEL
+} from '@shared/remoteDesktop'
 import { parseThinkingLevel } from '@shared/thinkingLevel'
 import { normalizeCursorConversationModel } from '@shared/cursorModel'
 import { hostTranscriptKey } from '@shared/types'
@@ -556,7 +560,7 @@ export class ConversationStore {
           existingLocal.cliHost = source.cliHost
           changed = true
         }
-        if (source.model) {
+        if (source.model || remoteModelIsCliDefault(source)) {
           existingLocal.model = source.model
           changed = true
         }
@@ -607,7 +611,7 @@ export class ConversationStore {
         ? (cloned.title ?? null)
         : (cloned.duplicateSourceTitle ?? null),
       workingDirectory: cloned.workingDirectory ?? null,
-      model: cloned.model || UNKNOWN_REMOTE_MODEL,
+      model: remoteModelIsCliDefault(cloned) ? '' : cloned.model || UNKNOWN_REMOTE_MODEL,
       title: cloned.title || defaultSessionTitle(currentLocale()),
       approvalMode: cloned.approvalMode || 'auto',
       thinkingLevel: parseThinkingLevel(cloned.thinkingLevel),
@@ -681,7 +685,10 @@ export class ConversationStore {
         adopted.quotaWindows = existing.quotaWindows
         adopted.reportedSessionCostUsd = existing.reportedSessionCostUsd
         adopted.cliResumeCursor = existing.cliResumeCursor
-      } else if (!cloned.model || cloned.model === UNKNOWN_REMOTE_MODEL) {
+      } else if (
+        !remoteModelIsCliDefault(cloned) &&
+        (!cloned.model || cloned.model === UNKNOWN_REMOTE_MODEL)
+      ) {
         adopted.model = existing.model
       }
     }
@@ -770,7 +777,7 @@ export class ConversationStore {
     conversation.hostTranscripts[prevKey] = snapshotHostBucket(conversation)
 
     const parked = conversation.hostTranscripts[nextKey]
-    applyHostBucket(conversation, parked ?? emptyHostBucket())
+    applyHostBucket(conversation, parked ?? emptyHostBucket(), nextHost)
     if (!parked) {
       conversation.tokenLimit = contextWindowFor(conversation.model)
       conversation.reportedSessionCostUsd = null
@@ -1521,7 +1528,11 @@ function snapshotHostBucket(conversation: Conversation): HostTranscriptBucket {
   }
 }
 
-function applyHostBucket(conversation: Conversation, bucket: HostTranscriptBucket): void {
+function applyHostBucket(
+  conversation: Conversation,
+  bucket: HostTranscriptBucket,
+  host: CliHostKind | null
+): void {
   conversation.messages = bucket.messages.map((m) => structuredClone(m))
   conversation.activeLeafId = bucket.activeLeafId
   conversation.tokenHistory = [...bucket.tokenHistory]
@@ -1535,5 +1546,7 @@ function applyHostBucket(conversation: Conversation, bucket: HostTranscriptBucke
   conversation.cliResumeCursor = bucket.cliResumeCursor
     ? structuredClone(bucket.cliResumeCursor)
     : null
-  if (bucket.model) conversation.model = bucket.model
+  if (bucket.model || remoteModelIsCliDefault({ model: bucket.model, cliHost: host })) {
+    conversation.model = bucket.model ?? ''
+  }
 }
