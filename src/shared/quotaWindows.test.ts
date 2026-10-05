@@ -16,6 +16,7 @@ import {
   windowsFromClaudeOAuthPayload,
   windowsFromCodexBackendPayload,
   windowsFromCursorPeriodPayload,
+  windowsFromDroidBillingLimits,
   windowsFromGrokBillingPayload
 } from './quotaWindows.ts'
 
@@ -296,6 +297,72 @@ describe('windowsFromCursorPeriodPayload', () => {
     assert.equal(windows[0]?.kind, 'monthly')
     assert.equal(windows[0]?.usedPercent, 37.1468)
     assert.equal(windows[0]?.resetsAt, 1788969122000)
+  })
+})
+
+describe('windowsFromDroidBillingLimits', () => {
+  const now = 1_790_000_000_000
+
+  it('maps the Standard pool onto 5h / weekly / monthly windows', () => {
+    const windows = windowsFromDroidBillingLimits(
+      {
+        usesTokenRateLimitsBilling: true,
+        limits: {
+          standard: {
+            fiveHour: { usedPercent: 42.5, secondsRemaining: 3600 },
+            weekly: { usedPercent: 10, windowEnd: new Date(now + 86_400_000).toISOString() },
+            monthly: { usedPercent: 3, windowEnd: (now + 2 * 86_400_000) / 1000 }
+          },
+          core: {
+            fiveHour: { usedPercent: 99 },
+            weekly: { usedPercent: 99 },
+            monthly: { usedPercent: 99 }
+          }
+        },
+        extraUsageBalanceCents: 0
+      },
+      now
+    )
+    assert.deepEqual(
+      windows.map((w) => ({ kind: w.kind, usedPercent: w.usedPercent, resetsAt: w.resetsAt })),
+      [
+        { kind: 'five_hour', usedPercent: 42.5, resetsAt: now + 3_600_000 },
+        { kind: 'seven_day', usedPercent: 10, resetsAt: now + 86_400_000 },
+        { kind: 'monthly', usedPercent: 3, resetsAt: now + 2 * 86_400_000 }
+      ]
+    )
+  })
+
+  it('treats a lapsed rolling window as reset', () => {
+    const windows = windowsFromDroidBillingLimits(
+      {
+        usesTokenRateLimitsBilling: true,
+        limits: {
+          standard: {
+            fiveHour: { usedPercent: 80, windowEnd: new Date(now - 60_000).toISOString() },
+            weekly: { usedPercent: 20 },
+            monthly: { usedPercent: 5 }
+          }
+        }
+      },
+      now
+    )
+    assert.equal(windows[0]?.kind, 'five_hour')
+    assert.equal(windows[0]?.usedPercent, 0)
+    assert.equal(windows[0]?.resetsAt, null)
+    assert.equal(windows[1]?.usedPercent, 20)
+  })
+
+  it('returns nothing for legacy (non rate-limit) billing accounts', () => {
+    assert.deepEqual(
+      windowsFromDroidBillingLimits({
+        usesTokenRateLimitsBilling: false,
+        limits: { standard: { fiveHour: { usedPercent: 1 } } }
+      }),
+      []
+    )
+    assert.deepEqual(windowsFromDroidBillingLimits({ usesTokenRateLimitsBilling: true }), [])
+    assert.deepEqual(windowsFromDroidBillingLimits(null), [])
   })
 })
 

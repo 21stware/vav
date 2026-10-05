@@ -29,15 +29,21 @@ import { buildAccountsPage, cliCatalogOf, resolveWorkspaceContext } from './page
 import { captureAccountCredentials, captureLiveHost } from './activateAccount.ts'
 import { adapterFor } from './credentials/index.ts'
 import {
+  canHostLogin,
   cancelHostOAuthLogin,
   currentOAuthLogin,
   finishHostOAuth,
-  loginArgv,
   runHostLogout,
   startHostOAuthLogin
 } from './hostLogin.ts'
 
 async function liveOauthIdentity(agentId: string): Promise<string | null> {
+  if (agentId === 'droid') {
+    // Lazy: droidUsage pulls in electron `net`, which the daemon catalog's tests cannot load.
+    const { readDroidAccountInfo } = await import('../quota/droidUsage.ts')
+    const info = await readDroidAccountInfo()
+    return info.signedIn ? info.accountId?.trim() || null : null
+  }
   const adapter = adapterFor(agentId)
   if (!adapter) return null
   const live = (await adapter.liveIdentity())?.trim()
@@ -48,6 +54,7 @@ async function liveOauthIdentity(agentId: string): Promise<string | null> {
 const HOST_BINS: Record<string, string[]> = {
   claude: ['claude'],
   codex: ['codex'],
+  droid: ['droid'],
   cursor: ['cursor-agent', 'agent', 'cursor'],
   grok: ['grok'],
   devin: ['devin'],
@@ -255,7 +262,7 @@ export function createAccountsCatalog(opts: {
       if (
         !isStructuredCliHost(oauthHost) ||
         createKindForAgent(oauthHost) !== 'oauth' ||
-        !loginArgv(oauthHost)
+        !canHostLogin(oauthHost)
       ) {
         throw new Error(t('accounts.error.missing'))
       }

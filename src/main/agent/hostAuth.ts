@@ -4,6 +4,7 @@ import { readClaudeAccountInfo, readClaudeAuthIdentity } from '../quota/claudeUs
 import { readCodexAccountInfo, readCodexAuthIdentity } from '../quota/codexUsage'
 import { readCursorAccountInfo, readCursorAuthIdentity } from '../quota/cursorUsage'
 import { readDevinAccountInfo, readDevinAuthIdentity } from '../quota/devinUsage'
+import { readDroidAccountInfo } from '../quota/droidUsage'
 import { readGrokAccountInfo, readGrokAuthIdentity } from '../quota/grokUsage'
 
 const IDENTITY_TTL_MS = 2 * 60_000
@@ -72,6 +73,8 @@ export async function readHostAccountInfo(
       return readCursorAccountInfo()
     case 'devin':
       return readDevinAccountInfo()
+    case 'droid':
+      return readDroidAccountInfo()
     default:
       return unknownAccount()
   }

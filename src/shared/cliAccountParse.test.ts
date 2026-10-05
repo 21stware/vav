@@ -11,6 +11,8 @@ import {
   parseCodexIdToken,
   parseCursorStatusPayload,
   parseDevinAuthStatusText,
+  factoryApiKeyFromEnvFile,
+  parseDroidDoctorAuth,
   resolveClaudeAccount
 } from './cliAccountParse.ts'
 
@@ -228,6 +230,82 @@ Account:
     const info = parseDevinAuthStatusText('garbage from a new CLI version')
     assert.equal(info.signedIn, false)
     assert.equal(info.authKind, 'unknown')
+  })
+})
+
+describe('parseDroidDoctorAuth', () => {
+  const report = (...results: Array<{ id: string; status: string; detail: string }>) => ({
+    ok: true,
+    results: [{ id: 'env.info', category: 'environment', status: 'pass', detail: 'v0.233.0' }, ...results]
+  })
+
+  it('reads the masked email from a stored login session', () => {
+    const info = parseDroidDoctorAuth(
+      report({
+        id: 'auth.verify',
+        status: 'pass',
+        detail: 'authenticated as a***@example.com via stored login session'
+      })
+    )
+    assert.deepEqual(info, {
+      signedIn: true,
+      accountId: 'a***@example.com',
+      plan: null,
+      authKind: 'oauth'
+    })
+  })
+
+  it('marks FACTORY_API_KEY logins as api-key', () => {
+    const info = parseDroidDoctorAuth(
+      report({
+        id: 'auth.verify',
+        status: 'pass',
+        detail: 'authenticated as a***@example.com via FACTORY_API_KEY'
+      })
+    )
+    assert.equal(info.signedIn, true)
+    assert.equal(info.authKind, 'api-key')
+  })
+
+  it('treats no stored login as signed out', () => {
+    const info = parseDroidDoctorAuth(
+      report({ id: 'auth.verify', status: 'warn', detail: 'no usable credentials found (not logged in)' })
+    )
+    assert.equal(info.signedIn, false)
+    assert.equal(info.authKind, 'none')
+  })
+
+  it('flags a rejected FACTORY_API_KEY as expired', () => {
+    const info = parseDroidDoctorAuth(
+      report({
+        id: 'auth.verify',
+        status: 'fail',
+        detail: 'FACTORY_API_KEY is set but the Factory API rejected it'
+      })
+    )
+    assert.equal(info.signedIn, false)
+    assert.equal(info.authKind, 'expired')
+  })
+
+  it('stays unknown when the report has no auth.verify check', () => {
+    assert.equal(parseDroidDoctorAuth(report()).authKind, 'unknown')
+    assert.equal(parseDroidDoctorAuth(null).authKind, 'unknown')
+  })
+})
+
+describe('factoryApiKeyFromEnvFile', () => {
+  it('reads plain, exported, and quoted assignments', () => {
+    assert.equal(factoryApiKeyFromEnvFile('FACTORY_API_KEY=fk-plain\n'), 'fk-plain')
+    assert.equal(factoryApiKeyFromEnvFile('export FACTORY_API_KEY="fk-quoted"'), 'fk-quoted')
+    assert.equal(factoryApiKeyFromEnvFile("FACTORY_API_KEY='fk-single' "), 'fk-single')
+    assert.equal(factoryApiKeyFromEnvFile('FACTORY_API_KEY=fk-x # note'), 'fk-x')
+  })
+
+  it('ignores comments and other keys, last assignment wins', () => {
+    const text = '# FACTORY_API_KEY=fk-commented\nOTHER=1\nFACTORY_API_KEY=fk-a\nFACTORY_API_KEY=fk-b'
+    assert.equal(factoryApiKeyFromEnvFile(text), 'fk-b')
+    assert.equal(factoryApiKeyFromEnvFile('MY_FACTORY_API_KEY=fk-no'), null)
+    assert.equal(factoryApiKeyFromEnvFile('FACTORY_API_KEY='), null)
   })
 })
 

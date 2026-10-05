@@ -18,7 +18,7 @@ import { isStructuredCliHost } from '@shared/cliHost'
 import { accountSecret } from '../accounts/service'
 import { clearLegacyApiSlotIfNoVavKeys } from '../accounts/vavCredentials'
 import { activateAccount, captureAccountCredentials, captureLiveHost } from '../accounts/activateAccount'
-import { loginArgv } from '../accounts/hostLoginArgv'
+import { canHostLogin } from '../accounts/hostLoginArgv'
 import { t } from '../i18n'
 import type { AccountStore } from '../store/AccountStore'
 import type { SecretStore } from '../store/SecretStore'
@@ -329,7 +329,7 @@ export function registerAccountsIpc(
     if (
       !isStructuredCliHost(oauthHost) ||
       createKindForAgent(oauthHost) !== 'oauth' ||
-      !loginArgv(oauthHost)
+      !canHostLogin(oauthHost)
     ) {
       return Promise.reject(new Error(t('accounts.error.missing')))
     }

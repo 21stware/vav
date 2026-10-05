@@ -2,7 +2,7 @@ import type { CliHostKind } from './cliHost'
 import type { QuotaWindow, QuotaWindowKind } from './types'
 
 /** Hosts that expose an account-level subscription / rate-limit poll. */
-export const ACCOUNT_QUOTA_HOSTS = ['claude', 'codex', 'cursor', 'grok'] as const
+export const ACCOUNT_QUOTA_HOSTS = ['claude', 'codex', 'cursor', 'grok', 'droid'] as const
 export type AccountQuotaHost = (typeof ACCOUNT_QUOTA_HOSTS)[number]
 
 const ACCOUNT_QUOTA_HOST_SET = new Set<string>(ACCOUNT_QUOTA_HOSTS)
@@ -479,6 +479,45 @@ export function windowsFromCursorPeriodPayload(
       updatedAt: now
     }
   ]
+}
+
+function droidBillingWindow(
+  raw: unknown,
+  kind: QuotaWindowKind,
+  now: number
+): QuotaWindow | null {
+  const rec = asRecord(raw)
+  if (!rec) return null
+  const used = normalizeQuotaPercent(finiteNumber(rec.usedPercent) ?? NaN)
+  if (used == null) return null
+  const secondsRemaining = finiteNumber(rec.secondsRemaining)
+  const windowEnd = parseQuotaResetsAt(rec.windowEnd)
+  const resetsAt =
+    secondsRemaining != null && secondsRemaining > 0
+      ? now + Math.round(secondsRemaining * 1000)
+      : windowEnd != null && windowEnd > now
+        ? windowEnd
+        : null
+  // Factory leaves the last percent on a rolling window after it lapses; its web UI shows that as reset.
+  const stale = resetsAt == null && windowEnd != null && secondsRemaining == null
+  return { id: kind, kind, usedPercent: stale ? 0 : used, resetsAt, updatedAt: now }
+}
+
+/** Factory `GET /api/billing/limits` (token-rate-limits billing) — Standard pool only. */
+export function windowsFromDroidBillingLimits(
+  payload: unknown,
+  now = Date.now()
+): QuotaWindow[] {
+  const data = asRecord(payload)
+  if (!data || data.usesTokenRateLimitsBilling !== true) return []
+  const standard = asRecord(asRecord(data.limits)?.standard)
+  if (!standard) return []
+  const windows = [
+    droidBillingWindow(standard.fiveHour, 'five_hour', now),
+    droidBillingWindow(standard.weekly, 'seven_day', now),
+    droidBillingWindow(standard.monthly, 'monthly', now)
+  ].filter((row): row is QuotaWindow => row != null)
+  return sortQuotaWindows(windows)
 }
 
 export function mergeQuotaWindows(

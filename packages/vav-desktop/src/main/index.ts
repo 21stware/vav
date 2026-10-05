@@ -447,6 +447,7 @@ import { fetchClaudeAccountQuota } from '@main/quota/claudeUsage'
 import { fetchCodexAccountQuota } from '@main/quota/codexUsage'
 import { fetchCursorAccountQuota } from '@main/quota/cursorUsage'
 import { fetchGrokAccountQuota } from '@main/quota/grokUsage'
+import { fetchDroidAccountQuota } from '@main/quota/droidUsage'
 import { apiBalanceUrl, hostCanShowApiBalance } from '@shared/apiBalance'
 import {
   cachedApiBalance,
@@ -1500,7 +1501,8 @@ const quotaService = new QuotaService({
     claude: fetchClaudeAccountQuota,
     codex: fetchCodexAccountQuota,
     cursor: fetchCursorAccountQuota,
-    grok: fetchGrokAccountQuota
+    grok: fetchGrokAccountQuota,
+    droid: fetchDroidAccountQuota
   },
   identityOf: async (host) => {
     const info = await readHostAccountInfo(host)
