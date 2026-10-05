@@ -461,6 +461,54 @@ describe('wireAcp protocol', () => {
     driver.dispose()
   })
 
+  it('sends Droid model ids to session/set_model verbatim', async () => {
+    const events: DriverEvent[] = []
+    const { proc, outbound, toClient } = fakeStdio()
+    const dir = await mkdtemp(join(tmpdir(), 'vav-acp-droid-model-'))
+
+    const driver = wireAcp(
+      'droid',
+      proc,
+      { binary: 'droid', cwd: dir, approvalMode: 'edit', model: 'claude-opus-4-8-fast' },
+      (event) => events.push(event)
+    )
+
+    const init = await waitFor(outbound, (msg) => msg.method === 'initialize')
+    toClient({
+      jsonrpc: '2.0',
+      id: init.id,
+      result: { protocolVersion: ACP_PROTOCOL_VERSION, agentCapabilities: {}, authMethods: [] }
+    })
+    const created = await waitFor(outbound, (msg) => msg.method === 'session/new')
+    toClient({
+      jsonrpc: '2.0',
+      id: created.id,
+      result: {
+        sessionId: 'droid-sess',
+        models: {
+          currentModelId: 'gpt-6-sol',
+          availableModels: [
+            { modelId: 'auto', name: 'Auto Model' },
+            { modelId: 'claude-opus-4-8', name: 'Opus 4.8' },
+            { modelId: 'claude-opus-4-8-fast', name: 'Opus 4.8 Fast' },
+            { modelId: 'gpt-6-sol', name: 'GPT-6 Sol' }
+          ]
+        }
+      }
+    })
+
+    const first = await waitFor(outbound, (msg) => msg.method === 'session/set_model')
+    assert.equal(asRecord(first.params)?.modelId, 'claude-opus-4-8-fast')
+    toClient({ jsonrpc: '2.0', id: first.id, result: {} })
+    await waitForEvent(events, (event) => event.type === 'connected')
+
+    driver.applyOptions({ model: 'auto' })
+    const second = await waitForNth(outbound, (msg) => msg.method === 'session/set_model', 2)
+    assert.equal(asRecord(second.params)?.modelId, 'auto')
+    toClient({ jsonrpc: '2.0', id: second.id, result: {} })
+    driver.dispose()
+  })
+
   it('never invents a Fast overlay when the advertised row is locked', async () => {
     const events: DriverEvent[] = []
     const { proc, outbound, toClient } = fakeStdio()
@@ -1165,7 +1213,122 @@ describe('ACP goal (Grok)', () => {
   })
 })
 
+describe('wireAcp Droid protocol', () => {
+  it('opens and resumes a Droid session using the provider cursor', async () => {
+    const events: DriverEvent[] = []
+    const { proc, outbound, toClient } = fakeStdio()
+    const driver = wireAcp(
+      'droid',
+      proc,
+      { binary: 'droid', cwd: '/workspace', approvalMode: 'edit' },
+      (event) => events.push(event)
+    )
+
+    const init = await waitFor(outbound, (msg) => msg.method === 'initialize')
+    toClient({
+      jsonrpc: '2.0',
+      id: init.id,
+      result: { protocolVersion: ACP_PROTOCOL_VERSION, agentCapabilities: {}, authMethods: [] }
+    })
+    const created = await waitFor(outbound, (msg) => msg.method === 'session/new')
+    assert.deepEqual(asRecord(created.params), { cwd: '/workspace', mcpServers: [] })
+    toClient({ jsonrpc: '2.0', id: created.id, result: { sessionId: 'droid-session' } })
+    await waitForEvent(
+      events,
+      (event) => event.type === 'connected' && event.cursor.provider === 'droid'
+    )
+    driver.prompt('hello')
+    const prompt = await waitFor(outbound, (msg) => msg.method === 'session/prompt')
+    assert.equal(asRecord(prompt.params)?.sessionId, 'droid-session')
+    toClient({ jsonrpc: '2.0', id: prompt.id, result: { stopReason: 'end_turn' } })
+    await waitForEvent(events, (event) => event.type === 'turn-finished')
+    driver.dispose()
+
+    const resumed = fakeStdio()
+    const resumedEvents: DriverEvent[] = []
+    const next = wireAcp(
+      'droid',
+      resumed.proc,
+      {
+        binary: 'droid',
+        cwd: '/workspace',
+        approvalMode: 'edit',
+        cursor: { provider: 'droid', sessionId: 'droid-session' }
+      },
+      (event) => resumedEvents.push(event)
+    )
+    const resumedInit = await waitFor(resumed.outbound, (msg) => msg.method === 'initialize')
+    resumed.toClient({
+      jsonrpc: '2.0',
+      id: resumedInit.id,
+      result: { protocolVersion: ACP_PROTOCOL_VERSION, agentCapabilities: {}, authMethods: [] }
+    })
+    const loaded = await waitFor(resumed.outbound, (msg) => msg.method === 'session/load')
+    assert.equal(asRecord(loaded.params)?.sessionId, 'droid-session')
+    resumed.toClient({ jsonrpc: '2.0', id: loaded.id, result: { sessionId: 'droid-session' } })
+    await waitForEvent(
+      resumedEvents,
+      (event) => event.type === 'connected' && event.cursor.provider === 'droid'
+    )
+    next.dispose()
+  })
+
+  it('signs in with device pairing without tripping the handshake deadline', async () => {
+    const events: DriverEvent[] = []
+    const { proc, outbound, toClient } = fakeStdio()
+    const driver = wireAcp(
+      'droid',
+      proc,
+      { binary: 'droid', cwd: '/workspace', approvalMode: 'edit', bootstrapTimeoutMs: 40 },
+      (event) => events.push(event)
+    )
+    const init = await waitFor(outbound, (msg) => msg.method === 'initialize')
+    toClient({
+      jsonrpc: '2.0',
+      id: init.id,
+      result: {
+        protocolVersion: ACP_PROTOCOL_VERSION,
+        agentCapabilities: {},
+        authMethods: [
+          { id: 'device-pairing', name: 'Login' },
+          { id: 'factory-api-key', name: 'Factory API Key' }
+        ]
+      }
+    })
+    const first = await waitFor(outbound, (msg) => msg.method === 'session/new')
+    toClient({
+      jsonrpc: '2.0',
+      id: first.id,
+      error: { code: RpcErrorCode.authRequired, message: 'Authentication required' }
+    })
+    const auth = await waitFor(outbound, (msg) => msg.method === 'authenticate')
+    assert.equal(asRecord(auth.params)?.methodId, 'device-pairing')
+    // The browser login outlasts the 40ms handshake deadline.
+    await new Promise((resolve) => setTimeout(resolve, 120))
+    assert.equal(
+      events.some((event) => event.type === 'error'),
+      false
+    )
+    toClient({ jsonrpc: '2.0', id: auth.id, result: {} })
+    const second = await waitFor(
+      outbound,
+      (msg) => msg.method === 'session/new' && msg.id !== first.id
+    )
+    toClient({ jsonrpc: '2.0', id: second.id, result: { sessionId: 'droid-authed' } })
+    const connected = await waitForEvent(events, (event) => event.type === 'connected')
+    assert.ok(connected.type === 'connected')
+    assert.equal(connected.cursor.sessionId, 'droid-authed')
+    driver.dispose()
+  })
+})
+
 describe('acpInvokeArgs', () => {
+  it('starts Droid in ACP mode without unsafe permission overrides', () => {
+    assert.deepEqual(acpInvokeArgs('droid', 'edit', {}), ['exec', '--output-format', 'acp'])
+    assert.deepEqual(acpInvokeArgs('droid', 'auto', {}), ['exec', '--output-format', 'acp'])
+    assert.deepEqual(acpInvokeArgs('droid', 'bypass', {}), ['exec', '--output-format', 'acp'])
+  })
+
   it('pins Cursor with a hyphen --model id, never a bracket overlay', () => {
     assert.deepEqual(
       acpInvokeArgs('cursor', 'edit', {

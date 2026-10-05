@@ -8,6 +8,7 @@
 export type CliHostKind =
   | 'claude'
   | 'codex'
+  | 'droid'
   | 'cursor'
   | 'grok'
   | 'devin'
@@ -20,6 +21,7 @@ export const STRUCTURED_CLI_HOSTS: readonly CliHostKind[] = [
   'cursor',
   'devin',
   'codex',
+  'droid',
   'grok',
   'kiro',
   'cline'
@@ -66,6 +68,7 @@ export function resolveDefaultChatHost(
 export type ProviderResumeCursor = (
   | { provider: 'claude'; sessionId: string; resumeAt?: string | null }
   | { provider: 'codex'; threadId: string }
+  | { provider: 'droid'; sessionId: string }
   | { provider: 'cursor'; sessionId: string }
   | { provider: 'grok'; sessionId: string }
   | { provider: 'devin'; sessionId: string }
@@ -98,6 +101,8 @@ export function displayNameForCliHost(kind: CliHostKind): string {
       return 'Claude Code'
     case 'codex':
       return 'Codex'
+    case 'droid':
+      return 'Droid'
     case 'cursor':
       return 'Cursor'
     case 'grok':
@@ -120,6 +125,7 @@ export function transportForCliHost(kind: CliHostKind): CliHostTransport {
       return 'claude-stream'
     case 'codex':
       return 'codex-app-server'
+    case 'droid':
     case 'cursor':
     case 'grok':
     case 'devin':
@@ -129,7 +135,7 @@ export function transportForCliHost(kind: CliHostKind): CliHostTransport {
   }
 }
 
-/** ACP session protocol (Cursor / Grok / Devin / Kiro / Cline). */
+/** ACP session protocol (Droid / Cursor / Grok / Devin / Kiro / Cline). */
 export function isAcpCliHost(kind: CliHostKind | null | undefined): boolean {
   return kind != null && transportForCliHost(kind) === 'acp'
 }

@@ -663,6 +663,19 @@ export const DEFAULT_CLI_AGENTS: AgentConfig[] = [
     builtin: true,
     installCommand: 'npm i -g cline',
     installDocsUrl: 'https://cline.bot/cli'
+  },
+  {
+    id: 'droid',
+    name: 'Droid',
+    binaryPath: 'droid',
+    binaryCandidates: ['droid'],
+    defaultArgs: [],
+    envVars: {},
+    enabled: true,
+    providerName: null,
+    builtin: true,
+    installCommand: 'curl -fsSL https://app.factory.ai/cli | sh',
+    installDocsUrl: 'https://docs.factory.ai/cli'
   }
 ]
 

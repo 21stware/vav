@@ -18,12 +18,13 @@ import { contextWindowFor, lookupCatalogModel } from './modelMeta'
 import { resolveModelModalities } from '../../shared/modelModalities.ts'
 import { fetchVavModels } from './vavModelProbe'
 import { presentHostCatalog } from '../../shared/hostModelCodec.ts'
+import { probeDroidAcpModels } from './droidModelProbe'
 
 const CACHE_TTL_MS = 30 * 60_000
 const RUN_TIMEOUT_MS = 12_000
 
 /** Hosts whose CLI can actually print a catalogue. Others stay on static fallback. */
-const LIVE_PROBE_HOSTS = new Set<CliHostKind>(['cursor', 'grok'])
+const LIVE_PROBE_HOSTS = new Set<CliHostKind>(['cursor', 'grok', 'droid'])
 
 /** Empty id = omit `--model` / use the CLI's own default. */
 export const CLI_DEFAULT_MODEL: ModelOption = { id: '', label: 'Default' }
@@ -461,6 +462,10 @@ async function probeLiveModels(
     case 'claude':
       // No machine-readable list in the CLI; aliases are the supported surface.
       return [...CLAUDE_ALIASES]
+    case 'droid': {
+      const live = await probeDroidAcpModels(binary, { env, timeoutMs: RUN_TIMEOUT_MS })
+      return live.length > 0 ? [CLI_DEFAULT_MODEL, ...live] : []
+    }
     case 'codex':
     case 'devin':
     case 'kiro':

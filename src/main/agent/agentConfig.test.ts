@@ -6,6 +6,8 @@ import { agentConfigForHost, mergeVavCredentials } from './agentConfig.ts'
 describe('agentConfigForHost', () => {
   it('finds an enabled catalogue entry and skips disabled hosts', () => {
     assert.equal(agentConfigForHost('claude', DEFAULT_CLI_AGENTS)?.id, 'claude')
+    assert.equal(agentConfigForHost('droid', DEFAULT_CLI_AGENTS)?.binaryPath, 'droid')
+    assert.deepEqual(agentConfigForHost('droid', DEFAULT_CLI_AGENTS)?.defaultArgs, [])
     const disabled = DEFAULT_CLI_AGENTS.map((agent) =>
       agent.id === 'claude' ? { ...agent, enabled: false } : agent
     )

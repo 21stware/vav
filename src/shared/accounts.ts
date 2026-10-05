@@ -19,11 +19,11 @@ export type AccountProvider = 'vav' | 'anthropic' | 'openai' | 'custom'
 export type AccountCreateKind = 'oauth' | 'key'
 
 /** Provider support list: these agents add via OAuth. Everyone else uses the Key form. */
-export const OAUTH_CREATE_AGENTS = ['grok', 'cursor'] as const
+export const OAUTH_CREATE_AGENTS = ['grok', 'cursor', 'droid'] as const
 const OAUTH_CREATE_SET = new Set<string>(OAUTH_CREATE_AGENTS)
 
 /** CLI logins we sync into Settings → Accounts (includes quota-only hosts). */
-export const OAUTH_SYNC_AGENTS = ['grok', 'cursor', 'claude', 'codex'] as const
+export const OAUTH_SYNC_AGENTS = ['grok', 'cursor', 'claude', 'codex', 'droid'] as const
 const OAUTH_SYNC_SET = new Set<string>(OAUTH_SYNC_AGENTS)
 
 export function isOAuthSyncAgent(agentId: string): boolean {
@@ -32,7 +32,8 @@ export function isOAuthSyncAgent(agentId: string): boolean {
 
 const OAUTH_SUPPORT_CATALOG: Array<{ id: string; name: string }> = [
   { id: 'cursor', name: 'Cursor' },
-  { id: 'grok', name: 'Grok build' }
+  { id: 'grok', name: 'Grok build' },
+  { id: 'droid', name: 'Droid' }
 ]
 
 const OAUTH_DOMAIN: Record<string, string> = {
@@ -41,6 +42,7 @@ const OAUTH_DOMAIN: Record<string, string> = {
   grok: 'x.ai',
   codex: 'openai.com',
   devin: 'devin.ai',
+  droid: 'factory.ai',
   kiro: 'kiro.dev',
   cline: 'cline.bot'
 }

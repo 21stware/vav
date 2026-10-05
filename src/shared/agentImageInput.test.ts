@@ -15,6 +15,7 @@ describe('imageInputForChatHost', () => {
     const claude = imageInputForChatHost('claude')
     assert.ok(vav && vav.maxCount >= 1)
     assert.ok(claude && claude.maxCount >= vav.maxCount)
+    assert.ok(imageInputForChatHost('droid'))
     assert.equal(imageInputForChatHost('not-a-host'), null)
   })
 })

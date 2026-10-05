@@ -5,6 +5,7 @@ import devinIcon from '../assets/agents/devin.svg'
 import grokIcon from '../assets/agents/grok.svg'
 import kiroIcon from '../assets/agents/kiro.svg'
 import clineIcon from '../assets/agents/cline.svg'
+import droidIcon from '../assets/agents/droid.svg'
 import anthropicIcon from '../assets/vendors/anthropic.svg'
 import deepseekIcon from '../assets/vendors/deepseek.svg'
 import googleIcon from '../assets/vendors/google.svg'
@@ -30,6 +31,7 @@ export const AGENT_ICONS: Record<string, string> = {
   devin: devinIcon,
   kiro: kiroIcon,
   cline: clineIcon,
+  droid: droidIcon,
   deepseek: deepseekIcon,
   openrouter: openrouterIcon,
   openai: openaiIcon,
@@ -49,6 +51,7 @@ export const MONO_MARKS = new Set([
   'devin',
   'grok',
   'cline',
+  'droid',
   'kiro',
   'deepseek',
   'openrouter',

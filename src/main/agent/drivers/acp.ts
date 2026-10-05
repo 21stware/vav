@@ -97,11 +97,25 @@ const CURSOR_TODOS_ID = 'cursor-todos'
 
 /** `initialize` + `session/new` (or load/resume) must not hang a live turn forever. */
 export const ACP_BOOTSTRAP_TIMEOUT_MS = 30_000
+/** `authenticate` may wait on a browser login (Droid device pairing). */
+export const ACP_AUTH_TIMEOUT_MS = 10 * 60_000
 
-function raceWithTimeout<T>(work: Promise<T>, ms: number, label: string): Promise<T> {
+function raceWithTimeout<T>(
+  work: Promise<T>,
+  ms: number,
+  label: string,
+  holdOff?: () => boolean
+): Promise<T> {
   if (ms <= 0) return work
   return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(label)), ms)
+    let timer: ReturnType<typeof setTimeout>
+    const arm = (): void => {
+      timer = setTimeout(() => {
+        if (holdOff?.()) arm()
+        else reject(new Error(label))
+      }, ms)
+    }
+    arm()
     work.then(
       (value) => {
         clearTimeout(timer)
@@ -125,10 +139,12 @@ type PendingClient =
 type QueuedPrompt = { text: string; extras?: DriverPromptExtras }
 
 /** ACP-speaking hosts in the VAV catalogue. */
-export type AcpHostKind = Extract<CliHostKind, 'cursor' | 'grok' | 'devin' | 'kiro' | 'cline'>
+export type AcpHostKind = Extract<CliHostKind, 'droid' | 'cursor' | 'grok' | 'devin' | 'kiro' | 'cline'>
 
 function acpArgs(kind: AcpHostKind, approvalMode: ApprovalMode): string[] {
   switch (kind) {
+    case 'droid':
+      return ['exec', '--output-format', 'acp']
     case 'cursor':
       return ['acp']
     case 'grok':
@@ -241,6 +257,7 @@ export function acpInvokeArgs(
 /**
  * Full ACP v1 client over stdio.
  *
+ * - Droid:  `droid exec --output-format acp`
  * - Cursor: `cursor-agent acp`
  * - Grok:   `grok agent stdio`
  * - Devin:  `devin acp`
@@ -305,6 +322,7 @@ export function wireAcp(
   let wantedThinking = options.thinkingLevel ?? null
   let wantedFast = options.fast === true
   let applyModelChain: Promise<void> = Promise.resolve()
+  let authenticating = false
   const rejectedModels = new Set<string>()
 
   const send = (method: string, params: Record<string, unknown>, id?: number): void => {
@@ -353,8 +371,13 @@ export function wireAcp(
       emit({ type: 'auth-required', methods })
       return false
     }
+    authenticating = true
     try {
-      await request('authenticate', { methodId: agentMethod.id })
+      await raceWithTimeout(
+        request('authenticate', { methodId: agentMethod.id }),
+        ACP_AUTH_TIMEOUT_MS,
+        `${kind} ACP authenticate timed out`
+      )
       return true
     } catch (err) {
       const extracted = extractRpcError(err)
@@ -366,6 +389,8 @@ export function wireAcp(
       })
       emit({ type: 'auth-required', methods })
       return false
+    } finally {
+      authenticating = false
     }
   }
 
@@ -482,7 +507,7 @@ export function wireAcp(
   }
 
   const publishAdvertisedThinkingLevels = (): void => {
-    if (kind === 'grok') return
+    if (kind === 'grok' || kind === 'droid') return
     if (!wantedModel) return
     const family = cursorModelFamilyId(wantedModel)
     if (!family || cursorFamilyAllowsThinkingOverlay(family)) return
@@ -494,6 +519,10 @@ export function wireAcp(
     if (disposed || !sessionId) return
     if (kind === 'grok') {
       await applyGrokRunPrefs()
+      return
+    }
+    if (kind === 'droid') {
+      await applyExactModel()
       return
     }
     if (!wantedModel) return
@@ -515,6 +544,22 @@ export function wireAcp(
         if (disposed) return
         rejectedModels.add(modelId)
       }
+    }
+  }
+
+  /** Droid ids are opaque (`claude-opus-4-8-fast`); the Cursor family codec would rewrite them. */
+  const applyExactModel = async (): Promise<void> => {
+    const modelId = wantedModel?.trim()
+    if (!modelId || rejectedModels.has(modelId)) return
+    if (availableModels.length && !availableModels.some((m) => m.modelId === modelId)) return
+    try {
+      await request('session/set_model', { sessionId, modelId })
+      if (disposed) return
+      publishModelContextSize(modelId)
+      emit({ type: 'model-applied', modelId })
+    } catch {
+      if (disposed) return
+      rejectedModels.add(modelId)
     }
   }
 
@@ -655,7 +700,12 @@ export function wireAcp(
     const running = handshake()
     void running.catch(() => undefined)
     try {
-      await raceWithTimeout(running, timeoutMs, `${kind} ACP handshake timed out`)
+      await raceWithTimeout(
+        running,
+        timeoutMs,
+        `${kind} ACP handshake timed out`,
+        () => authenticating
+      )
       if (disposed) return
 
       if (!sessionId) {

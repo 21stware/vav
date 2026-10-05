@@ -86,6 +86,16 @@ describe('applySwarmSessionArgs', () => {
     ])
   })
 
+  it('resumes Droid with the interactive CLI flag', () => {
+    const cursor = mintSwarmCursor('droid', 'droid-1')
+    assert.deepEqual(cursor, { provider: 'droid', sessionId: 'droid-1' })
+    assert.deepEqual(applySwarmSessionArgs('droid', [], cursor, null), [
+      '--resume',
+      'droid-1'
+    ])
+    assert.deepEqual(applySwarmSessionArgs('droid', [], null, null), [])
+  })
+
   it('starts a new Grok session with --session-id and never --continue', () => {
     assert.deepEqual(
       applySwarmSessionArgs('grok', ['--always-approve', '--continue'], null, 'new-uuid'),
@@ -112,6 +122,7 @@ describe('applySwarmSessionArgs', () => {
     assert.equal(canApplyResumeArgs('claude'), true)
     assert.equal(canApplyResumeArgs('codex'), true)
     assert.equal(canApplyResumeArgs('cursor'), true)
+    assert.equal(canApplyResumeArgs('droid'), true)
   })
 })
 

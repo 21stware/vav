@@ -146,7 +146,8 @@ describe('accounts helpers', () => {
         'bigmodel',
         'kimi',
         'magpie',
-        'cursor'
+        'cursor',
+        'droid'
       ]
     )
     assert.equal(grouped[0]?.accounts.length, 2)
