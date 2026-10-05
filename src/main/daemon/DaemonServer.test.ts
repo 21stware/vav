@@ -220,7 +220,9 @@ describe('daemon loopback', () => {
       const spawned = (await client.request('pty.spawn', {
         file: process.execPath,
         args: ['-e', 'process.stdin.resume()'],
-        opts: { cols: 80, rows: 24, cwd: dir }
+        // Windows callers always ask for ConPTY; winpty's conout pipe races a
+        // quick kill and throws after the test ends.
+        opts: { cols: 80, rows: 24, cwd: dir, useConpty: process.platform === 'win32' }
       })) as { stream?: string }
       assert.ok(spawned.stream)
       client.close()
