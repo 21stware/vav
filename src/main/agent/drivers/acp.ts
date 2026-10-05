@@ -323,6 +323,7 @@ export function wireAcp(
   let wantedFast = options.fast === true
   let applyModelChain: Promise<void> = Promise.resolve()
   let authenticating = false
+  let authEndedAt = 0
   const rejectedModels = new Set<string>()
 
   const send = (method: string, params: Record<string, unknown>, id?: number): void => {
@@ -391,6 +392,7 @@ export function wireAcp(
       return false
     } finally {
       authenticating = false
+      authEndedAt = Date.now()
     }
   }
 
@@ -704,7 +706,8 @@ export function wireAcp(
         running,
         timeoutMs,
         `${kind} ACP handshake timed out`,
-        () => authenticating
+        // A browser login can outlast the deadline; give the rest of the handshake a full window after it.
+        () => authenticating || Date.now() - authEndedAt < timeoutMs
       )
       if (disposed) return
 

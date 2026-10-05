@@ -1279,7 +1279,7 @@ describe('wireAcp Droid protocol', () => {
     const driver = wireAcp(
       'droid',
       proc,
-      { binary: 'droid', cwd: '/workspace', approvalMode: 'edit', bootstrapTimeoutMs: 40 },
+      { binary: 'droid', cwd: '/workspace', approvalMode: 'edit', bootstrapTimeoutMs: 150 },
       (event) => events.push(event)
     )
     const init = await waitFor(outbound, (msg) => msg.method === 'initialize')
@@ -1303,8 +1303,8 @@ describe('wireAcp Droid protocol', () => {
     })
     const auth = await waitFor(outbound, (msg) => msg.method === 'authenticate')
     assert.equal(asRecord(auth.params)?.methodId, 'device-pairing')
-    // The browser login outlasts the 40ms handshake deadline.
-    await new Promise((resolve) => setTimeout(resolve, 120))
+    // The browser login outlasts the 150ms handshake deadline.
+    await new Promise((resolve) => setTimeout(resolve, 400))
     assert.equal(
       events.some((event) => event.type === 'error'),
       false
