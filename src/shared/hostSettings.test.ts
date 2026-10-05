@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { DEFAULT_SETTINGS } from './types.ts'
 import {
+  agentListSeedFromDesktop,
   composeHostSettings,
   mergeHostSettings,
   omitHostSettings,
@@ -84,5 +85,31 @@ describe('hostSettings', () => {
     )
     assert.equal(merged.defaultModel, 'hosted')
     assert.deepEqual(merged.recentWorkspaceDirectories, [localPath, remotePath])
+  })
+
+  it('seeds the desktop agent list onto a host that never removed an agent', () => {
+    const agent = (id: string) => ({ ...DEFAULT_SETTINGS.cliAgents[0]!, id, name: id })
+    const desktop = {
+      cliAgents: [agent('cursor'), agent('droid')],
+      removedCliAgentIds: ['codex', 'pi']
+    }
+    const pristine = {
+      cliAgents: [agent('claude'), agent('cursor'), agent('codex'), agent('pi'), agent('droid')],
+      removedCliAgentIds: []
+    }
+    assert.deepEqual(agentListSeedFromDesktop(pristine, desktop), desktop)
+    // Host already curated, or already matches: leave it alone.
+    assert.equal(
+      agentListSeedFromDesktop({ ...pristine, removedCliAgentIds: ['kiro'] }, desktop),
+      null
+    )
+    assert.equal(
+      agentListSeedFromDesktop({ cliAgents: desktop.cliAgents, removedCliAgentIds: [] }, desktop),
+      null
+    )
+    assert.equal(
+      agentListSeedFromDesktop(pristine, { ...desktop, removedCliAgentIds: [] }),
+      null
+    )
   })
 })

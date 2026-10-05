@@ -98,7 +98,12 @@ import { DaemonAttachService } from '@main/daemon/DaemonAttachService'
 import { createAccountsCatalog } from '@main/accounts/daemonCatalog'
 import { seedChangeReviewTurn } from '@main/agent/seedChangeReview'
 import { createSettingsCatalog, vavAccountKeyPresent } from '@main/daemon/settingsCatalog'
-import { composeHostSettings, pickSecretPresent, remapHostWorkspaceSettings } from '@shared/hostSettings'
+import {
+  agentListSeedFromDesktop,
+  composeHostSettings,
+  pickSecretPresent,
+  remapHostWorkspaceSettings
+} from '@shared/hostSettings'
 import { appearanceForMachine, pickAppearanceBase } from '@shared/machineAppearance'
 import {
   createChangeSetCatalog,
@@ -2210,7 +2215,10 @@ const daemonAttach = new DaemonAttachService({
     applyConversationPersist()
     // Windows booted before the host attached hold desktop-only settings;
     // repaint the merged view once the host is reachable.
-    void seedHostRecentsFromDesktop(machineId).finally(() => void publishMergedSettings())
+    void Promise.allSettled([
+      seedHostRecentsFromDesktop(machineId),
+      seedHostAgentsFromDesktop(machineId)
+    ]).finally(() => void publishMergedSettings())
     void pullRemoteWorkspace(machineId)
     attachLocalShellLogs(machineId)
   },
@@ -6751,6 +6759,20 @@ async function seedHostRecentsFromDesktop(machineId: string): Promise<void> {
       'settings.update',
       remapHostWorkspaceSettings({ recentWorkspaceDirectories: desktop }, scope, 'toHost')
     )
+  } catch {
+    /* ignore */
+  }
+}
+
+/** First attach of this Mac's vav-server: keep the agent list curated before it attached. */
+async function seedHostAgentsFromDesktop(machineId: string): Promise<void> {
+  if (recentsHostScope(machineId) !== LOCAL_MACHINE_ID) return
+  const client = daemonAttach.localShellClient()
+  if (!client?.connected) return
+  try {
+    const hostSnap = (await client.request('settings.get')) as Partial<AppSettings>
+    const seed = agentListSeedFromDesktop(hostSnap, settingsStore.get())
+    if (seed) await client.request('settings.update', seed)
   } catch {
     /* ignore */
   }
