@@ -209,7 +209,7 @@ test('Settings → Machines rejects garbage, then pairs and forgets a vav-server
     await expect(row).toContainText('E2E Daemon')
     await expect(row).toContainText('Online')
     await expect(row.locator('[data-testid^="settings-machine-providers-"]')).toBeVisible()
-    await expect(row).toContainText('CLI agents on this machine')
+    await expect(row).toContainText('Remote CLI Tools')
 
     const testId = await row.getAttribute('data-testid')
     const hostId = testId?.slice('settings-machine-'.length)

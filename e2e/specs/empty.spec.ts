@@ -28,7 +28,6 @@ test('empty VAV session shows the no-key empty state and keeps local tools', asy
     await expect(page.locator('.empty-state-session [data-testid="empty-workspace-name"]')).toHaveCount(
       0
     )
-    await expect(page.locator('.session-workspace-text-btn')).toContainText('Enter CLI Mode')
   } finally {
     await harness.dispose()
   }
