@@ -2773,7 +2773,9 @@ export function installPhoneVav(transport: PhoneTransport): PhoneVavHandle {
         } catch (err) {
           return { ok: false as const, error: (err as Error).message }
         }
-      }
+      },
+      // Screen Recording is a desktop TCC grant; the browser has no way to read it.
+      screenshotPermission: async () => 'unknown' as const
     },
     pty: {
       list: async (conversationId: string) => ({
