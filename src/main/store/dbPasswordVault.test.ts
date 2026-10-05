@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { join } from 'node:path'
 import { describe, it } from 'node:test'
 import { dbAccountSecretFileName, siblingUserDataDirs } from './dbPasswordVault.ts'
 
@@ -11,8 +12,9 @@ describe('dbPasswordVault paths', () => {
   })
 
   it('includes vav and vav-dev next to the current userData', () => {
-    const dirs = siblingUserDataDirs('/Users/me/Library/Application Support/vav-dev')
-    assert.ok(dirs.includes('/Users/me/Library/Application Support/vav-dev'))
-    assert.ok(dirs.includes('/Users/me/Library/Application Support/vav'))
+    const parent = join('/Users/me/Library/Application Support')
+    const dirs = siblingUserDataDirs(join(parent, 'vav-dev'))
+    assert.ok(dirs.includes(join(parent, 'vav-dev')))
+    assert.ok(dirs.includes(join(parent, 'vav')))
   })
 })

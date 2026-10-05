@@ -1,5 +1,3 @@
-import { fileURLToPath } from 'node:url'
-
 /** Packaged renderer HTML entries loaded from `out/renderer/`. */
 const RENDERER_FILE_ENTRY = /\/out\/renderer\/(?:index|screenshot|faaaaast)\.html$/i
 
@@ -16,8 +14,8 @@ export function isRendererUrl(
   }
   if (!url.startsWith('file:')) return false
   try {
-    const path = fileURLToPath(url.split('#')[0]!.split('?')[0]!)
-    return RENDERER_FILE_ENTRY.test(path.replace(/\\/g, '/'))
+    // URL pathname, not fileURLToPath: that throws on Windows for drive-less `file:///app/...`.
+    return RENDERER_FILE_ENTRY.test(decodeURIComponent(new URL(url).pathname))
   } catch {
     return false
   }

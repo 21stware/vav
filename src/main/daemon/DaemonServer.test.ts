@@ -76,7 +76,7 @@ describe('daemon loopback', () => {
     } finally {
       client.close()
       server.close()
-      await rm(dir, { recursive: true, force: true })
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   })
 
@@ -116,7 +116,7 @@ describe('daemon loopback', () => {
     } finally {
       client.close()
       server.close()
-      await rm(dir, { recursive: true, force: true })
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   })
 
@@ -142,7 +142,7 @@ describe('daemon loopback', () => {
     } finally {
       client.close()
       server.close()
-      await rm(dir, { recursive: true, force: true })
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   })
 
@@ -171,7 +171,7 @@ describe('daemon loopback', () => {
     } finally {
       client.close()
       server.close()
-      await rm(dir, { recursive: true, force: true })
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   })
 
@@ -209,7 +209,7 @@ describe('daemon loopback', () => {
     } finally {
       client.close()
       server.close()
-      await rm(dir, { recursive: true, force: true })
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   })
 
@@ -241,7 +241,7 @@ describe('daemon loopback', () => {
       next.close()
     } finally {
       server.close()
-      await rm(dir, { recursive: true, force: true })
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   })
 
@@ -273,7 +273,7 @@ describe('daemon loopback', () => {
       next.close()
     } finally {
       server.close()
-      await rm(dir, { recursive: true, force: true })
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   })
 
@@ -298,7 +298,7 @@ describe('daemon loopback', () => {
     } finally {
       client.close()
       server.close()
-      await rm(dir, { recursive: true, force: true })
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   })
 
@@ -312,7 +312,7 @@ describe('daemon loopback', () => {
     } finally {
       client.close()
       server.close()
-      await rm(dir, { recursive: true, force: true })
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   })
 
@@ -363,7 +363,7 @@ describe('daemon loopback', () => {
       assert.equal(offered, pairing)
     } finally {
       server.close()
-      await rm(dir, { recursive: true, force: true })
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   })
 
@@ -434,7 +434,7 @@ describe('daemon loopback', () => {
     } finally {
       client.close()
       server.close()
-      await rm(dir, { recursive: true, force: true })
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   })
 
@@ -471,7 +471,7 @@ describe('daemon loopback', () => {
     } finally {
       client.close()
       server.close()
-      await rm(dir, { recursive: true, force: true })
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   })
 
@@ -486,7 +486,7 @@ describe('daemon loopback', () => {
     } finally {
       client.close()
       server.close()
-      await rm(dir, { recursive: true, force: true })
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   })
 
@@ -539,7 +539,7 @@ describe('daemon loopback', () => {
       client.close()
       server.close()
       store.dispose()
-      await rm(dir, { recursive: true, force: true })
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   })
 
@@ -554,7 +554,7 @@ describe('daemon loopback', () => {
     } finally {
       client.close()
       server.close()
-      await rm(dir, { recursive: true, force: true })
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   })
 
@@ -581,7 +581,7 @@ describe('daemon loopback', () => {
     } finally {
       client.close()
       server.close()
-      await rm(dir, { recursive: true, force: true })
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   })
 
@@ -674,7 +674,7 @@ describe('daemon loopback', () => {
     } finally {
       hub.dispose()
       server.close()
-      await rm(dir, { recursive: true, force: true })
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   })
 
@@ -706,7 +706,7 @@ describe('daemon loopback', () => {
     } finally {
       client.close()
       server.close()
-      await rm(dir, { recursive: true, force: true })
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   })
 
@@ -732,7 +732,7 @@ describe('daemon loopback', () => {
       b.close()
       client.close()
       server.close()
-      await rm(dir, { recursive: true, force: true })
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   })
 
@@ -769,7 +769,7 @@ describe('daemon loopback', () => {
     } finally {
       relay.close()
       server.close()
-      await rm(dir, { recursive: true, force: true })
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   })
 
@@ -797,7 +797,7 @@ describe('daemon loopback', () => {
     } finally {
       client.close()
       server.close()
-      await rm(dir, { recursive: true, force: true })
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   })
 
@@ -847,7 +847,7 @@ describe('daemon loopback', () => {
     } finally {
       client.close()
       server.close()
-      await rm(dir, { recursive: true, force: true })
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   })
 
@@ -891,7 +891,7 @@ describe('daemon loopback', () => {
     } finally {
       client.close()
       server.close()
-      await rm(dir, { recursive: true, force: true })
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   })
 
@@ -932,7 +932,7 @@ describe('daemon loopback', () => {
     } finally {
       client.close()
       server.close()
-      await rm(dir, { recursive: true, force: true })
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   })
 
@@ -955,7 +955,7 @@ describe('daemon loopback', () => {
       probe.destroy()
       client.close()
       server.close()
-      await rm(dir, { recursive: true, force: true })
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   })
 
@@ -999,7 +999,7 @@ describe('daemon loopback', () => {
       echo.close()
       client.close()
       server.close()
-      await rm(dir, { recursive: true, force: true })
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   })
 
@@ -1051,7 +1051,7 @@ describe('daemon loopback', () => {
       other.close()
       client.close()
       server.close()
-      await rm(dir, { recursive: true, force: true })
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   })
 
@@ -1105,7 +1105,7 @@ describe('daemon loopback', () => {
     } finally {
       client.close()
       server.close()
-      await rm(dir, { recursive: true, force: true })
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   })
 
@@ -1137,7 +1137,7 @@ describe('daemon loopback', () => {
     } finally {
       client.close()
       server.close()
-      await rm(dir, { recursive: true, force: true })
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   })
 
@@ -1160,7 +1160,7 @@ describe('daemon loopback', () => {
     } finally {
       client.close()
       server.close()
-      await rm(dir, { recursive: true, force: true })
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   })
 
@@ -1186,7 +1186,7 @@ describe('daemon loopback', () => {
     } finally {
       client.close()
       server.close()
-      await rm(dir, { recursive: true, force: true })
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   })
 
@@ -1209,7 +1209,7 @@ describe('daemon loopback', () => {
     } finally {
       client.close()
       server.close()
-      await rm(dir, { recursive: true, force: true })
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   })
 
@@ -1254,7 +1254,7 @@ describe('daemon loopback', () => {
     } finally {
       client.close()
       server.close()
-      await rm(dir, { recursive: true, force: true })
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   })
 
@@ -1304,7 +1304,7 @@ describe('daemon loopback', () => {
     } finally {
       client.close()
       server.close()
-      await rm(dir, { recursive: true, force: true })
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   })
 
@@ -1342,7 +1342,7 @@ describe('daemon loopback', () => {
     } finally {
       client.close()
       server.close()
-      await rm(dir, { recursive: true, force: true })
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   })
 
@@ -1382,7 +1382,7 @@ describe('daemon loopback', () => {
     } finally {
       client.close()
       server.close()
-      await rm(dir, { recursive: true, force: true })
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   })
 
@@ -1425,7 +1425,7 @@ describe('daemon loopback', () => {
     } finally {
       client.close()
       server.close()
-      await rm(dir, { recursive: true, force: true })
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   })
 
@@ -1459,7 +1459,7 @@ describe('daemon loopback', () => {
     } finally {
       client.close()
       server.close()
-      await rm(dir, { recursive: true, force: true })
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   })
 
@@ -1509,7 +1509,7 @@ describe('daemon loopback', () => {
     } finally {
       client.close()
       server.close()
-      await rm(dir, { recursive: true, force: true })
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   })
 })
