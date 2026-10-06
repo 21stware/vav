@@ -1,5 +1,11 @@
 import { test, expect } from '@playwright/test'
-import { chooseNativeMenu, launchWorkbench, peekNativeMenu, waitForNewWindow } from '../launch'
+import {
+  chooseNativeMenu,
+  launchWorkbench,
+  openAppColumn,
+  peekNativeMenu,
+  waitForNewWindow
+} from '../launch'
 
 /**
  * session/sidebar-conversation-list.rpml + session/main-chat-empty.rpml
@@ -11,7 +17,7 @@ test('sidebar lists the session, groups by workspace, and archives stay reachabl
     await expect(page.locator('[data-testid="sidebar"]')).toBeVisible()
     await expect(page.locator('[data-testid="agent-column"]')).toBeVisible()
     await expect(page.locator('[data-testid="session-detail"]')).toBeVisible()
-    await expect(page.locator('[data-testid="close-app"]')).toBeVisible()
+    await expect(page.locator('[data-testid="app-column"]')).toBeHidden()
     await expect(page.locator('[data-testid="composer-input"]')).toBeVisible()
     await expect(page.getByText('E2E session')).toBeVisible()
     await expect(page.locator('[data-testid="sidebar"]')).toBeVisible()
@@ -21,13 +27,19 @@ test('sidebar lists the session, groups by workspace, and archives stay reachabl
     await expect(page.locator('[data-testid="sidebar-services"]')).toBeVisible()
     await expect(page.locator('[data-testid="sidebar-services"]')).toHaveAttribute(
       'data-active',
-      'true'
+      'false'
     )
     await expect(page.locator('[data-testid="sidebar-new-note"]')).toBeVisible()
     await expect(page.locator('[data-testid="sidebar-new-scheduled"]')).toBeVisible()
     await expect(page.locator('[data-testid="sidebar-primary-nav"] [data-testid="new-scheduled"]')).toHaveCount(0)
     await expect(page.locator('[data-testid="sidebar-connect"]')).toBeVisible()
+    await page.locator('[data-testid="sidebar-services"]').click()
     await expect(page.locator('[data-testid="app-column"]')).toBeVisible()
+    await expect(page.locator('[data-testid="sidebar-services"]')).toHaveAttribute(
+      'data-active',
+      'true'
+    )
+    await expect(page.locator('[data-testid="close-app"]')).toBeVisible()
     await expect(page.locator('[data-testid="applications-panel"]')).toBeVisible()
     await expect(page.locator('[data-testid="app-mode-tabs"]')).toBeVisible()
     await expect(page.locator('[data-testid="new-scheduled"]')).toBeVisible()
@@ -132,7 +144,6 @@ test('new session is created and selected', async () => {
       'data-tools-collapsed',
       'true'
     )
-    await page.locator('[data-testid="close-app"]').click()
     await expect(page.locator('[data-testid="app-column"]')).toBeHidden()
     await expect(page.locator('[data-testid="sidebar-services"]')).toHaveAttribute(
       'data-active',
@@ -152,6 +163,12 @@ test('Services opens the right-hand panel and clears highlight when closed', asy
   const harness = await launchWorkbench()
   try {
     const { page } = harness
+    await expect(page.locator('[data-testid="app-column"]')).toBeHidden()
+    await expect(page.locator('[data-testid="sidebar-services"]')).toHaveAttribute(
+      'data-active',
+      'false'
+    )
+    await page.locator('[data-testid="sidebar-services"]').click()
     await expect(page.locator('[data-testid="app-column"]')).toBeVisible()
     await expect(page.locator('[data-testid="sidebar-services"]')).toHaveAttribute(
       'data-active',
@@ -210,6 +227,7 @@ test('Storage application shows recent files and Open File', async () => {
   const harness = await launchWorkbench()
   try {
     const { page } = harness
+    await openAppColumn(page)
     await page.locator('[data-testid="applications-tab-storage"]').click()
     await expect(page.locator('[data-testid="applications-tab-storage"]')).toHaveAttribute(
       'data-active',
@@ -246,6 +264,7 @@ test('File list Back to file list returns to This Mac or Recent files', async ()
   const harness = await launchWorkbench()
   try {
     const { page, workspace } = harness
+    await openAppColumn(page)
     await page.locator('[data-testid="applications-tab-storage"]').click()
     await page.locator('[data-testid="file-source-select"]').selectOption('thisMac')
     await expect(page.locator('[data-testid="file-mac-browser"]')).toBeVisible()
@@ -283,6 +302,7 @@ test('Schedule lives in the app, not the session list', async () => {
     const { page } = harness
     await expect(page.locator('[data-testid="composer-input"]')).toBeVisible()
     await expect(page.getByText('E2E session')).toBeVisible()
+    await openAppColumn(page)
     await page.locator('[data-testid="new-scheduled"]').click()
     await expect(page.locator('[data-testid="new-scheduled"]')).toHaveAttribute('data-active', 'true')
     await expect(page.locator('[data-testid="scheduled-home"]')).toBeVisible()
@@ -309,6 +329,7 @@ test('Data application create opens the connection editor', async () => {
   const harness = await launchWorkbench()
   try {
     const { page } = harness
+    await openAppColumn(page)
     await page.locator('[data-testid="applications-tab-data"]').click()
     await expect(page.locator('[data-testid="applications-tab-data"]')).toHaveAttribute(
       'data-active',
@@ -338,6 +359,7 @@ test('Knowledge application starts empty, then create opens a note', async () =>
   const harness = await launchWorkbench()
   try {
     const { page } = harness
+    await openAppColumn(page)
     await page.locator('[data-testid="applications-tab-knowledge"]').click()
     await expect(page.locator('[data-testid="applications-tab-knowledge"]')).toHaveAttribute(
       'data-active',

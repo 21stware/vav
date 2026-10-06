@@ -859,7 +859,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   storageBrowsePath: null,
   storageBrowseNonce: 0,
   applicationsMode: 'storage',
-  applicationsVisible: true,
+  applicationsVisible: false,
   focusedAppObjectId: null,
   selectedAppObjectIds: [],
   applicationsDetailOpen: false,

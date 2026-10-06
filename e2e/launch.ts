@@ -576,6 +576,15 @@ export async function openFilesTray(page: Page): Promise<void> {
   await page.locator('[data-testid="files-panel"]').waitFor({ state: 'visible' })
 }
 
+/** App column starts closed; Services in the sidebar opens it. */
+export async function openAppColumn(page: Page): Promise<void> {
+  const column = page.locator('[data-testid="app-column"]')
+  if (!(await column.isVisible())) {
+    await page.locator('[data-testid="sidebar-services"]').click()
+  }
+  await column.waitFor({ state: 'visible' })
+}
+
 /** Persist a workspace API key so VAV send is allowed (settings-api.rpml). */
 export async function seedApiKey(page: Page, key = 'sk-e2e-test-key'): Promise<void> {
   await page.evaluate((value) => window.vav.settings.setApiKey(value), key)
