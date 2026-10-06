@@ -1203,7 +1203,9 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       void cacheCreatedAt
       target = meta
     }
-    if (target && isAppObjectSession(target)) {
+    // Only the main shell has an app column. Preview / companion windows bind
+    // their composer to the file session itself, so it must become active.
+    if (target && isAppObjectSession(target) && isMainSessionShell()) {
       if (options?.appPeek) get().focusAppObject(target.id)
       else get().openAppObject(target.id)
       return
