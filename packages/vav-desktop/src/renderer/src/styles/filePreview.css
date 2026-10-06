@@ -3122,6 +3122,97 @@
 }
 
 /*
+ * Wide code and tables scroll by how much they overflow the measure, but
+ * are not clipped to it — the scroller spans the whole pane (body padding
+ * included). See --md-wide-bleed in app-shell.css.
+ */
+.file-viewer-body:has(> .preview-document) {
+  container-type: inline-size;
+}
+
+.preview-document {
+  --md-wide-bleed: max(0px, (100cqi - var(--md-measure) * var(--text-zoom, 1)) / 2);
+  --md-wide-col: min(100cqi, var(--md-measure) * var(--text-zoom, 1));
+  --md-wide-gutter: 0px;
+  --md-wide-reach: calc(var(--md-wide-bleed) + var(--md-wide-gutter));
+}
+
+.file-viewer-body[data-pad='text'] > .preview-document {
+  --md-wide-gutter: 24px;
+}
+
+/* Bare full-width scrollers; the card moves onto the content. */
+.preview-document
+  > .preview-markdown
+  > :is(.md-preview-fence, .md-preview-table, .md-block[data-kind='code']),
+.preview-document
+  > .preview-markdown
+  > .markdown-chunk
+  > :is(.md-preview-fence, .md-preview-table, .md-block[data-kind='code']) {
+  display: grid;
+  grid-template-columns: max-content;
+  max-width: none;
+  margin-inline: calc(-1 * var(--md-wide-reach));
+  padding-inline: var(--md-wide-reach);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+}
+
+.preview-document
+  :is(.preview-markdown, .markdown-chunk)
+  > :is(.md-preview-fence, .md-block[data-kind='code'])
+  > :is(pre, .md-block-bar),
+.preview-document
+  :is(.preview-markdown, .markdown-chunk)
+  > .md-preview-table
+  > table {
+  grid-area: 1 / 1;
+}
+
+.preview-document
+  :is(.preview-markdown, .markdown-chunk)
+  > :is(.md-preview-fence, .md-block[data-kind='code'])
+  > pre {
+  /* Never narrower than the measure; wider content widens the card. */
+  min-width: var(--md-wide-col);
+  overflow: visible;
+  /* !important: the inner-pre reset above strips the card with !important. */
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius) !important;
+  background: var(--bg-sunken) !important;
+  box-shadow: 0 1px 2px color-mix(in srgb, #000 6%, transparent) !important;
+}
+
+.preview-document :is(.preview-markdown, .markdown-chunk) > .md-preview-table > table {
+  min-width: var(--md-wide-col);
+  width: max-content;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--bg-content) 40%, var(--bg-sunken));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 80%, transparent);
+  clip-path: inset(0 round 12px);
+}
+
+/* Copy bar rides the card's top-right, sticking inside the pane while the
+   card runs off its right edge. */
+.preview-document
+  :is(.preview-markdown, .markdown-chunk)
+  > :is(.md-preview-fence, .md-block[data-kind='code'])
+  > .md-block-bar {
+  position: sticky;
+  top: auto;
+  right: 8px;
+  justify-self: end;
+  align-self: start;
+  margin: 8px 8px 0 0;
+}
+
+/*
  * Leaf fragments zero outer edges so region margins own the stack.
  * Heading titles are handled above (keep 0 vertical on the hx itself).
  */

@@ -2303,6 +2303,22 @@ label,
   -webkit-app-region: drag;
 }
 
+/*
+ * Windows / Linux draw min·max·close (titleBarOverlay) over the window's
+ * top-right corner. Only the rightmost column's top bar reaches it: the app
+ * column when open, otherwise the agent column.
+ */
+:root[data-platform='win32'] .applications-column:not([hidden]) .app-mode-tabs,
+:root[data-platform='linux'] .applications-column:not([hidden]) .app-mode-tabs {
+  /* App column already insets `--applications-column-pad`; only the remainder. */
+  padding-right: calc(var(--chrome-trail) - var(--applications-column-pad));
+}
+
+:root[data-platform='win32'] .body-split:has(> .applications-column[hidden]) > .agent-column > .detail > .terminal-host-chrome,
+:root[data-platform='linux'] .body-split:has(> .applications-column[hidden]) > .agent-column > .detail > .terminal-host-chrome {
+  padding-right: var(--chrome-trail);
+}
+
 .app-shell.panel-flush-top .terminal-host-chrome button,
 .app-shell.panel-flush-top .terminal-host-chrome label,
 .app-shell.panel-flush-top .terminal-host-chrome select,
@@ -2529,8 +2545,9 @@ label,
   box-sizing: border-box;
   isolation: isolate;
   background: transparent;
-  /* Lead clears native traffic lights; modest trail so the label isn’t flush. */
-  padding: 0 12px 0 var(--chrome-lead);
+  /* Lead clears native traffic lights; trail clears Windows min·max·close
+     (12px on macOS, so the label isn’t flush). */
+  padding: 0 var(--chrome-trail) 0 var(--chrome-lead);
   border-bottom: 0;
   /* Override `.titlebar { drag }` — isolation + glass otherwise swallows
      no-drag on the overlay buttons. Spacer below is the drag strip. */
@@ -5392,6 +5409,102 @@ kbd {
   flex-direction: column;
   align-self: stretch;
   max-width: 100%;
+}
+
+/*
+ * Wide markdown blocks (code, tables) still scroll by exactly how much they
+ * overflow the reading column, but are no longer clipped to it: the card
+ * starts at the column's left edge, shows past its right edge, and scrolls
+ * out past its left edge until the card's end meets the column's right edge.
+ * The scroller spans the whole log with the column's offset as padding on
+ * both sides. Content that fits the column looks as before.
+ *
+ * --md-wide-bleed is how far the column sits in from the log's gutters (0
+ * once the log is narrower than --reading-max). Registered as a <length> so
+ * the cqi resolves here against .transcript and inherits as px.
+ */
+@property --md-wide-bleed {
+  syntax: '<length>';
+  inherits: true;
+  initial-value: 0px;
+}
+
+@property --md-wide-col {
+  syntax: '<length>';
+  inherits: true;
+  initial-value: 0px;
+}
+
+.transcript-inner {
+  --md-wide-bleed: max(0px, (100cqi - var(--reading-max)) / 2);
+  --md-wide-col: calc(min(100cqi, var(--reading-max)) - 2 * var(--reading-gutter));
+  /* Column edge → log edge. */
+  --md-wide-reach: calc(var(--md-wide-bleed) + var(--reading-gutter));
+}
+
+/* content-visibility paint-contains the turn, so the turn itself spans the
+   log (padded back to the column) or the wide scroller would be clipped. */
+.message-turn.assistant {
+  max-width: none;
+  margin-inline: calc(-1 * var(--md-wide-reach));
+  padding-inline: var(--md-wide-reach);
+}
+
+/*
+ * The .md-block becomes a bare full-width scroller; its card moves onto the
+ * content, sized column-wide up to the content's own width. Top-level blocks
+ * only — inside a list or quote they keep their indent and own scroll.
+ */
+.message.assistant > .markdown > .md-block:is([data-kind='code'], [data-kind='table']),
+.message.assistant
+  > .markdown
+  > .markdown-chunk
+  > .md-block:is([data-kind='code'], [data-kind='table']) {
+  display: grid;
+  grid-template-columns: max-content;
+  margin-inline: calc(-1 * var(--md-wide-reach));
+  padding-inline: var(--md-wide-reach);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+  isolation: auto;
+}
+
+.message.assistant .md-block:is([data-kind='code'], [data-kind='table']) > :is(pre, .table-scroll),
+.message.assistant .md-block:is([data-kind='code'], [data-kind='table']) > .md-block-bar {
+  grid-area: 1 / 1;
+}
+
+.message.assistant
+  :is(.markdown, .markdown-chunk)
+  > .md-block:is([data-kind='code'], [data-kind='table'])
+  > :is(pre, .table-scroll) {
+  /* Never narrower than the column; wider content widens the card. */
+  min-width: var(--md-wide-col);
+  max-width: none;
+  overflow: visible;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius) !important;
+  background: var(--bg-sunken) !important;
+  clip-path: inset(0 round var(--radius));
+}
+
+/* Copy bar rides the card's top-right, but sticks inside the log while the
+   card runs off its right edge. */
+.message.assistant
+  :is(.markdown, .markdown-chunk)
+  > .md-block:is([data-kind='code'], [data-kind='table'])
+  > .md-block-bar {
+  position: sticky;
+  top: auto;
+  right: 8px;
+  justify-self: end;
+  align-self: start;
+  margin: 8px 8px 0 0;
 }
 
 .message-role {
@@ -10014,6 +10127,15 @@ button.tool-row {
   --hm-table-cell-edit-bg: var(--bg);
   --hm-selection: var(--accent-soft);
   min-height: 100%;
+}
+
+/* A wide table scrolls across the whole note (ProseMirror's 52px / 32px
+   gutters included), starting flush with the text — not inside the text
+   column. Code wraps and diagrams scale, so only tables overflow. */
+.knowledge-note-editor .handymd .hm-table-scroll {
+  margin-inline: -52px -32px;
+  padding-inline: 52px 32px;
+  scrollbar-width: none;
 }
 
 .knowledge-note-editor .ProseMirror {
