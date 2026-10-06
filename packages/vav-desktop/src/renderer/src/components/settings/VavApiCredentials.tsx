@@ -376,7 +376,8 @@ export function AgentProfileSwitch({
   )
 }
 
-function NewKeyFields({
+/** Endpoint + key; saves on blur / Enter as the current profile. Also used by first-launch setup. */
+export function NewKeyFields({
   agentId,
   endpoint,
   onCreated

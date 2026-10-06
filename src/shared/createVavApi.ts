@@ -532,6 +532,7 @@ export function createVavApi(adapter: VavIpcAdapter): VavApi {
     openSettings: (view?: SettingsView, agentId?: string, machineId?: string) =>
       invoke(IPC.windowOpenSettings, view, agentId, machineId),
     closeSettings: () => invoke(IPC.windowCloseSettings),
+    previewOnboarding: () => invoke(IPC.windowPreviewOnboarding),
     desiredSettingsView: () =>
       invoke(IPC.settingsDesiredView) as Promise<SettingsViewPayload>,
     popupMenu: (items: NativeMenuItem[], position?: { x: number; y: number }) =>

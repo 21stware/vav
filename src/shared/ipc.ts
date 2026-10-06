@@ -1704,6 +1704,8 @@ export interface VavApi {
     /** Settings live in their own window, not a sheet over the transcript. */
     openSettings(view?: SettingsView, agentId?: string, machineId?: string): Promise<void>
     closeSettings(): Promise<void>
+    /** Dev builds: close Settings and replay the first-launch tour in the main window. */
+    previewOnboarding(): Promise<void>
     /** Last category ⌘, / Open Settings asked for — pull after the lazy chunk mounts. */
     desiredSettingsView(): Promise<SettingsViewPayload>
     /** Opens (or raises) the standalone window for one conversation. */
@@ -2096,6 +2098,8 @@ export type MenuCommand =
   | 'show-file-sessions'
   /** Trigger the same update check as Settings → About. */
   | 'check-updates'
+  /** Dev: replay the first-launch tour (Settings → About). */
+  | 'preview-onboarding'
   /**
    * ⌘W — context close via uiFocus (bash tab / collapse Files tray / agent pane),
    * else close the window. Replaces bare role:close so the renderer can decide.
@@ -2415,6 +2419,7 @@ export const IPC = {
   windowShellPath: 'vav:window:shell-path',
   windowOpenSettings: 'vav:window:open-settings',
   windowCloseSettings: 'vav:window:close-settings',
+  windowPreviewOnboarding: 'vav:window:preview-onboarding',
   settingsDesiredView: 'vav:settings:desired-view',
   windowPopupMenu: 'vav:window:popup-menu',
   windowClosePopupMenu: 'vav:window:close-popup-menu',

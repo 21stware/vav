@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import type { MenuCommand } from '@shared/ipc'
 import { tt } from '../i18n/useT'
+import { useOnboardingPreview } from '../state/onboardingPreview'
 import { useSessionStore } from '../state/sessionStore'
 import { useWorkspaceStore } from '../state/workspaceStore'
 import {
@@ -210,6 +211,9 @@ export function handleMenuCommand(command: MenuCommand): void {
     case 'check-updates':
       store.openSettings('about')
       void store.checkForUpdates()
+      break
+    case 'preview-onboarding':
+      if (import.meta.env.DEV) useOnboardingPreview.getState().setOpen(true)
       break
     case 'close-context': {
       // Bash → close tab; Files → collapse tray;

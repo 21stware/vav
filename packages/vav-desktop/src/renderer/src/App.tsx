@@ -22,7 +22,8 @@ import { RemoteFolderPicker } from './components/RemoteFolderPicker'
 import { UpdateCorner } from './components/UpdateCorner'
 import { ShellLeadingControls } from './components/ShellLeadingControls'
 import { EmptyState } from './components/ui'
-import { KeychainOnboarding } from './components/KeychainOnboarding'
+import { Onboarding } from './components/onboarding/Onboarding'
+import { useOnboardingPreview } from './state/onboardingPreview'
 import { useAppearance } from './lib/appearance'
 import { useMenuCommands } from './lib/menuCommands'
 import { installDefaultContextMenu } from './lib/nativeMenu'
@@ -65,6 +66,9 @@ export default function App(): React.JSX.Element {
   const [phase, setPhase] = useState<LaunchPhase>(initialLaunchPhase)
   /** Returning mac users who fail silent unlock only see the authorize step. */
   const [keychainAuthorizeOnly, setKeychainAuthorizeOnly] = useState(false)
+  const onboardingPreview = useOnboardingPreview((s) => s.open)
+  const setOnboardingPreview = useOnboardingPreview((s) => s.setOpen)
+  const needsSetup = useSessionStore((s) => s.settings.onboardingCompleted === false)
   useAppHostApply()
 
   useEffect(() => {
@@ -208,10 +212,12 @@ export default function App(): React.JSX.Element {
 
   if (phase === 'keychain') {
     return (
-      <KeychainOnboarding
+      <Onboarding
+        key="gate"
+        phase="gate"
         authorizeOnly={keychainAuthorizeOnly}
         onUnlocked={async () => {
-          setPhase('booting')
+          // Keep the gate (and its waiting state) up until setup can take over.
           await bootstrap()
           setPhase('ready')
         }}
@@ -222,6 +228,9 @@ export default function App(): React.JSX.Element {
   if (phase === 'checking' || phase === 'booting' || !ready) {
     return <div className="app-shell" />
   }
+
+  // Own key: same slot as the gate, which must not hand its step state over.
+  if (needsSetup) return <Onboarding key="setup" phase="setup" />
 
   // Change review is inline in the transcript (not a full-screen takeover).
   return (
@@ -246,6 +255,9 @@ export default function App(): React.JSX.Element {
       {floating && !sidebarVisible ? <UpdateCorner /> : null}
       <AppToast />
       <RemoteFolderPicker />
+      {import.meta.env.DEV && onboardingPreview ? (
+        <Onboarding phase="preview" onDone={() => setOnboardingPreview(false)} />
+      ) : null}
     </div>
   )
 }

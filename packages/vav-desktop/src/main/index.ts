@@ -8516,6 +8516,12 @@ return c as text`
     openSettings: openSettingsWindow,
     settingsDesiredView: () => settingsDesiredView,
     hideSettings: hideSettingsWindow,
+    previewOnboarding: () => {
+      if (!isDevRuntime() || !mainWindow || mainWindow.isDestroyed()) return
+      hideSettingsWindow()
+      const win = mainWindow
+      void revealBrowserWindow(win).then(() => safeSend(win.webContents, IPC.menuCommand, 'preview-onboarding'))
+    },
     openSession: (id) => {
       void openDetachedWindow(id)
     },

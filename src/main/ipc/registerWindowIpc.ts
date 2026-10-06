@@ -12,6 +12,7 @@ export type WindowIpcActions = {
   openSettings: (view: SettingsView, agentId?: string, machineId?: string) => void
   settingsDesiredView: () => unknown
   hideSettings: () => void
+  previewOnboarding: () => void
   openSession: (id: string) => void
   revealInList: (event: IpcMainInvokeEvent, id: string) => Promise<void>
   closeDetached: (id: string) => void
@@ -61,6 +62,7 @@ export function registerWindowIpc(ipcMain: IpcMain, actions: WindowIpcActions): 
   )
   ipcMain.handle(IPC.settingsDesiredView, () => actions.settingsDesiredView())
   ipcMain.handle(IPC.windowCloseSettings, () => actions.hideSettings())
+  ipcMain.handle(IPC.windowPreviewOnboarding, () => actions.previewOnboarding())
   ipcMain.handle(IPC.windowOpenSession, (_event, id: string) => {
     void actions.openSession(String(id || ''))
   })

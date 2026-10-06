@@ -42,6 +42,7 @@ import { clampLogRetentionDays } from '@shared/appLog'
 import { coerceAppLibraries } from '@shared/appFolders'
 import { createDebouncedWriter } from './debounceWrite'
 import { electronUserData } from './electronUserData.ts'
+import { isE2eRuntime } from '../e2eRuntime.ts'
 
 const PLATFORM = process.platform as Platform
 
@@ -90,7 +91,14 @@ export class SettingsStore {
         // Resolve from the file, not the merged defaults — otherwise a leftover
         // `autoCheckUpdates: false` is hidden by DEFAULTS.autoUpdatePolicy.
         this.settings.autoUpdatePolicy = resolveAutoUpdatePolicy(raw)
+        // Settings saved before first-launch setup existed: not a fresh install.
+        if (typeof raw.onboardingCompleted !== 'boolean') this.settings.onboardingCompleted = true
+      } else if (this.hasPriorUse()) {
+        this.settings.onboardingCompleted = true
       }
+      // Test and marketing-capture profiles start fresh but must reach the shell,
+      // same as SecretStore's gate.
+      if (isE2eRuntime() || process.env.VAV_SNAPSHOT) this.settings.onboardingCompleted = true
     } catch {
       this.settings = { ...DEFAULTS }
     }
@@ -109,6 +117,13 @@ export class SettingsStore {
       this.persist(true)
     }
     return this.settings
+  }
+
+  /** Conversations or a finished Keychain tour without a settings file still mean an existing install. */
+  private hasPriorUse(): boolean {
+    return ['conversations', 'keychain-onboarding-done', 'apikey.bin'].some((name) =>
+      existsSync(join(this.userDataDir, name))
+    )
   }
 
   /**
@@ -510,7 +525,7 @@ export class SettingsStore {
     ])
     if (!sortKeys.has(s.fileSortKey)) s.fileSortKey = 'name'
     if (typeof s.fileSortAscending !== 'boolean') s.fileSortAscending = true
-    if (typeof s.firstRunChecklistDismissed !== 'boolean') s.firstRunChecklistDismissed = false
+    if (typeof s.onboardingCompleted !== 'boolean') s.onboardingCompleted = false
     if (typeof s.screenshotKeepWindowFront !== 'boolean') s.screenshotKeepWindowFront = true
     if (typeof s.computerUseEnabled !== 'boolean') s.computerUseEnabled = false
     s.logRetentionDays = clampLogRetentionDays(s.logRetentionDays)

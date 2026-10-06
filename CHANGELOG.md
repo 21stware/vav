@@ -4,6 +4,8 @@ User-facing changes by release. Unreleased work lives at the top until the next 
 
 ## Unreleased
 
+A fresh install now opens on a first-launch setup instead of a Keychain tour. It runs welcome, Keychain (macOS only, now one screen), agent, then workspace. The agent step finds the CLI agents already on this machine and shows whether each one is signed in. From there you can install or sign in to one, or add an API key for the built-in agent. The workspace step picks a folder or a temporary workspace, and setup ends in a new session with both applied. Windows gets the same flow without the Keychain step. Existing installs skip it, and the empty-session "Get started" checklist is gone.
+
 ## 1.32.11
 
 Factory **Droid** joins the CLI agents. It runs over ACP, resumes sessions, lists its live models, and picks up plugins and skills from `~/.factory`. Settings → Accounts can sign in to Droid through browser device pairing (and sign out), and shows the Factory Standard quota for the 5-hour, weekly, and monthly windows. A slow browser sign-in no longer times out the session that follows it.

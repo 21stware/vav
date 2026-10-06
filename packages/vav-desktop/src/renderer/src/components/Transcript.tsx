@@ -38,7 +38,6 @@ import { Button, EmptyState } from './ui'
 import { AgentBrandMark } from './AgentBrandMark'
 import { SessionWorkspaceChrome } from './SessionWorkspaceChrome'
 import { EmptyQuotaUsage } from './EmptyQuotaUsage'
-import { FirstRunChecklist } from './FirstRunChecklist'
 import { EmptyWorkbenchFacts } from './EmptyWorkbenchFacts'
 import { handleSessionSplitContextMenu } from '../lib/sessionSplit'
 import { useT } from '../i18n/useT'
@@ -750,7 +749,6 @@ export function Transcript({
                     onClick={() => openSettings('agents', 'vav')}
                   />
                 ) : null}
-                {activeId ? <FirstRunChecklist conversationId={activeId} /> : null}
                 {needsVavKey ? null : <EmptyWorkbenchFacts />}
               </EmptyState>
             ))}

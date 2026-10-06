@@ -1343,8 +1343,11 @@ export interface AppSettings {
    * When false, block selection is Edit-only (Read is view + copy).
    */
   previewReadModeSelection: boolean
-  /** Hide the empty-transcript first-run checklist. */
-  firstRunChecklistDismissed: boolean
+  /**
+   * First-launch setup (agent + workspace) finished or skipped. Existing
+   * installs are migrated to true so only fresh installs see it.
+   */
+  onboardingCompleted: boolean
   /**
    * How long durable diagnostic records stay on disk (1 / 3 / 7 / 14 / 30).
    * Session records still expire at 24h or when the conversation is deleted.
@@ -1448,7 +1451,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   recentAgentModels: [],
   previewSelectionAgentMark: true,
   previewReadModeSelection: true,
-  firstRunChecklistDismissed: false,
+  onboardingCompleted: false,
   logRetentionDays: 7
 }
 
