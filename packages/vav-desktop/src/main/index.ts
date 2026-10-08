@@ -8,6 +8,7 @@ import {
   ipcMain,
   type IpcMainInvokeEvent,
   Menu,
+  nativeImage,
   nativeTheme,
   powerMonitor,
   protocol,
@@ -98,7 +99,12 @@ import { DaemonAttachService } from '@main/daemon/DaemonAttachService'
 import { createAccountsCatalog } from '@main/accounts/daemonCatalog'
 import { seedChangeReviewTurn } from '@main/agent/seedChangeReview'
 import { createSettingsCatalog, vavAccountKeyPresent } from '@main/daemon/settingsCatalog'
-import { composeHostSettings, pickSecretPresent, remapHostWorkspaceSettings } from '@shared/hostSettings'
+import {
+  agentListSeedFromDesktop,
+  composeHostSettings,
+  pickSecretPresent,
+  remapHostWorkspaceSettings
+} from '@shared/hostSettings'
 import { appearanceForMachine, pickAppearanceBase } from '@shared/machineAppearance'
 import {
   createChangeSetCatalog,
@@ -284,7 +290,7 @@ import {
   destroyLeavingFullscreen,
   hideLeavingFullscreen
 } from '@main/window/fullscreenLeave'
-import { overlayCascadeOrigin, overlayFit, placeDetachedBounds, placePipBounds } from '@main/window/windowPlace'
+import { overlayCascadeOrigin, overlayFit, placeDetachedBounds } from '@main/window/windowPlace'
 import { isPreviewableColdOpenPath as previewableColdOpenPath } from '@main/window/coldOpen'
 import { appZOrderWindowIds, windowIsInPlay as windowIsInPlayOf } from '@main/window/windowZOrder'
 import { replaceLiveWarmPool, shouldDestroyParkedWarmShell, takeReadyWarmShell, waitForReadyWarmShell } from '@main/window/warmShell'
@@ -306,8 +312,6 @@ import {
 import {
   MAIN_WINDOW_MIN_HEIGHT,
   MAIN_WINDOW_MIN_WIDTH,
-  PIP_WINDOW_MIN_HEIGHT,
-  PIP_WINDOW_MIN_WIDTH,
   SESSION_WINDOW_MIN_HEIGHT,
   SESSION_WINDOW_MIN_WIDTH
 } from '@shared/shellMinSize'
@@ -449,6 +453,7 @@ import { fetchClaudeAccountQuota } from '@main/quota/claudeUsage'
 import { fetchCodexAccountQuota } from '@main/quota/codexUsage'
 import { fetchCursorAccountQuota } from '@main/quota/cursorUsage'
 import { fetchGrokAccountQuota } from '@main/quota/grokUsage'
+import { fetchDroidAccountQuota } from '@main/quota/droidUsage'
 import { apiBalanceUrl, hostCanShowApiBalance } from '@shared/apiBalance'
 import {
   cachedApiBalance,
@@ -522,9 +527,6 @@ protocol.registerSchemesAsPrivileged([
 ])
 
 let mainWindow: BrowserWindow | null = null
-/** Full-shell bounds parked while the main window is in picture-in-picture. */
-let mainWindowFullBounds: Electron.Rectangle | null = null
-let mainWindowPip = false
 let stopSpawnedVavServer: (() => void) | undefined
 /** State dir of the spawned loopback vav-server, when this app owns one. */
 let spawnedVavServerStateDir: string | null = null
@@ -1505,7 +1507,8 @@ const quotaService = new QuotaService({
     claude: fetchClaudeAccountQuota,
     codex: fetchCodexAccountQuota,
     cursor: fetchCursorAccountQuota,
-    grok: fetchGrokAccountQuota
+    grok: fetchGrokAccountQuota,
+    droid: fetchDroidAccountQuota
   },
   identityOf: async (host) => {
     const info = await readHostAccountInfo(host)
@@ -1659,7 +1662,7 @@ function createRemoteSession(): RemoteSession {
   const settings = settingsStore.get()
   if (workdir) {
     settingsStore.rememberWorkspaceDirectory(workdir, tmpRootFor(undefined))
-    broadcast(IPC.settingsChanged, currentSettings())
+    void publishMergedSettings()
   }
   const defaultHost = resolveDefaultChatHost(settings.defaultAgentId)
   const conversation = conversationStore.create(
@@ -1839,12 +1842,12 @@ function favoriteRemote(conversationId: string, favorite: boolean): 'ok' | 'not-
   const has = current.includes(conversationId)
   if (favorite && !has) {
     settingsStore.update({ favoriteConversationIds: [conversationId, ...current] })
-    broadcast(IPC.settingsChanged, currentSettings())
+    void publishMergedSettings()
   } else if (!favorite && has) {
     settingsStore.update({
       favoriteConversationIds: current.filter((id) => id !== conversationId)
     })
-    broadcast(IPC.settingsChanged, currentSettings())
+    void publishMergedSettings()
   }
   return 'ok'
 }
@@ -2211,7 +2214,12 @@ const daemonAttach = new DaemonAttachService({
   },
   onHostAttached: (machineId) => {
     applyConversationPersist()
-    void seedHostRecentsFromDesktop(machineId)
+    // Windows booted before the host attached hold desktop-only settings;
+    // repaint the merged view once the host is reachable.
+    void Promise.allSettled([
+      seedHostRecentsFromDesktop(machineId),
+      seedHostAgentsFromDesktop(machineId)
+    ]).finally(() => void publishMergedSettings())
     void pullRemoteWorkspace(machineId)
     attachLocalShellLogs(machineId)
   },
@@ -2592,7 +2600,10 @@ function applyDesktopControlEvent(machineId: string, message: RemoteServerMessag
   if (message.type === 'thread') {
     const local = conversationStore.findOnHost(machineId, message.conversationId)
     if (!local) {
-      void pullRemoteWorkspace(machineId)
+      // A session this desktop has not adopted yet (scheduled run, another
+      // client). Dropping the frame lost the opening prompt until the turn
+      // ended — adopt that one session now and replay the frame.
+      adoptThenReplayThread(machineId, message)
       return
     }
     const projected = turnEventsFromRemoteThread(local.id, message.messages, local.messages)
@@ -2646,6 +2657,65 @@ function applyDesktopControlEvent(machineId: string, message: RemoteServerMessag
     }
     return
   }
+}
+
+/** Latest unadopted thread frame per host session, replayed once the row exists. */
+const pendingHostThreads = new Map<string, Extract<RemoteServerMessage, { type: 'thread' }>>()
+
+function adoptThenReplayThread(
+  machineId: string,
+  frame: Extract<RemoteServerMessage, { type: 'thread' }>
+): void {
+  const key = `${machineId}\u0000${frame.conversationId}`
+  const inFlight = pendingHostThreads.has(key)
+  pendingHostThreads.set(key, frame)
+  if (inFlight) return
+  const client = daemonAttach.clientOf(machineId)
+  const fallback = (): void => {
+    pendingHostThreads.delete(key)
+    void pullRemoteWorkspace(machineId)
+  }
+  if (!client?.connected) {
+    fallback()
+    return
+  }
+  const adoptAs = hostRegistry.get(machineId)?.info.localShell ? LOCAL_MACHINE_ID : machineId
+  void client
+    .request('sessions.get', { id: frame.conversationId }, 15_000)
+    .then((got) => {
+      const latest = pendingHostThreads.get(key) ?? frame
+      pendingHostThreads.delete(key)
+      const conversation = (got as { conversation?: Conversation } | null)?.conversation
+      if (conversation && typeof conversation === 'object') {
+        conversationStore.adoptHostConversation(conversation, adoptAs)
+      }
+      const local = conversationStore.findOnHost(machineId, latest.conversationId)
+      if (!local) {
+        void pullRemoteWorkspace(machineId)
+        return
+      }
+      publishConversations()
+      // Store sync against what main now holds; renderer events against an
+      // empty tree, because the renderer never saw any of these prompts.
+      const projected = turnEventsFromRemoteThread(local.id, latest.messages, local.messages)
+      // Same rule as the live path: the adopted copy is full-fidelity (tool
+      // input/output); only rows the frame adds or grows are written back.
+      const prevById = new Map(local.messages.map((row) => [row.id, row]))
+      for (const row of projected.messages) {
+        const prev = prevById.get(row.id)
+        if (!prev || prev.content !== row.content || (prev.blocks?.length ?? 0) !== (row.blocks?.length ?? 0)) {
+          conversationStore.replaceMessage(local.id, row)
+        }
+      }
+      if (projected.leafId) conversationStore.setActiveLeaf(local.id, projected.leafId)
+      const fresh = turnEventsFromRemoteThread(local.id, latest.messages, [])
+      emitDesktopControlEvents([
+        ...fresh.events.filter((event) => event.type === 'user'),
+        ...projected.events.filter((event) => event.type === 'end')
+      ])
+      publishConversations()
+    })
+    .catch(fallback)
 }
 
 /** Pull one vav-server conversation so usage / resume / ACP chrome match the host. */
@@ -2728,7 +2798,7 @@ async function pullRemoteWorkspaceNow(id: string): Promise<void> {
     settingsStore.rememberWorkspaceDirectory(path, '', adoptAs)
   }
   if (sessionsChanged) broadcast(IPC.convChanged, conversationStore.listMeta())
-  if (catalog.recents.length > 0) broadcast(IPC.settingsChanged, currentSettings())
+  if (catalog.recents.length > 0) void publishMergedSettings()
 }
 
 hostRegistry.onChange((hosts) => {
@@ -2792,6 +2862,33 @@ function broadcast(channel: string, payload: unknown): void {
     if (window.isDestroyed()) continue
     safeSend(window.webContents, channel, payload)
   }
+}
+
+/** A real vav window (not a capture / faaaaast overlay) has key focus. */
+function isVavFrontmost(): boolean {
+  const focused = BrowserWindow.getFocusedWindow()
+  if (!focused || focused.isDestroyed()) return false
+  return !screenshotController?.isOverlay(focused) && !faaaaastController?.isOverlay(focused)
+}
+
+/** Background global-hotkey capture: annotate, then copy the PNG. */
+async function captureScreenshotToClipboard(): Promise<void> {
+  if (!screenshotController) return
+  const hideWindows = settingsStore.get().screenshotKeepWindowFront === false
+  const result = await screenshotController.start(
+    null,
+    hideWindows ? { hideWindows: true } : undefined
+  )
+  if (!result.ok) {
+    if (!result.cancelled) console.warn('[screenshot] background capture failed', result.error)
+    return
+  }
+  const image = nativeImage.createFromPath(result.path)
+  if (image.isEmpty()) {
+    console.warn('[screenshot] background capture unreadable', result.path)
+    return
+  }
+  clipboard.writeImage(image)
 }
 
 /** Debounce twin fires (menu accelerator + before-input, or key repeat). */
@@ -2985,6 +3082,7 @@ function createAppDefinitionConversation(
   const conversation = conversationStore.create(workdir, modelForNewConversation(defaultHost), {
     sessionKind: kind,
     title,
+    machineId: mainShellMachineId,
     approvalMode: settings.defaultApprovalMode ?? 'auto',
     thinkingLevel: parseThinkingLevel(settings.defaultThinkingLevel),
     cliHost: defaultHost,
@@ -3516,7 +3614,6 @@ function createWindow(): BrowserWindow {
   wirePopupDismiss(window)
   applyTrafficLights(window)
   wireVibrancyRefresh(window)
-  wireMainWindowPipResize(window)
 
   window.once('ready-to-show', () => {
     applyTrafficLights(window)
@@ -3569,55 +3666,6 @@ function createWindow(): BrowserWindow {
   return window
 }
 
-function wireMainWindowPipResize(window: BrowserWindow): void {
-  let resizeTimer: NodeJS.Timeout | null = null
-  window.on('resize', () => {
-    if (!mainWindowPip || window !== mainWindow) return
-    if (resizeTimer) clearTimeout(resizeTimer)
-    resizeTimer = setTimeout(() => {
-      if (!mainWindowPip || window.isDestroyed() || window.isFullScreen() || window.isMaximized()) {
-        return
-      }
-      const { width, height } = window.getBounds()
-      settingsStore.update({ pipWindowSize: { width, height } })
-    }, 500)
-  })
-}
-
-function setMainWindowPictureInPicture(enabled: boolean): void {
-  const win = mainWindow
-  if (!win || win.isDestroyed()) return
-  if (enabled === mainWindowPip) {
-    if (enabled) void revealBrowserWindow(win)
-    return
-  }
-  if (enabled) {
-    if (win.isFullScreen()) win.setFullScreen(false)
-    if (win.isMaximized()) win.unmaximize()
-    mainWindowFullBounds = win.getBounds()
-    mainWindowPip = true
-    const display = screen.getDisplayMatching(win.getBounds())
-    const bounds = placePipBounds(
-      display.workArea,
-      settingsStore.get().pipWindowSize,
-      PIP_WINDOW_MIN_WIDTH,
-      PIP_WINDOW_MIN_HEIGHT
-    )
-    win.setMinimumSize(PIP_WINDOW_MIN_WIDTH, PIP_WINDOW_MIN_HEIGHT)
-    win.setAlwaysOnTop(true, 'floating')
-    win.setBounds(bounds)
-    void revealBrowserWindow(win)
-    return
-  }
-  mainWindowPip = false
-  win.setAlwaysOnTop(false)
-  const restore = mainWindowFullBounds
-  mainWindowFullBounds = null
-  win.setMinimumSize(MAIN_WINDOW_MIN_WIDTH, MAIN_WINDOW_MIN_HEIGHT)
-  if (restore) win.setBounds(restore)
-  void revealBrowserWindow(win)
-}
-
 const uiZoomWired = new WeakSet<Electron.WebContents>()
 
 function applyUiZoomToAllWindows(): void {
@@ -3634,7 +3682,7 @@ function persistUiZoom(next: number): void {
   const previous = clampUiZoom(settingsStore.get().uiZoom)
   if (previous !== zoom) settingsStore.update({ uiZoom: zoom })
   applyUiZoomToAllWindows()
-  if (previous !== zoom) broadcast(IPC.settingsChanged, currentSettings())
+  if (previous !== zoom) void publishMergedSettings()
 }
 
 /** Stamp Chromium zoom on every ordinary renderer; skip overlays / popups. */
@@ -6243,7 +6291,7 @@ function openWorkspaceSession(options: {
   const resolved = workdir ?? resolveNewWorkdir()
   if (workdir) {
     settingsStore.rememberWorkspaceDirectory(workdir, tmpRootFor(undefined))
-    broadcast(IPC.settingsChanged, currentSettings())
+    void publishMergedSettings()
   }
   const sessionSettings = settingsStore.get()
   const defaultHost = resolveDefaultChatHost(sessionSettings.defaultAgentId)
@@ -6408,9 +6456,15 @@ function registerGlobalHotkey(accelerator: string): boolean {
   try {
     const ok = globalShortcut.register(screenshotAccel, () => {
       console.log(`[hotkey] screenshot fired: ${screenshotAccel}`)
+      if (screenshotController?.isActive()) return
+      // vav in the background: capture without pulling it forward or touching
+      // the composer — the shot lands on the clipboard instead.
+      if (!isVavFrontmost()) {
+        void captureScreenshotToClipboard()
+        return
+      }
       // Route through the renderer menu command so confirm can attach to the
       // focused conversation. Calling start() here used to swallow the result.
-      if (screenshotController?.isActive()) return
       sendMenuCommand('screenshot')
     })
     if (!ok) {
@@ -6744,6 +6798,20 @@ async function seedHostRecentsFromDesktop(machineId: string): Promise<void> {
   }
 }
 
+/** First attach of this Mac's vav-server: keep the agent list curated before it attached. */
+async function seedHostAgentsFromDesktop(machineId: string): Promise<void> {
+  if (recentsHostScope(machineId) !== LOCAL_MACHINE_ID) return
+  const client = daemonAttach.localShellClient()
+  if (!client?.connected) return
+  try {
+    const hostSnap = (await client.request('settings.get')) as Partial<AppSettings>
+    const seed = agentListSeedFromDesktop(hostSnap, settingsStore.get())
+    if (seed) await client.request('settings.update', seed)
+  } catch {
+    /* ignore */
+  }
+}
+
 /** Always mint a Temporary Workspace folder (switcher “A new temp folder”). */
 function mintTempWorkdir(): string {
   const root = currentTempDir()
@@ -6797,7 +6865,7 @@ function applyWorkingDirectory(
   fileService.watchRoot(id, path)
   rememberWorkdir(path, machineId)
   syncScheduledJobFromConversation(id, { sourceWorkdir: path })
-  broadcast(IPC.settingsChanged, currentSettings())
+  void publishMergedSettings()
   publishConversations()
   return conversationStore.listMeta()
 }
@@ -6814,7 +6882,7 @@ function applyDefaultMachine(machineId: string): void {
   const id = machineId.trim() || LOCAL_MACHINE_ID
   if (settingsStore.get().defaultMachineId === id) return
   settingsStore.update({ defaultMachineId: id })
-  broadcast(IPC.settingsChanged, currentSettings())
+  void publishMergedSettings()
   notifications.notifyHostsChanged()
 }
 
@@ -7576,7 +7644,7 @@ function registerIpc(): void {
           customSurfacePatternUrl: ''
         })
         const settings = currentSettings()
-        broadcast(IPC.settingsChanged, settings)
+        void publishMergedSettings()
         return { ok: true as const, url: settings.customSurfacePatternUrl, size: imported.size }
       } catch {
         return { ok: false as const, reason: 'invalid' as const }
@@ -7779,7 +7847,7 @@ return c as text`
     settings: () => settingsStore.get(),
     validateKey: (endpoint, key) => validateAccountKey(endpoint, key),
     retargetEmpty: retargetEmptyConversations,
-    broadcastSettings: () => broadcast(IPC.settingsChanged, currentSettings()),
+    broadcastSettings: () => void publishMergedSettings(),
     publishSettings: () => publishMergedSettings(),
     broadcastAccounts: (page) => {
       broadcast(IPC.accountsUpdated, page)
@@ -7929,7 +7997,7 @@ return c as text`
   registerConversationMutateIpc(ipcMain, conversationStore, {
     resolveNewWorkdirOn,
     rememberWorkdir,
-    broadcastSettings: () => broadcast(IPC.settingsChanged, currentSettings()),
+    broadcastSettings: () => void publishMergedSettings(),
     settings: () => settingsStore.get(),
     modelForNewConversation,
     accountIdForSession,
@@ -8267,7 +8335,7 @@ return c as text`
     remote: () => daemonAttach.localShellClient() ?? null
   })
   registerConnectorIpc(ipcMain, connectorRegistry, {
-    broadcastSettings: () => broadcast(IPC.settingsChanged, currentSettings()),
+    broadcastSettings: () => void publishMergedSettings(),
     remote: () => daemonAttach.localShellClient() ?? null
   })
   registerTimerIpc(
@@ -8277,7 +8345,7 @@ return c as text`
     conversationStore,
     () => broadcast(IPC.timersChanged, null),
     {
-      remote: () => daemonAttach.localShellClient() ?? null,
+      remote: () => activeSettingsClient(),
       publishConversations,
       createDefinitionConversation: () => createAppDefinitionConversation('timer')
     }
@@ -8448,11 +8516,15 @@ return c as text`
     openSettings: openSettingsWindow,
     settingsDesiredView: () => settingsDesiredView,
     hideSettings: hideSettingsWindow,
+    previewOnboarding: () => {
+      if (!isDevRuntime() || !mainWindow || mainWindow.isDestroyed()) return
+      hideSettingsWindow()
+      const win = mainWindow
+      void revealBrowserWindow(win).then(() => safeSend(win.webContents, IPC.menuCommand, 'preview-onboarding'))
+    },
     openSession: (id) => {
       void openDetachedWindow(id)
     },
-    setPictureInPicture: setMainWindowPictureInPicture,
-    isPictureInPicture: () => mainWindowPip,
     revealInList: async (event, id) => {
       await revealConversationInList(id)
       const senderWin = BrowserWindow.fromWebContents(event.sender)
@@ -8940,6 +9012,12 @@ if (singleInstance) {
     remoteControl.applySettings()
     daemonAttach.applySettings()
     daemonAttach.restore()
+    // Sleep / lid / Wi-Fi switch leave half-open sockets and long backoff
+    // timers; re-probe paired computers as soon as the Mac is back.
+    const wakeRemotes = (): void => daemonAttach.wake()
+    powerMonitor.on('resume', wakeRemotes)
+    powerMonitor.on('unlock-screen', wakeRemotes)
+    powerMonitor.on('user-did-become-active', wakeRemotes)
     rebuildAppChrome()
     if (!process.env.VAV_SNAPSHOT) {
       quotaService.start()

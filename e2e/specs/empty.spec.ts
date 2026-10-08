@@ -28,7 +28,6 @@ test('empty VAV session shows the no-key empty state and keeps local tools', asy
     await expect(page.locator('.empty-state-session [data-testid="empty-workspace-name"]')).toHaveCount(
       0
     )
-    await expect(page.locator('.session-workspace-text-btn')).toContainText('Enter CLI Mode')
   } finally {
     await harness.dispose()
   }
@@ -74,8 +73,6 @@ test('empty session hero plays logo and name empty-in on a new visit', async () 
     const { page } = harness
     await expect(page.locator('.empty-state-session')).toBeVisible()
 
-    await page.locator('[data-testid="home-page"]').click()
-    await expect(page.locator('[data-testid="workbench-home"]')).toBeVisible()
     await page.locator('[data-testid="new-session"]').click()
     await expect(page.locator('.empty-state-session')).toBeVisible()
 

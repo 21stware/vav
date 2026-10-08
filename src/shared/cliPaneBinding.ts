@@ -42,6 +42,8 @@ export function mintSwarmCursor(
       return { provider: 'claude', sessionId: id, resumeAt: null }
     case 'codex':
       return { provider: 'codex', threadId: id }
+    case 'droid':
+      return { provider: 'droid', sessionId: id }
     case 'cursor':
       return { provider: 'cursor', sessionId: id }
     case 'grok':
@@ -66,6 +68,7 @@ export function canApplyResumeArgs(agentId: string): boolean {
     agentId === 'claude' ||
     agentId === 'grok' ||
     agentId === 'codex' ||
+    agentId === 'droid' ||
     agentId === 'cursor'
   )
 }
@@ -122,6 +125,7 @@ export function applySwarmSessionArgs(
   const resumeId = nativeSessionId(cursor)
   if (resumeId) {
     if (agentId === 'codex') return ['resume', resumeId, ...stripped]
+    if (agentId === 'droid') return [...stripped, '--resume', resumeId]
     if (agentId === 'claude' || agentId === 'grok' || agentId === 'cursor') {
       return [...stripped, '--resume', resumeId]
     }

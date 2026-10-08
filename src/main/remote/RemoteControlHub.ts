@@ -366,7 +366,13 @@ export class RemoteControlHub {
     }
 
     if (!client.authed) {
-      if (message.type !== 'hello' || !this.helloAuthOk(message.auth)) {
+      // Daemon-role hellos are authenticated by the daemon server itself, which
+      // knows per-controller grants and can answer `revoked` for a removed one
+      // (the hub only knows "accept / reject", so a revoked controller on
+      // tailcat used to redial forever on `pairing rejected`).
+      const daemonHandoff =
+        message.type === 'hello' && message.role === 'daemon' && Boolean(this.deps.onDaemonHello)
+      if (message.type !== 'hello' || (!daemonHandoff && !this.helloAuthOk(message.auth))) {
         this.send(client, { type: 'error', code: 'auth', message: 'pairing rejected' })
         return false
       }

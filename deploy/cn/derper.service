@@ -1,0 +1,16 @@
+[Unit]
+Description=VAV mainland DERP relay
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# HTTP only on loopback-facing 3340; Caddy terminates TLS for derp.vavapp.art.
+# Bind :3340 (not 127.0.0.1) so STUN still listens on *:3478.
+ExecStart=/usr/local/bin/derper -hostname=derp.vavapp.art -a=:3340 -http-port=-1 -stun
+Restart=always
+RestartSec=5
+LimitNOFILE=1048576
+
+[Install]
+WantedBy=multi-user.target

@@ -84,7 +84,12 @@ type TunnelHandle = {
   host: string
   port: number
   close: () => void
+  /** Optional liveness; a dead sidecar must not be reused for reconnect. */
+  alive?: () => boolean
 }
+
+/** Stagger between parallel LAN dial targets (stale addresses no longer serialize 4s timeouts). */
+const DIAL_STAGGER_MS = 300
 
 type AttachOpts = {
   userData: string
@@ -155,6 +160,9 @@ export class DaemonAttachService {
   private readonly tunnelOfHost = new Map<string, string>()
   private readonly reconnectTimers = new Map<string, ReturnType<typeof setTimeout>>()
   private readonly reconnectCtl = new Map<string, AbortController>()
+  /** Backoff timers re-opening a control plane that dropped while the daemon link stayed up. */
+  private readonly controlRetry = new Map<string, ReturnType<typeof setTimeout>>()
+  private lastWake = 0
   private discovered: DiscoveredPeer[] = []
   readonly identity: DaemonIdentity
   private readonly grants: GrantStore
@@ -261,8 +269,15 @@ export class DaemonAttachService {
     const localHit = this.server?.disconnectGrant(grantId) ?? false
     const remote = await this.ensureLocalShellClient()
     if (remote) {
-      await remote.request('host.disconnectIncoming', { grantId }).catch(() => undefined)
+      let failure: unknown = null
+      try {
+        await remote.request('host.disconnectIncoming', { grantId })
+      } catch (err) {
+        failure = err
+      }
       await this.pullIncoming()
+      // Surface a real failure instead of leaving the controller connected silently.
+      if (failure && !localHit) throw failure
       return
     }
     if (localHit) {
@@ -277,8 +292,15 @@ export class DaemonAttachService {
     const localHit = this.server?.unpairGrant(grantId) ?? false
     const remote = await this.ensureLocalShellClient()
     if (remote) {
-      await remote.request('host.unpairIncoming', { grantId }).catch(() => undefined)
+      let failure: unknown = null
+      try {
+        await remote.request('host.unpairIncoming', { grantId })
+      } catch (err) {
+        failure = err
+      }
       await this.pullIncoming()
+      // The grant is still live on the vav-server — do not pretend it was revoked.
+      if (failure && !localHit) throw failure
       return
     }
     if (localHit) {
@@ -709,6 +731,7 @@ export class DaemonAttachService {
     this.appearances.delete(machineId)
     this.whichCache.delete(machineId)
     this.versions.delete(machineId)
+    this.proxyDials.delete(machineId)
     this.controlTargets.delete(machineId)
     this.opts.registry.remove(machineId)
     this.saveStore(this.loadStore().filter((row) => row.machineId !== machineId))
@@ -774,6 +797,8 @@ export class DaemonAttachService {
     this.stopBrowse = null
     for (const client of this.clients.values()) client.close()
     this.clients.clear()
+    for (const timer of this.controlRetry.values()) clearTimeout(timer)
+    this.controlRetry.clear()
     for (const dial of this.control.values()) dial.close()
     this.control.clear()
     for (const tunnel of this.tunnels.values()) tunnel.close()
@@ -963,7 +988,8 @@ export class DaemonAttachService {
 
   private async ensureTunnel(token: string, signal?: AbortSignal): Promise<DialTarget> {
     const existing = this.tunnels.get(token)
-    if (existing) return { host: existing.host, port: existing.port }
+    if (existing && existing.alive?.() === false) this.dropTunnel(token)
+    else if (existing) return { host: existing.host, port: existing.port }
     const handle = await this.opts.dialTunnel!(token)
     if (signal?.aborted) {
       handle.close()
@@ -1001,29 +1027,94 @@ export class DaemonAttachService {
     welcome: import('../../shared/daemonProtocol.ts').DaemonWelcome
     target: DialTarget
   }> {
-    const failures: Error[] = []
-    for (const target of targets) {
-      if (signal?.aborted) throw new Error(PAIRING_CANCELLED)
-      const client = new DaemonClient()
-      try {
-        const welcome = await client.connect({
-          host: target.host,
-          port: target.port,
-          secret,
-          device: this.identity.name,
-          clientId: this.identity.machineId,
-          grantId: this.loadStore().find((row) => row.secret === secret)?.grantId,
-          timeoutMs,
-          signal
-        })
-        return { client, welcome, target }
-      } catch (err) {
-        client.close()
-        if (isPairCancelled(err)) throw err instanceof Error ? err : new Error(PAIRING_CANCELLED)
-        failures.push(err instanceof Error ? err : new Error(String(err)))
+    if (signal?.aborted) throw new Error(PAIRING_CANCELLED)
+    if (targets.length === 0) throw preferPairError([])
+    const grantId = this.loadStore().find((row) => row.secret === secret)?.grantId
+    // Happy-eyeballs over every candidate: a stale address used to cost a full
+    // connect timeout before the next one was even tried, so reconnecting after
+    // a network change took tens of seconds (or lost to the backoff timer).
+    return new Promise((resolve, reject) => {
+      const abort = new AbortController()
+      const clients = new Set<DaemonClient>()
+      const timers: Array<ReturnType<typeof setTimeout>> = []
+      const failures: Error[] = []
+      let next = 0
+      let finished = 0
+      let done = false
+      const cleanup = (): void => {
+        done = true
+        for (const timer of timers) clearTimeout(timer)
+        signal?.removeEventListener('abort', onParent)
       }
-    }
-    throw preferPairError(failures)
+      const onParent = (): void => {
+        if (done) return
+        cleanup()
+        abort.abort()
+        for (const client of clients) client.close()
+        reject(new Error(PAIRING_CANCELLED))
+      }
+      signal?.addEventListener('abort', onParent, { once: true })
+      const launch = (): void => {
+        if (done || next >= targets.length) return
+        const target = targets[next]
+        next += 1
+        const client = new DaemonClient()
+        clients.add(client)
+        client
+          .connect({
+            host: target.host,
+            port: target.port,
+            secret,
+            device: this.identity.name,
+            clientId: this.identity.machineId,
+            grantId,
+            timeoutMs,
+            signal: abort.signal
+          })
+          .then(
+            (welcome) => {
+              if (done) {
+                client.close()
+                return
+              }
+              cleanup()
+              clients.delete(client)
+              abort.abort()
+              for (const other of clients) other.close()
+              resolve({ client, welcome, target })
+            },
+            (err: unknown) => {
+              client.close()
+              clients.delete(client)
+              if (done) return
+              const error = err instanceof Error ? err : new Error(String(err))
+              ;(error as Error & { dialHost?: string }).dialHost = target.host
+              failures.push(error)
+              finished += 1
+              // An explicit revoke from the host is final — no need to wait for the rest.
+              if (error.name === 'PairRevoked' || isPairRevokedMessage(error.message)) {
+                cleanup()
+                abort.abort()
+                for (const other of clients) other.close()
+                reject(error)
+                return
+              }
+              if (finished >= targets.length) {
+                cleanup()
+                reject(preferPairError(failures))
+                return
+              }
+              launch()
+            }
+          )
+      }
+      launch()
+      for (let i = 1; i < targets.length; i += 1) {
+        const timer = setTimeout(launch, i * DIAL_STAGGER_MS)
+        timer.unref?.()
+        timers.push(timer)
+      }
+    })
   }
 
   private mount(
@@ -1114,7 +1205,62 @@ export class DaemonAttachService {
 
   private pendingControl: Promise<void> = Promise.resolve()
 
+  /**
+   * Re-open a control plane that was live and dropped. A single 250ms retry
+   * used to give up for good, leaving sends on the local CLI fallback until
+   * the whole daemon link happened to reconnect.
+   */
+  private retryControlPlane(machineId: string, attempt: number): void {
+    const prev = this.controlRetry.get(machineId)
+    if (prev) clearTimeout(prev)
+    const delay = attempt === 0 ? 250 : Math.min(30_000, 1_000 * 2 ** Math.min(attempt, 5))
+    const timer = setTimeout(() => {
+      this.controlRetry.delete(machineId)
+      if (this.disposed || !this.clients.get(machineId)?.connected) return
+      void this.ensureControlPlane(machineId).then((ok) => {
+        if (ok) {
+          this.opts.onHostsChanged(this.opts.registry.list())
+          return
+        }
+        if (this.disposed || !this.clients.get(machineId)?.connected) return
+        if (!this.controlTargets.has(machineId)) return
+        this.retryControlPlane(machineId, attempt + 1)
+      })
+    }, delay)
+    timer.unref?.()
+    this.controlRetry.set(machineId, timer)
+  }
+
+  /**
+   * After sleep / unlock / a network change: probe live links (half-open
+   * sockets die fast instead of after the heartbeat window), drop dead tunnel
+   * sidecars, and redial hosts waiting in backoff right now.
+   */
+  wake(): void {
+    if (this.disposed) return
+    // resume + unlock + become-active fire together; one sweep is enough.
+    const now = Date.now()
+    if (now - this.lastWake < 2_000) return
+    this.lastWake = now
+    for (const [token, handle] of [...this.tunnels]) {
+      if (handle.alive?.() === false) this.dropTunnel(token)
+    }
+    for (const client of this.clients.values()) {
+      if (client.connected) void client.probe()
+    }
+    for (const dial of this.control.values()) void dial.probe()
+    for (const row of this.loadStore()) {
+      if (row.localShell) continue
+      if (!this.reconnectTimers.has(row.machineId)) continue
+      void this.reconnect(row, 0)
+    }
+    if (this.localShellPairingText && !this.localShellClient()) void this.ensureLocalShellClient()
+  }
+
   private dropControl(machineId: string): void {
+    const retry = this.controlRetry.get(machineId)
+    if (retry) clearTimeout(retry)
+    this.controlRetry.delete(machineId)
     const dial = this.control.get(machineId)
     this.control.delete(machineId)
     this.controlProbes.delete(machineId)
@@ -1166,15 +1312,20 @@ export class DaemonAttachService {
         secret,
         device: this.identity.name
       })
+      // Host forgotten / revoked while the probe was in flight: don't keep a
+      // phone-role connection open to a machine that is no longer paired.
+      if (this.disposed || !this.clients.has(machineId) || !this.controlTargets.has(machineId)) {
+        dial.close()
+        return false
+      }
       this.control.set(machineId, dial)
       dial.onFrame((_state, message) => this.opts.onControlEvent?.(machineId, message))
       dial.onClose(() => {
         if (this.control.get(machineId) !== dial) return
         this.control.delete(machineId)
         if (this.disposed) return
-        setTimeout(() => {
-          void this.ensureControlPlane(machineId)
-        }, 250)
+        this.opts.onHostsChanged(this.opts.registry.list())
+        this.retryControlPlane(machineId, 0)
       })
       this.opts.onHostsChanged(this.opts.registry.list())
       return true
@@ -1243,8 +1394,8 @@ export class DaemonAttachService {
         return
       }
       this.mount(client, welcome, target, welcome.grant?.secret || row.secret)
-      await this.pendingControl
-      await this.notifyHostAttached(welcome.host.id)
+      // Persist right away: awaiting the control plane / catalog first let a
+      // forget() during those awaits be undone when remember() re-added the row.
       this.remember({
         ...row,
         secret: welcome.grant?.secret || row.secret,
@@ -1255,6 +1406,9 @@ export class DaemonAttachService {
         tmp: welcome.tmp,
         name: welcome.host.name || row.name
       })
+      await this.pendingControl
+      if (this.disposed || this.clients.get(welcome.host.id) !== client) return
+      await this.notifyHostAttached(welcome.host.id)
     } catch (err) {
       if (this.disposed || ctl.signal.aborted) return
       const message = err instanceof Error ? err.message : String(err)
@@ -1350,6 +1504,12 @@ function pairErrorRank(err: Error): number {
   const code = (err as NodeJS.ErrnoException).code ?? ''
   const message = err.message
   const blob = `${code} ${message}`
+  // Revoke must win: reconnect only drops the pairing when it sees it.
+  if (err.name === 'PairRevoked' || isPairRevokedMessage(message)) return -1
+  // Loopback fallback usually hits this machine's own listen; its "rejected"
+  // is noise that used to mask the real unreachable / timeout error.
+  const dialHost = (err as Error & { dialHost?: string }).dialHost
+  if (/pairing rejected|auth/i.test(message) && dialHost && isLoopbackHost(dialHost)) return 8
   if (/pairing rejected|auth/i.test(message)) return 0
   if (isTunnelError(err)) return 1
   if (/\b(EHOSTUNREACH|ENETUNREACH|EHOSTDOWN)\b/.test(blob)) return 2

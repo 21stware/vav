@@ -872,6 +872,27 @@ kbd {
   color: var(--ink);
 }
 
+/* Mainland ICP — visible only on the China host (vavapp.art). GitHub Pages / vavapp.com stay hidden. */
+.foot-beian {
+  display: none;
+  margin: 0;
+  flex: 1 0 100%;
+  color: var(--ink-faint);
+  font-size: 13px;
+}
+
+html[data-site-region='cn'] .foot-beian {
+  display: block;
+}
+
+.foot-beian a {
+  color: var(--ink-faint);
+}
+
+.foot-beian a:hover {
+  color: var(--ink-muted);
+}
+
 /* —— Motion —— */
 
 .reveal {

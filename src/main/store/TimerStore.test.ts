@@ -32,6 +32,23 @@ describe('TimerStore', () => {
     assert.equal(b.getJob(job.id)?.conversationId, null)
   })
 
+  it('keeps updatedAt when a save changes nothing', () => {
+    const timers = store()
+    const job = timers.createJob({
+      title: 'Daily',
+      prompt: 'Summarize',
+      schedule: { kind: 'interval', everyMs: 60_000 }
+    })
+    const same = timers.updateJob(
+      job.id,
+      { title: 'Daily', prompt: 'Summarize', schedule: { kind: 'interval', everyMs: 60_000 }, enabled: true },
+      job.updatedAt + 5_000
+    )
+    assert.equal(same?.updatedAt, job.updatedAt)
+    const edited = timers.updateJob(job.id, { prompt: 'Summarize inbox' }, job.updatedAt + 9_000)
+    assert.equal(edited?.updatedAt, job.updatedAt + 9_000)
+  })
+
   it('allows an empty prompt and binds a definition conversation', () => {
     const timers = store()
     const job = timers.createJob({

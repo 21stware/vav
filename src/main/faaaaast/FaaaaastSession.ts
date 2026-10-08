@@ -47,7 +47,7 @@ function windowTheme(settings: AppSettings): 'light' | 'dark' {
 }
 
 function plateColor(settings: AppSettings): string {
-  return windowTheme(settings) === 'dark' ? '#1b1b1d' : '#fcfcfc'
+  return windowTheme(settings) === 'dark' ? '#1a1a1c' : '#fcfcfd'
 }
 
 export function createFaaaaastController(host: FaaaaastHost): {

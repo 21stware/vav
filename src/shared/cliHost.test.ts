@@ -3,7 +3,10 @@ import { describe, it } from 'node:test'
 import {
   conversationProviderId,
   DEFAULT_PROVIDER_ID,
-  isAcpCliHost
+  displayNameForCliHost,
+  isAcpCliHost,
+  resolveDefaultChatHost,
+  transportForCliHost
 } from './cliHost.ts'
 
 describe('conversationProviderId', () => {
@@ -28,10 +31,20 @@ describe('isAcpCliHost', () => {
     assert.equal(isAcpCliHost(undefined), false)
     assert.equal(isAcpCliHost('claude'), false)
     assert.equal(isAcpCliHost('codex'), false)
+    assert.equal(isAcpCliHost('droid'), true)
     assert.equal(isAcpCliHost('cursor'), true)
     assert.equal(isAcpCliHost('grok'), true)
     assert.equal(isAcpCliHost('devin'), true)
     assert.equal(isAcpCliHost('kiro'), true)
     assert.equal(isAcpCliHost('cline'), true)
+  })
+})
+
+describe('Droid host', () => {
+  it('resolves the provider and its ACP transport', () => {
+    assert.equal(resolveDefaultChatHost('droid'), 'droid')
+    assert.equal(conversationProviderId({ cliHost: 'droid' }), 'droid')
+    assert.equal(displayNameForCliHost('droid'), 'Droid')
+    assert.equal(transportForCliHost('droid'), 'acp')
   })
 })

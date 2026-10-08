@@ -16,9 +16,7 @@ const ChinaRegionID = 900
 // FallbackDERPMapURL is Tailscale's map when tailcat.dev cannot be fetched.
 const FallbackDERPMapURL = "https://login.tailscale.com/derpmap/default"
 
-// Host is the compiled-in mainland DERP hostname (Shanghai 锐驰).
-// Desktop can override at runtime with --derp-host / VAV_CN_DERP_HOST.
-var Host = "derp.vavapp.com"
+// Host is generated from edition/cn.json (scripts/apply-edition.mjs).
 
 // ChinaRegion returns a single-node region for hostname, or nil if blank.
 func ChinaRegion(host string) *tailcfg.DERPRegion {

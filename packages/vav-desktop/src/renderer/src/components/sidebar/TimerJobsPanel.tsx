@@ -19,6 +19,7 @@ import {
   timerSessionsForJob,
   timerTreeBrackets
 } from '../../lib/timerSessions'
+import { conversationOnMachine, isLocalMachine, normalizeMachineId } from '@shared/workspaceHost'
 import { flattenSessionTitle, adjacentRunClass } from '../../lib/sidebarList'
 import { appObjectContextTargets, applyAppObjectList } from '../../lib/appObjectList'
 import { absoluteTime, relativeTime, middleTruncate } from '../../lib/format'
@@ -29,6 +30,7 @@ import { lucideMenuIcon } from '../../lib/menuIcons'
 import { useT } from '../../i18n/useT'
 import {
   AppObjectListToolbar,
+  folderMoveMenuItems,
   useAppObjectList,
   useAppObjectListKeys,
   useAppObjectListSelection
@@ -75,6 +77,7 @@ export function TimerJobsPanel({
   const setArchived = useSessionStore((s) => s.setArchived)
   const showToast = useSessionStore((s) => s.showToast)
   const conversations = useSessionStore((s) => s.conversations)
+  const windowMachineId = normalizeMachineId(useSessionStore((s) => s.windowMachineId))
   const activeId = useSessionStore((s) => s.activeId)
   const selectedIds = useSessionStore((s) => s.selectedIds)
   const sidebarQuery = useSessionStore((s) => s.sidebarQuery)
@@ -138,7 +141,8 @@ export function TimerJobsPanel({
         ? conversations.find((row) => row.id === job.conversationId)
         : undefined
       if (definition?.archived) return false
-      if (!job.conversationId) return true
+      if (definition && !conversationOnMachine(definition, windowMachineId)) return false
+      if (!job.conversationId) return isLocalMachine(windowMachineId)
       if (conversations.some((row) => row.id === job.conversationId)) return true
       return !isDroppedConversationId(job.conversationId)
     })
@@ -191,7 +195,8 @@ export function TimerJobsPanel({
     library.assignments,
     list.filter,
     list.sort,
-    query
+    query,
+    windowMachineId
   ])
 
   const orderedIds = useMemo(
@@ -240,8 +245,8 @@ export function TimerJobsPanel({
 
   const openJob = async (job: TimerJob): Promise<void> => {
     if (job.conversationId) {
+      // Schedule definitions are app objects: this already opens the editor.
       await selectConversation(job.conversationId)
-      onOpenDetail?.()
       return
     }
     showToast({ kind: 'info', title: t('timer.openFailed') })
@@ -485,6 +490,16 @@ export function TimerJobsPanel({
             onSortChange={list.setSort}
             askKind="Scheduled"
             testIdPrefix="timer-list"
+            manage={{
+              orderedIds,
+              onDelete: requestDelete,
+              menu: (ids) => [
+                ...folderMoveMenuItems(t, library.folders, (folderId) =>
+                  moveAppFolderObjects('scheduled', ids, folderId)
+                ),
+                ...sessionMenu(conversations.filter((row) => ids.includes(row.id)))
+              ]
+            }}
           />
         ) : null}
         <div className="applications-object-body">
@@ -582,6 +597,7 @@ export function TimerJobsPanel({
                         if (job.conversationId) appSelection.select(job.conversationId, event)
                       },
                       onOpen: () => void openJob(job),
+                      managing: appSelection.managing,
                       onMenu: (event) => {
                         if (definition) {
                           const { ids, collapse } = appObjectContextTargets(

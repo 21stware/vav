@@ -277,8 +277,7 @@ export function Sidebar({
       lucideMenuIcon('file-sessions'),
       lucideMenuIcon('archive'),
       lucideMenuIcon('import'),
-      lucideMenuIcon('settings'),
-      lucideMenuIcon('picture-in-picture')
+      lucideMenuIcon('settings')
     ])
     warmSessionContextMenuIcons()
   }, [])

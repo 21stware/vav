@@ -23,6 +23,7 @@ import { reportFileSessionAgentOpen } from '../lib/useWindowMinSize'
 import { Button, EmptyState } from './ui'
 import { ShellLeadingControls } from './ShellLeadingControls'
 import { warmSessionDetail } from '../lib/apps/warmAppViews'
+import { retainAppFileWorkspace } from '../lib/apps/appFileWorkspace'
 
 const FileViewer = lazy(() => import('./FileViewer').then((m) => ({ default: m.FileViewer })))
 
@@ -95,6 +96,12 @@ export function FileSessionView({
   }, [hideAgent, agentOpen, agentWidth])
   useEffect(() => () => reportFileSessionAgentOpen(null), [])
 
+  // App column: drop this session's watcher + tree when the canvas leaves.
+  useEffect(() => {
+    if (!hideAgent) return
+    return retainAppFileWorkspace(conversationId)
+  }, [hideAgent, conversationId])
+
   useEffect(() => {
     let cancelled = false
     setLoading(true)
@@ -155,9 +162,15 @@ export function FileSessionView({
   }, [])
 
   const pathOk = resolved?.pathStatus === 'ok' && !!resolved.path
+  const isDirectory = resolved?.pathStatus === 'directory' && !!resolved.path
   // Canvas is always about the *file* — even when the parent folder is gone.
   // "dir not exist" is reserved for the tools Enclosed-dir chip, not this empty.
   const missingName = resolved?.path ? basename(resolved.path) : ''
+
+  useEffect(() => {
+    if (!isDirectory || !resolved?.path) return
+    useSessionStore.getState().browseStoragePath(resolved.path)
+  }, [isDirectory, resolved?.path])
 
   /** Placeholder header so missing/loading states are not a bald void. */
   const missingChrome = (
@@ -183,7 +196,7 @@ export function FileSessionView({
   return (
     <div className="workspace-view file-session-view" ref={rootRef}>
       <section className="workspace-view-preview file-session-preview">
-        {loading ? (
+        {loading || isDirectory ? (
           <div className="file-session-missing">
             {hideAgent ? null : missingChrome}
             <div className="file-session-missing-body muted">{t('common.loading')}</div>

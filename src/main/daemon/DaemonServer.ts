@@ -44,7 +44,8 @@ import {
   createMemoryGrantStore,
   incomingFromGrants,
   type GrantStore,
-  type IncomingController
+  type IncomingController,
+  type PairGrant
 } from './grants.ts'
 import { emptyPluginSnapshot, pluginHostKind } from '../../shared/plugins.ts'
 import { whichOnHost } from './procWhich.ts'
@@ -343,8 +344,21 @@ type LiveMeta = {
   grantId: string | null
   clientId: string | null
   name: string
-  role: 'daemon' | 'control'
+  /**
+   * `pending` until hello authenticates. Only `daemon` sockets speak the
+   * JSON-lines daemon protocol after welcome; `proxy` is a raw TCP pipe and
+   * `control` belongs to the phone hub, so neither may receive daemon frames.
+   */
+  role: 'pending' | 'daemon' | 'control' | 'proxy'
+  /** Last frame from the peer, for reaping half-open sockets. */
+  lastInbound: number
+  /** Peer sends heartbeats — only then is silence proof of a dead link. */
+  pinged: boolean
 }
+
+/** A pinging controller silent this long is gone (sleep / Wi-Fi switch). */
+const DAEMON_SILENT_REAP_MS = 60_000
+const DAEMON_REAP_EVERY_MS = 20_000
 
 export class DaemonServer {
   private readonly opts: ServerOpts
@@ -359,6 +373,7 @@ export class DaemonServer {
   private readonly lastPtyPorts = new Map<string, number[]>()
   private portPollTimer: ReturnType<typeof setInterval> | null = null
   private portPolling = false
+  private reapTimer: ReturnType<typeof setInterval> | null = null
   private listenPort = 0
   private pairAskBusy = false
   private pendingAsk: IncomingController | null = null
@@ -443,7 +458,11 @@ export class DaemonServer {
   }
 
   /** Socket already authenticated (e.g. tailcat multiplex after hello). */
-  adopt(socket: Socket, leftover = '', hello?: { auth: string; device?: string }): void {
+  adopt(
+    socket: Socket,
+    leftover = '',
+    hello?: { auth: string; device?: string; clientId?: string; grantId?: string }
+  ): void {
     this.attachSession(socket, leftover, true, hello)
   }
 
@@ -455,7 +474,34 @@ export class DaemonServer {
     this.attachSession(socket, leftover, false)
   }
 
+  /**
+   * Drop daemon sockets whose (heartbeating) peer went silent, so a slept
+   * laptop does not linger as "online" and trip the multi-controller warning.
+   */
+  private ensureReaper(): void {
+    if (this.reapTimer) return
+    this.reapTimer = setInterval(() => {
+      const now = Date.now()
+      for (const [socket, meta] of [...this.live]) {
+        if (meta.role !== 'daemon' || !meta.pinged) continue
+        if (now - meta.lastInbound < DAEMON_SILENT_REAP_MS) continue
+        try {
+          socket.destroy()
+        } catch {
+          /* ignore */
+        }
+      }
+    }, DAEMON_REAP_EVERY_MS)
+    this.reapTimer.unref?.()
+  }
+
   close(): void {
+    if (this.reapTimer) clearInterval(this.reapTimer)
+    this.reapTimer = null
+    // Snapshot first: each session's dispose removes its socket from
+    // `this.sockets`, so the destroy loop below used to find nothing and
+    // turning remote access off left every paired controller connected.
+    const open = [...this.sockets]
     for (const dispose of [...this.sessions]) dispose()
     this.sessions.clear()
     for (const live of this.processes.values()) {
@@ -477,7 +523,7 @@ export class DaemonServer {
     this.ptys.clear()
     this.lastPtyPorts.clear()
     this.stopPortPolling()
-    for (const socket of this.sockets) {
+    for (const socket of new Set([...open, ...this.sockets])) {
       try {
         if (typeof socket.resetAndDestroy === 'function') socket.resetAndDestroy()
         else socket.destroy()
@@ -503,6 +549,13 @@ export class DaemonServer {
 
   private authKey(socket: Socket): string {
     return socket.remoteAddress || 'unknown'
+  }
+
+  private carriesValidAuth(value: unknown): boolean {
+    const auth =
+      value && typeof value === 'object' ? (value as { auth?: unknown }).auth : undefined
+    if (typeof auth !== 'string' || auth.length < 16) return false
+    return Boolean(this.grants.findBySecret(auth)) || this.matchesOffer(auth)
   }
 
   private authLocked(socket: Socket): boolean {
@@ -547,16 +600,31 @@ export class DaemonServer {
     return this.offerSecrets().some((secret) => secretsMatch(auth, secret))
   }
 
+  /**
+   * A hello whose secret no longer matches anything but whose grant id this
+   * host removed: answer `revoked` so the controller drops the pairing rather
+   * than redialing forever on `pairing rejected`.
+   */
+  private isRevokedHello(hello: { auth: string; grantId?: string }): boolean {
+    const grantId = hello.grantId?.trim()
+    if (!grantId || this.grants.findById(grantId)) return false
+    if (this.grants.findBySecret(hello.auth) || this.matchesOffer(hello.auth)) return false
+    return this.grants.isRevoked(grantId)
+  }
+
   private dropGrantSockets(grantId: string, reason: 'revoked' | 'disconnected'): number {
     let n = 0
     for (const [socket, meta] of [...this.live]) {
       if (meta.grantId !== grantId) continue
       n += 1
-      writeLine(socket, {
-        type: 'error',
-        code: reason === 'revoked' ? 'revoked' : 'auth',
-        message: reason === 'revoked' ? 'pairing revoked' : 'disconnected'
-      })
+      // A port-proxy socket is a raw byte pipe — no JSON frame, just close it.
+      if (meta.role !== 'proxy') {
+        writeLine(socket, {
+          type: 'error',
+          code: reason === 'revoked' ? 'revoked' : 'auth',
+          message: reason === 'revoked' ? 'pairing revoked' : 'disconnected'
+        })
+      }
       try {
         socket.destroy()
       } catch {
@@ -622,7 +690,7 @@ export class DaemonServer {
     socket: Socket,
     leftover: string,
     authed: boolean,
-    adoptedHello?: { auth: string; device?: string }
+    adoptedHello?: { auth: string; device?: string; clientId?: string; grantId?: string }
   ): void {
     this.sockets.add(socket)
     const handles = new Map<string, LiveHandle>()
@@ -634,7 +702,9 @@ export class DaemonServer {
       grantId: null,
       clientId: null,
       name: '',
-      role: 'daemon'
+      role: 'pending',
+      lastInbound: Date.now(),
+      pinged: false
     }
 
     const forget = (): void => {
@@ -660,6 +730,7 @@ export class DaemonServer {
     socket.on('close', forget)
     socket.on('error', forget)
     this.live.set(socket, meta)
+    this.ensureReaper()
 
     const sendWelcome = (grant?: { id: string; secret: string }): void => {
       writeLine(socket, {
@@ -681,19 +752,38 @@ export class DaemonServer {
     }
 
     if (ready) {
-      if (adoptedHello) this.authenticateDaemonHello(socket, adoptedHello, meta, sendWelcome)
-      else sendWelcome()
+      if (adoptedHello) {
+        // Tailcat hands daemon hellos over unauthenticated; reject here instead
+        // of leaving the socket hanging until the client's welcome timeout.
+        if (!this.authenticateDaemonHello(socket, adoptedHello, meta, sendWelcome)) {
+          const revoked = this.isRevokedHello(adoptedHello)
+          writeLine(socket, {
+            type: 'error',
+            code: revoked ? 'revoked' : 'auth',
+            message: revoked ? 'pairing revoked' : 'pairing rejected'
+          })
+          socket.destroy()
+          return
+        }
+      } else {
+        meta.role = 'daemon'
+        sendWelcome()
+      }
     }
 
     const leftoverRef = { value: leftover }
     attachLineReader(socket, (value) => {
+      meta.lastInbound = Date.now()
       if (value === null) {
         writeLine(socket, { type: 'error', code: 'bad-request', message: 'invalid json' })
         socket.destroy()
         return
       }
       if (!ready) {
-        if (this.authLocked(socket)) {
+        // The lock throttles guessing; a hello with a valid grant / offer must
+        // still get in, or a controller retrying stale addresses locks its own
+        // IP and the user's fresh re-pair fails with "pairing rejected".
+        if (this.authLocked(socket) && !this.carriesValidAuth(value)) {
           writeLine(socket, { type: 'error', code: 'auth', message: 'pairing rejected' })
           socket.destroy()
           return
@@ -713,7 +803,7 @@ export class DaemonServer {
         }
         const proxy = parseDaemonProxyHello(value)
         if (proxy) {
-          void this.handleProxyHello(socket, leftoverRef, proxy)
+          void this.handleProxyHello(socket, leftoverRef, proxy, meta)
           return
         }
         const phone = parseClientMessage(value)
@@ -731,18 +821,23 @@ export class DaemonServer {
               return
             }
             this.authFails.delete(this.authKey(socket))
+            meta.role = 'control'
             if (grant) {
               this.grants.touch(grant.id, phone.device)
               meta.grantId = grant.id
               meta.clientId = grant.clientId
               meta.name = grant.name
-              meta.role = 'control'
               this.notifyIncoming()
             }
             socket.removeAllListeners('data')
             this.opts.onControlHello(socket, leftoverRef.value, phone)
             return
           }
+        }
+        if (hello && this.isRevokedHello(hello)) {
+          writeLine(socket, { type: 'error', code: 'revoked', message: 'pairing revoked' })
+          socket.destroy()
+          return
         }
         this.noteAuthFail(socket)
         writeLine(socket, { type: 'error', code: 'auth', message: 'pairing rejected' })
@@ -756,6 +851,7 @@ export class DaemonServer {
       }
       if (frame.type === 'hello' || frame.type === 'pair-ask') return
       if (frame.type === 'ping') {
+        meta.pinged = true
         writeLine(socket, { type: 'pong' })
         return
       }
@@ -1588,30 +1684,48 @@ export class DaemonServer {
     return { stream, pid: proc.pid }
   }
 
-  private authenticateProxyHello(auth: string, device?: string): boolean {
+  private authenticateProxyHello(
+    auth: string,
+    device?: string
+  ): { ok: false } | { ok: true; grant: PairGrant | null } {
     const existing = this.grants.findBySecret(auth)
     if (existing) {
       this.grants.touch(existing.id, device)
-      return true
+      return { ok: true, grant: existing }
     }
-    return this.matchesOffer(auth)
+    return this.matchesOffer(auth) ? { ok: true, grant: null } : { ok: false }
   }
 
   private async handleProxyHello(
     socket: Socket,
     leftoverRef: { value: string },
-    hello: DaemonProxyHello
+    hello: DaemonProxyHello,
+    meta: LiveMeta
   ): Promise<void> {
-    if (this.authLocked(socket)) {
+    // Raw pipe from here on: keep incoming broadcasts off this socket.
+    meta.role = 'proxy'
+    if (this.authLocked(socket) && !this.carriesValidAuth(hello)) {
       writeLine(socket, { type: 'error', code: 'auth', message: 'pairing rejected' })
       socket.destroy()
       return
     }
-    if (!this.authenticateProxyHello(hello.auth, hello.device)) {
+    const auth = this.authenticateProxyHello(hello.auth, hello.device)
+    if (!auth.ok) {
+      if (this.isRevokedHello(hello)) {
+        writeLine(socket, { type: 'error', code: 'revoked', message: 'pairing revoked' })
+        socket.destroy()
+        return
+      }
       this.noteAuthFail(socket)
       writeLine(socket, { type: 'error', code: 'auth', message: 'pairing rejected' })
       socket.destroy()
       return
+    }
+    // Tie the pipe to its grant so unpair / disconnect tears forwarded ports down too.
+    if (auth.grant) {
+      meta.grantId = auth.grant.id
+      meta.clientId = auth.grant.clientId
+      meta.name = auth.grant.name
     }
     this.authFails.delete(this.authKey(socket))
     const targetHost = hello.targetHost?.trim() || '127.0.0.1'

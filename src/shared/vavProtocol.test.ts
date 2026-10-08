@@ -48,4 +48,10 @@ describe('detectProtocol', () => {
     assert.equal(detectProtocol('https://api.moonshot.cn/v1', 'kimi-k2'), 'openai')
     assert.equal(detectProtocol('https://api.moonshot.ai/v1', 'moonshot-v1-128k'), 'openai')
   })
+
+  it('uses OpenAI completions for the Magpie loopback gateway', () => {
+    assert.equal(detectProtocol('http://127.0.0.1:3425/v1', 'deepseek/deepseek-chat'), 'openai')
+    assert.equal(detectProtocol('http://localhost:3425/v1', 'anthropic/claude-sonnet-5'), 'openai')
+    assert.equal(detectProtocol('http://[::1]:3425/v1', ''), 'openai')
+  })
 })

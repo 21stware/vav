@@ -11,6 +11,7 @@ export type { DriverControl, DriverEvent, DriverEventSink, DriverStartOptions } 
 const CANDIDATES: Record<CliHostKind, string[]> = {
   claude: ['claude'],
   codex: ['codex'],
+  droid: ['droid'],
   cursor: ['cursor-agent', 'agent', 'cursor'],
   grok: ['grok'],
   devin: ['devin'],
@@ -18,7 +19,7 @@ const CANDIDATES: Record<CliHostKind, string[]> = {
   cline: ['cline']
 }
 
-const ACP_HOSTS = new Set<CliHostKind>(['cursor', 'grok', 'devin', 'kiro', 'cline'])
+const ACP_HOSTS = new Set<CliHostKind>(['droid', 'cursor', 'grok', 'devin', 'kiro', 'cline'])
 
 export function candidatesForHost(kind: CliHostKind, agent?: AgentConfig | null): string[] {
   const fromSettings = [
@@ -46,6 +47,7 @@ export async function startDriver(
       return startClaudeDriver(options, emit)
     case 'codex':
       return startCodexDriver(options, emit)
+    case 'droid':
     case 'cursor':
     case 'grok':
     case 'devin':

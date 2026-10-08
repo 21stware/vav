@@ -5,7 +5,11 @@ import { COLOR_TINTS, type ColorTint } from '@shared/types'
 import { useSessionStore } from '../state/sessionStore'
 import { IS_MAC } from './platform'
 import { paintTerminalThemes } from './terminalRegistryHandle'
-import { customSurfaceTile, surfacePatternPreset } from './surfacePatterns'
+import {
+  customSurfaceTile,
+  surfacePatternPreset,
+  surfacePatternStrengthScale
+} from './surfacePatterns'
 import { drivesNativeWindowTheme } from './nativeWindowTheme'
 import { applyAccentTintVars, clearSystemTintVars } from './paintAppearance'
 
@@ -34,6 +38,7 @@ export function useAppearance(): void {
   const surfacePattern = resolved.surfacePattern
   const customSurfacePatternUrl = resolved.customSurfacePatternUrl
   const customSurfacePatternSize = resolved.customSurfacePatternSize
+  const surfacePatternStrength = useSessionStore((s) => s.settings.surfacePatternStrength)
   const storedAccent = useSessionStore((s) => s.systemAccentColor)
 
   const [systemAccent, setSystemAccent] = useState(storedAccent || '#007aff')
@@ -143,12 +148,17 @@ export function useAppearance(): void {
       root.style.setProperty('--surface-pattern-url', `url("${preset.url}")`)
       root.style.setProperty('--surface-pattern-size', preset.size)
       root.style.setProperty('--surface-pattern-opacity', String(preset.opacity))
+      root.style.setProperty(
+        '--surface-pattern-strength',
+        String(surfacePatternStrengthScale(surfacePatternStrength))
+      )
     } else {
       root.style.removeProperty('--surface-pattern-url')
       root.style.removeProperty('--surface-pattern-size')
       root.style.removeProperty('--surface-pattern-opacity')
+      root.style.removeProperty('--surface-pattern-strength')
     }
-  }, [surfacePattern, customSurfacePatternUrl, customSurfacePatternSize])
+  }, [surfacePattern, customSurfacePatternUrl, customSurfacePatternSize, surfacePatternStrength])
 
   useEffect(() => {
     return window.vav.onFullscreen((fullscreen) => {

@@ -3,6 +3,7 @@ import { test, expect } from '@playwright/test'
 import {
   E2E_SESSION_ID,
   launchWorkbench,
+  openAppColumn,
   seedVavKeyAccount
 } from '../launch'
 
@@ -15,7 +16,8 @@ test('file block pick stays on the workspace agent across app switches', async (
   const harness = await launchWorkbench()
   try {
     const { page, workspace } = harness
-    await expect(page.locator('[data-testid="app-column"]')).toBeVisible()
+    await expect(page.locator('[data-testid="app-column"]')).toBeHidden()
+    await openAppColumn(page)
     await expect(page.locator('[data-testid="agent-column"]')).toBeVisible()
     await expect(page.locator('[data-testid="app-mode-tabs"]')).toBeVisible()
     await expect(page.locator('[data-testid="close-app"]')).toBeVisible()
@@ -252,6 +254,7 @@ test('Notes and Analysis lists select on click and enter on double-click', async
       await api.createKnowledgeNote()
     })
 
+    await openAppColumn(page)
     await page.locator('[data-testid="applications-tab-data"]').click()
     const dataRow = page.locator('[data-testid="data-object-row"]').filter({ hasText: 'notes.db' })
     await expect(dataRow).toBeVisible()
@@ -291,6 +294,7 @@ test('app tabs stay consistent while switching Storage / Data / Knowledge', asyn
       { tab: 'applications-tab-data', app: 'data' },
       { tab: 'applications-tab-knowledge', app: 'knowledge' }
     ] as const
+    await openAppColumn(page)
     for (const mode of modes) {
       await page.locator(`[data-testid="${mode.tab}"]`).click()
       await expect(page.locator(`[data-testid="${mode.tab}"]`)).toHaveAttribute('data-active', 'true')

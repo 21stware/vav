@@ -50,6 +50,14 @@
                 : 'light'
           document.documentElement.dataset.theme = theme
           document.documentElement.style.colorScheme = theme
+          var host = location.hostname
+          if (/(^|\.)vavapp\.art$/i.test(host)) document.documentElement.dataset.siteRegion = 'cn'
+          else if (
+            host === 'vavapp.com' ||
+            host === 'www.vavapp.com' ||
+            /\.github\.io$/i.test(host)
+          )
+            document.documentElement.dataset.siteRegion = 'global'
           var meta = document.querySelector('meta[name="theme-color"]')
           if (meta) meta.setAttribute('content', theme === 'dark' ? '#121213' : '#ececee')
         } catch (e) {
@@ -1153,8 +1161,14 @@
         · Commercial licensing
         <a href="mailto:licensing@21stware.com">licensing@21stware.com</a>
       </p>
+      <p class="foot-beian">
+        <a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer"
+          >沪ICP备2026049369号-1</a
+        >
+      </p>
     </footer>
 
+    <script src="edition.js" defer></script>
     <script src="script.js" defer></script>
   </body>
 </html>

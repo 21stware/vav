@@ -1070,9 +1070,16 @@ export function FileViewer({
   // main-sidebar selection).
   useEffect(() => {
     if (!agentConversationId) return
-    if (useSessionStore.getState().activeId === agentConversationId) return
+    const state = useSessionStore.getState()
+    if (state.activeId === agentConversationId) return
+    // App-column canvases (Storage peek / open) are bound to a file-session
+    // object, not the composer. selectConversation on an app object only
+    // opens its full layer — that was the click → full-jump on every peek.
+    // App column hands a separate context agent (workspace agent) here.
+    const appColumnCanvas = embedded && contextConversationId !== parentConversationId
+    if (appColumnCanvas) return
     void selectConversation(agentConversationId)
-  }, [agentConversationId, selectConversation])
+  }, [agentConversationId, embedded, contextConversationId, parentConversationId, selectConversation])
 
   const toggleAgentPanel = async (): Promise<void> => {
     if (agentPanelOpen) {

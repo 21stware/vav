@@ -5,9 +5,9 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { renderAsync } from 'docx-preview'
 import type { PreviewBlock } from '@shared/previewBlock'
 import { loadFileBuffer } from '../../lib/officeBinary'
+import { renderDocx } from './docxRender'
 import { attachDomPick, updateDomPick } from './pickFromDom'
 import { useT } from '../../i18n/useT'
 import { PagePager } from './PagePager'
@@ -167,28 +167,8 @@ export function DocxNativeView({
         const buffer = await loadFileBuffer(path, revision)
         if (cancelled) return
         const staging = document.createElement('div')
-        await renderAsync(buffer, staging, styleHost ?? undefined, {
-          className: 'docx-native',
-          inWrapper: true,
-          breakPages: true,
-          renderHeaders: true,
-          renderFooters: true,
-          ignoreWidth: false,
-          ignoreHeight: false,
-          useBase64URL: true
-        })
+        await renderDocx(buffer, staging, styleHost ?? undefined)
         if (cancelled) return
-
-        // Library default injects gray stage on the wrapper — strip it explicitly
-        // (CSS targets .docx-native-wrapper; also clear any inline leftovers).
-        const wrapper = staging.querySelector(
-          '.docx-native-wrapper, .docx-wrapper'
-        ) as HTMLElement | null
-        if (wrapper) {
-          wrapper.style.background = 'transparent'
-          wrapper.style.padding = '0'
-          wrapper.style.boxShadow = 'none'
-        }
 
         body.replaceChildren(...Array.from(staging.childNodes))
 

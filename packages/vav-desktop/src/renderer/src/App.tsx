@@ -15,16 +15,15 @@ import {
 import { installFsWatchBridge, installPtyBridge } from './state/workspaceStore'
 import { Sidebar } from './components/Sidebar'
 import { SessionDetail } from './components/SessionDetail'
-import { PipView } from './components/PipView'
 import { useTerminalAppearance } from './lib/useTerminalAppearance'
 import { createWarmComponent } from './lib/warmComponent'
-import { WorkbenchHome } from './components/WorkbenchHome'
 import { AppToast } from './components/AppToast'
 import { RemoteFolderPicker } from './components/RemoteFolderPicker'
 import { UpdateCorner } from './components/UpdateCorner'
 import { ShellLeadingControls } from './components/ShellLeadingControls'
 import { EmptyState } from './components/ui'
-import { KeychainOnboarding } from './components/KeychainOnboarding'
+import { Onboarding } from './components/onboarding/Onboarding'
+import { useOnboardingPreview } from './state/onboardingPreview'
 import { useAppearance } from './lib/appearance'
 import { useMenuCommands } from './lib/menuCommands'
 import { installDefaultContextMenu } from './lib/nativeMenu'
@@ -67,6 +66,9 @@ export default function App(): React.JSX.Element {
   const [phase, setPhase] = useState<LaunchPhase>(initialLaunchPhase)
   /** Returning mac users who fail silent unlock only see the authorize step. */
   const [keychainAuthorizeOnly, setKeychainAuthorizeOnly] = useState(false)
+  const onboardingPreview = useOnboardingPreview((s) => s.open)
+  const setOnboardingPreview = useOnboardingPreview((s) => s.setOpen)
+  const needsSetup = useSessionStore((s) => s.settings.onboardingCompleted === false)
   useAppHostApply()
 
   useEffect(() => {
@@ -190,7 +192,6 @@ export default function App(): React.JSX.Element {
 
   const floating = useSidebarFloatMode()
   const sidebarVisible = useSessionStore((s) => s.sidebarVisible)
-  const pictureInPicture = useSessionStore((s) => s.pictureInPicture)
   // Expanded docked list owns traffic-light chrome. Collapsed capsule and
   // narrow-window float leave the session header flush to the window top —
   // those chrome rows indent so they are not painted under the lights.
@@ -211,10 +212,12 @@ export default function App(): React.JSX.Element {
 
   if (phase === 'keychain') {
     return (
-      <KeychainOnboarding
+      <Onboarding
+        key="gate"
+        phase="gate"
         authorizeOnly={keychainAuthorizeOnly}
         onUnlocked={async () => {
-          setPhase('booting')
+          // Keep the gate (and its waiting state) up until setup can take over.
           await bootstrap()
           setPhase('ready')
         }}
@@ -226,15 +229,8 @@ export default function App(): React.JSX.Element {
     return <div className="app-shell" />
   }
 
-  if (pictureInPicture) {
-    return (
-      <>
-        <PipView />
-        <AppToast />
-        <RemoteFolderPicker />
-      </>
-    )
-  }
+  // Own key: same slot as the gate, which must not hand its step state over.
+  if (needsSetup) return <Onboarding key="setup" phase="setup" />
 
   // Change review is inline in the transcript (not a full-screen takeover).
   return (
@@ -254,12 +250,14 @@ export default function App(): React.JSX.Element {
         />
         <AgentSlot />
         <ApplicationsSlot />
-        <HomeSlot />
       </div>
       {/* Expanded list hosts the chip; floating + hidden pins bottom-left. */}
       {floating && !sidebarVisible ? <UpdateCorner /> : null}
       <AppToast />
       <RemoteFolderPicker />
+      {import.meta.env.DEV && onboardingPreview ? (
+        <Onboarding phase="preview" onDone={() => setOnboardingPreview(false)} />
+      ) : null}
     </div>
   )
 }
@@ -297,7 +295,8 @@ function CategoryEmpty({
 
 function AgentSlot(): React.JSX.Element {
   const t = useT()
-  const visible = useSessionStore((s) => s.agentVisible)
+  // No Home page: with the app column closed the agent is the window.
+  const visible = useSessionStore((s) => s.agentVisible || !s.applicationsVisible)
   const listMode = useSessionStore((s) => s.sidebarListMode)
   const hasActive = useSessionStore((s) => s.conversations.some((c) => c.id === s.activeId))
 
@@ -331,12 +330,6 @@ function Titlebar({
   )
 }
 
-function HomeSlot(): React.JSX.Element | null {
-  const agentVisible = useSessionStore((s) => s.agentVisible)
-  const applicationsVisible = useSessionStore((s) => s.applicationsVisible)
-  if (agentVisible || applicationsVisible) return null
-  return <WorkbenchHome />
-}
 
 const warmApplicationsPanel = createWarmComponent(() =>
   import('./components/ApplicationsPanel').then((m) => m.ApplicationsPanel)

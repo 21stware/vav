@@ -376,7 +376,8 @@ export function AgentProfileSwitch({
   )
 }
 
-function NewKeyFields({
+/** Endpoint + key; saves on blur / Enter as the current profile. Also used by first-launch setup. */
+export function NewKeyFields({
   agentId,
   endpoint,
   onCreated
@@ -387,8 +388,9 @@ function NewKeyFields({
 }): React.JSX.Element {
   const t = useT()
   const preset = (endpoint ?? defaultKeyEndpoint(agentId, '')).trim()
+  const presetVendor = vendorFromEndpoint(preset)
   const [endpointValue, setEndpointValue] = useState(preset)
-  const [draftKey, setDraftKey] = useState('')
+  const [draftKey, setDraftKey] = useState(presetVendor?.defaultApiKey ?? '')
   const [saving, setSaving] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
   const draftRef = useRef(draftKey)
@@ -436,7 +438,7 @@ function NewKeyFields({
           className="text-field"
           data-testid="settings-api-key"
           type="password"
-          placeholder="sk-…"
+          placeholder={presetVendor?.defaultApiKey ?? 'sk-…'}
           value={draftKey}
           disabled={saving}
           onChange={(event) => setDraftKey(event.target.value)}
@@ -535,7 +537,11 @@ function LlmAccountFields({
             className="text-field"
             data-testid="settings-api-key"
             type={revealed ? 'text' : 'password'}
-            placeholder={account.keyPresent ? '••••••••••••••••' : 'sk-…'}
+            placeholder={
+              account.keyPresent
+                ? '••••••••••••••••'
+                : (vendorFromEndpoint(lockedEndpoint || endpoint)?.defaultApiKey ?? 'sk-…')
+            }
             value={draftKey}
             onChange={(event) => setDraftKey(event.target.value)}
             onBlur={() => {

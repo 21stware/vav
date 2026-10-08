@@ -42,12 +42,17 @@
   --tone-list: #3a3a42;
   --tone-web: #0f766e;
 
-  --bg-window: #ececee;
-  --bg-content: #fcfcfc;
+  /*
+   * Surface ramp. The window wash sits a full step below the content plate so
+   * the plate reads as paper lifted off a desk — the depth comes from value,
+   * not from rules. Raised is pure white: cards, popovers and the composer.
+   */
+  --bg-window: #e7e7ea;
+  --bg-content: #fcfcfd;
   --bg-raised: #ffffff;
-  --bg-sunken: #f2f2f4;
+  --bg-sunken: #f1f1f4;
   --bg-hover: rgba(20, 20, 28, 0.05);
-  --bg-selected: #e2e2e6;
+  --bg-selected: #dfdfe4;
   /* Live bash (when matching theme) / swarm / CLI agents share the Thread plate. */
   --bg-terminal: var(--bg-content);
 
@@ -56,13 +61,15 @@
   --text-tertiary: #8a8a94;
   --text-inverse: #fbfbfc;
 
-  --border: rgba(20, 20, 28, 0.09);
-  --border-strong: rgba(20, 20, 28, 0.16);
+  --border: rgba(20, 20, 28, 0.08);
+  --border-strong: rgba(20, 20, 28, 0.15);
+  /* Hairline highlight along the top edge of a lifted surface (dark only). */
+  --edge-highlight: rgba(255, 255, 255, 0);
 
   --radius-sm: 6px;
   --radius: 10px;
-  --radius-lg: 14px;
-  --radius-xl: 18px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
 
   /*
    * Stable document measures. Paper/slides keep a fixed width between min and
@@ -84,12 +91,28 @@
   --md-doc-size: 15px;
   --md-doc-lh: 1.68;
 
-  --shadow-sheet: 0 24px 64px rgba(20, 20, 28, 0.26), 0 2px 8px rgba(20, 20, 28, 0.12);
-  --shadow-card: 0 1px 2px rgba(20, 20, 28, 0.07);
-  --shadow-raised: 0 1px 3px rgba(20, 20, 28, 0.09), 0 4px 14px rgba(20, 20, 28, 0.06);
+  /*
+   * Elevation. Every shadow is two layers: a tight contact shadow that seats
+   * the surface and a wide, low-alpha ambient that lifts it. Negative spread
+   * keeps the ambient from bleeding past the edges as a grey halo.
+   */
+  --shadow-sheet: 0 24px 64px rgba(20, 20, 28, 0.24), 0 2px 8px rgba(20, 20, 28, 0.1);
+  --shadow-card: 0 1px 2px rgba(20, 20, 28, 0.06), 0 0 0 0.5px rgba(20, 20, 28, 0.03);
+  --shadow-raised: 0 1px 2px rgba(20, 20, 28, 0.06), 0 6px 20px -6px rgba(20, 20, 28, 0.14);
+  /* The agent plate / app card on the window wash. */
+  --shadow-plate: 0 1px 2px rgba(20, 20, 28, 0.04), 0 10px 30px -18px rgba(20, 20, 28, 0.18);
+  /* Composer and other surfaces that float over the plate. */
+  --shadow-float: 0 1px 2px rgba(20, 20, 28, 0.05), 0 12px 32px -14px rgba(20, 20, 28, 0.18);
   --ring-accent: 0 0 0 3px var(--accent-soft);
-  --surface-pattern-opacity: 0.16;
-  --surface-pattern-band: 108px;
+  /*
+   * Surface wash (Appearance → texture). The band is the tall head of the
+   * plate the tile is allowed to live in; the fade inside it runs the ink
+   * out well before the composer. Presets raise `--surface-pattern-opacity`.
+   */
+  --surface-pattern-opacity: 0.3;
+  --surface-pattern-band: clamp(300px, 46vh, 640px);
+  /* Soft accent atmosphere under the tile, strongest at the very top. */
+  --surface-pattern-veil: var(--accent-veil);
 
   --toolbar-height: 42px;
   --row-height: 34px;
@@ -178,12 +201,13 @@
   --tone-list: #c8c8d0;
   --tone-web: #5eead4;
 
-  --bg-window: #121213;
-  --bg-content: #1b1b1d;
-  --bg-raised: #242427;
-  --bg-sunken: #161617;
+  /* Deeper well behind the plate; the plate itself stays a warm charcoal. */
+  --bg-window: #0f0f10;
+  --bg-content: #1a1a1c;
+  --bg-raised: #232326;
+  --bg-sunken: #141415;
   --bg-hover: rgba(255, 255, 255, 0.055);
-  --bg-selected: #2f2f33;
+  --bg-selected: #2e2e33;
   --bg-terminal: var(--bg-content);
 
   --text: #efeff1;
@@ -191,12 +215,22 @@
   --text-tertiary: #73737b;
   --text-inverse: #17171a;
 
-  --border: rgba(255, 255, 255, 0.07);
-  --border-strong: rgba(255, 255, 255, 0.14);
+  --border: rgba(255, 255, 255, 0.075);
+  --border-strong: rgba(255, 255, 255, 0.15);
+  --edge-highlight: rgba(255, 255, 255, 0.045);
 
+  /* Dark shadows are mostly contact; the lift comes from the edge highlight. */
   --shadow-sheet: 0 24px 64px rgba(0, 0, 0, 0.62), 0 2px 8px rgba(0, 0, 0, 0.45);
-  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.32);
-  --shadow-raised: 0 1px 3px rgba(0, 0, 0, 0.38), 0 6px 18px rgba(0, 0, 0, 0.26);
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.32), inset 0 1px 0 var(--edge-highlight);
+  --shadow-raised:
+    0 1px 3px rgba(0, 0, 0, 0.38), 0 8px 24px -8px rgba(0, 0, 0, 0.45),
+    inset 0 1px 0 var(--edge-highlight);
+  --shadow-plate:
+    0 1px 2px rgba(0, 0, 0, 0.3), 0 12px 32px -18px rgba(0, 0, 0, 0.6),
+    inset 0 1px 0 var(--edge-highlight);
+  --shadow-float:
+    0 1px 2px rgba(0, 0, 0, 0.35), 0 14px 36px -14px rgba(0, 0, 0, 0.6),
+    inset 0 1px 0 var(--edge-highlight);
 }
 
 /*
@@ -317,13 +351,13 @@ body,
   /* Opaque fill under the shell so a resize frame where the compositor lags
      still shows `--bg-window`, not a transparent hole into the native layer.
      Fallback hex covers the gap before :root tokens resolve (dark-mode flash). */
-  background: var(--bg-window, #121213);
+  background: var(--bg-window, #0f0f10);
 }
 
 html[data-theme='light'],
 html[data-theme='light'] body,
 html[data-theme='light'] #root {
-  background: var(--bg-window, #ececee);
+  background: var(--bg-window, #e7e7ea);
 }
 
 html[data-theme='light'] {
@@ -336,11 +370,11 @@ html[data-theme='dark'] {
 
 /* Detached ⌘⇧↵ session: keep the shell wash while messages hydrate. */
 .session-window-booting {
-  background: var(--bg-window, #121213);
+  background: var(--bg-window, #0f0f10);
 }
 
 html[data-theme='light'] .session-window-booting {
-  background: var(--bg-window, #ececee);
+  background: var(--bg-window, #e7e7ea);
 }
 
 body {
@@ -384,17 +418,17 @@ select {
 }
 
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
 }
 ::-webkit-scrollbar-thumb {
-  background: var(--border-strong);
-  border-radius: 3px;
-  border: 1px solid transparent;
+  background: color-mix(in srgb, var(--text) 16%, transparent);
+  border-radius: 8px;
+  border: 2px solid transparent;
   background-clip: content-box;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--text-tertiary);
+  background: color-mix(in srgb, var(--text) 30%, transparent);
   background-clip: content-box;
 }
 ::-webkit-scrollbar-track {
@@ -490,10 +524,6 @@ html[data-resizing='true'] .body-split {
 html[data-resizing='true'] .sidebar-column,
 html[data-resizing='true'] .app-shell .body-split > .sidebar:not(.floating) {
   background: var(--bg-window);
-}
-
-html[data-resizing='true'] .workbench-home {
-  background: var(--bg-content);
 }
 
 /* The panel itself is already opaque — no repaint guard needed on the column. */
@@ -621,9 +651,11 @@ label,
   margin: calc(var(--chrome-gutter) + 10px) var(--sidebar-rail-inset) 8px;
   padding: 6px 0;
   border-radius: 999px;
-  background: var(--bg-sunken);
+  /* Lifted like the composer card, not sunken: over the textured wash a
+     darker capsule read as a hole punched in the plate. */
+  background: var(--bg-raised);
   border: 0.5px solid var(--border);
-  box-shadow: none;
+  box-shadow: var(--shadow-float);
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
   -webkit-app-region: no-drag;
@@ -779,474 +811,6 @@ label,
   display: none !important;
 }
 
-.workbench-home {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  flex: 1 1 0%;
-  min-width: 0;
-  max-width: 100%;
-  min-height: 0;
-  align-self: stretch;
-  background: var(--bg-content);
-  box-shadow: inset 0.5px 0 0 var(--border);
-}
-
-.workbench-home[hidden] {
-  display: none !important;
-}
-
-.workbench-home-chrome {
-  display: flex;
-  align-items: center;
-  flex: 0 0 auto;
-  height: var(--toolbar-height);
-  min-height: var(--toolbar-height);
-  padding: 0 12px;
-  box-sizing: border-box;
-  -webkit-app-region: drag;
-}
-
-.workbench-home-chrome > .spacer {
-  align-self: stretch;
-  flex: 1 1 auto;
-  min-width: 12px;
-  -webkit-app-region: drag;
-}
-
-.workbench-home-chrome button,
-.workbench-home-chrome .btn {
-  -webkit-app-region: no-drag;
-}
-
-.workbench-home-body {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow: auto;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding: 36px 32px 48px;
-  box-sizing: border-box;
-}
-
-.workbench-home[data-empty='true'] .workbench-home-body {
-  padding-top: 28px;
-  padding-bottom: 28px;
-  -webkit-app-region: no-drag;
-}
-
-.workbench-home[data-empty='true'] .workbench-home-stage {
-  -webkit-app-region: no-drag;
-}
-
-.workbench-home[data-empty='true'] .workbench-home-body::before,
-.workbench-home[data-empty='true'] .workbench-home-body::after {
-  content: '';
-  align-self: stretch;
-  min-height: 0;
-  pointer-events: none;
-}
-
-.workbench-home[data-empty='true'] .workbench-home-body::before {
-  flex: 0.48 1 0;
-}
-
-.workbench-home[data-empty='true'] .workbench-home-body::after {
-  flex: 0.52 1 0;
-}
-
-.workbench-home-stage {
-  width: min(640px, 100%);
-  flex: 0 0 auto;
-}
-
-/* Sections build up in a short cascade — hero first, sessions last. */
-.workbench-home-stage > * {
-  animation: empty-in 320ms var(--ease-out) both;
-}
-
-.workbench-home-stage > *:nth-child(2) {
-  animation-delay: 50ms;
-}
-
-.workbench-home-stage > *:nth-child(3) {
-  animation-delay: 100ms;
-}
-
-.workbench-home-stage > *:nth-child(4) {
-  animation-delay: 150ms;
-}
-
-:root[data-reduce-motion='true'] .workbench-home-stage > *,
-html[data-summoning] .workbench-home-stage > * {
-  animation: none;
-}
-
-.workbench-home-hero {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  text-align: center;
-  margin: 0 0 36px;
-  color: var(--text);
-}
-
-.workbench-home-mark {
-  position: relative;
-  display: grid;
-  place-items: center;
-  width: 64px;
-  height: 64px;
-  margin-bottom: 14px;
-  color: var(--text);
-}
-
-/* A breath of accent behind the mark — the hero's only colour field. */
-.workbench-home-mark::before {
-  content: '';
-  position: absolute;
-  inset: -30px;
-  border-radius: 50%;
-  background: radial-gradient(50% 50% at 50% 50%, var(--accent-soft), transparent 72%);
-  pointer-events: none;
-}
-
-.workbench-home-mark .agent-brand-mark {
-  background: transparent;
-  box-shadow: none;
-}
-
-/* Ground the glyph plate so it reads as an object, not a pasted bitmap. */
-.workbench-home-mark .agent-brand-mark img {
-  filter: drop-shadow(0 5px 14px rgba(20, 20, 28, 0.16));
-}
-
-:root[data-theme='dark'] .workbench-home-mark .agent-brand-mark img {
-  filter: drop-shadow(0 5px 14px rgba(0, 0, 0, 0.5));
-}
-
-.workbench-home-user {
-  margin: 2px 0 0;
-  max-width: 22em;
-  color: var(--text-secondary);
-  font-size: 13px;
-  font-weight: 500;
-  letter-spacing: -0.015em;
-  line-height: 1.35;
-}
-
-.workbench-home-hero .workbench-home-stats {
-  margin-top: 22px;
-}
-
-.workbench-home-stats {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
-  width: 100%;
-}
-
-@media (max-width: 520px) {
-  .workbench-home-stats {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
-.workbench-home-stat {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 4px;
-  min-height: 86px;
-  padding: 11px 12px 10px;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--bg-raised);
-  box-shadow: var(--shadow-card);
-  color: var(--text);
-  text-align: left;
-  cursor: pointer;
-  transition:
-    border-color var(--dur-hover) ease,
-    box-shadow var(--dur-hover) ease,
-    transform var(--dur-press) var(--ease-out);
-}
-
-@media (hover: hover) and (pointer: fine) {
-  .workbench-home-stat:hover {
-    border-color: var(--border-strong);
-    box-shadow: var(--shadow-raised);
-    transform: translateY(-1px);
-  }
-}
-
-.workbench-home-stat:active {
-  transform: scale(0.97);
-  box-shadow: var(--shadow-card);
-}
-
-.workbench-home-stat-label {
-  color: var(--text-tertiary);
-  font-size: 11px;
-  font-weight: 550;
-  letter-spacing: -0.01em;
-}
-
-.workbench-home-stat-value {
-  font-size: 19px;
-  font-weight: 620;
-  letter-spacing: -0.03em;
-  line-height: 1.15;
-  font-variant-numeric: tabular-nums;
-}
-
-.workbench-home-stat-meta {
-  color: var(--text-tertiary);
-  font-size: 11px;
-  letter-spacing: -0.01em;
-}
-
-.workbench-home-stat-bar {
-  display: block;
-  width: 100%;
-  height: 3px;
-  margin-top: auto;
-  border-radius: 999px;
-  background: var(--bg-sunken);
-  overflow: hidden;
-}
-
-.workbench-home-stat-bar-fill {
-  display: block;
-  height: 100%;
-  border-radius: inherit;
-  background: var(--accent);
-}
-
-.workbench-home-stat[data-exhausted='true'] .workbench-home-stat-bar-fill {
-  background: var(--danger);
-}
-
-.workbench-home-spark {
-  display: flex;
-  align-items: flex-end;
-  gap: 2px;
-  width: 100%;
-  height: 18px;
-  margin-top: auto;
-}
-
-.workbench-home-spark-bar {
-  flex: 1 1 0;
-  min-width: 0;
-  border-radius: 1.5px;
-  background: color-mix(in srgb, var(--accent) 72%, var(--text));
-  opacity: 0.55;
-}
-
-.workbench-home-title {
-  margin: 0;
-  font-size: 24px;
-  font-weight: 680;
-  letter-spacing: -0.045em;
-  line-height: 1.1;
-}
-
-.workbench-home-desc {
-  margin: 8px 0 0;
-  max-width: 22em;
-  color: var(--text-secondary);
-  font-size: 13px;
-  line-height: 1.5;
-}
-
-.workbench-home-nav {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
-  gap: 8px;
-}
-
-.workbench-home-nav-item {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 12px;
-  min-height: 84px;
-  padding: 12px 12px 11px;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--bg-raised);
-  box-shadow: var(--shadow-card);
-  color: var(--text);
-  text-align: left;
-  cursor: pointer;
-  transition:
-    border-color var(--dur-hover) ease,
-    box-shadow var(--dur-hover) ease,
-    transform var(--dur-press) var(--ease-out);
-}
-
-/* Icon well: a soft inset tile so the glyph sits in material, not on it. */
-.workbench-home-nav-icon {
-  display: grid;
-  place-items: center;
-  width: 28px;
-  height: 28px;
-  border-radius: 8px;
-  background: linear-gradient(180deg, var(--bg-content), var(--bg-sunken));
-  box-shadow: inset 0 0 0 1px var(--border);
-  color: var(--text-secondary);
-  transition:
-    background var(--dur-hover) ease,
-    color var(--dur-hover) ease;
-}
-
-.workbench-home-nav-item.is-primary .workbench-home-nav-icon {
-  background: var(--accent);
-  box-shadow: none;
-  color: var(--accent-fg);
-}
-
-.workbench-home-nav-item > span:last-child {
-  font-size: 13px;
-  font-weight: 550;
-  letter-spacing: -0.015em;
-}
-
-@media (hover: hover) and (pointer: fine) {
-  .workbench-home-nav-item:hover {
-    border-color: var(--border-strong);
-    box-shadow: var(--shadow-raised);
-    transform: translateY(-1px);
-  }
-
-  .workbench-home-nav-item:hover .workbench-home-nav-icon {
-    color: var(--text);
-  }
-
-  .workbench-home-nav-item.is-primary:hover .workbench-home-nav-icon {
-    background: var(--accent-hover);
-    color: var(--accent-fg);
-  }
-}
-
-.workbench-home-nav-item:active {
-  transform: scale(0.97);
-  box-shadow: var(--shadow-card);
-}
-
-.workbench-home-composer {
-  margin-top: 40px;
-  margin-bottom: 40px;
-  width: 100%;
-}
-
-.workbench-home-composer .composer,
-.workbench-home-composer .composer-context {
-  width: 100%;
-  max-width: none;
-  padding: 0;
-}
-
-.workbench-home-composer .composer-workspace-btn {
-  max-width: 160px;
-}
-
-.workbench-home-composer .composer-workspace-btn .session-run-level {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.workbench-home-sessions {
-  margin-top: 0;
-}
-
-.workbench-home-sessions-empty {
-  margin: 0;
-  padding: 8px 10px;
-  color: var(--text-tertiary);
-  font-size: 13px;
-}
-
-.workbench-home-sessions-title {
-  margin: 0 0 8px;
-  padding: 0 10px;
-  color: var(--text-secondary);
-  font-size: 12px;
-  font-weight: 550;
-  letter-spacing: -0.01em;
-}
-
-.workbench-home-session-list {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.workbench-home-session {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-  min-height: 36px;
-  padding: 6px 10px 6px 8px;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--text);
-  text-align: left;
-  cursor: pointer;
-  transition:
-    background var(--dur-hover) ease,
-    transform var(--dur-press) var(--ease-out);
-}
-
-@media (hover: hover) and (pointer: fine) {
-  .workbench-home-session:hover {
-    background: var(--bg-hover);
-  }
-}
-
-.workbench-home-session:active {
-  transform: scale(0.97);
-}
-
-.workbench-home-session-icon {
-  flex: 0 0 auto;
-  display: grid;
-  place-items: center;
-  width: 22px;
-  height: 22px;
-  border-radius: 6px;
-  background: linear-gradient(180deg, var(--bg-raised), var(--bg-sunken));
-  box-shadow: inset 0 0 0 1px var(--border);
-  color: var(--text-tertiary);
-  transition: color var(--dur-hover) ease;
-}
-
-.workbench-home-session:hover .workbench-home-session-icon {
-  color: var(--text-secondary);
-}
-
-.workbench-home-session-title {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 13px;
-  font-weight: 500;
-}
-
-.workbench-home-session-meta {
-  flex: 0 0 auto;
-  color: var(--text-tertiary);
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-}
-
 .applications-column > .applications-panel {
   flex: 1 1 auto;
   min-height: 0;
@@ -1297,7 +861,7 @@ html[data-summoning] .workbench-home-stage > * {
   border-radius: var(--radius-lg);
   background: var(--bg-content);
   border: 1px solid var(--border);
-  box-shadow: var(--shadow-card);
+  box-shadow: var(--shadow-plate);
   overflow: hidden;
 }
 
@@ -1382,6 +946,7 @@ html[data-summoning] .workbench-home-stage > * {
 .applications-tab[data-active='true'] {
   color: var(--accent-text, var(--accent));
   background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 8%, transparent);
 }
 
 .applications-body {
@@ -2527,6 +2092,7 @@ html[data-summoning] .workbench-home-stage > * {
 .sidebar-nav-item[data-active='true'] {
   color: var(--accent-text, var(--accent));
   background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 8%, transparent);
 }
 
 .sidebar-nav-new-session[data-active='true'] {
@@ -2604,18 +2170,21 @@ html[data-summoning] .workbench-home-stage > * {
   }
 }
 
-:root[data-platform='darwin'][data-vibrancy='true'] .sidebar-column.is-rail,
-:root[data-platform='darwin'][data-vibrancy='true'] .workbench-home {
-  background: var(--bg-content) !important;
+:root[data-platform='darwin'][data-vibrancy='true'] .sidebar-column.is-rail {
+  /* Color only — the shorthand wiped the surface-wash gradient and left a
+     visible tint seam against the plate. */
+  background-color: var(--bg-content) !important;
 }
 
 /* App column shares the agent plate — not glass — so the card gutters match. */
 :root[data-platform='darwin'][data-vibrancy='true'] .applications-column {
-  background: var(--bg-content) !important;
+  /* Color only: the shorthand wiped the surface wash (seam at the card gutter). */
+  background-color: var(--bg-content) !important;
 }
 
 :root[data-theme='light'][data-platform='darwin'][data-vibrancy='true'] .applications-column {
-  background: var(--bg-content) !important;
+  /* Color only: the shorthand wiped the surface wash (seam at the card gutter). */
+  background-color: var(--bg-content) !important;
 }
 
 :root[data-platform='darwin'][data-vibrancy='false'] html,
@@ -2629,18 +2198,21 @@ html[data-summoning] .workbench-home-stage > * {
   background: var(--bg-window) !important;
 }
 
-:root[data-platform='darwin'][data-vibrancy='false'] .sidebar-column.is-rail,
-:root[data-platform='darwin'][data-vibrancy='false'] .workbench-home {
-  background: var(--bg-content) !important;
+:root[data-platform='darwin'][data-vibrancy='false'] .sidebar-column.is-rail {
+  /* Color only — the shorthand wiped the surface-wash gradient and left a
+     visible tint seam against the plate. */
+  background-color: var(--bg-content) !important;
 }
 
 :root[data-platform='darwin'][data-vibrancy='false'] .applications-column {
-  background: var(--bg-content) !important;
+  /* Color only: the shorthand wiped the surface wash (seam at the card gutter). */
+  background-color: var(--bg-content) !important;
 }
 
 /* Settings content pane stays opaque so forms sit on cardboard, not glass. */
 :root[data-platform='darwin'][data-vibrancy='false'] .settings-main {
-  background: var(--bg-content) !important;
+  /* Color only: the shorthand wiped the surface wash (seam at the card gutter). */
+  background-color: var(--bg-content) !important;
 }
 
 .app-shell .detail,
@@ -2731,21 +2303,20 @@ html[data-summoning] .workbench-home-stage > * {
   -webkit-app-region: drag;
 }
 
-.app-shell[data-chrome-lead='flush']:not(:has(.agent-column:not([hidden]))):not(
-    :has(.applications-column:not([hidden]))
-  )
-  .workbench-home-chrome,
-.app-shell[data-chrome-lead='rail']:not(:has(.agent-column:not([hidden]))):not(
-    :has(.applications-column:not([hidden]))
-  )
-  .workbench-home-chrome {
-  padding-left: var(--chrome-lead-content);
-  -webkit-app-region: drag;
+/*
+ * Windows / Linux draw min·max·close (titleBarOverlay) over the window's
+ * top-right corner. Only the rightmost column's top bar reaches it: the app
+ * column when open, otherwise the agent column.
+ */
+:root[data-platform='win32'] .applications-column:not([hidden]) .app-mode-tabs,
+:root[data-platform='linux'] .applications-column:not([hidden]) .app-mode-tabs {
+  /* App column already insets `--applications-column-pad`; only the remainder. */
+  padding-right: calc(var(--chrome-trail) - var(--applications-column-pad));
 }
 
-.app-shell.is-sidebar-rail .workbench-home {
-  padding-top: 0;
-  box-shadow: none;
+:root[data-platform='win32'] .body-split:has(> .applications-column[hidden]) > .agent-column > .detail > .terminal-host-chrome,
+:root[data-platform='linux'] .body-split:has(> .applications-column[hidden]) > .agent-column > .detail > .terminal-host-chrome {
+  padding-right: var(--chrome-trail);
 }
 
 .app-shell.panel-flush-top .terminal-host-chrome button,
@@ -2789,11 +2360,7 @@ html[data-summoning] .workbench-home-stage > * {
 .app-shell[data-chrome-lead='flush'] .file-viewer-header select,
 .app-shell[data-chrome-lead='flush'] .file-viewer-header .btn,
 .app-shell[data-chrome-lead='flush'] .workspace-preview-chrome button,
-.app-shell[data-chrome-lead='flush'] .workspace-preview-chrome .btn,
-.app-shell[data-chrome-lead='flush'] .workbench-home-chrome button,
-.app-shell[data-chrome-lead='flush'] .workbench-home-chrome .btn,
-.app-shell.is-sidebar-rail .workbench-home-chrome button,
-.app-shell.is-sidebar-rail .workbench-home-chrome .btn {
+.app-shell[data-chrome-lead='flush'] .workspace-preview-chrome .btn {
   -webkit-app-region: no-drag;
 }
 
@@ -2978,8 +2545,9 @@ html[data-summoning] .workbench-home-stage > * {
   box-sizing: border-box;
   isolation: isolate;
   background: transparent;
-  /* Lead clears native traffic lights; modest trail so the label isn’t flush. */
-  padding: 0 12px 0 var(--chrome-lead);
+  /* Lead clears native traffic lights; trail clears Windows min·max·close
+     (12px on macOS, so the label isn’t flush). */
+  padding: 0 var(--chrome-trail) 0 var(--chrome-lead);
   border-bottom: 0;
   /* Override `.titlebar { drag }` — isolation + glass otherwise swallows
      no-drag on the overlay buttons. Spacer below is the drag strip. */
@@ -3093,79 +2661,6 @@ html[data-summoning] .workbench-home-stage > * {
   color: var(--text);
   text-decoration: underline;
   text-underline-offset: 3px;
-}
-
-.session-window.pip-window {
-  overflow: hidden;
-}
-
-.pip-window .pip-body {
-  position: relative;
-  flex: 1 1 auto;
-  min-height: 0;
-  padding-top: var(--session-titlebar-h);
-  overflow: auto;
-  overscroll-behavior: contain;
-  box-sizing: border-box;
-}
-
-.pip-window .pip-body > .empty-state {
-  min-height: calc(100% - 8px);
-  padding: 24px 16px;
-}
-
-.pip-window > .dock.pip-dock {
-  flex: 0 0 auto;
-  z-index: 4;
-  background: var(--bg-window);
-}
-
-.pip-task-list {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 4px 8px 12px;
-}
-
-.pip-task-group-label {
-  padding: 8px 8px 4px;
-  color: var(--text-tertiary);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-}
-
-.pip-task {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-
-.pip-task-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-  height: 32px;
-  margin: 0;
-  padding: 0 8px;
-  border: 0;
-  border-radius: 7px;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-}
-
-.pip-task-title {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 13px;
-  font-weight: 500;
-  line-height: 1.2;
 }
 
 /* Drop the main-window “card” chrome so content is flush with the title bar. */
@@ -3366,11 +2861,17 @@ html[data-summoning] .workbench-home-stage > * {
 }
 
 .btn.primary {
-  background: var(--accent);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--accent) 90%, #fff) 0%,
+    var(--accent) 100%
+  );
   border-color: transparent;
   color: var(--accent-fg);
   font-weight: 500;
-  box-shadow: 0 1px 2px color-mix(in srgb, var(--accent) 40%, transparent);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.14),
+    0 1px 2px color-mix(in srgb, var(--accent) 40%, transparent);
 }
 
 .btn.primary:hover:not(:disabled) {
@@ -3559,10 +3060,13 @@ button.chip:active {
   width: 100%;
   height: 28px;
   padding: 0 10px;
-  border-radius: var(--radius-sm);
+  border-radius: calc(var(--radius-sm) + 1px);
   border: 0;
-  background: var(--bg-sunken);
-  box-shadow: inset 0 0 0 1px var(--border);
+  /* A white field seated into the plate: hairline edge + a whisper of inner shadow. */
+  background: var(--bg-raised);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--border-strong) 85%, transparent),
+    inset 0 1px 2px rgba(20, 20, 28, 0.04);
   outline: none;
   user-select: text;
   transition:
@@ -3570,7 +3074,15 @@ button.chip:active {
     box-shadow var(--dur-hover) ease;
 }
 
-.text-field:focus {
+:root[data-theme='dark'] .text-field {
+  background: var(--bg-sunken);
+  box-shadow:
+    inset 0 0 0 1px var(--border),
+    inset 0 1px 2px rgba(0, 0, 0, 0.25);
+}
+
+.text-field:focus,
+:root[data-theme='dark'] .text-field:focus {
   background: var(--bg-raised);
   box-shadow:
     inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent),
@@ -3603,8 +3115,9 @@ button.chip:active {
 .segmented {
   display: inline-flex;
   padding: 2px;
-  border-radius: var(--radius-sm);
+  border-radius: calc(var(--radius-sm) + 1px);
   background: var(--bg-sunken);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 60%, transparent);
 }
 
 .segmented button {
@@ -3645,7 +3158,7 @@ button.chip:active {
 
 .segmented button.active {
   background: var(--bg-raised);
-  box-shadow: var(--shadow-card);
+  box-shadow: var(--shadow-card), 0 0 0 0.5px var(--border);
   color: var(--text);
   font-weight: 500;
 }
@@ -3656,13 +3169,21 @@ button.chip:active {
   height: 23px;
   border-radius: 12px;
   border: none;
-  background: var(--border-strong);
+  background: color-mix(in srgb, var(--text) 14%, transparent);
+  box-shadow: inset 0 1px 2px rgba(20, 20, 28, 0.08);
   cursor: default;
-  transition: background var(--dur-pop) ease;
+  transition:
+    background var(--dur-pop) ease,
+    box-shadow var(--dur-pop) ease;
 }
 
 .toggle.on {
-  background: var(--accent);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--accent) 88%, #fff) 0%,
+    var(--accent) 100%
+  );
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16);
 }
 
 .toggle::after {
@@ -3674,7 +3195,9 @@ button.chip:active {
   height: 19px;
   border-radius: 50%;
   background: #fff;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.2),
+    0 0 0 0.5px rgba(0, 0, 0, 0.06);
   transition: transform var(--dur-pop) var(--ease-out);
 }
 
@@ -3966,10 +3489,15 @@ kbd {
 }
 
 /* Caret is enough — no web-style accent focus ring (same as .search-strip). */
-.sidebar-search-field .text-field,
+.sidebar-search-field .text-field {
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--text) 4%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--border) 80%, transparent);
+}
+
 .sidebar-search-field .text-field:focus {
-  background: transparent;
-  box-shadow: inset 0 0 0 1px var(--border);
+  background: color-mix(in srgb, var(--text) 6.5%, transparent);
+  box-shadow: inset 0 0 0 1px var(--border-strong);
 }
 
 .sidebar-body {
@@ -4295,6 +3823,7 @@ kbd {
 .conv-row.selected {
   background: var(--accent-soft);
   color: var(--text);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 8%, transparent);
 }
 
 .conv-row.multi {
@@ -4559,7 +4088,8 @@ kbd {
   background: var(--bg-content);
   border-radius: var(--radius-lg);
   border: 1px solid var(--border);
-  box-shadow: none;
+  /* Paper lifted off the window wash: contact + a wide, faint ambient. */
+  box-shadow: var(--shadow-plate);
 }
 
 .applications-panel .detail,
@@ -4574,9 +4104,43 @@ kbd {
 /*
  * Surface wash: agent plate, settings, and the app-column wash behind the
  * rounded card (not sidebar, not document preview, not inside the app).
- * ::before tiles the ink; ::after fades that ink into the plate so the
- * texture is strong at the top and gone before the composer.
+ *
+ * Three layers, all inside `--surface-pattern-band` at the head of the plate:
+ *   plate background  — a soft accent veil, strongest at the very top
+ *   ::before          — the tile, dyed `--surface-pattern-ink`
+ *   ::after           — a long fade that runs the ink out into the plate
+ * The band is viewport-relative, so a tall window gets a taller head and the
+ * overlay chrome plate (same origin) lines up tile for tile.
  */
+:root {
+  --surface-pattern-ink: var(--surface-pattern-color, var(--accent));
+  --surface-pattern-alpha: var(--surface-pattern-opacity, 0.3);
+  /* Ease-out fade: holds near full strength through the first quarter, then lets go. */
+  --surface-pattern-fade: linear-gradient(
+    180deg,
+    transparent 0%,
+    color-mix(in srgb, var(--bg-content) 10%, transparent) 18%,
+    color-mix(in srgb, var(--bg-content) 42%, transparent) 46%,
+    color-mix(in srgb, var(--bg-content) 80%, transparent) 74%,
+    var(--bg-content) 100%
+  );
+  --surface-pattern-atmosphere: linear-gradient(
+    180deg,
+    var(--surface-pattern-veil) 0%,
+    color-mix(in srgb, var(--surface-pattern-veil) 45%, transparent) 40%,
+    transparent 100%
+  );
+}
+
+/* Light paper swallows a tinted wash: darker ink, a little more hold. */
+:root[data-theme='light'] {
+  --surface-pattern-ink: var(
+    --surface-pattern-color,
+    color-mix(in srgb, var(--accent) 40%, var(--text-secondary))
+  );
+  --surface-pattern-alpha: calc(var(--surface-pattern-opacity, 0.3) * 1.15);
+}
+
 .detail::before,
 .detail::after,
 .settings-main::before,
@@ -4596,14 +4160,26 @@ kbd {
   z-index: 1;
 }
 
+:root[data-surface-pattern]:not([data-surface-pattern='none']) .detail,
+:root[data-surface-pattern]:not([data-surface-pattern='none']) .settings-main,
+:root[data-surface-pattern]:not([data-surface-pattern='none']) .applications-column {
+  background-image: var(--surface-pattern-atmosphere);
+  background-repeat: no-repeat;
+  background-size: 100% var(--surface-pattern-band);
+}
+
 :root[data-surface-pattern]:not([data-surface-pattern='none']) .detail::before,
 :root[data-surface-pattern]:not([data-surface-pattern='none']) .settings-main::before,
-:root[data-surface-pattern]:not([data-surface-pattern='none']) .applications-column::before {
+:root[data-surface-pattern]:not([data-surface-pattern='none']) .applications-column::before,
+:root[data-surface-pattern]:not([data-surface-pattern='none']) .agent-mode-chrome.is-overlay-plate::before {
   content: '';
+  position: absolute;
   inset: 0 0 auto;
   height: var(--surface-pattern-band);
-  background-color: var(--surface-pattern-color, var(--accent));
-  opacity: var(--surface-pattern-opacity, 0.16);
+  z-index: 0;
+  pointer-events: none;
+  background-color: var(--surface-pattern-ink);
+  opacity: min(0.92, calc(var(--surface-pattern-alpha) * var(--surface-pattern-strength, 1)));
   -webkit-mask-image: var(--surface-pattern-url);
   mask-image: var(--surface-pattern-url);
   -webkit-mask-size: var(--surface-pattern-size);
@@ -4616,43 +4192,99 @@ kbd {
 
 :root[data-surface-pattern]:not([data-surface-pattern='none']) .detail::after,
 :root[data-surface-pattern]:not([data-surface-pattern='none']) .settings-main::after,
-:root[data-surface-pattern]:not([data-surface-pattern='none']) .applications-column::after {
+:root[data-surface-pattern]:not([data-surface-pattern='none']) .applications-column::after,
+:root[data-surface-pattern]:not([data-surface-pattern='none']) .agent-mode-chrome.is-overlay-plate::after {
   content: '';
+  position: absolute;
   inset: 0 0 auto;
   height: var(--surface-pattern-band);
-  background: linear-gradient(
-    180deg,
-    transparent 0%,
-    color-mix(in srgb, var(--bg-content) 45%, transparent) 42%,
-    var(--bg-content) 100%
-  );
+  z-index: 0;
+  pointer-events: none;
+  background: var(--surface-pattern-fade);
 }
 
-/* Light paper swallows a tinted wash. Use darker ink + a bit more hold. */
-:root[data-theme='light'][data-surface-pattern]:not([data-surface-pattern='none']) .detail::before,
-:root[data-theme='light'][data-surface-pattern]:not([data-surface-pattern='none']) .settings-main::before,
-:root[data-theme='light'][data-surface-pattern]:not([data-surface-pattern='none']) .applications-column::before {
-  background-color: var(--surface-pattern-color, color-mix(in srgb, var(--accent) 38%, var(--text)));
-  opacity: calc(var(--surface-pattern-opacity, 0.16) * 1.65);
+/*
+ * Collapsed sidebar strip: it sits on the agent plate's left edge, so it has
+ * to carry the same wash — a flat strip next to the textured plate drew a hard
+ * vertical seam. The tile is shifted by the strip width so it meets the
+ * plate's tile at the boundary with no phase jump.
+ */
+:root[data-surface-pattern]:not([data-surface-pattern='none']) .sidebar-column.is-rail {
+  background-color: var(--bg-content);
+  background-image: var(--surface-pattern-atmosphere);
+  background-repeat: no-repeat;
+  background-size: 100% var(--surface-pattern-band);
 }
 
-:root[data-theme='light'][data-surface-pattern]:not([data-surface-pattern='none']) .detail::after,
-:root[data-theme='light'][data-surface-pattern]:not([data-surface-pattern='none']) .settings-main::after,
-:root[data-theme='light'][data-surface-pattern]:not([data-surface-pattern='none']) .applications-column::after {
-  height: 132px;
-  background: linear-gradient(
-    180deg,
-    transparent 0%,
-    color-mix(in srgb, var(--bg-content) 28%, transparent) 55%,
-    var(--bg-content) 100%
-  );
+:root[data-surface-pattern]:not([data-surface-pattern='none']) .sidebar-column.is-rail::before,
+:root[data-surface-pattern]:not([data-surface-pattern='none']) .sidebar-column.is-rail::after {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto;
+  height: var(--surface-pattern-band);
+  z-index: 0;
+  pointer-events: none;
+}
+
+:root[data-surface-pattern]:not([data-surface-pattern='none']) .sidebar-column.is-rail::before {
+  background-color: var(--surface-pattern-ink);
+  opacity: min(0.92, calc(var(--surface-pattern-alpha) * var(--surface-pattern-strength, 1)));
+  -webkit-mask-image: var(--surface-pattern-url);
+  mask-image: var(--surface-pattern-url);
+  -webkit-mask-size: var(--surface-pattern-size);
+  mask-size: var(--surface-pattern-size);
+  -webkit-mask-repeat: repeat;
+  mask-repeat: repeat;
+  -webkit-mask-position: var(--sidebar-rail-reserved) 0;
+  mask-position: var(--sidebar-rail-reserved) 0;
+  -webkit-mask-source-type: alpha;
+  mask-mode: alpha;
+}
+
+:root[data-surface-pattern]:not([data-surface-pattern='none']) .sidebar-column.is-rail::after {
+  background: var(--surface-pattern-fade);
 }
 
 /* App interiors stay clean — the wash lives behind the rounded wrapper. */
+:root[data-surface-pattern]:not([data-surface-pattern='none']) .applications-panel .detail {
+  background-image: none;
+}
+
 :root[data-surface-pattern]:not([data-surface-pattern='none']) .applications-panel .detail::before,
-:root[data-surface-pattern]:not([data-surface-pattern='none']) .applications-panel .detail::after,
-:root[data-theme='light'][data-surface-pattern]:not([data-surface-pattern='none']) .applications-panel .detail::before,
-:root[data-theme='light'][data-surface-pattern]:not([data-surface-pattern='none']) .applications-panel .detail::after {
+:root[data-surface-pattern]:not([data-surface-pattern='none']) .applications-panel .detail::after {
+  content: none;
+}
+
+/*
+ * Agent overlay plate (thread chrome floating over the log) stays opaque so
+ * the log never shows through, but it used to paint flat --bg-content over
+ * the wash. It shares the .detail origin (top/left 0, full width), so
+ * repainting the same atmosphere + ink + fade here lines up tile for tile.
+ */
+.agent-mode-chrome.is-overlay-plate > .agent-mode-chrome-row {
+  position: relative;
+  z-index: 1;
+}
+
+/* Specificity must clear the `.app-shell … > .terminal-host-chrome` plate fill. */
+:root[data-surface-pattern]:not([data-surface-pattern='none'])
+  .app-shell
+  .detail
+  > .terminal-host-chrome.agent-mode-chrome.is-overlay-plate {
+  background-image: var(--surface-pattern-atmosphere);
+  background-repeat: no-repeat;
+  background-size: 100% var(--surface-pattern-band);
+}
+
+/* Live window resize: drop the masked tile (the costly layer); keep the flat fills. */
+:root[data-resizing='true'][data-surface-pattern] .detail::before,
+:root[data-resizing='true'][data-surface-pattern] .detail::after,
+:root[data-resizing='true'][data-surface-pattern] .settings-main::before,
+:root[data-resizing='true'][data-surface-pattern] .settings-main::after,
+:root[data-resizing='true'][data-surface-pattern] .applications-column::before,
+:root[data-resizing='true'][data-surface-pattern] .applications-column::after,
+:root[data-resizing='true'][data-surface-pattern] .agent-mode-chrome.is-overlay-plate::before,
+:root[data-resizing='true'][data-surface-pattern] .agent-mode-chrome.is-overlay-plate::after {
   content: none;
 }
 
@@ -5282,90 +4914,6 @@ kbd {
   }
 }
 
-/* ==========================================================================
-   Keychain gate — full-screen multi-step brand onboarding (macOS)
-   Quiet paper surface, one brand mark, no marketing chrome.
-   ========================================================================== */
-
-.keychain-gate {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  background: var(--bg-content);
-  color: var(--text);
-  -webkit-app-region: no-drag;
-}
-
-/* Single soft wash — not a multi-orb light show. */
-.keychain-gate-wash {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background:
-    radial-gradient(
-      120% 70% at 50% -10%,
-      var(--accent-veil) 0%,
-      transparent 55%
-    ),
-    radial-gradient(80% 50% at 50% 100%, var(--bg-sunken) 0%, transparent 60%);
-  opacity: 0.9;
-}
-
-/* Traffic lights / drag strip. */
-.keychain-gate-chrome {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: var(--chrome-gutter);
-  -webkit-app-region: drag;
-  z-index: 2;
-}
-
-/* Full-height frame: content centers, footer docks. */
-.keychain-gate-frame {
-  position: relative;
-  z-index: 1;
-  flex: 1;
-  min-height: 0;
-  width: min(400px, calc(100% - 48px));
-  margin: 0 auto;
-  padding: calc(var(--chrome-gutter) + 8px) 0 28px;
-  box-sizing: border-box;
-  display: flex;
-  flex-direction: column;
-  opacity: 0;
-  transform: translateY(8px);
-  transition:
-    opacity 380ms var(--ease-out),
-    transform 420ms var(--ease-out);
-}
-
-.keychain-gate[data-entered='true'] .keychain-gate-frame {
-  opacity: 1;
-  transform: translateY(0);
-}
-
-.keychain-gate-main {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 28px;
-  padding: 12px 0 24px;
-}
-
-.keychain-gate-brand {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  -webkit-app-region: no-drag;
-}
-
 /* iOS Icon Composer app icon. */
 .brand-app-icon {
   display: block;
@@ -5417,345 +4965,6 @@ kbd {
   }
   :root:not([data-theme='light']) .brand-app-icon .logo-dark {
     display: block;
-  }
-}
-
-/* Waiting chip under the mark — same spirit as stream status. */
-.keychain-gate-busy-clip {
-  position: relative;
-  display: block;
-  width: 16px;
-  height: 16px;
-  min-width: 16px;
-  max-width: 16px;
-  overflow: hidden;
-}
-
-.keychain-gate-busy-mark {
-  position: absolute;
-  right: -6px;
-  bottom: -6px;
-  width: 28px;
-  height: 28px;
-  min-width: 28px;
-  max-width: 28px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
-  background: var(--bg-raised);
-  box-shadow:
-    0 1px 3px rgba(20, 20, 28, 0.14),
-    inset 0 0 0 1px var(--border);
-}
-
-.keychain-gate-busy-mark .logo-dark {
-  display: none;
-}
-
-.keychain-gate-busy-mark .logo-light {
-  display: block;
-}
-
-:root[data-theme='dark'] .keychain-gate-busy-mark .logo-light {
-  display: none;
-}
-
-:root[data-theme='dark'] .keychain-gate-busy-mark .logo-dark {
-  display: block;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme='light']) .keychain-gate-busy-mark .logo-light {
-    display: none;
-  }
-  :root:not([data-theme='light']) .keychain-gate-busy-mark .logo-dark {
-    display: block;
-  }
-}
-
-.keychain-gate-busy-sprite {
-  --frames: 4;
-  position: absolute;
-  top: 0;
-  left: 0;
-  display: block;
-  width: calc(16px * var(--frames)) !important;
-  max-width: none !important;
-  height: 16px !important;
-  object-fit: fill;
-  will-change: transform;
-  animation: stream-status-mark 0.8s steps(var(--frames)) infinite;
-}
-
-/* Copy block */
-.keychain-gate-panel {
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  text-align: center;
-  -webkit-app-region: no-drag;
-  animation: keychain-panel-in 280ms var(--ease-out) both;
-}
-
-@keyframes keychain-panel-in {
-  from {
-    opacity: 0;
-    transform: translateY(6px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-.keychain-gate-stepmeta {
-  margin: 0 0 14px;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  line-height: 1;
-  color: var(--text-tertiary);
-  font-variant-numeric: tabular-nums;
-}
-
-.keychain-gate-stepnum {
-  font-weight: 600;
-  color: var(--text-secondary);
-  letter-spacing: -0.02em;
-}
-
-.keychain-gate-stepof {
-  font-weight: 500;
-  color: var(--text-tertiary);
-}
-
-.keychain-gate-steplabel {
-  position: relative;
-  padding-left: 9px;
-}
-
-.keychain-gate-steplabel::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 50%;
-  width: 3px;
-  height: 3px;
-  border-radius: 50%;
-  background: var(--text-tertiary);
-  transform: translateY(-50%);
-  opacity: 0.7;
-}
-
-.keychain-gate-title {
-  margin: 0 0 10px;
-  max-width: 22em;
-  font-size: clamp(22px, 3.6vw, 26px);
-  font-weight: 600;
-  letter-spacing: -0.028em;
-  line-height: 1.2;
-  color: var(--text);
-  text-wrap: balance;
-}
-
-.keychain-gate-body {
-  margin: 0;
-  max-width: 34em;
-  font-size: 14px;
-  line-height: 1.55;
-  color: var(--text-secondary);
-  text-wrap: pretty;
-}
-
-.keychain-gate-aside {
-  margin: 16px 0 0;
-  max-width: 34em;
-  font-size: 12.5px;
-  line-height: 1.5;
-  color: var(--text-tertiary);
-  text-wrap: pretty;
-}
-
-/* Privacy rows — hairlines, no glass cards. */
-.keychain-gate-features {
-  list-style: none;
-  margin: 22px 0 0;
-  padding: 0;
-  width: 100%;
-  text-align: left;
-  border-top: 1px solid var(--border);
-}
-
-.keychain-gate-features li {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  padding: 14px 2px;
-  border-bottom: 1px solid var(--border);
-}
-
-.keychain-gate-feature-icon {
-  flex-shrink: 0;
-  width: 28px;
-  height: 28px;
-  margin-top: 1px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 8px;
-  background: var(--bg-sunken);
-  color: var(--text-secondary);
-}
-
-.keychain-gate-feature-title {
-  font-size: 13.5px;
-  font-weight: 600;
-  letter-spacing: -0.012em;
-  color: var(--text);
-  margin-bottom: 3px;
-}
-
-.keychain-gate-feature-desc {
-  font-size: 12.5px;
-  line-height: 1.45;
-  color: var(--text-secondary);
-  text-wrap: pretty;
-}
-
-.keychain-gate-error {
-  margin-top: 16px;
-  width: 100%;
-  padding: 10px 12px;
-  border-radius: var(--radius);
-  box-sizing: border-box;
-  font-size: 12.5px;
-  line-height: 1.45;
-  text-align: left;
-  color: var(--danger);
-  background: color-mix(in srgb, var(--danger) 9%, var(--bg-raised));
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--danger) 18%, transparent);
-}
-
-/* Footer */
-.keychain-gate-footer {
-  flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 16px;
-  padding-top: 8px;
-  -webkit-app-region: no-drag;
-}
-
-/* Thin segmented progress — calmer than pill dots. */
-.keychain-gate-progress {
-  display: flex;
-  gap: 6px;
-  width: 100%;
-  max-width: 120px;
-  margin: 0 auto;
-}
-
-.keychain-gate-progress-seg {
-  flex: 1;
-  height: 3px;
-  border-radius: 99px;
-  background: var(--border-strong);
-  opacity: 0.45;
-  transition:
-    background 180ms ease,
-    opacity 180ms ease;
-}
-
-.keychain-gate-progress-seg[data-active='true'],
-.keychain-gate-progress-seg[data-done='true'] {
-  background: var(--text);
-  opacity: 0.88;
-}
-
-.keychain-gate-progress-seg[data-active='true'] {
-  opacity: 1;
-}
-
-.keychain-gate-actions {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 10px;
-  width: 100%;
-}
-
-/* Full-width primary — the only strong surface on the screen. */
-.keychain-gate-cta.btn.primary {
-  width: 100%;
-  height: 40px;
-  min-width: 0;
-  padding: 0 18px;
-  border-radius: 10px;
-  font-size: 14px;
-  font-weight: 560;
-  letter-spacing: -0.012em;
-  box-shadow:
-    0 1px 2px color-mix(in srgb, var(--accent) 28%, transparent),
-    0 4px 12px color-mix(in srgb, var(--accent) 12%, transparent);
-}
-
-.keychain-gate-back {
-  appearance: none;
-  border: none;
-  background: transparent;
-  margin: 0 auto;
-  padding: 6px 12px;
-  font: inherit;
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text-secondary);
-  cursor: default;
-  border-radius: var(--radius-sm);
-  transition:
-    color var(--dur-hover) ease,
-    background var(--dur-hover) ease,
-    transform var(--dur-press) var(--ease-out);
-}
-
-.keychain-gate-back:hover:not(:disabled) {
-  color: var(--text);
-  background: var(--bg-hover);
-}
-
-.keychain-gate-back:active:not(:disabled) {
-  transform: scale(0.97);
-}
-
-.keychain-gate-back:disabled {
-  opacity: 0.38;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .keychain-gate-frame,
-  .keychain-gate-panel,
-  .keychain-gate-progress-seg {
-    transition: none !important;
-    animation: none !important;
-  }
-
-  .keychain-gate-frame {
-    opacity: 1;
-    transform: none;
-  }
-
-  .keychain-gate-busy-sprite {
-    animation: none !important;
-  }
-}
-
-@media (prefers-reduced-transparency: reduce) {
-  .keychain-gate-wash {
-    opacity: 0.35;
   }
 }
 
@@ -6202,6 +5411,102 @@ kbd {
   max-width: 100%;
 }
 
+/*
+ * Wide markdown blocks (code, tables) still scroll by exactly how much they
+ * overflow the reading column, but are no longer clipped to it: the card
+ * starts at the column's left edge, shows past its right edge, and scrolls
+ * out past its left edge until the card's end meets the column's right edge.
+ * The scroller spans the whole log with the column's offset as padding on
+ * both sides. Content that fits the column looks as before.
+ *
+ * --md-wide-bleed is how far the column sits in from the log's gutters (0
+ * once the log is narrower than --reading-max). Registered as a <length> so
+ * the cqi resolves here against .transcript and inherits as px.
+ */
+@property --md-wide-bleed {
+  syntax: '<length>';
+  inherits: true;
+  initial-value: 0px;
+}
+
+@property --md-wide-col {
+  syntax: '<length>';
+  inherits: true;
+  initial-value: 0px;
+}
+
+.transcript-inner {
+  --md-wide-bleed: max(0px, (100cqi - var(--reading-max)) / 2);
+  --md-wide-col: calc(min(100cqi, var(--reading-max)) - 2 * var(--reading-gutter));
+  /* Column edge → log edge. */
+  --md-wide-reach: calc(var(--md-wide-bleed) + var(--reading-gutter));
+}
+
+/* content-visibility paint-contains the turn, so the turn itself spans the
+   log (padded back to the column) or the wide scroller would be clipped. */
+.message-turn.assistant {
+  max-width: none;
+  margin-inline: calc(-1 * var(--md-wide-reach));
+  padding-inline: var(--md-wide-reach);
+}
+
+/*
+ * The .md-block becomes a bare full-width scroller; its card moves onto the
+ * content, sized column-wide up to the content's own width. Top-level blocks
+ * only — inside a list or quote they keep their indent and own scroll.
+ */
+.message.assistant > .markdown > .md-block:is([data-kind='code'], [data-kind='table']),
+.message.assistant
+  > .markdown
+  > .markdown-chunk
+  > .md-block:is([data-kind='code'], [data-kind='table']) {
+  display: grid;
+  grid-template-columns: max-content;
+  margin-inline: calc(-1 * var(--md-wide-reach));
+  padding-inline: var(--md-wide-reach);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+  isolation: auto;
+}
+
+.message.assistant .md-block:is([data-kind='code'], [data-kind='table']) > :is(pre, .table-scroll),
+.message.assistant .md-block:is([data-kind='code'], [data-kind='table']) > .md-block-bar {
+  grid-area: 1 / 1;
+}
+
+.message.assistant
+  :is(.markdown, .markdown-chunk)
+  > .md-block:is([data-kind='code'], [data-kind='table'])
+  > :is(pre, .table-scroll) {
+  /* Never narrower than the column; wider content widens the card. */
+  min-width: var(--md-wide-col);
+  max-width: none;
+  overflow: visible;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius) !important;
+  background: var(--bg-sunken) !important;
+  clip-path: inset(0 round var(--radius));
+}
+
+/* Copy bar rides the card's top-right, but sticks inside the log while the
+   card runs off its right edge. */
+.message.assistant
+  :is(.markdown, .markdown-chunk)
+  > .md-block:is([data-kind='code'], [data-kind='table'])
+  > .md-block-bar {
+  position: sticky;
+  top: auto;
+  right: 8px;
+  justify-self: end;
+  align-self: start;
+  margin: 8px 8px 0 0;
+}
+
 .message-role {
   font-size: 11px;
   font-weight: 600;
@@ -6211,7 +5516,21 @@ kbd {
 }
 
 .message-turn.assistant .message-role {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   color: var(--accent-text);
+}
+
+/* A small accent mark seats the agent's turns in the log at a glance. */
+.message-turn.assistant .message-role::before {
+  content: '';
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
 .message-collapse-toggle {
@@ -6231,13 +5550,19 @@ kbd {
 
 /* Text-only wash — hugs the prompt, not the chips / actions / full column. */
 .message.user {
-  --message-user-fill: color-mix(in srgb, var(--text) 5.5%, var(--bg-content));
+  /* Accent-tinted paper (grey under the mono tint) with a hairline edge, so
+     the prompt reads as a card laid on the plate rather than a stain on it. */
+  --message-user-fill: color-mix(in srgb, var(--accent) 7%, var(--bg-raised));
+  --message-user-edge: color-mix(in srgb, var(--accent) 12%, var(--border));
   align-self: flex-start;
   width: fit-content;
   max-width: 100%;
-  padding: 7px 11px;
-  border-radius: var(--radius);
+  padding: 8px 12px;
+  border-radius: calc(var(--radius) + 2px);
   background: var(--message-user-fill);
+  box-shadow:
+    inset 0 0 0 1px var(--message-user-edge),
+    0 1px 2px color-mix(in srgb, var(--text) 3%, transparent);
   color: var(--text);
   font-weight: 500;
   font-size: 14px;
@@ -6309,7 +5634,14 @@ kbd {
   display: block;
   height: 1px;
   margin: 6px 0 14px;
-  background: var(--border);
+  /* Rule fades out at both ends so rounds read as sections, not table rows. */
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--border-strong) 12%,
+    var(--border-strong) 88%,
+    transparent 100%
+  );
 }
 
 /* User message context stack — mirrors composer chips/cards after send. */
@@ -8939,7 +8271,6 @@ button.tool-row {
   color: var(--text-tertiary);
 }
 
-
 /* Transcript shell card — always a dark plate (not the live PTY wash). */
 .detail-terminal {
   background: #101012;
@@ -10798,6 +10129,15 @@ button.tool-row {
   min-height: 100%;
 }
 
+/* A wide table scrolls across the whole note (ProseMirror's 52px / 32px
+   gutters included), starting flush with the text — not inside the text
+   column. Code wraps and diagrams scale, so only tables overflow. */
+.knowledge-note-editor .handymd .hm-table-scroll {
+  margin-inline: -52px -32px;
+  padding-inline: 52px 32px;
+  scrollbar-width: none;
+}
+
 .knowledge-note-editor .ProseMirror {
   min-height: 48vh;
   box-sizing: border-box;
@@ -11930,50 +11270,6 @@ button.tool-row {
   pointer-events: none;
 }
 
-.first-run-checklist {
-  margin-top: 18px;
-  width: min(320px, 100%);
-  text-align: left;
-  font-size: 13px;
-  color: var(--text-secondary);
-}
-
-.first-run-checklist-title {
-  font-weight: 600;
-  color: var(--text);
-  margin-bottom: 8px;
-}
-
-.first-run-checklist ul {
-  list-style: none;
-  margin: 0 0 10px;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.first-run-checklist li {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.first-run-checklist li.is-done {
-  color: var(--text-tertiary);
-}
-
-.first-run-checklist .linkish {
-  background: none;
-  border: 0;
-  padding: 0;
-  color: var(--accent-text);
-  cursor: pointer;
-  font: inherit;
-  text-decoration: underline;
-  text-underline-offset: 2px;
-}
-
 /* Nothing to see until the run is armed: the window may still be off-screen, or
    the git prose may still be in flight. Reserve the layout, paint nothing —
    the stack has to appear out of nothing, not appear finished and rewind. */
@@ -12573,13 +11869,14 @@ button.tool-row {
   display: flex;
   align-items: center;
   gap: 8px;
-  /* Chip ~24px + 4px air above/below (border-box). */
-  height: 32px;
+  /* Chip ~24px + 4px air above, 6px below so the strip doesn't sit on the
+     window edge (border-box). */
+  height: 34px;
   width: min(100%, var(--reading-max));
   max-width: var(--reading-max);
   margin-left: auto;
   margin-right: auto;
-  padding: 4px var(--composer-gutter);
+  padding: 4px var(--composer-gutter) 6px;
   box-sizing: border-box;
   flex: 0 0 auto;
   align-self: center;
@@ -12613,6 +11910,19 @@ button.tool-row {
 .workdir-chip {
   min-width: 0;
   flex: 1 1 auto;
+}
+
+/* The prompt is a raised white card now; a filled grey pill under it reads as
+   a second, competing surface. Idle path chip is a ghost like New / the trail
+   icons, so the whole strip is one quiet line of chrome below the card. */
+.workdir-chip .chip:not(.active):not(.danger) {
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.workdir-chip .chip:not(.active):not(.danger):hover {
+  background: var(--bg-hover);
+  color: var(--text);
 }
 
 .tools-artifact-count {
@@ -15406,4 +14716,130 @@ button.tool-row {
 .file-columns:has(> .file-column:only-child > .empty-state) > .file-column {
   width: 100%;
   max-width: none;
+}
+
+/* ==========================================================================
+   App column — side peek (wide column) and list Manage mode
+   ========================================================================== */
+
+/* Single click previews beside the list; double click opens the full layer. */
+.applications-split[data-pane='split'] {
+  flex-direction: row;
+}
+
+.applications-split[data-pane='split'] > .applications-object-list {
+  flex: 0 0 clamp(320px, 44%, 560px);
+  width: clamp(320px, 44%, 560px);
+}
+
+.applications-split[data-pane='split'] > .applications-object-detail.is-peek {
+  flex: 1 1 auto;
+  min-width: 0;
+  box-shadow: inset 0.5px 0 0 var(--border);
+}
+
+.applications-split[data-pane='split'] .knowledge-folder-rail {
+  flex-basis: 136px;
+  width: 136px;
+}
+
+/* Manage: rows grow a checkbox and toggle on click. */
+.applications-panel[data-managing='true'] .applications-object-row,
+.applications-panel[data-managing='true'] .inline-review-file-row {
+  position: relative;
+  padding-left: 34px;
+}
+
+.applications-panel[data-managing='true'] .applications-object-row::before,
+.applications-panel[data-managing='true'] .inline-review-file-row::before {
+  content: '';
+  position: absolute;
+  left: 11px;
+  top: 50%;
+  width: 14px;
+  height: 14px;
+  margin-top: -7px;
+  box-sizing: border-box;
+  border-radius: 4px;
+  border: 1.5px solid color-mix(in srgb, var(--text) 32%, transparent);
+  background: transparent;
+  pointer-events: none;
+}
+
+.applications-panel[data-managing='true'] .applications-object-row[data-selected='true']::before,
+.applications-panel[data-managing='true'] .inline-review-file-row[data-selected='true']::before {
+  border-color: var(--accent);
+  background:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 14 14'%3E%3Cpath d='M3.5 7.2l2.3 2.3 4.7-4.9' fill='none' stroke='white' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
+      center / 12px no-repeat,
+    var(--accent);
+}
+
+/* Focus ring is not a selection while managing. */
+.applications-panel[data-managing='true']
+  .applications-object-row[data-active='true']:not([data-selected='true']):not(.multi) {
+  background: transparent;
+}
+
+.applications-manage-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 32px;
+  padding: 2px 10px 4px;
+  box-sizing: border-box;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.applications-manage-bar > .spacer {
+  flex: 1 1 auto;
+}
+
+.applications-manage-count {
+  font-variant-numeric: tabular-nums;
+  margin-right: 4px;
+}
+
+.applications-manage-bar .btn.is-destructive:not(:disabled) {
+  color: var(--danger, #d14343);
+}
+
+/* New-session empty: what Home used to say, as one quiet line. */
+.empty-workbench-facts {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: baseline;
+  gap: 2px 0;
+  margin-top: 10px;
+  max-width: min(420px, 100%);
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+.empty-workbench-fact-wrap {
+  display: inline-flex;
+  align-items: baseline;
+}
+
+.empty-workbench-fact-sep {
+  padding: 0 6px;
+  opacity: 0.7;
+}
+
+.empty-workbench-fact {
+  border: 0;
+  padding: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.empty-workbench-fact:hover {
+  color: var(--text-secondary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }

@@ -83,6 +83,17 @@ export function acpSessionFromControls(controls?: RemoteControlsEvent | null): A
 export const UNKNOWN_REMOTE_MODEL = 'unknown'
 
 /**
+ * `""` on a CLI host is a real pick (the CLI's own Default). Treating it as a
+ * missing field kept the previous model, so choosing Default snapped back.
+ */
+export function remoteModelIsCliDefault(source: {
+  model?: string | null
+  cliHost?: string | null
+}): boolean {
+  return source.model === '' && isStructuredCliHost(source.cliHost)
+}
+
+/**
  * Control-plane `sessions` rows have title/pin/workdir only. Adopting one as a
  * full Conversation would wipe model / cliHost (DeepSeek + `unknown`).
  */
@@ -123,7 +134,9 @@ export function conversationPatchFromRemoteControls(
   const thinking = asThinkingLevel(controls.thinking)
   const acpSession = acpSessionFromControls(controls)
   return {
-    model: controls.model || existing?.model,
+    model: remoteModelIsCliDefault({ model: controls.model, cliHost })
+      ? ''
+      : controls.model || existing?.model,
     approvalMode: asApprovalMode(controls.approval),
     ...(thinking ? { thinkingLevel: thinking } : {}),
     ...(typeof controls.fast === 'boolean' ? { fast: controls.fast } : {}),

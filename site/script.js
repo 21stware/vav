@@ -241,12 +241,33 @@
   }
 
   const KEY = 'vav.site.lang'
+  const editions = window.VAV_SITE_EDITIONS || {}
+  const GLOBAL_ORIGIN = editions.global?.site || 'https://vavapp.com'
+  const CN_ORIGIN = editions.cn?.site || 'https://vavapp.art'
+
+  function cnHostPattern() {
+    try {
+      const host = new URL(CN_ORIGIN).hostname.replace(/\./g, '\\.')
+      return new RegExp(`(^|\\.)${host}$`, 'i')
+    } catch {
+      return /(^|\.)vavapp\.art$/i
+    }
+  }
+
+  function isCnHost(hostname = location.hostname) {
+    return cnHostPattern().test(hostname)
+  }
+
+  function siteOrigin() {
+    return isCnHost() ? CN_ORIGIN : GLOBAL_ORIGIN
+  }
 
   function normalizeLang(value) {
     return value === 'en' || value === 'zh' ? value : null
   }
 
-  // ?lang= wins so a link can pin a language; then the saved choice, then the browser.
+  // ?lang= wins so a link can pin a language; then the saved choice.
+  // China host defaults to zh; everywhere else follows the browser.
   function detectLang() {
     const fromUrl = normalizeLang(new URLSearchParams(location.search).get('lang'))
     if (fromUrl) return fromUrl
@@ -256,6 +277,7 @@
     } catch {
       // ignore
     }
+    if (isCnHost()) return 'zh'
     return (navigator.language || 'en').toLowerCase().startsWith('zh') ? 'zh' : 'en'
   }
 
@@ -303,10 +325,16 @@
         .forEach((el) => el.setAttribute('content', description))
     }
 
-    // hreflang alternates only count when each variant canonicalises to itself.
-    const canonical = lang === 'zh' ? 'https://vavapp.com/?lang=zh' : 'https://vavapp.com/'
+    // Each host canonicalises to itself so the China copy does not claim vavapp.com.
+    const origin = siteOrigin()
+    const canonical = lang === 'zh' ? `${origin}/?lang=zh` : `${origin}/`
     document.querySelector('link[rel="canonical"]')?.setAttribute('href', canonical)
     document.querySelector('meta[property="og:url"]')?.setAttribute('content', canonical)
+    document.querySelector('link[hreflang="en"]')?.setAttribute('href', `${origin}/`)
+    document.querySelector('link[hreflang="zh-Hans"]')?.setAttribute('href', `${origin}/?lang=zh`)
+    document
+      .querySelector('link[hreflang="x-default"]')
+      ?.setAttribute('href', isCnHost() ? `${origin}/?lang=zh` : `${origin}/`)
     document
       .querySelector('meta[property="og:locale"]')
       ?.setAttribute('content', lang === 'zh' ? 'zh_CN' : 'en_US')
@@ -528,6 +556,9 @@
       }
     }
   }
+
+  const beian = document.querySelector('.foot-beian a')
+  if (beian && editions.cn?.icp) beian.textContent = editions.cn.icp
 
   const lang = detectLang()
   applyLang(lang)

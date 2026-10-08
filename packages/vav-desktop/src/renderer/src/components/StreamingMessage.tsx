@@ -34,12 +34,19 @@ function streamAsMessage(block: StreamBlock): MessageBlock {
  * session store, so an 80 ms tick re-renders only this subtree. Sealed chunks
  * are memoised by identity; only the trailing open chunk is re-parsed.
  */
-export function StreamingMessage({ conversationId }: { conversationId: string }): React.JSX.Element | null {
+export function StreamingMessage({
+  conversationId,
+  hideSettled = false
+}: {
+  conversationId: string
+  /** A sealed reply now ends the thread — the settled stand-in steps aside. */
+  hideSettled?: boolean
+}): React.JSX.Element | null {
   const t = useT()
   const projection = getProjection(conversationId)
   const snapshot = useSyncExternalStore(projection.subscribe, projection.getSnapshot)
 
-  if (!snapshot.active) return null
+  if (!snapshot.active && !(snapshot.settled && !hideSettled)) return null
   const awaiting = snapshot.phase === 'awaiting-user'
   const live = isLiveStreamPhase(snapshot.phase)
 
@@ -117,7 +124,11 @@ export function StreamingMessage({ conversationId }: { conversationId: string })
   }
 
   return (
-    <div className="message-turn assistant" data-testid="streaming-message">
+    <div
+      className={`message-turn assistant${snapshot.settled ? ' is-settled' : ''}`}
+      data-testid="streaming-message"
+      data-settled={snapshot.settled ? 'true' : undefined}
+    >
       <div className="message-role">{t('message.roleAgent')}</div>
       <div className="message assistant">
         {segments.map(renderSegment)}

@@ -42,6 +42,14 @@ type StreamHandler = (event: string, data: unknown) => void
 const REQ_TIMEOUT_MS = 30_000
 const CONNECT_TIMEOUT_MS = 4_000
 const PAIR_ASK_TIMEOUT_MS = 90_000
+/**
+ * App-level heartbeat. Sleep / Wi-Fi switches / a dead tailcat sidecar leave a
+ * half-open TCP socket that never emits `close`, so the host looked "online"
+ * while every request hung for 30s and reconnect never ran.
+ */
+export const DAEMON_HEARTBEAT_MS = 15_000
+export const DAEMON_HEARTBEAT_DEAD_MS = 45_000
+const PROBE_TIMEOUT_MS = 5_000
 export const STREAM_BACKLOG_CAP = 256
 
 export const PAIRING_CANCELLED = 'pairing cancelled'
@@ -129,6 +137,11 @@ export class DaemonClient {
   private readonly closeListeners = new Set<(reason: string) => void>()
   private closed = false
   private closeReason = 'daemon connection closed'
+  private lastInbound = 0
+  /** Bumped on every inbound chunk; probes compare it (ms clocks tie). */
+  private inboundSeq = 0
+  private heartbeat: ReturnType<typeof setInterval> | null = null
+  private probing: Promise<boolean> | null = null
   welcome: DaemonWelcome | null = null
 
   onClose(listener: (reason: string) => void): () => void {
@@ -186,7 +199,12 @@ export class DaemonClient {
           grantId: opts.grantId
         })
       })
+      socket.on('data', () => {
+        this.lastInbound = Date.now()
+        this.inboundSeq += 1
+      })
       socket.on('close', () => {
+        this.stopHeartbeat()
         const reason = this.closeReason
         const err = new Error(reason)
         if (!settled) fail(err)
@@ -220,6 +238,7 @@ export class DaemonClient {
           if (timer) clearTimeout(timer)
           opts.signal?.removeEventListener('abort', onAbort)
           this.welcome = frame
+          this.startHeartbeat(socket)
           resolve(frame)
           return
         }
@@ -251,6 +270,8 @@ export class DaemonClient {
       const timer = setTimeout(() => {
         this.pending.delete(id)
         reject(new Error(`daemon ${method} timed out`))
+        // A hung request is often the first sign of a dead link — check it.
+        void this.probe()
       }, timeoutMs)
       timer.unref?.()
       this.pending.set(id, {
@@ -282,7 +303,68 @@ export class DaemonClient {
     this.streamBacklog.delete(id)
   }
 
+  /**
+   * Ping and wait for any inbound byte. On silence the socket is destroyed so
+   * `onClose` fires and the owner reconnects. Used after wake / network change.
+   */
+  probe(timeoutMs = PROBE_TIMEOUT_MS): Promise<boolean> {
+    if (!this.connected || !this.socket) return Promise.resolve(false)
+    if (this.probing) return this.probing
+    const socket = this.socket
+    const seq = this.inboundSeq
+    writeLine(socket, { type: 'ping' })
+    this.probing = new Promise<boolean>((resolve) => {
+      const started = Date.now()
+      const tick = (): void => {
+        if (this.socket !== socket || socket.destroyed) return resolve(false)
+        if (this.inboundSeq !== seq) return resolve(true)
+        if (Date.now() - started >= timeoutMs) {
+          this.killDead(socket)
+          return resolve(false)
+        }
+        setTimeout(tick, 100).unref?.()
+      }
+      tick()
+    }).finally(() => {
+      this.probing = null
+    })
+    return this.probing
+  }
+
+  private startHeartbeat(socket: Socket): void {
+    this.stopHeartbeat()
+    this.lastInbound = Date.now()
+    this.heartbeat = setInterval(() => {
+      if (this.socket !== socket || socket.destroyed) {
+        this.stopHeartbeat()
+        return
+      }
+      if (Date.now() - this.lastInbound > DAEMON_HEARTBEAT_DEAD_MS) {
+        this.killDead(socket)
+        return
+      }
+      writeLine(socket, { type: 'ping' })
+    }, DAEMON_HEARTBEAT_MS)
+    this.heartbeat.unref?.()
+  }
+
+  private stopHeartbeat(): void {
+    if (this.heartbeat) clearInterval(this.heartbeat)
+    this.heartbeat = null
+  }
+
+  private killDead(socket: Socket): void {
+    this.stopHeartbeat()
+    this.closeReason = 'daemon heartbeat timed out'
+    try {
+      socket.destroy()
+    } catch {
+      /* ignore */
+    }
+  }
+
   close(): void {
+    this.stopHeartbeat()
     const already = this.closed
     this.closed = true
     const socket = this.socket

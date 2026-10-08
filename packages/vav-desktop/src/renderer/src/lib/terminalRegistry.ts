@@ -117,7 +117,8 @@ const ANSI_LIGHT = {
   brightWhite: '#141416'
 } as const
 
-const DARK_PLATE = '#1b1b1d'
+/** Matches `--bg-content` (dark) in app-shell.css. */
+const DARK_PLATE = '#1a1a1c'
 const DARK_INK = '#e6e6e7'
 const LIGHT_INK = '#141416'
 
@@ -130,7 +131,7 @@ function isDarkAppearance(): boolean {
 function contentBackground(dark: boolean): string {
   const value = getComputedStyle(document.documentElement).getPropertyValue('--bg-content').trim()
   if (value) return value
-  return dark ? DARK_PLATE : '#fcfcfc'
+  return dark ? DARK_PLATE : '#fcfcfd'
 }
 
 function resolvedTerminalTheme(forceDark = false) {

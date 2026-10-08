@@ -241,29 +241,18 @@ export async function assertFilePreview(page: Page, fileName: string): Promise<v
     return window.vav.files.write(filePath, `${text}\n`)
   }, { filePath: path, text: body })
   if (!written.ok) throw new Error(`files.write failed: ${'error' in written ? written.error : 'unknown'}`)
-  const before = await page.evaluate(() => ({
-    workspace: Boolean(document.querySelector('.workspace-view')),
-    preview: Boolean(document.querySelector('[data-testid="file-preview"]')),
-    ready: document.querySelector('[data-testid="app-shell"]')?.childElementCount ?? 0
-  }))
   await row.dblclick()
   await page.evaluate((filePath) => window.vav.window.openFilePreview(filePath), path)
-  const preview = page.locator('[data-testid="file-preview"]')
-  await expect
-    .poll(async () => {
-      return page.evaluate((prior) => ({
-        prior,
-        preview: Boolean(document.querySelector('[data-testid="file-preview"]')),
-        workspace: Boolean(document.querySelector('.workspace-view')),
-        rows: document.querySelectorAll('[data-testid="session-row"]').length,
-        selected: document
-          .querySelector('[data-testid="session-row"].selected')
-          ?.getAttribute('data-conversation-id')
-      }), before)
-    }, { timeout: 12_000 })
-    .toMatchObject({ preview: true, workspace: true })
-  await expect(preview).not.toHaveClass(/is-collapsed/, { timeout: 12_000 })
-  await expect(page.locator('[data-testid="file-preview-name"]')).toHaveText(fileName)
+  // Files open in the Storage panel of the applications column, beside the agent.
+  const preview = page.locator('[data-testid="app-column"]')
+  await expect(page.locator('[data-testid="applications-tab-storage"]')).toHaveAttribute(
+    'aria-pressed',
+    'true',
+    { timeout: 12_000 }
+  )
+  await expect(preview.locator('[data-testid="file-preview-name"]')).toHaveText(fileName, {
+    timeout: 12_000
+  })
   await expect(preview.getByText(body)).toBeVisible({ timeout: 12_000 })
 }
 

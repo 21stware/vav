@@ -17,7 +17,7 @@ body,
   font-family: var(--font-ui);
   -webkit-user-select: none;
   user-select: none;
-  background: color-mix(in srgb, var(--text) 4%, var(--bg-content, #1b1b1d));
+  background: color-mix(in srgb, var(--text) 4%, var(--bg-content, #1a1a1c));
 }
 
 :root:not([data-theme='dark']) .faaaaast-root {
@@ -31,7 +31,7 @@ body,
   width: 100%;
   height: auto;
   border-radius: var(--radius-lg, 14px);
-  background: color-mix(in srgb, var(--text) 4%, var(--bg-content, #1b1b1d));
+  background: color-mix(in srgb, var(--text) 4%, var(--bg-content, #1a1a1c));
   overflow: hidden;
 }
 

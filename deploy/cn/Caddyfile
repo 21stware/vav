@@ -1,0 +1,33 @@
+# Mainland site + DERP front door on the Tencent Lighthouse box (ssh vav).
+# vavapp.com stays on Cloudflare / GitHub Pages and is not served here.
+
+www.vavapp.art {
+	redir https://vavapp.art{uri} permanent
+}
+
+vavapp.art {
+	root * /var/www/vavapp
+	encode gzip zstd
+	file_server
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+	}
+}
+
+# Canonical relay after ICP filing. HTTP-01 works on this host.
+derp.vavapp.art {
+	reverse_proxy 127.0.0.1:3340 {
+		flush_interval -1
+	}
+}
+
+# Already-paired clients that pinned region 900 on derp.vavapp.com.
+# Manual certs stay until they expire; rewrite Host to the derper name.
+derp.vavapp.com {
+	tls /etc/caddy/certs/derp.vavapp.com.crt /etc/caddy/certs/derp.vavapp.com.key
+	reverse_proxy 127.0.0.1:3340 {
+		flush_interval -1
+		header_up Host derp.vavapp.art
+	}
+}

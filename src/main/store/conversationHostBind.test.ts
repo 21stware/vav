@@ -228,6 +228,78 @@ describe('ConversationStore host bind', () => {
     }
   })
 
+  it('keeps a CLI host Default pick ("") from the local vav-server', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'vav-host-cli-default-'))
+    try {
+      const store = new ConversationStore(dir)
+      store.load({ model: 'm', mintWorkdir: () => join(dir, 'ws') })
+      store.create(join(dir, 'ws'), 'claude-opus-4-8', { id: 'droid-row', cliHost: 'droid' })
+      store.adoptHostConversation(
+        {
+          id: 'droid-row',
+          title: 'New session',
+          createdAt: 1,
+          updatedAt: 5,
+          workingDirectory: join(dir, 'ws'),
+          model: '',
+          cliHost: 'droid',
+          tokensUsed: 0,
+          tokenLimit: 200_000,
+          messages: []
+        } as Conversation,
+        'local'
+      )
+      assert.equal(store.get('droid-row')?.model, '')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('adopts a paired-host CLI Default pick as "" instead of unknown', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'vav-host-cli-default-remote-'))
+    try {
+      const store = new ConversationStore(dir)
+      store.load({ model: 'm', mintWorkdir: () => join(dir, 'ws') })
+      const row = (model: string, updatedAt: number) =>
+        ({
+          id: 'remote-droid',
+          title: 'Live',
+          createdAt: 1,
+          updatedAt,
+          workingDirectory: join(dir, 'ws'),
+          model,
+          cliHost: 'droid',
+          agentBinaryName: 'droid',
+          tokensUsed: 0,
+          tokenLimit: 200_000,
+          messages: []
+        }) as Conversation
+      assert.equal(store.adoptHostConversation(row('', 5), 'box-1')?.model, '')
+      store.adoptHostConversation(row('claude-opus-4-8', 6), 'box-1')
+      assert.equal(store.adoptHostConversation(row('', 7), 'box-1')?.model, '')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('restores a parked CLI Default model when switching back to that host', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'vav-host-switch-default-'))
+    try {
+      const store = new ConversationStore(dir)
+      store.load({ model: 'm', mintWorkdir: () => join(dir, 'ws') })
+      store.create(join(dir, 'ws'), '', { id: 'switch-row', cliHost: 'droid' })
+      store.switchHostTranscript('switch-row', 'cursor')
+      store.updateMeta('switch-row', { model: 'grok-4.6' })
+      store.switchHostTranscript('switch-row', 'droid')
+      assert.equal(store.get('switch-row')?.model, '')
+      // A host never visited still inherits the current model.
+      store.switchHostTranscript('switch-row', 'kiro')
+      assert.equal(store.get('switch-row')?.model, '')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
   it('keeps host-owned local rows in memory only', () => {
     const dir = mkdtempSync(join(tmpdir(), 'vav-host-persist-'))
     try {

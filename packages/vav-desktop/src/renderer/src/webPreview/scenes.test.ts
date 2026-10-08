@@ -18,7 +18,7 @@ describe('web preview scenes', () => {
     assert.equal(parseWebPreviewScene('?scene=nope'), 'chat')
   })
 
-  it('keeps home/empty without a workspace session so WorkbenchHome can paint', () => {
+  it('keeps home/empty without a workspace session so the new-session empty can paint', () => {
     assert.equal(activeIdForScene('chat'), WEB_PREVIEW_CHAT_ID)
     assert.equal(activeIdForScene('home'), '')
     assert.equal(activeIdForScene('empty'), '')

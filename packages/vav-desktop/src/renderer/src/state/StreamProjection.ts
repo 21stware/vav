@@ -13,12 +13,24 @@ export type StreamBlock =
 
 export interface StreamSnapshot {
   active: boolean
+  /**
+   * Turn is over but no sealed message has replaced the live view yet (Stop,
+   * or a control-plane idle frame that carries no body). The blocks stay on
+   * screen, without live chrome, until a sealed copy lands or the next turn.
+   */
+  settled: boolean
   phase: TurnPhase
   recovery: TurnRecovery | null
   blocks: StreamBlock[]
 }
 
-const EMPTY_SNAPSHOT: StreamSnapshot = { active: false, phase: 'idle', recovery: null, blocks: [] }
+const EMPTY_SNAPSHOT: StreamSnapshot = {
+  active: false,
+  settled: false,
+  phase: 'idle',
+  recovery: null,
+  blocks: []
+}
 
 type Internal =
   | { kind: 'reasoning'; key: string; text: string; startedAt: number; durationMs?: number }
@@ -40,6 +52,7 @@ export class StreamProjection {
   private phase: TurnPhase = 'idle'
   private recovery: TurnRecovery | null = null
   private active = false
+  private settled = false
   private dirty = false
   private timer: ReturnType<typeof setInterval> | null = null
   private snapshot: StreamSnapshot = EMPTY_SNAPSHOT
@@ -56,6 +69,7 @@ export class StreamProjection {
     this.phase = 'thinking'
     this.recovery = null
     this.active = true
+    this.settled = false
     this.publish()
     this.ensureTicking()
   }
@@ -72,6 +86,7 @@ export class StreamProjection {
     this.phase = phase
     this.recovery = recovery ?? null
     this.active = true
+    this.settled = false
     this.dirty = false
     for (let index = 0; index < blocks.length; index++) {
       const block = blocks[index]
@@ -100,6 +115,7 @@ export class StreamProjection {
   ensureLive(phase?: TurnPhase): void {
     if (this.active) return
     this.active = true
+    this.settled = false
     if (phase) this.phase = phase
     this.publish()
     this.ensureTicking()
@@ -160,6 +176,31 @@ export class StreamProjection {
     this.publish()
   }
 
+  /**
+   * Turn is over but nothing sealed arrived to take over. Keep what streamed
+   * (minus live chrome) instead of blanking the reply the user just watched —
+   * Stop used to make the last output vanish. A projection with nothing in it
+   * simply ends.
+   */
+  settle(): void {
+    if (!this.active && !this.settled) return
+    this.stopTicking()
+    this.phase = 'idle'
+    this.recovery = null
+    this.active = false
+    if (!this.slots.some(Boolean)) {
+      this.end()
+      return
+    }
+    this.settled = true
+    this.publish()
+  }
+
+  /** True while a settled (finished, unsealed) reply is still on screen. */
+  isSettled(): boolean {
+    return this.settled
+  }
+
   /** Turn is over: the finished message takes over, so drop the live view. */
   end(): void {
     this.stopTicking()
@@ -167,6 +208,7 @@ export class StreamProjection {
     this.phase = 'idle'
     this.recovery = null
     this.active = false
+    this.settled = false
     this.dirty = false
     this.snapshot = EMPTY_SNAPSHOT
     this.notify()
@@ -223,7 +265,13 @@ export class StreamProjection {
         blocks.push(block)
       }
     }
-    this.snapshot = { active: this.active, phase: this.phase, recovery: this.recovery, blocks }
+    this.snapshot = {
+      active: this.active,
+      settled: this.settled,
+      phase: this.phase,
+      recovery: this.recovery,
+      blocks
+    }
     this.notify()
   }
 

@@ -14,6 +14,7 @@ import {
   type DisplayCurrency,
   type LocalePreference,
   type SurfacePattern,
+  type SurfacePatternStrength,
   type ThemeMode
 } from '@shared/types'
 import { swatchPatternSize } from '@shared/surfacePattern'
@@ -672,6 +673,27 @@ export function AppearanceSettings(): React.JSX.Element {
       <div className="form-hint">
         {t('appearance.surfacePatternHint')} {t('appearance.surfacePattern.customHint')}
       </div>
+      {(machineLook.surfacePattern ?? 'none') !== 'none' ? (
+        <>
+          <div className="form-row">
+            <label>{t('appearance.surfacePatternStrength')}</label>
+            <div className="control">
+              <Segmented<SurfacePatternStrength>
+                options={[
+                  { value: 'soft', label: t('appearance.surfacePatternStrength.soft') },
+                  { value: 'normal', label: t('appearance.surfacePatternStrength.normal') },
+                  { value: 'bold', label: t('appearance.surfacePatternStrength.bold') }
+                ]}
+                value={settings.surfacePatternStrength ?? 'normal'}
+                onChange={(surfacePatternStrength) =>
+                  void updateSettings({ surfacePatternStrength })
+                }
+              />
+            </div>
+          </div>
+          <div className="form-hint">{t('appearance.surfacePatternStrengthHint')}</div>
+        </>
+      ) : null}
       {patternError ? (
         <div className="form-hint accounts-error" role="alert">
           {patternError}

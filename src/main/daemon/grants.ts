@@ -33,7 +33,18 @@ export type GrantStore = {
   touch(id: string, name?: string): void
   markKicked(id: string): void
   remove(id: string): PairGrant | null
+  /**
+   * True when `id` was a grant this host removed (unpair / pair.leave). Lets a
+   * hello carrying a dead grant id get an explicit `revoked` instead of the
+   * generic `pairing rejected`, so an offline controller stops redialing.
+   */
+  isRevoked(id: string): boolean
+  /** Removed grant ids, oldest first (persisted with the grants). */
+  revokedIds(): string[]
 }
+
+/** Tombstones kept per store; old ones fall off so the file stays small. */
+const REVOKED_CAP = 256
 
 function mintSecret(): string {
   return randomBytes(24).toString('base64url')
@@ -59,9 +70,20 @@ function asGrant(value: unknown): PairGrant | null {
   }
 }
 
-export function createMemoryGrantStore(seed: PairGrant[] = []): GrantStore {
+export function createMemoryGrantStore(seed: PairGrant[] = [], revokedSeed: string[] = []): GrantStore {
   const rows = new Map<string, PairGrant>()
   for (const grant of seed) rows.set(grant.id, { ...grant })
+  const revoked = new Set<string>()
+  for (const id of revokedSeed) if (id && !rows.has(id)) revoked.add(id)
+  const tombstone = (id: string): void => {
+    revoked.delete(id)
+    revoked.add(id)
+    while (revoked.size > REVOKED_CAP) {
+      const oldest = revoked.values().next().value
+      if (oldest === undefined) break
+      revoked.delete(oldest)
+    }
+  }
   return {
     list() {
       return [...rows.values()].sort((a, b) => b.lastSeen - a.lastSeen)
@@ -87,8 +109,16 @@ export function createMemoryGrantStore(seed: PairGrant[] = []): GrantStore {
       const clientId = input.clientId.trim() || randomUUID()
       const name = input.name.trim() || 'unknown'
       const existing = this.findByClientId(clientId)
-      if (existing) rows.delete(existing.id)
       const now = Date.now()
+      if (existing) {
+        // Same controller pairing again (or racing LAN + tunnel): hand back its
+        // grant. Minting a new one silently invalidated whichever connection
+        // won the race, and the next reconnect then failed "pairing rejected".
+        existing.name = name
+        existing.lastSeen = now
+        existing.kicked = false
+        return existing
+      }
       const grant: PairGrant = {
         id: randomUUID(),
         secret: mintSecret(),
@@ -115,18 +145,28 @@ export function createMemoryGrantStore(seed: PairGrant[] = []): GrantStore {
     },
     remove(id) {
       const grant = rows.get(id) ?? null
-      if (grant) rows.delete(id)
+      if (grant) {
+        rows.delete(id)
+        tombstone(id)
+      }
       return grant
+    },
+    isRevoked(id) {
+      return Boolean(id) && revoked.has(id)
+    },
+    revokedIds() {
+      return [...revoked]
     }
   }
 }
 
 export function createFileGrantStore(dir: string): GrantStore {
   const file = join(dir, 'grants.json')
-  const memory = createMemoryGrantStore(loadGrantsFile(file))
+  const loaded = loadGrantsFile(file)
+  const memory = createMemoryGrantStore(loaded.grants, loaded.revoked)
   const persist = (): void => {
     mkdirSync(dirname(file), { recursive: true })
-    writePrivateJson(file, { grants: memory.list() })
+    writePrivateJson(file, { grants: memory.list(), revoked: memory.revokedIds() })
   }
   return {
     list: () => memory.list(),
@@ -150,18 +190,25 @@ export function createFileGrantStore(dir: string): GrantStore {
       const grant = memory.remove(id)
       if (grant) persist()
       return grant
-    }
+    },
+    isRevoked: (id) => memory.isRevoked(id),
+    revokedIds: () => memory.revokedIds()
   }
 }
 
-function loadGrantsFile(file: string): PairGrant[] {
+function loadGrantsFile(file: string): { grants: PairGrant[]; revoked: string[] } {
   try {
-    if (!existsSync(file)) return []
-    const raw = JSON.parse(readFileSync(file, 'utf8')) as { grants?: unknown }
-    if (!Array.isArray(raw.grants)) return []
-    return raw.grants.map(asGrant).filter((row): row is PairGrant => row !== null)
+    if (!existsSync(file)) return { grants: [], revoked: [] }
+    const raw = JSON.parse(readFileSync(file, 'utf8')) as { grants?: unknown; revoked?: unknown }
+    const grants = Array.isArray(raw.grants)
+      ? raw.grants.map(asGrant).filter((row): row is PairGrant => row !== null)
+      : []
+    const revoked = Array.isArray(raw.revoked)
+      ? raw.revoked.filter((id): id is string => typeof id === 'string' && id.trim().length > 0)
+      : []
+    return { grants, revoked }
   } catch {
-    return []
+    return { grants: [], revoked: [] }
   }
 }
 

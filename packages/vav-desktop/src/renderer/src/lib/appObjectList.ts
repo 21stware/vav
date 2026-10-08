@@ -43,6 +43,8 @@ export function appObjectPointerHandlers(opts: {
   onSelect: (event: MouseEvent) => void
   onOpen: () => void
   onMenu?: (event: MouseEvent) => void
+  /** Manage mode: every click toggles; double-click never opens. */
+  managing?: boolean
 }): {
   onClick: (event: MouseEvent) => void
   onDoubleClick: (event: MouseEvent) => void
@@ -50,11 +52,12 @@ export function appObjectPointerHandlers(opts: {
 } {
   return {
     onClick: (event) => {
-      if (event.detail > 1) return
+      if (event.detail > 1 && !opts.managing) return
       opts.onSelect(event)
     },
     onDoubleClick: (event) => {
       event.preventDefault()
+      if (opts.managing) return
       opts.onOpen()
     },
     onContextMenu: (event) => {

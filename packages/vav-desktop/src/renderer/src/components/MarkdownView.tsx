@@ -793,7 +793,7 @@ function canvasFromImage(img: HTMLImageElement, outW: number, outH: number): str
   if (!ctx) return null
   const dark =
     typeof document !== 'undefined' && document.documentElement.dataset.theme === 'dark'
-  ctx.fillStyle = dark ? '#1b1b1d' : '#fcfcfc'
+  ctx.fillStyle = dark ? '#1a1a1c' : '#fcfcfd'
   ctx.fillRect(0, 0, outW, outH)
   ctx.drawImage(img, 0, 0, outW, outH)
   const dataUrl = canvas.toDataURL('image/png')

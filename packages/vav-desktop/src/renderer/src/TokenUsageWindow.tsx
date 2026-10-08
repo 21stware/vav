@@ -4,7 +4,7 @@ import type { TokenUsageViewPayload } from '@shared/ipc'
 import { t as translate, type MessageKey, type TParams } from '@shared/i18n'
 import { TokenUsagePanel } from './components/TokenUsagePanel'
 
-const BG = { dark: '#121213', light: '#ececee' } as const
+const BG = { dark: '#0f0f10', light: '#e7e7ea' } as const
 
 function resolveTheme(theme: ThemeMode): 'light' | 'dark' {
   if (theme === 'light' || theme === 'dark') return theme

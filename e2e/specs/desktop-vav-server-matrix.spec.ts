@@ -62,7 +62,7 @@ test('spawned vav-server desktop covers list, send, files, and terminal', async 
     await expect(page.locator('[data-testid="files-panel"]')).toBeVisible()
     await expect(page.locator('[data-file-path$="hello.md"]')).toBeVisible()
     await page.locator('[data-file-path$="hello.md"]').dblclick()
-    await expect(page.locator('[data-testid="file-preview"]')).not.toHaveClass(/is-collapsed/)
+    await expect(page.locator('[data-testid="applications-tab-storage"]')).toHaveAttribute('aria-pressed', 'true')
     await expect(page.locator('[data-testid="file-preview-name"]')).toHaveText('hello.md')
     await expect(page.getByText('hello from e2e')).toBeVisible()
 

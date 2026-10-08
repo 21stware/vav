@@ -7,6 +7,16 @@ export const APPLICATIONS_WIDTH_DEFAULT = 380
 /** App column wide enough for list + detail side by side (tablet regular). */
 export const APP_SPLIT_MIN_WIDTH = 560
 
+/**
+ * List + side preview inside the app column. Higher than the tablet split:
+ * Notes / Analysis / Schedules also carry a folder rail on the list side.
+ */
+export const APP_PEEK_MIN_WIDTH = 760
+
+export function appCanPeek(width: number): boolean {
+  return width >= APP_PEEK_MIN_WIDTH
+}
+
 export type AppSplitLayout = 'split' | 'stack'
 
 export function appSplitLayout(width: number): AppSplitLayout {

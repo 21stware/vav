@@ -337,11 +337,14 @@ export interface FileSessionsDeleteResult extends FileSessionsState {
   removed: string[]
 }
 
+/** Live disk status for a file-session path. `directory` is browsable in Storage. */
+export type FilePathStatus = 'ok' | 'file_missing' | 'dir_missing' | 'directory'
+
 /** One row in the sidebar “Show file sessions” list. */
 export interface FileSessionListEntry {
   fileId: string
   path: string
-  pathStatus: 'ok' | 'file_missing' | 'dir_missing'
+  pathStatus: FilePathStatus
   sessionId: string
   title: string
   createdAt: number
@@ -1701,6 +1704,8 @@ export interface VavApi {
     /** Settings live in their own window, not a sheet over the transcript. */
     openSettings(view?: SettingsView, agentId?: string, machineId?: string): Promise<void>
     closeSettings(): Promise<void>
+    /** Dev builds: close Settings and replay the first-launch tour in the main window. */
+    previewOnboarding(): Promise<void>
     /** Last category ⌘, / Open Settings asked for — pull after the lazy chunk mounts. */
     desiredSettingsView(): Promise<SettingsViewPayload>
     /** Opens (or raises) the standalone window for one conversation. */
@@ -1710,11 +1715,6 @@ export interface VavApi {
      * conversation in the sidebar list (Reveal in List).
      */
     revealInList(conversationId: string): Promise<void>
-    /**
-     * Shrink (or restore) the main window as a picture-in-picture shell.
-     * Main owns bounds / always-on-top; the renderer switches layout.
-     */
-    setPictureInPicture(enabled: boolean): Promise<void>
     /**
      * Close the companion window for this conversation so the main shell can
      * host the live terminal again (“Take it back”).
@@ -2098,6 +2098,8 @@ export type MenuCommand =
   | 'show-file-sessions'
   /** Trigger the same update check as Settings → About. */
   | 'check-updates'
+  /** Dev: replay the first-launch tour (Settings → About). */
+  | 'preview-onboarding'
   /**
    * ⌘W — context close via uiFocus (bash tab / collapse Files tray / agent pane),
    * else close the window. Replaces bare role:close so the renderer can decide.
@@ -2417,6 +2419,7 @@ export const IPC = {
   windowShellPath: 'vav:window:shell-path',
   windowOpenSettings: 'vav:window:open-settings',
   windowCloseSettings: 'vav:window:close-settings',
+  windowPreviewOnboarding: 'vav:window:preview-onboarding',
   settingsDesiredView: 'vav:settings:desired-view',
   windowPopupMenu: 'vav:window:popup-menu',
   windowClosePopupMenu: 'vav:window:close-popup-menu',
@@ -2425,7 +2428,6 @@ export const IPC = {
   windowE2eDismissMenu: 'vav:window:e2e-dismiss-menu',
   windowOpenSession: 'vav:window:open-session',
   windowRevealInList: 'vav:window:reveal-in-list',
-  windowSetPictureInPicture: 'vav:window:set-picture-in-picture',
   windowCloseDetached: 'vav:window:close-detached',
   windowNewDetached: 'vav:window:new-detached',
   windowNewSessionHere: 'vav:window:new-session-here',

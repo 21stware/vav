@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { ChevronDown, Download, LoaderCircle, RefreshCw, RotateCw } from 'lucide-react'
+import { ChevronDown, Download, LoaderCircle, RefreshCw, RotateCw, Sparkles } from 'lucide-react'
 import { brandDisplayName } from '@shared/brandIdentity'
 import type { MessageKey } from '@shared/i18n'
 import {
@@ -269,6 +269,22 @@ export function AboutSettings(): React.JSX.Element {
           </div>
         ) : null}
       </div>
+
+      {import.meta.env.DEV ? (
+        <div className="about-section" data-testid="settings-about-dev">
+          <div className="settings-section-title">{t('about.devSection')}</div>
+          <div className="about-actions">
+            <Button
+              icon={<Sparkles size={14} />}
+              label={t('about.previewOnboarding')}
+              variant="secondary"
+              testId="settings-about-preview-onboarding"
+              onClick={() => void window.vav.window.previewOnboarding()}
+            />
+          </div>
+          <div className="form-hint">{t('about.previewOnboardingHint')}</div>
+        </div>
+      ) : null}
 
       <div className="about-actions">
         <Button

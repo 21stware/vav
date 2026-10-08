@@ -8,6 +8,9 @@
  *
  * Cursor: `agent login` → cursor.com
  *
+ * Droid: no login subcommand. Drive ACP `authenticate { device-pairing }`;
+ * Droid opens the pairing page and resolves once it is approved.
+ *
  * Do not invent a client/PKCE stack. Do not treat an existing ~/.grok/auth.json
  * (or Cursor keychain) as “this click finished OAuth”.
  */
@@ -18,10 +21,12 @@ import { promisify } from 'node:util'
 import type { AccountsOAuthLogin } from '@shared/ipc'
 import { loginPath } from '../terminal/loginPath'
 import { unwrapAgentLaunch } from '../terminal/unwrapAgentLaunch'
-import { loginArgv, logoutArgv } from './hostLoginArgv'
+import { startAcpLogin } from './acpHostLogin'
+import { removeDroidCredentials } from './droidCredentials'
+import { acpLoginSpec, canHostLogin, loginArgv, logoutArgv } from './hostLoginArgv'
 import { loginUrlFromCliOutput } from './hostLoginUrl'
 
-export { loginArgv, logoutArgv }
+export { acpLoginSpec, canHostLogin, loginArgv, logoutArgv }
 
 const execFileAsync = promisify(execFile)
 const IS_WINDOWS = process.platform === 'win32'
@@ -29,7 +34,7 @@ const LOGOUT_TIMEOUT_MS = 20_000
 
 type Job = {
   agentId: string
-  proc: pty.IPty
+  proc: { kill: () => void }
   cancelled: boolean
 }
 
@@ -76,6 +81,11 @@ export function startHostOAuthLogin(input: {
   onAuthorizeUrl?: (url: string) => void
   onFinished: (result: { cancelled: boolean; exitCode: number | null }) => void
 }): void {
+  const acp = acpLoginSpec(input.agentId)
+  if (acp) {
+    startAcpHostLogin({ ...input, ...acp })
+    return
+  }
   const args = loginArgv(input.agentId)
   if (!args) {
     throw new Error(`oauth login is not supported for ${input.agentId}`)
@@ -126,7 +136,51 @@ export function startHostOAuthLogin(input: {
   })
 }
 
+function loginEnv(extra: Record<string, string>): Record<string, string> {
+  const env: Record<string, string> = {
+    ...(process.env as Record<string, string>),
+    PATH: loginPath(),
+    ...extra
+  }
+  delete env.NO_OPEN_BROWSER
+  return env
+}
+
+function startAcpHostLogin(input: {
+  agentId: string
+  accountId?: string
+  resolved: string
+  argv: string[]
+  methodId: string
+  onFinished: (result: { cancelled: boolean; exitCode: number | null }) => void
+}): void {
+  cancelHostOAuthLogin(input.agentId)
+  const unwrapped = unwrapAgentLaunch(input.resolved, input.argv)
+  latest = { agentId: input.agentId, accountId: input.accountId, status: 'running' }
+  const login = startAcpLogin({
+    file: unwrapped.file,
+    args: unwrapped.args,
+    methodId: input.methodId,
+    cwd: homedir(),
+    env: loginEnv(unwrapped.env)
+  })
+  const job: Job = { agentId: input.agentId, proc: login, cancelled: false }
+  jobs.set(input.agentId, job)
+  void login.done.then(({ exitCode }) => {
+    if (jobs.get(input.agentId) === job) jobs.delete(input.agentId)
+    const cancelled = job.cancelled
+    if (cancelled) {
+      latest = { agentId: input.agentId, status: 'cancelled' }
+    }
+    input.onFinished({ cancelled, exitCode })
+  })
+}
+
 export async function runHostLogout(resolved: string, agentId: string): Promise<void> {
+  if (agentId === 'droid') {
+    await removeDroidCredentials()
+    return
+  }
   const args = logoutArgv(agentId)
   if (!args) return
   const unwrapped = unwrapAgentLaunch(resolved, args)

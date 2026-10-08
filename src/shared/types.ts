@@ -663,6 +663,19 @@ export const DEFAULT_CLI_AGENTS: AgentConfig[] = [
     builtin: true,
     installCommand: 'npm i -g cline',
     installDocsUrl: 'https://cline.bot/cli'
+  },
+  {
+    id: 'droid',
+    name: 'Droid',
+    binaryPath: 'droid',
+    binaryCandidates: ['droid'],
+    defaultArgs: [],
+    envVars: {},
+    enabled: true,
+    providerName: null,
+    builtin: true,
+    installCommand: 'curl -fsSL https://app.factory.ai/cli | sh',
+    installDocsUrl: 'https://docs.factory.ai/cli'
   }
 ]
 
@@ -840,6 +853,16 @@ export const SURFACE_PATTERNS: readonly SurfacePattern[] = [
   'hearts',
   'stars',
   'custom'
+] as const
+/**
+ * How much ink the surface texture lays down. `normal` is the preset peak;
+ * `soft` is roughly half, `bold` about one and a half times.
+ */
+export type SurfacePatternStrength = 'soft' | 'normal' | 'bold'
+export const SURFACE_PATTERN_STRENGTHS: readonly SurfacePatternStrength[] = [
+  'soft',
+  'normal',
+  'bold'
 ] as const
 /**
  * Accent / surface tint.
@@ -1100,11 +1123,6 @@ export interface AppSettings {
    * New detached windows restore these dimensions.
    */
   detachedWindowSize?: { width: number; height: number }
-  /**
-   * Last-used picture-in-picture main-window size { width, height }.
-   * Entering PiP restores these dimensions in the display corner.
-   */
-  pipWindowSize?: { width: number; height: number }
   theme: ThemeMode
   /**
    * Tools-tray bash background. `dark` stays dark regardless of theme;
@@ -1134,6 +1152,11 @@ export interface AppSettings {
    * Default `none` — no overlay.
    */
   surfacePattern: SurfacePattern
+  /**
+   * Texture ink strength. Global (not per machine): a user who finds a tile
+   * loud wants it quieter everywhere, not on one host.
+   */
+  surfacePatternStrength: SurfacePatternStrength
   /**
    * Runtime `vav-local://` URL of the user tile. Injected by main from
    * `userData/surface-pattern.png` — never persisted as a data URL.
@@ -1283,7 +1306,7 @@ export interface AppSettings {
   /**
    * Default chat host for new / quick-launch sessions.
    * `null` or `"vav"` = no explicit default (current VAV profile).
-   * A {@link CliHostKind} or LLM vendor id (`deepseek`, `openrouter`, `bigmodel`, `kimi`, …)
+   * A {@link CliHostKind} or LLM vendor id (`deepseek`, `openrouter`, `bigmodel`, `kimi`, `magpie`, …)
    * is set only when the user clicks Set as default.
    */
   defaultAgentId: string | null
@@ -1320,8 +1343,11 @@ export interface AppSettings {
    * When false, block selection is Edit-only (Read is view + copy).
    */
   previewReadModeSelection: boolean
-  /** Hide the empty-transcript first-run checklist. */
-  firstRunChecklistDismissed: boolean
+  /**
+   * First-launch setup (agent + workspace) finished or skipped. Existing
+   * installs are migrated to true so only fresh installs see it.
+   */
+  onboardingCompleted: boolean
   /**
    * How long durable diagnostic records stay on disk (1 / 3 / 7 / 14 / 30).
    * Session records still expire at 24h or when the conversation is deleted.
@@ -1370,6 +1396,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   customAccentColor: '',
   machineAppearances: {},
   surfacePattern: 'none',
+  surfacePatternStrength: 'normal',
   customSurfacePatternUrl: '',
   customSurfacePatternSize: '',
   swarmModeEnabled: true,
@@ -1424,7 +1451,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   recentAgentModels: [],
   previewSelectionAgentMark: true,
   previewReadModeSelection: true,
-  firstRunChecklistDismissed: false,
+  onboardingCompleted: false,
   logRetentionDays: 7
 }
 

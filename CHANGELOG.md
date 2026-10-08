@@ -4,6 +4,52 @@ User-facing changes by release. Unreleased work lives at the top until the next 
 
 ## Unreleased
 
+## 1.32.12
+
+A fresh install now opens on a first-launch setup instead of a Keychain tour. It runs welcome, Keychain (macOS only, now one screen), agent, then workspace. The agent step finds the CLI agents already on this machine and shows whether each one is signed in. From there you can install or sign in to one, or add an API key for the built-in agent. The workspace step picks a folder or a temporary workspace, and setup ends in a new session with both applied. Windows gets the same flow without the Keychain step. Existing installs skip it, and the empty-session "Get started" checklist is gone.
+
+## 1.32.11
+
+Factory **Droid** joins the CLI agents. It runs over ACP, resumes sessions, lists its live models, and picks up plugins and skills from `~/.factory`. Settings → Accounts can sign in to Droid through browser device pairing (and sign out), and shows the Factory Standard quota for the 5-hour, weekly, and monthly windows. A slow browser sign-in no longer times out the session that follows it.
+
+Pressing the screenshot shortcut while vav is in the background no longer pulls vav forward or drops the shot into the Prompt Composer. You still select and annotate as usual, and the result is copied to the clipboard. With vav in front, the screenshot attaches to the current conversation as before.
+
+Choosing a CLI agent's **Default** model sticks instead of snapping back to the previous model, and a freshly attached local vav-server no longer re-adds agents you removed.
+
+Settings in the vav-server web UI opens again instead of crashing on the Appearance pane.
+
+## 1.32.10
+
+Settings → Agents can add **Magpie** as a model provider. It talks to the local Magpie gateway at `http://127.0.0.1:3425/v1`, lists `provider/model` ids from `/v1/models`, and fills the loopback key for you.
+
+## 1.32.9
+
+Surface textures are now a real part of the room: the tile runs down the top ~46% of the agent plate, settings, and the app-column wash (not a 108px strip), lays down about twice the ink, and sits on a soft accent glow before fading into the plate. Every built-in tile was redrawn denser and a touch bolder; the texture ink follows the accent, so a blue tint gives a blue grain. Settings → Appearance gains a **Texture Strength** control (Soft / Normal / Bold).
+
+The theme itself is deeper: the window wash sits a full step below the content plate, the plate and app card cast a soft two-layer shadow, the composer is a raised white (or charcoal) card that floats over the log, user prompts are accent-tinted cards with a hairline edge, solid accent buttons carry a slight sheen, and dark mode gets a hairline top highlight on lifted surfaces. Corner radii step up to 16/20px. Tinted (system / custom / preset) light and dark ramps follow the same steps as the mono ramp; first-paint window fills (#e7e7ea / #0f0f10) match.
+
+Recent working folders stop disappearing. Folder lists are no longer pruned on every settings change (an unplugged drive or a macOS privacy prompt used to wipe them), only a real "no such folder" forgets one, and windows always receive the merged desktop + vav-server list instead of a desktop-only copy.
+
+Home is gone. The new-session screen now carries a one-line summary — this week's tokens and how many notes, files, and schedules you have — each linking to its place.
+
+Clicking a file in Storage or This Mac previews it beside the list instead of jumping into the full view, and viewing a schedule no longer bumps its Updated time.
+
+Services stays fast after opening many files. Leaving a file in Storage now releases its folder watcher and cached tree, and the Notes / Analysis lists keep their word counts and table totals instead of re-reading every note and data file on each Back.
+
+A wide Services column previews the clicked note, analysis, schedule, or file beside the list; double-click still opens it full size. Lists gain a Manage button for checkbox multi-select with Select all, Move to folder, archive, and delete.
+
+The agent top bar drags the window again (including on an empty session), and the surface pattern now runs under it instead of being covered by a flat plate.
+
+Switching device now refreshes Services — notes, analysis, schedules, and files stay on the selected machine, and new app objects are created there.
+
+Picture in Picture is gone. The sidebar service menu no longer shrinks the window into a compact always-on-top task list.
+
+## 1.32.8
+
+Mainland remote WAN pairing uses the filed relay `derp.vavapp.art`. Already-paired hosts that pinned `derp.vavapp.com` keep working through that alias.
+
+Distribution faces (`edition/global.json`, `edition/cn.json`) bake site, update feed, and locale defaults. Every binary still includes the mainland DERP. A China bake can check `https://vavapp.art/releases` after that feed is mirrored.
+
 ## 1.32.7
 
 Desktop and vav-server are the only products. iOS, Android, the Chrome extension, `vav-board`, and `vav-tui` are gone. The loopback web UI stays with vav-server (`src/web-ui`). Settings → Command Line installs `vav` and `vav-server` only.

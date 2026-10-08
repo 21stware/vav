@@ -209,6 +209,57 @@ export function parseDevinAuthStatusText(text: string): HostAccountInfo {
   return accountInfo('oauth', { accountId: email, plan: plan || null })
 }
 
+/**
+ * `droid doctor --auth --json`. Droid has no `auth status` command; the
+ * `auth.verify` check is the only machine-readable login state. The email it
+ * reports is already masked by Droid (`o***@example.com`).
+ */
+export function parseDroidDoctorAuth(value: unknown): HostAccountInfo {
+  const results = asAccountRecord(value)?.results
+  if (!Array.isArray(results)) return unknownAccount()
+  const checks = new Map<string, { status: string; detail: string }>()
+  for (const item of results) {
+    const row = asAccountRecord(item)
+    const id = typeof row?.id === 'string' ? row.id : ''
+    if (!id) continue
+    checks.set(id, {
+      status: typeof row?.status === 'string' ? row.status : '',
+      detail: typeof row?.detail === 'string' ? row.detail.trim() : ''
+    })
+  }
+  const verify = checks.get('auth.verify')
+  if (!verify) return unknownAccount()
+  if (verify.status === 'pass') {
+    const match = verify.detail.match(/authenticated as (\S+) via (.+)$/i)
+    const source = match?.[2] ?? verify.detail
+    const kind: HostAuthKind = /FACTORY_API_KEY|api key/i.test(source) ? 'api-key' : 'oauth'
+    return accountInfo(kind, { accountId: match?.[1] ?? null })
+  }
+  if (/not logged in|no usable credentials/i.test(verify.detail)) {
+    const expiry = checks.get('auth.tokenExpiry')
+    if (expiry?.status === 'fail' && /expired/i.test(expiry.detail)) return accountInfo('expired')
+    return emptyAccount()
+  }
+  if (/FACTORY_API_KEY is set but/i.test(verify.detail)) return accountInfo('expired')
+  return unknownAccount()
+}
+
+/** `FACTORY_API_KEY=…` or `export FACTORY_API_KEY=…` from `~/.factory/.env`. */
+export function factoryApiKeyFromEnvFile(text: string): string | null {
+  let key: string | null = null
+  for (const line of text.split(/\r?\n/)) {
+    const match = line.match(/^\s*(?:export\s+)?FACTORY_API_KEY\s*=\s*(.*?)\s*$/)
+    if (!match) continue
+    let value = match[1]
+    const quoted = value.match(/^(['"])(.*)\1$/)
+    if (quoted) value = quoted[2]
+    else value = value.replace(/\s+#.*$/, '')
+    value = value.trim()
+    key = value || null
+  }
+  return key
+}
+
 /** Claude context fill: input + cache write + cache read (t3code / Agent SDK). */
 export function claudeContextUsed(usage: {
   inputTokens?: number | null

@@ -160,6 +160,9 @@ export class TimerStore {
   updateJob(id: string, patch: Partial<TimerJobInput> & { enabled?: boolean }, now = Date.now()): TimerJob | null {
     const job = this.jobs.find((row) => row.id === id)
     if (!job) return null
+    // Editors re-save on blur / focus change. A no-op save must not bump
+    // `updatedAt` (it reorders the list and reads as an edit).
+    const before = timerJobEditStamp(job)
     if (typeof patch.title === 'string' && patch.title.trim()) job.title = patch.title.trim()
     if (typeof patch.prompt === 'string') job.prompt = patch.prompt.trim()
     if (patch.conversationId !== undefined) {
@@ -181,6 +184,7 @@ export class TimerStore {
     if (patch.accountId !== undefined) job.accountId = patch.accountId?.trim() || null
     if (patch.thinkingLevel !== undefined) job.thinkingLevel = coerceTimerThinkingLevel(patch.thinkingLevel)
     if (patch.fast !== undefined) job.fast = patch.fast === true
+    if (timerJobEditStamp(job) === before) return { ...job, connectorIds: [...job.connectorIds] }
     job.updatedAt = now
     job.nextRunAt = job.enabled ? nextTimerRunAt(job.schedule, job.lastRunAt ?? now) : null
     this.persistJobs()
@@ -301,4 +305,23 @@ export class TimerStore {
       console.error('[timers] persist failed', err)
     }
   }
+}
+
+/** User-editable fields only — runtime bookkeeping (runs, nextRunAt) excluded. */
+function timerJobEditStamp(job: TimerJob): string {
+  return JSON.stringify([
+    job.title,
+    job.prompt,
+    job.conversationId,
+    job.schedule,
+    job.enabled,
+    job.workdirPolicy,
+    job.sourceWorkdir,
+    job.connectorIds,
+    job.model,
+    job.cliHost,
+    job.accountId,
+    job.thinkingLevel,
+    job.fast
+  ])
 }

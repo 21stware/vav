@@ -6,6 +6,12 @@ import (
 	"tailscale.com/tailcfg"
 )
 
+func TestCompiledHost(t *testing.T) {
+	if Host != "derp.vavapp.art" {
+		t.Fatalf("Host %q", Host)
+	}
+}
+
 func TestChinaRegionEmpty(t *testing.T) {
 	if ChinaRegion("") != nil || ChinaRegion("  ") != nil {
 		t.Fatal("blank host must be nil")

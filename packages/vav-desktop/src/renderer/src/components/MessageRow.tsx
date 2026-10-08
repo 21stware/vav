@@ -83,6 +83,8 @@ interface MessageRowProps {
   /** Bumped when this row should flash after a jump. */
   flash?: number
   /** Branches hanging off this message: which one is showing, and how many. */
+  /** Fork key the pager steps (the parent the branches hang off). */
+  branchKey?: string
   branchIndex?: number
   branchCount?: number
   /** A turn is in flight: retrying or editing now would collide with it. */
@@ -206,6 +208,7 @@ export const MessageRow = memo(function MessageRow({
   highlight,
   isCurrentMatch,
   flash = 0,
+  branchKey,
   branchIndex = 0,
   branchCount = 1,
   busy,
@@ -262,7 +265,7 @@ export const MessageRow = memo(function MessageRow({
       index={branchIndex}
       count={branchCount}
       pulseKey={branchPulse}
-      onStep={(step) => onStepBranch(message.id, step)}
+      onStep={(step) => onStepBranch(branchKey ?? message.id, step)}
     />
   )
 

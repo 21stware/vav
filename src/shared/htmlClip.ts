@@ -26,16 +26,16 @@ export const CLIP_THEME_VAR_KEYS = [
 ] as const
 
 const LIGHT_THEME: HtmlClipThemeVars = {
-  '--bg-content': '#fcfcfc',
+  '--bg-content': '#fcfcfd',
   '--bg-raised': '#ffffff',
-  '--bg-sunken': '#f2f2f4',
+  '--bg-sunken': '#f1f1f4',
   '--text': '#141416',
   '--text-secondary': '#5c5c66',
   '--text-tertiary': '#8a8a94',
   '--accent': '#3a3a42',
   '--accent-text': '#3a3a42',
   '--accent-fg': '#ffffff',
-  '--border': 'rgba(20, 20, 28, 0.09)',
+  '--border': 'rgba(20, 20, 28, 0.08)',
   '--danger': '#c4544f',
   '--success': '#2f8f62',
   '--warning': '#b07a20',
@@ -43,16 +43,16 @@ const LIGHT_THEME: HtmlClipThemeVars = {
 }
 
 const DARK_THEME: HtmlClipThemeVars = {
-  '--bg-content': '#1b1b1d',
-  '--bg-raised': '#242427',
-  '--bg-sunken': '#161617',
+  '--bg-content': '#1a1a1c',
+  '--bg-raised': '#232326',
+  '--bg-sunken': '#141415',
   '--text': '#efeff1',
   '--text-secondary': '#a2a2a9',
   '--text-tertiary': '#73737b',
   '--accent': '#c8c8d0',
   '--accent-text': '#e4e4ea',
   '--accent-fg': '#141416',
-  '--border': 'rgba(255, 255, 255, 0.07)',
+  '--border': 'rgba(255, 255, 255, 0.075)',
   '--danger': '#e8817c',
   '--success': '#6ec596',
   '--warning': '#d8ac62',

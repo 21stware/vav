@@ -26,34 +26,72 @@ export function fileSessionSelectHint(
 async function revealInMainShell(
   conversationId: string,
   _mode: 'fileSessions' | 'databases',
-  hint?: FileSessionSelectHint
+  hint?: FileSessionSelectHint,
+  peek = false
 ): Promise<void> {
   const store = useSessionStore.getState()
-  await store.selectConversation(conversationId, hint ? { fileSession: hint } : undefined)
+  await store.selectConversation(conversationId, {
+    ...(hint ? { fileSession: hint } : {}),
+    ...(peek ? { appPeek: true } : {})
+  })
 }
 
-/** Open or create a file session for `path` and show it in the File category. */
-export async function openFileSessionFromPath(path: string): Promise<string | null> {
+async function browseIfDirectory(path: string): Promise<boolean> {
+  try {
+    const info = await window.vav.files.inspect(path)
+    if (info.kind === 'directory') {
+      useSessionStore.getState().browseStoragePath(path)
+      return true
+    }
+  } catch {
+    // Missing / unreadable: treat as a file session.
+  }
+  return false
+}
+
+/** Latest peek wins — a slower earlier click must not steal the side panel. */
+let peekSeq = 0
+
+/**
+ * Open or create a file session for `path` and show it in the File category.
+ * `peek` focuses it for the wide app column's side panel instead of opening
+ * the full layer (selectConversation on an app object already does that —
+ * callers must not open the detail again).
+ */
+export async function openFileSessionFromPath(
+  path: string,
+  opts?: { peek?: boolean }
+): Promise<string | null> {
+  const peek = opts?.peek === true
+  const seq = peek ? ++peekSeq : 0
+  const stale = (): boolean => peek && seq !== peekSeq
   const { showToast } = useSessionStore.getState()
+  if (!peek && (await browseIfDirectory(path))) return null
   try {
     if (typeof window.vav.db?.list === 'function') {
       const dbId = dbConversationIdForFilePath(await window.vav.db.list(), path)
       if (dbId) {
-        await revealInMainShell(dbId, 'databases')
+        // Database files live under Analysis — a peek must not switch tabs.
+        if (!peek) await revealInMainShell(dbId, 'databases')
         return dbId
       }
     }
     const state = await window.vav.fileSessions.open(path)
-    if (!state?.activeSessionId) return null
+    if (!state?.activeSessionId || stale()) return null
     const hint: FileSessionSelectHint = {
       fileId: state.fileId,
       title: state.sessions.find((s) => s.id === state.activeSessionId)?.title || 'New session',
       workingDirectory: dirname(path) || null,
       machineId: normalizeMachineId(useSessionStore.getState().windowMachineId)
     }
-    await revealInMainShell(state.activeSessionId, 'fileSessions', hint)
+    await revealInMainShell(state.activeSessionId, 'fileSessions', hint, peek)
     return state.activeSessionId
   } catch (err) {
+    if (peek) return null
+    if (String(err).includes('directory')) {
+      useSessionStore.getState().browseStoragePath(path)
+      return null
+    }
     showToast({
       kind: 'error',
       title: tt('preview.openFailed'),
@@ -78,14 +116,19 @@ export async function openPickedFileSessions(): Promise<string | null> {
 export function openExistingFileSession(
   path: string,
   conversationId: string,
-  hint?: FileSessionSelectHint
+  hint?: FileSessionSelectHint,
+  opts?: { peek?: boolean }
 ): void {
+  const peek = opts?.peek === true
+  const seq = peek ? ++peekSeq : 0
   void (async () => {
+    if (await browseIfDirectory(path)) return
     try {
       if (typeof window.vav.db?.list === 'function') {
         const dbId = dbConversationIdForFilePath(await window.vav.db.list(), path)
         if (dbId) {
-          await revealInMainShell(dbId, 'databases')
+          // Database files live under Analysis — a peek must not switch tabs.
+          if (!peek) await revealInMainShell(dbId, 'databases')
           return
         }
       }
@@ -96,6 +139,10 @@ export function openExistingFileSession(
     } catch {
       // Main-shell FileSessionView still mounts from the sidebar hint.
     }
-    await revealInMainShell(conversationId, 'fileSessions', hint)
+    // A peek that lost the race to a newer click must not steal focus back.
+    if (peek && (seq !== peekSeq || useSessionStore.getState().focusedAppObjectId !== conversationId)) {
+      return
+    }
+    await revealInMainShell(conversationId, 'fileSessions', hint, peek)
   })()
 }

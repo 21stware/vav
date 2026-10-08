@@ -40,7 +40,8 @@ function harness() {
     set,
     refreshConversations: (): void => {},
     drainQueue: (): void => {},
-    openChangeReview: (): void => {}
+    openChangeReview: (): void => {},
+    resyncMessages: undefined as ((id: string) => void) | undefined
   }
 }
 
@@ -185,7 +186,10 @@ describe('applySessionTurnEvent recovery chrome', () => {
       },
       ctx
     )
-    assert.equal(getProjection(ID).getSnapshot().active, true)
+    // Settled: still on screen (no live chrome), never inserted as a root.
+    assert.equal(getProjection(ID).getSnapshot().active, false)
+    assert.equal(getProjection(ID).getSnapshot().settled, true)
+    assert.equal(getProjection(ID).getSnapshot().blocks.length, 1)
     assert.equal(ctx.get().messages[ID], undefined)
     assert.equal(ctx.get().activeLeaf[ID], undefined)
     apply(
@@ -201,6 +205,7 @@ describe('applySessionTurnEvent recovery chrome', () => {
       ctx
     )
     assert.equal(getProjection(ID).getSnapshot().active, false)
+    assert.equal(getProjection(ID).getSnapshot().settled, false)
     assert.equal(ctx.get().messages[ID]?.at(-1)?.content, '金价这周在涨。')
     assert.equal(ctx.get().activeLeaf[ID], 'asst-1')
   })
@@ -220,6 +225,95 @@ describe('applySessionTurnEvent recovery chrome', () => {
     assert.deepEqual(ctx.get().turns[ID], IDLE_TURN)
     assert.equal(getProjection(ID).getSnapshot().active, false)
     assert.equal(ctx.get().messages[ID], undefined)
+  })
+
+  it('keeps the streamed output on screen when Stop seals nothing', () => {
+    const ctx = apply({ type: 'start', conversationId: ID })
+    getProjection(ID).appendText(0, 'half an answer')
+    apply(
+      {
+        type: 'end',
+        conversationId: ID,
+        message: assistant({ content: '', cancelled: true }),
+        tokensUsed: 0,
+        cancelled: true
+      },
+      ctx
+    )
+    const snap = getProjection(ID).getSnapshot()
+    assert.equal(snap.settled, true)
+    assert.equal(snap.phase, 'idle')
+    assert.equal(snap.blocks[0]?.kind, 'text')
+    assert.deepEqual(ctx.get().turns[ID], IDLE_TURN)
+    assert.equal(ctx.get().messages[ID], undefined)
+    // The next prompt clears the stand-in.
+    apply({ type: 'user', conversationId: ID, message: { ...assistant(), id: 'u2', role: 'user', parentId: null } }, ctx)
+    assert.equal(getProjection(ID).getSnapshot().settled, false)
+  })
+
+  it('never inserts a synthetic control-plane error frame as a second root', () => {
+    const ctx = harness()
+    let resynced = 0
+    ctx.resyncMessages = () => {
+      resynced += 1
+    }
+    const user: ChatMessage = { ...assistant(), id: 'user-1', role: 'user', parentId: null, content: 'hi' }
+    apply({ type: 'user', conversationId: ID, message: user }, ctx)
+    apply({ type: 'start', conversationId: ID }, ctx)
+    apply(
+      {
+        type: 'end',
+        conversationId: ID,
+        message: assistant({ id: `remote-end-${ID}`, parentId: null, errorText: 'boom' }),
+        tokensUsed: 0,
+        error: 'boom',
+        errorKind: 'generic'
+      },
+      ctx
+    )
+    assert.deepEqual(ctx.get().messages[ID]?.map((m) => m.id), ['user-1'])
+    assert.equal(ctx.get().activeLeaf[ID], 'user-1')
+    assert.equal(ctx.get().errorBanner, 'boom')
+    assert.equal(resynced, 1)
+  })
+
+  it('asks for a resync when a reply arrives whose prompt this window never saw', () => {
+    const ctx = harness()
+    let resynced = 0
+    ctx.resyncMessages = () => {
+      resynced += 1
+    }
+    apply({ type: 'start', conversationId: ID }, ctx)
+    apply(
+      {
+        type: 'end',
+        conversationId: ID,
+        message: assistant({ content: 'done', blocks: [{ kind: 'text', text: 'done' }] }),
+        tokensUsed: 1
+      },
+      ctx
+    )
+    assert.equal(resynced, 1)
+  })
+
+  it('hangs an optimistic phone prompt off the thread and swaps it for the real one', () => {
+    const ctx = harness()
+    const first: ChatMessage = { ...assistant(), id: 'user-1', role: 'user', parentId: null, content: 'q1' }
+    apply({ type: 'user', conversationId: ID, message: first }, ctx)
+    apply(
+      {
+        type: 'end',
+        conversationId: ID,
+        message: assistant({ content: 'a1', blocks: [{ kind: 'text', text: 'a1' }] }),
+        tokensUsed: 1
+      },
+      ctx
+    )
+    const optimistic: ChatMessage = { ...first, id: 'local-user-9', content: 'q2', parentId: null }
+    apply({ type: 'user', conversationId: ID, message: optimistic }, ctx)
+    assert.equal(ctx.get().messages[ID]?.find((m) => m.id === 'local-user-9')?.parentId, 'asst-1')
+    apply({ type: 'user', conversationId: ID, message: { ...optimistic, id: 'user-2', parentId: 'asst-1' } }, ctx)
+    assert.deepEqual(ctx.get().messages[ID]?.map((m) => m.id), ['user-1', 'asst-1', 'user-2'])
   })
 
   it('end without message.errorText raises a technical banner', () => {

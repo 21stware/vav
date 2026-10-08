@@ -155,6 +155,14 @@ export function registerSettingsIpc(
             'settings.update',
             remapHostWorkspaceSettings(hostPatch, machineId, 'toHost')
           )
+          // Desktop keeps a mirror of folder recents / pins (all machines).
+          // Without it the next local-only broadcast — or a host that has not
+          // attached yet after launch — showed a stale list, and
+          // retainAdoptedHostRecents resurrected folders the user removed.
+          const mirror = workspaceListMirror(hostPatch)
+          if (mirror) store.update(mirror)
+          const agentMirror = isLocalMachine(machineId) ? localAgentListMirror(hostPatch) : null
+          if (agentMirror) store.update(agentMirror)
         } catch {
           const failed = { ...(await mergedSettings()), hostSettingsUnavailable: true }
           host.broadcastSettings(failed)
@@ -323,4 +331,23 @@ export function registerSettingsIpc(
     host.unsetFileAssociation(formatId)
   )
   ipcMain.handle(IPC.settingsRegisterAllFileAssociations, () => host.registerAllFileAssociations())
+}
+
+function workspaceListMirror(patch: Partial<AppSettings>): Partial<AppSettings> | null {
+  const out: Partial<AppSettings> = {}
+  if ('recentWorkspaceDirectories' in patch) {
+    out.recentWorkspaceDirectories = patch.recentWorkspaceDirectories
+  }
+  if ('pinnedWorkspaceDirectories' in patch) {
+    out.pinnedWorkspaceDirectories = patch.pinnedWorkspaceDirectories
+  }
+  return Object.keys(out).length ? out : null
+}
+
+/** This Mac's agent list, kept so a fresh local vav-server can be seeded from it. */
+function localAgentListMirror(patch: Partial<AppSettings>): Partial<AppSettings> | null {
+  const out: Partial<AppSettings> = {}
+  if ('cliAgents' in patch) out.cliAgents = patch.cliAgents
+  if ('removedCliAgentIds' in patch) out.removedCliAgentIds = patch.removedCliAgentIds
+  return Object.keys(out).length ? out : null
 }

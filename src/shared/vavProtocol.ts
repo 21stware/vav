@@ -1,3 +1,5 @@
+import { isMagpieEndpoint } from './llmVendors.ts'
+
 export type VavProtocol = 'anthropic' | 'openai' | 'google'
 
 function isAnthropicMessagesUrl(endpoint: string): boolean {
@@ -17,6 +19,8 @@ export function detectProtocol(endpoint: string, modelId = ''): VavProtocol {
   // Google's native protocol is only driven by the endpoint: gateways proxying
   // gemini models over OpenAI-compat stay on the OpenAI path.
   if (isGoogleGenerativeLanguageUrl(value)) return 'google'
+  // Magpie's loopback gateway speaks OpenAI Chat Completions (and translates).
+  if (isMagpieEndpoint(endpoint)) return 'openai'
   // DeepSeek's native API is OpenAI Chat Completions. Only use Anthropic when
   // the URL is explicitly the Messages mount (`/anthropic`, `/v1/messages`).
   // A bare `includes('anthropic')` would pin api.anthropic.com + deepseek-*

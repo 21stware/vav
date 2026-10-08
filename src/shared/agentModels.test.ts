@@ -27,6 +27,7 @@ describe('vavFallbackModels', () => {
     assert.equal(vavFallbackModels(null, 'bigmodel')[0]?.id, 'glm-4')
     assert.equal(vavFallbackModels(null, 'deepseek')[0]?.id, VAV_DEFAULT_MODEL_ID)
     assert.equal(vavFallbackModels(null, 'custom')[0]?.id, VAV_DEFAULT_MODEL_ID)
+    assert.deepEqual(vavFallbackModels(null, 'magpie'), [])
   })
 
   it('prefers the stored default over the vendor seed', () => {

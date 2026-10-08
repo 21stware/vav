@@ -13,6 +13,8 @@ export type AppColumnDetailContext = {
 
 export type AppColumnListProps = {
   onOpenDetail: () => void
+  /** Wide column: single click may preview the object in the side panel. */
+  canPeek?: boolean
 }
 
 export type AppColumnDetailProps = {

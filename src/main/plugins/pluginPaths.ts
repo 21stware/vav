@@ -39,6 +39,10 @@ export function pluginRootsForHost(
       const root = codexHome()
       return { root, scan: [join(root, 'plugins'), join(root, 'skills'), root] }
     }
+    case 'droid': {
+      const root = join(home, '.factory')
+      return { root, scan: [join(root, 'plugins'), join(root, 'skills'), root] }
+    }
     case 'devin':
     case 'kiro':
     case 'cline': {

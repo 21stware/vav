@@ -128,6 +128,20 @@ describe('sessionBootstrap', () => {
     assert.equal(again.conversations, seeded.conversations)
   })
 
+  it('does not wipe a prompt that arrived before the create reply', () => {
+    const seeded = seedEmptyConversationPatch(
+      {
+        conversations: [],
+        messages: { c3: [{ id: 'u' }] },
+        messagesHydrated: {},
+        activeLeaf: { c3: 'u' }
+      },
+      { id: 'c3' }
+    )
+    assert.deepEqual(seeded.messages.c3, [{ id: 'u' }])
+    assert.equal(seeded.activeLeaf.c3, 'u')
+  })
+
   it('pins a claimed session and optionally seeds an empty transcript', () => {
     const existing = { id: 'c1' }
     const meta = { id: 'c2' }

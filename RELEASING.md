@@ -3,10 +3,11 @@
 Tags `v*` drive `.github/workflows/release.yml`.
 
 1. Land changes on `main`. Keep [CHANGELOG.md](CHANGELOG.md) updated under **Unreleased**.
-2. Bump `version` together in `package.json`, `package-lock.json`, and `packages/vav-server/package.json`.
+2. Bump `version` together in `package.json`, `package-lock.json`, `packages/vav-desktop/{package,product}.json`, and `packages/vav-server/{package,product}.json`.
 3. Move Unreleased notes into a new `## x.y.z` section in CHANGELOG.md.
 4. Tag and push: `git tag vX.Y.Z && git push origin vX.Y.Z`.
 5. The workflow builds signed macOS and unsigned Windows artifacts, packs `@21stware/vav-server`, **verifies every required asset is present**, then publishes the GitHub Release. Optional npm publish of `vav-server` follows.
+6. After the GitHub Release is up, `npm run cn:deploy-releases` mirrors updater assets to `https://vavapp.art/releases` for a `VAV_EDITION=cn` bake. The default tag bake stays `global` (GitHub + gh-proxy). Do not fork bundle IDs.
 
 Required GitHub Release assets (see `scripts/release-assets.mjs`):
 

@@ -54,7 +54,10 @@ npm run site:images        # add -- --force to rebuild everything
 npm run brand:icons        # rebuild Windows .ico + site favicon from build/icon.png
 ```
 
-Custom domain: `vavapp.com` (see `site/CNAME`). Apex uses GitHub Pages `A`/`AAAA` records; `www` is a `CNAME` to `21stware.github.io`. Keep Cloudflare proxy **DNS only** (grey cloud) so GitHub can issue HTTPS.
+Two hosts, same `site/` tree. Faces live in [`edition/`](edition/) (`global.json` / `cn.json`); `VAV_EDITION=global|cn npm run edition:apply` bakes site, update-feed, and locale defaults. The mainland DERP host always comes from `edition/cn.json` — every binary keeps that relay plus Tailcat.
+
+- **International** — https://vavapp.com via GitHub Pages + Cloudflare DNS (`site/CNAME`). No ICP footer. Apex uses GitHub Pages `A`/`AAAA` records; `www` is a `CNAME` to `21stware.github.io`. Keep Cloudflare proxy **DNS only** (grey cloud) so GitHub can issue HTTPS. In-app updates use GitHub, then gh-proxy.
+- **Mainland** — https://vavapp.art on the Tencent Lighthouse box (`ssh vav`). `npm run site:deploy-cn` rsyncs `site/` (leaves `/releases` alone) and stamps `data-site-region="cn"` so the footer shows the ICP number from `edition/cn.json`. Caddy sits on :80/:443 and reverse-proxies `derp.vavapp.art` (and the older `derp.vavapp.com` alias) to derper. `npm run cn:deploy-relay` applies `deploy/cn/`. After a GitHub Release, `npm run cn:deploy-releases` mirrors updater assets to `https://vavapp.art/releases`.
 
 ## Install
 

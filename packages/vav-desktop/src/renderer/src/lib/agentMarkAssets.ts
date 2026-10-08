@@ -5,6 +5,7 @@ import devinIcon from '../assets/agents/devin.svg'
 import grokIcon from '../assets/agents/grok.svg'
 import kiroIcon from '../assets/agents/kiro.svg'
 import clineIcon from '../assets/agents/cline.svg'
+import droidIcon from '../assets/agents/droid.svg'
 import anthropicIcon from '../assets/vendors/anthropic.svg'
 import deepseekIcon from '../assets/vendors/deepseek.svg'
 import googleIcon from '../assets/vendors/google.svg'
@@ -15,6 +16,7 @@ import togetherIcon from '../assets/vendors/together.svg'
 import xaiIcon from '../assets/vendors/xai.svg'
 import bigmodelIcon from '../assets/vendors/bigmodel.svg'
 import kimiIcon from '../assets/vendors/kimi.svg'
+import magpieIcon from '../assets/vendors/magpie.svg'
 // VAV: line graphic (wordmark), not the app-icon plate.
 import vavGlyph from '../assets/wordmark.png'
 import vavGlyphDark from '../assets/wordmark-dark.png'
@@ -29,6 +31,7 @@ export const AGENT_ICONS: Record<string, string> = {
   devin: devinIcon,
   kiro: kiroIcon,
   cline: clineIcon,
+  droid: droidIcon,
   deepseek: deepseekIcon,
   openrouter: openrouterIcon,
   openai: openaiIcon,
@@ -38,7 +41,8 @@ export const AGENT_ICONS: Record<string, string> = {
   together: togetherIcon,
   siliconflow: siliconflowIcon,
   bigmodel: bigmodelIcon,
-  kimi: kimiIcon
+  kimi: kimiIcon,
+  magpie: magpieIcon
 }
 
 export const MONO_MARKS = new Set([
@@ -47,6 +51,7 @@ export const MONO_MARKS = new Set([
   'devin',
   'grok',
   'cline',
+  'droid',
   'kiro',
   'deepseek',
   'openrouter',
@@ -57,7 +62,8 @@ export const MONO_MARKS = new Set([
   'together',
   'siliconflow',
   'bigmodel',
-  'kimi'
+  'kimi',
+  'magpie'
 ])
 
 export { vavGlyph, vavGlyphDark }

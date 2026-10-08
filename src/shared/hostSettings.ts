@@ -133,6 +133,25 @@ export function composeHostSettings(
   return retainAdoptedHostRecents(mergeHostSettings(local, remapped), local, machineId)
 }
 
+/**
+ * Agent edits made before the local vav-server attached land only in the
+ * desktop store. A host that never had an agent removed still carries the
+ * full built-in catalogue, so adopting it on attach re-added every agent the
+ * user had deleted. Returns the desktop list to push, or null to keep the host's.
+ */
+export function agentListSeedFromDesktop(
+  hostSnap: Partial<AppSettings> | null | undefined,
+  desktop: Partial<AppSettings>
+): HostSettingsPatch | null {
+  const desktopRemoved = desktop.removedCliAgentIds ?? []
+  const hostRemoved = hostSnap?.removedCliAgentIds ?? []
+  if (!desktopRemoved.length || hostRemoved.length) return null
+  if (!Array.isArray(desktop.cliAgents) || desktop.cliAgents.length === 0) return null
+  const hostIds = new Set((hostSnap?.cliAgents ?? []).map((agent) => agent.id))
+  if (!desktopRemoved.some((id) => hostIds.has(id))) return null
+  return { cliAgents: desktop.cliAgents, removedCliAgentIds: desktopRemoved }
+}
+
 /** Derived secret flags from vav-server — not persisted host prefs. */
 export const SECRET_PRESENT_KEYS = [
   'apiKeyPresent',

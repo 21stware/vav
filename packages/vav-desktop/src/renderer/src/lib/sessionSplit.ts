@@ -43,7 +43,6 @@ export function focusCliAgentPickerFirstOption(_conversationId: string, tabId?: 
 export function canSplitSession(conversationId: string): boolean {
   if (!conversationId) return false
   const store = useSessionStore.getState()
-  if (store.pictureInPicture) return false
   const conversation = store.conversations.find((row) => row.id === conversationId)
   if (!conversation || conversation.fileId || conversation.archived) return false
   return true

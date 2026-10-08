@@ -76,7 +76,7 @@ describe('daemon loopback', () => {
     } finally {
       client.close()
       server.close()
-      await rm(dir, { recursive: true, force: true })
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   })
 
@@ -116,7 +116,7 @@ describe('daemon loopback', () => {
     } finally {
       client.close()
       server.close()
-      await rm(dir, { recursive: true, force: true })
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   })
 
@@ -142,7 +142,7 @@ describe('daemon loopback', () => {
     } finally {
       client.close()
       server.close()
-      await rm(dir, { recursive: true, force: true })
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   })
 
@@ -171,7 +171,7 @@ describe('daemon loopback', () => {
     } finally {
       client.close()
       server.close()
-      await rm(dir, { recursive: true, force: true })
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   })
 
@@ -209,7 +209,7 @@ describe('daemon loopback', () => {
     } finally {
       client.close()
       server.close()
-      await rm(dir, { recursive: true, force: true })
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   })
 
@@ -220,7 +220,9 @@ describe('daemon loopback', () => {
       const spawned = (await client.request('pty.spawn', {
         file: process.execPath,
         args: ['-e', 'process.stdin.resume()'],
-        opts: { cols: 80, rows: 24, cwd: dir }
+        // Windows callers always ask for ConPTY; winpty's conout pipe races a
+        // quick kill and throws after the test ends.
+        opts: { cols: 80, rows: 24, cwd: dir, useConpty: process.platform === 'win32' }
       })) as { stream?: string }
       assert.ok(spawned.stream)
       client.close()
@@ -241,7 +243,7 @@ describe('daemon loopback', () => {
       next.close()
     } finally {
       server.close()
-      await rm(dir, { recursive: true, force: true })
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   })
 
@@ -273,7 +275,7 @@ describe('daemon loopback', () => {
       next.close()
     } finally {
       server.close()
-      await rm(dir, { recursive: true, force: true })
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   })
 
@@ -298,7 +300,7 @@ describe('daemon loopback', () => {
     } finally {
       client.close()
       server.close()
-      await rm(dir, { recursive: true, force: true })
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   })
 
@@ -312,7 +314,7 @@ describe('daemon loopback', () => {
     } finally {
       client.close()
       server.close()
-      await rm(dir, { recursive: true, force: true })
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   })
 
@@ -363,7 +365,7 @@ describe('daemon loopback', () => {
       assert.equal(offered, pairing)
     } finally {
       server.close()
-      await rm(dir, { recursive: true, force: true })
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   })
 
@@ -434,7 +436,7 @@ describe('daemon loopback', () => {
     } finally {
       client.close()
       server.close()
-      await rm(dir, { recursive: true, force: true })
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   })
 
@@ -471,7 +473,7 @@ describe('daemon loopback', () => {
     } finally {
       client.close()
       server.close()
-      await rm(dir, { recursive: true, force: true })
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   })
 
@@ -486,7 +488,7 @@ describe('daemon loopback', () => {
     } finally {
       client.close()
       server.close()
-      await rm(dir, { recursive: true, force: true })
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   })
 
@@ -539,7 +541,7 @@ describe('daemon loopback', () => {
       client.close()
       server.close()
       store.dispose()
-      await rm(dir, { recursive: true, force: true })
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   })
 
@@ -554,7 +556,7 @@ describe('daemon loopback', () => {
     } finally {
       client.close()
       server.close()
-      await rm(dir, { recursive: true, force: true })
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   })
 
@@ -581,7 +583,7 @@ describe('daemon loopback', () => {
     } finally {
       client.close()
       server.close()
-      await rm(dir, { recursive: true, force: true })
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   })
 
@@ -674,7 +676,7 @@ describe('daemon loopback', () => {
     } finally {
       hub.dispose()
       server.close()
-      await rm(dir, { recursive: true, force: true })
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   })
 
@@ -706,7 +708,148 @@ describe('daemon loopback', () => {
     } finally {
       client.close()
       server.close()
-      await rm(dir, { recursive: true, force: true })
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
+    }
+  })
+
+  it('hands the same grant to racing first-pair dials from one controller', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vav-daemon-'))
+    const { server, client } = await startPair(dir)
+    const a = new DaemonClient()
+    const b = new DaemonClient()
+    try {
+      const opts = { host: '127.0.0.1', port: server.port(), secret: SECRET, device: 'Mac', clientId: 'mac-1' }
+      const [wa, wb] = await Promise.all([a.connect(opts), b.connect(opts)])
+      assert.equal(wa.grant?.id, wb.grant?.id)
+      assert.equal(wa.grant?.secret, wb.grant?.secret)
+      a.close()
+      b.close()
+      // The winner's stored secret still works on the next reconnect.
+      const again = new DaemonClient()
+      const welcome = await again.connect({ ...opts, secret: wa.grant!.secret, grantId: wa.grant!.id })
+      assert.equal(welcome.grant?.id, wa.grant?.id)
+      again.close()
+    } finally {
+      a.close()
+      b.close()
+      client.close()
+      server.close()
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
+    }
+  })
+
+  it('rejects or revokes an adopted (tailcat) daemon hello instead of hanging', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vav-daemon-'))
+    const { server, client } = await startPair(dir)
+    const { createServer } = await import('node:net')
+    const relay = createServer((sock) => {
+      sock.once('data', (chunk) => {
+        const hello = JSON.parse(String(chunk).trim()) as { auth: string; grantId?: string }
+        server.adopt(sock, '', hello)
+      })
+    })
+    await new Promise<void>((resolve) => relay.listen(0, '127.0.0.1', () => resolve()))
+    const relayPort = (relay.address() as { port: number }).port
+    try {
+      const grant = client.welcome!.grant!
+      client.close()
+      server.unpairGrant(grant.id)
+      const revoked = new DaemonClient()
+      await assert.rejects(
+        () =>
+          revoked.connect({ host: '127.0.0.1', port: relayPort, secret: grant.secret, grantId: grant.id, timeoutMs: 2000 }),
+        (err: Error) => err.name === 'PairRevoked'
+      )
+      revoked.close()
+      const stranger = new DaemonClient()
+      await assert.rejects(
+        () =>
+          stranger.connect({ host: '127.0.0.1', port: relayPort, secret: 'x'.repeat(24), timeoutMs: 2000 }),
+        /pairing rejected/
+      )
+      stranger.close()
+    } finally {
+      relay.close()
+      server.close()
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
+    }
+  })
+
+  it('lets a valid grant through while its address is auth-locked', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vav-daemon-'))
+    const { server, client } = await startPair(dir)
+    try {
+      const grant = client.welcome!.grant!
+      for (let i = 0; i < 10; i += 1) {
+        const bad = new DaemonClient()
+        await assert.rejects(() =>
+          bad.connect({ host: '127.0.0.1', port: server.port(), secret: `wrong-secret-${i}-000000000` })
+        )
+        bad.close()
+      }
+      const good = new DaemonClient()
+      const welcome = await good.connect({
+        host: '127.0.0.1',
+        port: server.port(),
+        secret: grant.secret,
+        grantId: grant.id
+      })
+      assert.equal(welcome.grant?.id, grant.id)
+      good.close()
+    } finally {
+      client.close()
+      server.close()
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
+    }
+  })
+
+  it('kills a half-open link when a probe gets no reply', async () => {
+    const { createServer } = await import('node:net')
+    const silent = createServer((sock) => {
+      sock.once('data', () => {
+        sock.write(
+          `${JSON.stringify({
+            type: 'welcome',
+            proto: 1,
+            app: 'vav-server',
+            version: 't',
+            host: { id: 'ghost', name: 'ghost', kind: 'remote', online: true },
+            home: '/',
+            tmp: '/'
+          })}\n`
+        )
+        // …then go silent like a peer that slept with the socket still open.
+      })
+    })
+    await new Promise<void>((resolve) => silent.listen(0, '127.0.0.1', () => resolve()))
+    const port = (silent.address() as { port: number }).port
+    const c = new DaemonClient()
+    try {
+      await c.connect({ host: '127.0.0.1', port, secret: SECRET })
+      let reason = ''
+      c.onClose((r) => {
+        reason = r
+      })
+      assert.equal(await c.probe(300), false)
+      for (let i = 0; i < 50 && !reason; i += 1) await new Promise((r) => setTimeout(r, 20))
+      assert.match(reason, /heartbeat timed out/)
+      assert.equal(c.connected, false)
+    } finally {
+      c.close()
+      silent.close()
+    }
+  })
+
+  it('answers a probe on a live link', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vav-daemon-'))
+    const { server, client } = await startPair(dir)
+    try {
+      assert.equal(await client.probe(2000), true)
+      assert.equal(client.connected, true)
+    } finally {
+      client.close()
+      server.close()
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   })
 
@@ -750,7 +893,115 @@ describe('daemon loopback', () => {
     } finally {
       client.close()
       server.close()
-      await rm(dir, { recursive: true, force: true })
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
+    }
+  })
+
+  it('answers revoked (not rejected) when a removed grant redials', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vav-daemon-'))
+    const { server, client } = await startPair(dir)
+    try {
+      const grant = client.welcome!.grant!
+      client.close()
+      assert.equal(server.unpairGrant(grant.id), true)
+      const again = new DaemonClient()
+      await assert.rejects(
+        () =>
+          again.connect({
+            host: '127.0.0.1',
+            port: server.port(),
+            secret: grant.secret,
+            grantId: grant.id,
+            device: 'test'
+          }),
+        (err: Error) => err.name === 'PairRevoked' && /pairing revoked/.test(err.message)
+      )
+      again.close()
+      // A bogus secret without a revoked grant id stays a plain auth failure.
+      const stranger = new DaemonClient()
+      await assert.rejects(
+        () =>
+          stranger.connect({
+            host: '127.0.0.1',
+            port: server.port(),
+            secret: 'not-the-secret-at-all-000',
+            grantId: 'made-up',
+            device: 'x'
+          }),
+        /pairing rejected/
+      )
+      stranger.close()
+    } finally {
+      client.close()
+      server.close()
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
+    }
+  })
+
+  it('does not broadcast controllers to unauthenticated sockets', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vav-daemon-'))
+    const { server, client } = await startPair(dir)
+    const probe = createConnection({ host: '127.0.0.1', port: server.port() })
+    try {
+      let seen = ''
+      probe.setEncoding('utf8')
+      probe.on('data', (chunk: string) => {
+        seen += chunk
+      })
+      await new Promise<void>((resolve) => probe.once('connect', () => resolve()))
+      await new Promise((r) => setTimeout(r, 50))
+      server.disconnectGrant(client.welcome!.grant!.id)
+      await new Promise((r) => setTimeout(r, 100))
+      assert.equal(seen, '')
+    } finally {
+      probe.destroy()
+      client.close()
+      server.close()
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
+    }
+  })
+
+  it('tears down forwarded-port pipes on unpair without injecting frames', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vav-daemon-'))
+    const { server, client } = await startPair(dir)
+    const { createServer } = await import('node:net')
+    const echo = createServer((sock) => sock.pipe(sock))
+    await new Promise<void>((resolve) => echo.listen(0, '127.0.0.1', () => resolve()))
+    const echoPort = (echo.address() as { port: number }).port
+    const grant = client.welcome!.grant!
+    const pipe = createConnection({ host: '127.0.0.1', port: server.port() })
+    try {
+      pipe.setEncoding('utf8')
+      let buf = ''
+      pipe.on('data', (chunk: string) => {
+        buf += chunk
+      })
+      await new Promise<void>((resolve) => pipe.once('connect', () => resolve()))
+      pipe.write(
+        `${JSON.stringify({ type: 'hello', proto: 1, auth: grant.secret, role: 'proxy', targetPort: echoPort, grantId: grant.id })}\n`
+      )
+      const until = async (pred: () => boolean): Promise<void> => {
+        for (let i = 0; i < 100 && !pred(); i += 1) await new Promise((r) => setTimeout(r, 20))
+        assert.ok(pred())
+      }
+      await until(() => buf.includes('"welcome"'))
+      buf = ''
+      // A second controller pairing fires an incoming broadcast; the raw pipe must stay clean.
+      const other = new DaemonClient()
+      await other.connect({ host: '127.0.0.1', port: server.port(), secret: SECRET, device: 'o', clientId: 'o' })
+      pipe.write('ping')
+      await until(() => buf === 'ping')
+      other.close()
+      const closed = new Promise<void>((resolve) => pipe.once('close', () => resolve()))
+      assert.equal(server.unpairGrant(grant.id), true)
+      await closed
+      assert.equal(buf, 'ping')
+    } finally {
+      pipe.destroy()
+      echo.close()
+      client.close()
+      server.close()
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   })
 
@@ -802,7 +1053,7 @@ describe('daemon loopback', () => {
       other.close()
       client.close()
       server.close()
-      await rm(dir, { recursive: true, force: true })
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   })
 
@@ -856,7 +1107,7 @@ describe('daemon loopback', () => {
     } finally {
       client.close()
       server.close()
-      await rm(dir, { recursive: true, force: true })
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   })
 
@@ -888,7 +1139,7 @@ describe('daemon loopback', () => {
     } finally {
       client.close()
       server.close()
-      await rm(dir, { recursive: true, force: true })
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   })
 
@@ -911,7 +1162,7 @@ describe('daemon loopback', () => {
     } finally {
       client.close()
       server.close()
-      await rm(dir, { recursive: true, force: true })
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   })
 
@@ -937,7 +1188,7 @@ describe('daemon loopback', () => {
     } finally {
       client.close()
       server.close()
-      await rm(dir, { recursive: true, force: true })
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   })
 
@@ -960,7 +1211,7 @@ describe('daemon loopback', () => {
     } finally {
       client.close()
       server.close()
-      await rm(dir, { recursive: true, force: true })
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   })
 
@@ -1005,7 +1256,7 @@ describe('daemon loopback', () => {
     } finally {
       client.close()
       server.close()
-      await rm(dir, { recursive: true, force: true })
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   })
 
@@ -1055,7 +1306,7 @@ describe('daemon loopback', () => {
     } finally {
       client.close()
       server.close()
-      await rm(dir, { recursive: true, force: true })
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   })
 
@@ -1093,7 +1344,7 @@ describe('daemon loopback', () => {
     } finally {
       client.close()
       server.close()
-      await rm(dir, { recursive: true, force: true })
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   })
 
@@ -1133,7 +1384,7 @@ describe('daemon loopback', () => {
     } finally {
       client.close()
       server.close()
-      await rm(dir, { recursive: true, force: true })
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   })
 
@@ -1176,7 +1427,7 @@ describe('daemon loopback', () => {
     } finally {
       client.close()
       server.close()
-      await rm(dir, { recursive: true, force: true })
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   })
 
@@ -1210,7 +1461,7 @@ describe('daemon loopback', () => {
     } finally {
       client.close()
       server.close()
-      await rm(dir, { recursive: true, force: true })
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   })
 
@@ -1260,7 +1511,7 @@ describe('daemon loopback', () => {
     } finally {
       client.close()
       server.close()
-      await rm(dir, { recursive: true, force: true })
+      await rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   })
 })
